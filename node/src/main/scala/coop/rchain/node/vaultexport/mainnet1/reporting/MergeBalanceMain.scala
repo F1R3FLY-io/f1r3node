@@ -126,7 +126,7 @@ object MergeBalanceMain {
 
   def getBalanceRholang(address: String) =
     s"""new return, rl(`rho:registry:lookup`), RevVaultCh, vaultCh, balanceCh in {
-                                            |  rl!(`rho:rchain:revVault`, *RevVaultCh) |
+                                            |  rl!(`rho:vault:system`, *RevVaultCh) |
                                             |  for (@(_, RevVault) <- RevVaultCh) {
                                             |    @RevVault!("findOrCreate", "$address", *vaultCh) |
                                             |    for (@(true, vault) <- vaultCh) {

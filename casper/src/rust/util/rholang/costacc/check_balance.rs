@@ -28,10 +28,10 @@ impl SystemDeployTrait for CheckBalance {
         new deployerId(`sys:casper:deployerId`),
         return(`sys:casper:return`),
         rl(`rho:registry:lookup`),
-        revAddressOps(`rho:rev:address`),
+        revAddressOps(`rho:vault:address`),
         revAddressCh,
         revVaultCh in {
-          rl!(`rho:rchain:revVault`, *revVaultCh) |
+          rl!(`rho:vault:system`, *revVaultCh) |
           revAddressOps!("fromDeployerId", *deployerId, *revAddressCh) |
           for(@userRevAddress <- revAddressCh & @(_, revVault) <- revVaultCh){
               new userVaultCh in {

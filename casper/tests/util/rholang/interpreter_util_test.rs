@@ -1648,9 +1648,9 @@ async fn used_deploy_with_insufficient_phlos_should_be_added_to_a_block_with_all
 
     let sample_term = r#"
   new
-    rl(`rho:registry:lookup`), RevVaultCh, vaultCh, balanceCh, deployId(`rho:rchain:deployId`)
+    rl(`rho:registry:lookup`), RevVaultCh, vaultCh, balanceCh, deployId(`rho:system:deployId`)
   in {
-    rl!(`rho:rchain:revVault`, *RevVaultCh) |
+    rl!(`rho:vault:system`, *RevVaultCh) |
     for (@(_, RevVault) <- RevVaultCh) {
       match "1111MnCcfyG9sExhw1jQcW6hSb98c2XUtu3E4KGSxENo1nTn4e5cx" {
         revAddress => {
@@ -1708,7 +1708,7 @@ const MULTI_BRANCH_SAMPLE_TERM_WITH_ERROR: &str = r#"
     new signal in {
       signal!(0) | signal!(0) | signal!(0) | signal!(0) | signal!(0) | signal!(0) | signal!(1) |
       contract signal(@x) = {
-        rl!(`rho:rchain:revVault`, *RevVaultCh) | ackCh!(x) |
+        rl!(`rho:vault:system`, *RevVaultCh) | ackCh!(x) |
         if (x == 1) {}.xxx() // Simulates error in one branch
       }
     } |

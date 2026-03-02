@@ -66,8 +66,8 @@ class TransactionAPISpec extends FlatSpec with Matchers with Inspectors {
     val phloPrice   = 1L
     val phloLimit   = 3000000L
     val transferRho = s"""
-         #new rl(`rho:registry:lookup`), RevVaultCh, vaultCh, toVaultCh, deployerId(`rho:rchain:deployerId`), revVaultKeyCh, resultCh in {
-         #  rl!(`rho:rchain:revVault`, *RevVaultCh) |
+         #new rl(`rho:registry:lookup`), RevVaultCh, vaultCh, toVaultCh, deployerId(`rho:system:deployerId`), revVaultKeyCh, resultCh in {
+         #  rl!(`rho:vault:system`, *RevVaultCh) |
          #  for (@(_, RevVault) <- RevVaultCh) {
          #    @RevVault!("findOrCreate", "$fromAddr", *vaultCh) |
          #    @RevVault!("findOrCreate", "$toAddr", *toVaultCh) |

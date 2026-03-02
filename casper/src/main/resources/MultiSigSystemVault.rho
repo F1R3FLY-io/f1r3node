@@ -24,8 +24,8 @@ new MultiSigRevVault,
     ListOpsCh
 in {
   rl!(`rho:lang:listOps`, *ListOpsCh) |
-  rl!(`rho:rchain:authKey`, *AuthKeyCh) |
-  rl!(`rho:rchain:revVault`, *RevVaultCh) |
+  rl!(`rho:system:authKey`, *AuthKeyCh) |
+  rl!(`rho:vault:system`, *RevVaultCh) |
   for(@(_, ListOps) <- ListOpsCh &
       @(_, AuthKey) <- AuthKeyCh &
       @(_, RevVault) <- RevVaultCh) {
@@ -55,7 +55,7 @@ in {
     } |
 
     contract MultiSigRevVault(@"deployerAuthKey", deployerId, ret) = {
-      new DeployerIdOps(`rho:rchain:deployerId:ops`),
+      new DeployerIdOps(`rho:system:deployerId:ops`),
           revAddrCh,
           deployerPubKeyBytesCh in {
         DeployerIdOps!("pubKeyBytes", *deployerId, *deployerPubKeyBytesCh) |
@@ -66,7 +66,7 @@ in {
     } |
 
     contract _fromPublicKey(@publicKey, ret) = {
-      new RevAddress(`rho:rev:address`), revAddrCh in {
+      new RevAddress(`rho:vault:address`), revAddrCh in {
         RevAddress!("fromPublicKey", publicKey, *revAddrCh)|
         for (@revAddress <- revAddrCh) {
           @AuthKey!("make", (*_multiSigRevVault, revAddress), *ret)
@@ -81,7 +81,7 @@ in {
           quorumSize <= 0) {
         ret!((false, "invalid quorum size"))
       } else {
-        new unf, authKeyCh, authPubKeysCh, RevAddress(`rho:rev:address`), revAddrCh in {
+        new unf, authKeyCh, authPubKeysCh, RevAddress(`rho:vault:address`), revAddrCh in {
           RevAddress!("fromUnforgeable", *unf, *revAddrCh) |
           @RevVault!("unforgeableAuthKey", *unf, *authKeyCh) |
           @ListOps!("map", publicKeys, *_fromPublicKey, *authPubKeysCh) |

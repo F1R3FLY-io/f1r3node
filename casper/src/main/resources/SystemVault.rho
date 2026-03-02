@@ -15,7 +15,7 @@
  */
 new
   RevVault, rs(`rho:registry:insertSigned:secp256k1`), uriOut,
-  rl(`rho:registry:lookup`), RevAddress(`rho:rev:address`),
+  rl(`rho:registry:lookup`), RevAddress(`rho:vault:address`),
   MakeMintCh, AuthKeyCh, EitherCh, TreeHashMapCh,
   _makeVault,
   _newVault,
@@ -24,8 +24,8 @@ new
   _transferTemplate,
   _depositTemplate
 in {
-  rl!(`rho:rchain:makeMint`, *MakeMintCh) |
-  rl!(`rho:rchain:authKey`, *AuthKeyCh) |
+  rl!(`rho:system:makeMint`, *MakeMintCh) |
+  rl!(`rho:system:authKey`, *AuthKeyCh) |
   rl!(`rho:lang:either`, *EitherCh) |
   rl!(`rho:lang:treeHashMap`, *TreeHashMapCh) |
   for (@(_, MakeMint) <- MakeMintCh &
@@ -63,7 +63,7 @@ in {
           } |
 
           contract RevVault(@"deployerAuthKey", deployerId, ret) = {
-            new RevAddress(`rho:rev:address`), DeployerIdOps(`rho:rchain:deployerId:ops`),
+            new RevAddress(`rho:vault:address`), DeployerIdOps(`rho:system:deployerId:ops`),
                 revAddrCh, deployerPubKeyBytesCh
             in {
               DeployerIdOps!("pubKeyBytes", *deployerId, *deployerPubKeyBytesCh) |
@@ -77,7 +77,7 @@ in {
           } |
           // Creates authKey from Rev vault name.
           contract RevVault(@"unforgeableAuthKey", unf, ret) = {
-            new RevAddress(`rho:rev:address`), revAddrCh in {
+            new RevAddress(`rho:vault:address`), revAddrCh in {
               RevAddress!("fromUnforgeable", *unf, *revAddrCh) |
               for (@unfRevAddress <- revAddrCh) {
                 @AuthKey!("make", (*_revVault, unfRevAddress), *ret)

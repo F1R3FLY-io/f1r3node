@@ -1324,7 +1324,7 @@ impl RuntimeOps {
     fn activate_validator_query_source() -> String {
         r#"
           new return, rl(`rho:registry:lookup`), poSCh in {
-          rl!(`rho:rchain:pos`, *poSCh) |
+          rl!(`rho:system:pos`, *poSCh) |
           for(@(_, PoS) <- poSCh) {
             @PoS!("getActiveValidators", *return)
           }
@@ -1344,7 +1344,7 @@ impl RuntimeOps {
     fn bonds_query_source() -> String {
         r#"
         new return, rl(`rho:registry:lookup`), poSCh in {
-          rl!(`rho:rchain:pos`, *poSCh) |
+          rl!(`rho:system:pos`, *poSCh) |
           for(@(_, PoS) <- poSCh) {
             @PoS!("getBonds", *return)
           }

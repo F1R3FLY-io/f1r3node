@@ -28,7 +28,7 @@ async fn pos_contract_should_return_correct_bonds_at_genesis() {
 
     let get_bonds_query = r#"
         new return, rl(`rho:registry:lookup`), posCh in {
-          rl!(`rho:rchain:pos`, *posCh) |
+          rl!(`rho:system:pos`, *posCh) |
           for (@(_, PoS) <- posCh) {
             @PoS!("getBonds", *return)
           }
@@ -79,7 +79,7 @@ async fn rev_vault_should_be_accessible_at_genesis() {
     let get_vault_query = format!(
         r#"
         new return, rl(`rho:registry:lookup`), RevVaultCh, vaultCh in {{
-          rl!(`rho:rchain:revVault`, *RevVaultCh) |
+          rl!(`rho:vault:system`, *RevVaultCh) |
           for (@(_, RevVault) <- RevVaultCh) {{
             @RevVault!("findOrCreate", "{}", *vaultCh) |
             for (@(true, vault) <- vaultCh) {{
@@ -128,7 +128,7 @@ async fn validator_vaults_should_have_zero_balance_at_genesis() {
     let get_validator_vault_query = format!(
         r#"
         new return, rl(`rho:registry:lookup`), RevVaultCh, vaultCh in {{
-          rl!(`rho:rchain:revVault`, *RevVaultCh) |
+          rl!(`rho:vault:system`, *RevVaultCh) |
           for (@(_, RevVault) <- RevVaultCh) {{
             @RevVault!("findOrCreate", "{}", *vaultCh) |
             for (@(true, vault) <- vaultCh) {{
@@ -245,7 +245,7 @@ async fn system_contracts_should_work_after_adding_block() {
 
     let get_bonds_query = r#"
         new return, rl(`rho:registry:lookup`), posCh in {
-          rl!(`rho:rchain:pos`, *posCh) |
+          rl!(`rho:system:pos`, *posCh) |
           for (@(_, PoS) <- posCh) {
             @PoS!("getBonds", *return)
           }
@@ -309,7 +309,7 @@ async fn validator_key_lookup_should_succeed_in_all_bonds() {
     let lookup_query = format!(
         r#"
         new return, rl(`rho:registry:lookup`), posCh in {{
-          rl!(`rho:rchain:pos`, *posCh) |
+          rl!(`rho:system:pos`, *posCh) |
           for (@(_, PoS) <- posCh) {{
             new bondsCh in {{
               @PoS!("getBonds", *bondsCh) |

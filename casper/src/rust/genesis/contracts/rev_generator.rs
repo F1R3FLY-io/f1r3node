@@ -32,7 +32,7 @@ impl RevGenerator {
         let code = format!(
             r#" 
             new rl(`rho:registry:lookup`), revVaultCh in {{
-              rl!(`rho:rchain:revVault`, *revVaultCh) |
+              rl!(`rho:vault:system`, *revVaultCh) |
               for (@(_, RevVault) <- revVaultCh) {{
                 new revVaultInitCh in {{
                   @RevVault!("init", *revVaultInitCh) |

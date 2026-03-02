@@ -71,7 +71,7 @@ User transfer the bonding amount directly to posVault. `allBonds` would update w
 
 new PoS,
     registryLookup(`rho:registry:lookup`),
-    revAddressOps(`rho:rev:address`),
+    revAddressOps(`rho:vault:address`),
     revVaultCh, listOpsCh,
     getUser,
     pickActiveValidators,
@@ -80,17 +80,17 @@ new PoS,
     deposit, distributeRewards,
     perActiveValidatorPosVaultsCh,
     rs(`rho:registry:insertSigned:secp256k1`),
-    posId(`rho:rchain:deployerId`),
+    posId(`rho:system:deployerId`),
     PendingRewards, MergeIntMaps, treeHashMapCh,
     sysAuthTokenOps(`sys:authToken:ops`),
     multiSigRevVaultCh, coopVaultCh,
     uriOut, sumFromPair
 in {
   // Simultaneously retrieves RevVault, ListOps, TreeHashMap, and MultiSigRevVault contracts from the registry.
-  registryLookup!(`rho:rchain:revVault`, *revVaultCh) |
+  registryLookup!(`rho:vault:system`, *revVaultCh) |
   registryLookup!(`rho:lang:listOps`, *listOpsCh) |
   registryLookup!(`rho:lang:treeHashMap`, *treeHashMapCh) |
-  registryLookup!(`rho:rchain:multiSigRevVault`, *multiSigRevVaultCh) |
+  registryLookup!(`rho:vault:multiSig`, *multiSigRevVaultCh) |
   for (@(_, RevVault)         <- revVaultCh &
        @(_, ListOps)          <- listOpsCh &
        TreeHashMap            <- treeHashMapCh &
@@ -124,7 +124,7 @@ in {
             @RevVault!("findOrCreate", unfAddr, *createRetCh) |
             for (@(true, vault) <- createRetCh){
               contract unfVaultHandle(@"transfer", @targetAddress, @amount, deployerID, transferRet) = {
-                new deployerPubKeyBytesCh, DeployerIdOps(`rho:rchain:deployerId:ops`) in {
+                new deployerPubKeyBytesCh, DeployerIdOps(`rho:system:deployerId:ops`) in {
                   DeployerIdOps!("pubKeyBytes", *deployerID, *deployerPubKeyBytesCh) |
                   for (@deployerPubKeyBytes <- deployerPubKeyBytesCh) {
                     if (deployerPubKeyBytes ==  pubkey.hexToBytes()){
@@ -704,7 +704,7 @@ in {
       } |
       // Retrieves deployer's public key.
       contract getUser(@deployerId, returnCh) = {
-        new deployerIdOps(`rho:rchain:deployerId:ops`) in {
+        new deployerIdOps(`rho:system:deployerId:ops`) in {
           deployerIdOps!("pubKeyBytes", deployerId, *returnCh)
         }
       } |

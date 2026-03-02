@@ -671,7 +671,7 @@ fn std_system_processes() -> Vec<Definition> {
             remainder: None,
         },
         Definition {
-            urn: "rho:rev:address".to_string(),
+            urn: "rho:vault:address".to_string(),
             fixed_channel: FixedChannels::rev_address(),
             arity: 3,
             body_ref: BodyRefs::REV_ADDRESS,
@@ -684,7 +684,7 @@ fn std_system_processes() -> Vec<Definition> {
             remainder: None,
         },
         Definition {
-            urn: "rho:rchain:deployerId:ops".to_string(),
+            urn: "rho:system:deployerId:ops".to_string(),
             fixed_channel: FixedChannels::deployer_id_ops(),
             arity: 3,
             body_ref: BodyRefs::DEPLOYER_ID_OPS,

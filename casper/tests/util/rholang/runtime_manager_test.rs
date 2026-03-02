@@ -865,12 +865,12 @@ async fn compute_state_should_be_replayed_by_replay_compute_state() {
         |mut runtime_manager, genesis_context, genesis_block| async move {
             let deploy = construct_deploy::source_deploy_now_full(
                 r#"
-                  new deployerId(`rho:rchain:deployerId`),
+                  new deployerId(`rho:system:deployerId`),
                   rl(`rho:registry:lookup`),
-                  revAddressOps(`rho:rev:address`),
+                  revAddressOps(`rho:vault:address`),
                   revAddressCh,
                   revVaultCh in {
-                  rl!(`rho:rchain:revVault`, *revVaultCh) |
+                  rl!(`rho:vault:system`, *revVaultCh) |
                   revAddressOps!("fromDeployerId", *deployerId, *revAddressCh) |
                   for(@userRevAddress <- revAddressCh & @(_, revVault) <- revVaultCh){
                     new userVaultCh in {

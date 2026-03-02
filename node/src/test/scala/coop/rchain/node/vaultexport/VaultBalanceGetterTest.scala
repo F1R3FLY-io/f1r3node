@@ -18,7 +18,7 @@ class VaultBalanceGetterTest extends FlatSpec {
       val genesisVaultAddr = RevAddress.fromPublicKey(genesis.genesisVaults.toList(0)._2).get
       val getVault =
         s"""new return, rl(`rho:registry:lookup`), RevVaultCh, vaultCh, balanceCh in {
-          |  rl!(`rho:rchain:revVault`, *RevVaultCh) |
+          |  rl!(`rho:vault:system`, *RevVaultCh) |
           |  for (@(_, RevVault) <- RevVaultCh) {
           |    @RevVault!("findOrCreate", "${genesisVaultAddr.address.toBase58}", *vaultCh) |
           |    for (@(true, vault) <- vaultCh) {
@@ -58,7 +58,7 @@ class VaultBalanceGetterTest extends FlatSpec {
         _ <- genesisVaultAddrs.toList.traverse { vaultAddr =>
               val getVaultBalance =
                 s"""new return, rl(`rho:registry:lookup`), RevVaultCh, vaultCh, balanceCh in {
-              |  rl!(`rho:rchain:revVault`, *RevVaultCh) |
+              |  rl!(`rho:vault:system`, *RevVaultCh) |
               |  for (@(_, RevVault) <- RevVaultCh) {
               |    @RevVault!("findOrCreate", "${vaultAddr.address.toBase58}", *vaultCh) |
               |    for (@(true, vault) <- vaultCh) {
