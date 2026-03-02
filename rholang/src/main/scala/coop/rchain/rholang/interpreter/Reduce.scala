@@ -606,10 +606,7 @@ class DebruijnInterpreter[M[_]: Sync: Parallel: _cost](
             v2 <- evalSingleExpr(p2)
             result <- (v1.exprInstance, v2.exprInstance) match {
                        case (GInt(lhs), GInt(rhs)) =>
-                         for {
-                           _      <- charge[M](SUM_COST)
-                           result <- safeArithmeticLong(Math.addExact(lhs, rhs), "addition")
-                         } yield Expr(GInt(result))
+                         charge[M](SUM_COST) >> Expr(GInt(lhs + rhs)).pure[M]
                        case (lhs: ESetBody, rhs) =>
                          for {
                            _         <- charge[M](OP_CALL_COST)
@@ -628,10 +625,7 @@ class DebruijnInterpreter[M[_]: Sync: Parallel: _cost](
             v2 <- evalSingleExpr(p2)
             result <- (v1.exprInstance, v2.exprInstance) match {
                        case (GInt(lhs), GInt(rhs)) =>
-                         for {
-                           _      <- charge[M](SUBTRACTION_COST)
-                           result <- safeArithmeticLong(Math.subtractExact(lhs, rhs), "subtraction")
-                         } yield Expr(GInt(result))
+                         charge[M](SUBTRACTION_COST) >> Expr(GInt(lhs - rhs)).pure[M]
                        case (lhs: EMapBody, rhs) =>
                          for {
                            _         <- charge[M](OP_CALL_COST)

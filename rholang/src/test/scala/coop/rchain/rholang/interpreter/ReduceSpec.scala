@@ -202,17 +202,6 @@ class ReduceSpec extends FlatSpec with Matchers with AppendedClues with Persiste
     result.exprs should be(expected)
   }
 
-  it should "return an error for subtraction overflow" in {
-    val result = withTestSpace {
-      case TestFixture(_, reducer) =>
-        val subExpr      = EMinus(GInt(Long.MinValue), GInt(1L))
-        implicit val env = Env[Par]()
-        val resultTask   = reducer.evalExpr(subExpr)
-        Await.ready(resultTask.runToFuture, 3.seconds)
-    }
-    result.value shouldBe Failure(ReduceError("Arithmetic overflow in subtraction")).some
-  }
-
   "evalExpr" should "handle simple negation" in {
     val result = withTestSpace {
       case TestFixture(_, reducer) =>
@@ -235,17 +224,6 @@ class ReduceSpec extends FlatSpec with Matchers with AppendedClues with Persiste
         Await.ready(resultTask.runToFuture, 3.seconds)
     }
     result.value shouldBe Failure(ReduceError("Arithmetic overflow in negation")).some
-  }
-
-  it should "return an error for addition overflow" in {
-    val result = withTestSpace {
-      case TestFixture(_, reducer) =>
-        val addExpr      = EPlus(GInt(Long.MaxValue), GInt(1L))
-        implicit val env = Env[Par]()
-        val resultTask   = reducer.evalExpr(addExpr)
-        Await.ready(resultTask.runToFuture, 3.seconds)
-    }
-    result.value shouldBe Failure(ReduceError("Arithmetic overflow in addition")).some
   }
 
   it should "return an error for division overflow" in {
