@@ -17,27 +17,27 @@
 //
 // Structural analogy with SystemVault.rho:
 //
-//   SystemVault concept          │  FileRegistry equivalent
-//   ─────────────────────────────┼──────────────────────────────────────────
-//   vaultMap (TreeHashMap)       │  fileMap (TreeHashMap[hash → fileHandle])
-//   _systemVault (priv unf.)     │  _fileRegistry (priv unf.)
-//   deployerAuthKey → AuthKey    │  ownerAuthKey  → AuthKey  (bound to hash)
-//   transfer(auth, ret)          │  delete(auth, ret)
-//   _transferTemplate            │  _deleteTemplate
-//   MakeMint / purse (I/O)       │  rho:io:file system process (I/O)
+//   SystemVault concept          |  FileRegistry equivalent
+//   -----------------------------|------------------------------------------
+//   vaultMap (TreeHashMap)       |  fileMap (TreeHashMap[hash -> fileHandle])
+//   _systemVault (priv unf.)     |  _fileRegistry (priv unf.)
+//   deployerAuthKey -> AuthKey   |  ownerAuthKey  -> AuthKey  (bound to hash)
+//   transfer(auth, ret)          |  delete(auth, ret)
+//   _transferTemplate            |  _deleteTemplate
+//   MakeMint / purse (I/O)       |  rho:io:file system process (I/O)
 //
-// Flow for delete — mirrors transfer:
+// Flow for delete -- mirrors transfer:
 //   1. Caller obtains authKey via FileRegistry!("ownerAuthKey", ...)
 //      (only possible in the deploy that registered the file, i.e., the owner's deploy)
 //   2. Caller calls fileHandle!("delete", authKey, *ret)
 //   3. _deleteTemplate validates AuthKey shape = (_fileRegistry, fileHash)
-//   4. If valid → calls rho:io:file!("delete", fileHash, sysAuthToken, *sysCh)
+//   4. If valid -> calls rho:io:file!("delete", fileHash, sysAuthToken, *sysCh)
 //   5. System process validates SysAuthToken, schedules physical file removal
 //   6. fileHandle is consumed (record removed from fileMap)
 //
 // Security: The system process rho:io:file requires a SysAuthToken for "delete".
 //   SysAuthToken is a special unforgeable type (GSysAuthTokenBody) that CANNOT
-//   be constructed by user Rholang code — only the Scala runtime creates them.
+//   be constructed by user Rholang code -- only the Scala runtime creates them.
 //   FileRegistry receives one at genesis init time and keeps it on a private channel.
 //   This means: no user deploy can bypass FileRegistry to call the system process directly.
 //
@@ -53,7 +53,7 @@ new
   // Fixed channel: the rho:io:file system process produces delegation data here
   // after successful sig verification + phlo charging.
   registerNotify(`rho:io:file:registerNotify`),
-  // Private unforgeable — the "shape secret" for AuthKey.
+  // Private unforgeable -- the "shape secret" for AuthKey.
   // Analogous to _systemVault in SystemVault.rho.
   // Never exposed outside this contract; makes AuthKeys unforgeable.
   _fileRegistry,
@@ -61,7 +61,7 @@ new
   // Passed to rho:io:file!("delete", ...) as proof that the caller is FileRegistry.
   // Analogous to how PoS.rho stores sysAuthToken and passes it to chargeDeploy/slash.
   _sysAuthTokenCh,
-  // Internal dispatch channels — never exported
+  // Internal dispatch channels -- never exported
   _newFileHandle,
   _deleteTemplate
 in {
@@ -73,7 +73,7 @@ in {
        @(_, Either)   <- EitherCh  &
        TreeHashMap    <- TreeHashMapCh) {
 
-    // ── SELF-INITIALIZING TOKEN STORAGE ──────────────────────────────────
+    // -- SELF-INITIALIZING TOKEN STORAGE ----------------------------------
     //
     // The _sysAuthTokenCh is populated lazily on the first registerNotify
     // call (i.e., the first file upload). The system process passes a
@@ -82,13 +82,13 @@ in {
     // FileRegistryInitDeploy system deploy at genesis, keeping
     // FileRegistry as a regular blessed contract like SystemVault or PoS.
 
-    // fileMap: TreeHashMap[fileHash:String → fileHandle:Name]
-    // Depth 3 → 3*8 = 24-bit prefix parallelism, adequate for millions of files.
+    // fileMap: TreeHashMap[fileHash:String -> fileHandle:Name]
+    // Depth 3 -> 3*8 = 24-bit prefix parallelism, adequate for millions of files.
     new fileMapStore in {
       TreeHashMap!("init", 3, *fileMapStore) |
       for (@fileMap <- fileMapStore) {
 
-        // ── PUBLIC API ────────────────────────────────────────────────────────
+        // -- PUBLIC API --------------------------------------------------------
 
         // register(fileHash, fileName, ownerDeployerId, sysAuthToken, ret)
         //   Called internally by the rho:io:file system process after confirming the
@@ -106,7 +106,7 @@ in {
                   TreeHashMap!("get", fileMap, fileHash, *existingCh) |
                   for (@existing <- existingCh) {
                     if (existing != Nil) {
-                      // Duplicate — file already registered. Get the capability.
+                      // Duplicate -- file already registered. Get the capability.
                       // We add this deployer to the reference counted array.
                       // `existing` is already bundle+{*fileHandle} from TreeHashMap.
                       @existing!("addDeployer", *ownerDeployerId, *ret)
@@ -131,7 +131,7 @@ in {
           }
         } |
 
-        // ── SYSTEM PROCESS DELEGATION BRIDGE ─────────────────────────────────
+        // -- SYSTEM PROCESS DELEGATION BRIDGE ---------------------------------
         //
         // Persistent listener on the rho:io:file:registerNotify fixed channel.
         // The rho:io:file system process (Scala) produces (fileHash, fileName,
@@ -143,7 +143,7 @@ in {
         //
         contract registerNotify(@fileHash, @fileName, ownerDeployerId, @sysAuthToken) = {
           new regAckCh in {
-            // Store token for _deleteTemplate (idempotent — all tokens are identical,
+            // Store token for _deleteTemplate (idempotent -- all tokens are identical,
             // and _deleteTemplate uses peek so extra values are harmless).
             _sysAuthTokenCh!(sysAuthToken) |
             FileRegistry!("register", fileHash, fileName, *ownerDeployerId, sysAuthToken, *regAckCh)
@@ -162,7 +162,7 @@ in {
               // Look up current state to verify caller is in the deployers map
               for (@state <<- @{["fileState", fileHash]}) {
                 if (state.get("deployers").contains(callerPubKey)) {
-                  // Caller is an owner — issue the AuthKey bound to their specific key.
+                  // Caller is an owner -- issue the AuthKey bound to their specific key.
                   @AuthKey!("make", (*_fileRegistry, fileHash, callerPubKey), *ret)
                 } else {
                    ret!(Nil)
@@ -177,7 +177,7 @@ in {
           TreeHashMap!("get", fileMap, fileHash, *ret)
         } |
 
-        // ── INTERNAL CONSTRUCTORS ─────────────────────────────────────────────
+        // -- INTERNAL CONSTRUCTORS ---------------------------------------------
 
         // _newFileHandle(fileHash, fileName, ownerDeployerId, ret)
         contract _newFileHandle(@fileHash, @fileName, ownerDeployerId, ret) = {
@@ -238,7 +238,7 @@ in {
               fileProc(`rho:io:file`),
               filteredCh, filterPred
           in {
-            // Step 1 — Validate AuthKey shape.
+            // Step 1 -- Validate AuthKey shape.
             @AuthKey!("check", *authKey, (*_fileRegistry, fileHash, callerPubKey), *authValidCh) |
             @Either!("fromBoolean <-", *authValidCh, "Invalid AuthKey", *authValidEitherCh) |
 
@@ -251,7 +251,7 @@ in {
               match authResult {
                 (false, _) => { ret!(authResult) }
                 _ => {
-                  // Step 2 — Update deployers map (remove callerPubKey)
+                  // Step 2 -- Update deployers map (remove callerPubKey)
                   for (@state <- @{["fileState", fileHash]}) {
                     match state.get("deployers").delete(callerPubKey) {
                       remainingDeployers => {
@@ -269,7 +269,7 @@ in {
                                     ret!((false, errMsg))
                                   }
                                   _ => {
-                                    // Step 3 — Remove from TreeHashMap
+                                    // Step 3 -- Remove from TreeHashMap
                                     TreeHashMap!("delete", fileMap, fileHash, *removeAckCh) |
                                     for (_ <- removeAckCh) {
                                       ret!((true, fileHash))
