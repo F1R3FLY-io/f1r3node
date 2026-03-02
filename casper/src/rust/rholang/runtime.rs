@@ -4,7 +4,7 @@ use std::{
     collections::{BTreeMap, HashMap, HashSet},
     future::Future,
     mem,
-    sync::{Arc, Mutex, OnceLock},
+    sync::OnceLock,
     time::Instant,
 };
 
@@ -186,11 +186,13 @@ impl RuntimeOps {
         log_mem_step("after_play_deploys_for_state");
 
         let mut current_hash = start_hash;
-        let mut processed_system_deploys = Vec::new();
+        let mut processed_system_deploys = Vec::with_capacity(system_deploys.len());
 
         for (idx, system_deploy_enum) in system_deploys.into_iter().enumerate() {
-            let before_step = format!("before_system_deploy_{}", idx + 1);
-            log_mem_step(&before_step);
+            if mem_profile_enabled {
+                let before_step = format!("before_system_deploy_{}", idx + 1);
+                log_mem_step(&before_step);
+            }
             // Match on the enum and call appropriate generic method
             let result = match system_deploy_enum {
                 crate::rust::util::rholang::system_deploy_enum::SystemDeployEnum::Slash(
@@ -206,8 +208,10 @@ impl RuntimeOps {
                         .await?
                 }
             };
-            let after_step = format!("after_system_deploy_{}", idx + 1);
-            log_mem_step(&after_step);
+            if mem_profile_enabled {
+                let after_step = format!("after_system_deploy_{}", idx + 1);
+                log_mem_step(&after_step);
+            }
 
             match result {
                 SystemDeployResult::PlaySucceeded {
@@ -338,13 +342,17 @@ impl RuntimeOps {
             .reset(&Blake2b256Hash::from_bytes_prost(start_hash));
         log_mem_step("after_reset");
 
-        let mut res = Vec::new();
+        let mut res = Vec::with_capacity(terms.len());
         for (idx, deploy) in terms.into_iter().enumerate() {
-            let before = format!("before_deploy_{}", idx + 1);
-            log_mem_step(&before);
+            if mem_profile_enabled {
+                let before = format!("before_deploy_{}", idx + 1);
+                log_mem_step(&before);
+            }
             res.push(self.play_deploy_with_cost_accounting(deploy).await?);
-            let after = format!("after_deploy_{}", idx + 1);
-            log_mem_step(&after);
+            if mem_profile_enabled {
+                let after = format!("after_deploy_{}", idx + 1);
+                log_mem_step(&after);
+            }
         }
 
         log_mem_step("before_final_checkpoint");
@@ -371,7 +379,7 @@ impl RuntimeOps {
         self.runtime
             .reset(&Blake2b256Hash::from_bytes_prost(start_hash));
 
-        let mut res = Vec::new();
+        let mut res = Vec::with_capacity(terms.len());
         for deploy in terms {
             res.push(self.process_deploy_with_mergeable_data(deploy).await?);
         }
@@ -429,28 +437,10 @@ impl RuntimeOps {
         // Using tracing events for async - Span[F].withMarks("play-deploy") from Scala
         tracing::debug!(target: "f1r3fly.casper.play-deploy", "play-deploy-started");
         log_mem_step("start");
-        let eval_collector_state = Arc::new(Mutex::new(EvalCollector::new()));
-
-        // System deploy result of evaluation
-        #[allow(type_alias_bounds)]
-        type SysDeployRes<S: SystemDeployTrait> = Either<SystemDeployUserError, S::Result>;
-
-        // Combines system deploy evaluation and update of local state with resulting event logs
-        async fn exec_and_save<S: SystemDeployTrait, F, Fut>(
-            eval_collector_state: Arc<Mutex<EvalCollector>>,
-            deploy_eval_fn: F,
-        ) -> Result<SysDeployRes<S>, CasperError>
-        where
-            F: FnOnce() -> Fut,
-            Fut: Future<Output = Result<(Vec<Event>, SysDeployRes<S>, HashSet<Par>), CasperError>>,
-        {
-            let (event_log, result, mergeable_channels) = deploy_eval_fn().await?;
-            let mut eval_collector_state_lock = eval_collector_state.lock().unwrap();
-            eval_collector_state_lock.add(event_log, mergeable_channels);
-            Ok(result)
-        }
+        let mut eval_collector_state = EvalCollector::new();
 
         let deploy_pk = deploy.pk.bytes.clone();
+        let deploy_pk_hex = hex::encode(&deploy_pk);
         let deploy_sig_hex = hex::encode(&deploy.sig);
         let refund_rand = system_deploy_util::generate_refund_deploy_random_seed(&deploy);
         let pre_charge_rand = system_deploy_util::generate_pre_charge_deploy_random_seed(&deploy);
@@ -459,9 +449,9 @@ impl RuntimeOps {
         let pre_charge_result = {
             // Using tracing events for async - Span[F].traceI("precharge") from Scala
             tracing::debug!(target: "f1r3fly.casper.precharge", "precharge-started");
-            tracing::info!(
+            tracing::debug!(
                 "PreCharging {} for {}",
-                hex::encode(&deploy_pk),
+                deploy_pk_hex.as_str(),
                 deploy.data.total_phlo_charge()
             );
             log_mem_step("before_precharge_internal");
@@ -473,11 +463,7 @@ impl RuntimeOps {
                 })
                 .await?;
             log_mem_step("after_precharge_internal");
-
-            {
-                let mut eval_collector_state_lock = eval_collector_state.lock().unwrap();
-                eval_collector_state_lock.add(event_log, mergeable_channels);
-            }
+            eval_collector_state.add(event_log, mergeable_channels);
             log_mem_step("after_precharge_collect");
             result
         };
@@ -489,13 +475,12 @@ impl RuntimeOps {
                 let pd = {
                     // Using tracing events for async - Span[F].traceI("user-deploy") from Scala
                     tracing::debug!(target: "f1r3fly.casper.user-deploy", "user-deploy-started");
-                    tracing::info!("Processing user deploy {}", hex::encode(&deploy_pk));
+                    tracing::debug!("Processing user deploy {}", deploy_pk_hex.as_str());
                     // Evaluates user deploy and append event log to local state
                     {
                         let (mut pd, mc) = self.process_deploy(deploy).await?;
-                        let mut eval_collector_state_lock = eval_collector_state.lock().unwrap();
                         let deploy_log = mem::take(&mut pd.deploy_log);
-                        eval_collector_state_lock.add(deploy_log, mc);
+                        eval_collector_state.add(deploy_log, mc);
                         pd
                     }
                 };
@@ -505,33 +490,29 @@ impl RuntimeOps {
                 let refund_result = {
                     // Using tracing events for async - Span[F].traceI("refund") from Scala
                     tracing::debug!(target: "f1r3fly.casper.refund", "refund-started");
-                    tracing::info!(
+                    tracing::debug!(
                         "Refunding {} with {}",
-                        hex::encode(&deploy_pk),
+                        deploy_pk_hex.as_str(),
                         pd.refund_amount()
                     );
-                    exec_and_save::<RefundDeploy, _, _>(eval_collector_state.clone(), || async {
-                        self.play_system_deploy_internal(&mut RefundDeploy {
+                    let (event_log, result, mergeable_channels) = self
+                        .play_system_deploy_internal(&mut RefundDeploy {
                             refund_amount: pd.refund_amount(),
                             rand: refund_rand,
                         })
-                        .await
-                    })
-                    .await
-                }?;
+                        .await?;
+                    eval_collector_state.add(event_log, mergeable_channels);
+                    result
+                };
                 log_mem_step("after_refund");
 
                 match refund_result {
                     Either::Right(_) => {
-                        // Update result with accumulated event logs
-                        let mut eval_collector_state_lock = eval_collector_state.lock().unwrap();
-
                         // Get mergeable channels data
-                        let mergeable_channels_data = self.get_number_channels_data(
-                            &eval_collector_state_lock.mergeable_channels,
-                        )?;
+                        let mergeable_channels_data =
+                            self.get_number_channels_data(&eval_collector_state.mergeable_channels)?;
 
-                        let deploy_log = mem::take(&mut eval_collector_state_lock.event_log);
+                        let deploy_log = mem::take(&mut eval_collector_state.event_log);
                         log_mem_step("after_collect_result");
 
                         Ok((
@@ -548,7 +529,7 @@ impl RuntimeOps {
                             "{}, deploy_sig={}, deployer_pk={}, refund_amount={}",
                             error.error_message,
                             deploy_sig_hex,
-                            hex::encode(&deploy_pk),
+                            deploy_pk_hex.as_str(),
                             refund_amount
                         );
                         metrics::counter!(
@@ -573,13 +554,11 @@ impl RuntimeOps {
                 empty_pd.system_deploy_error = Some(error.error_message);
 
                 // Update result with accumulated event logs
-                let mut eval_collector_state_lock = eval_collector_state.lock().unwrap();
-
                 // Get mergeable channels data
                 let mergeable_channels_data =
-                    self.get_number_channels_data(&eval_collector_state_lock.mergeable_channels)?;
+                    self.get_number_channels_data(&eval_collector_state.mergeable_channels)?;
 
-                let deploy_log = mem::take(&mut eval_collector_state_lock.event_log);
+                let deploy_log = mem::take(&mut eval_collector_state.event_log);
 
                 Ok((
                     ProcessedDeploy {
@@ -596,7 +575,9 @@ impl RuntimeOps {
         &mut self,
         deploy: Signed<DeployData>,
     ) -> Result<(ProcessedDeploy, HashSet<Par>), CasperError> {
-        let pre_root = self.runtime.get_root();
+        // Keep a soft checkpoint before user deploy execution so failed deploy rollback
+        // preserves pre-charge side effects required by refundDeploy.
+        let fallback = self.runtime.create_soft_checkpoint();
 
         // Evaluate deploy
         let eval_result = self.evaluate(&deploy).await?;
@@ -618,7 +599,7 @@ impl RuntimeOps {
         };
 
         if !eval_succeeded {
-            self.runtime.reset(&pre_root);
+            self.runtime.revert_to_soft_checkpoint(fallback);
             interpreter_util::print_deploy_errors(&deploy_sig, &eval_result.errors);
         }
 
@@ -1204,7 +1185,7 @@ impl RuntimeOps {
         let result = self
             .runtime
             .evaluate(
-                &S::source(),
+                S::source(),
                 Cost::unsafe_max(),
                 env,
                 // TODO: Review this clone and whether to pass mut ref down into evaluate

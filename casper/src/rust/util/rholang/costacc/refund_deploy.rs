@@ -23,7 +23,7 @@ impl SystemDeployTrait for RefundDeploy {
     type Output = (RhoBoolean, Either<RhoString, RhoNil>);
     type Result = ();
 
-    fn source() -> String {
+    fn source() -> &'static str {
         r#"
           new rl(`rho:registry:lookup`),
           poSCh,
@@ -36,7 +36,6 @@ impl SystemDeployTrait for RefundDeploy {
                 @PoS!("refundDeploy", *refundAmount, *sysAuthToken, *return)
             }
         }"#
-        .to_string()
     }
 
     fn process_result(value: (bool, Either<String, ()>)) -> Either<SystemDeployUserError, ()> {
