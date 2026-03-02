@@ -3,6 +3,7 @@
 
 use dashmap::DashSet;
 use std::collections::HashSet;
+use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -23,9 +24,10 @@ use crate::rust::util::doubly_linked_dag_operations::BlockDependencyDag;
 #[derive(Clone)]
 pub struct CasperBufferKeyValueStorage {
     parents_store: KeyValueTypedStoreImpl<BlockHashSerde, HashSet<BlockHashSerde>>,
-    block_dependency_dag: BlockDependencyDag,
-    first_seen_ms: dashmap::DashMap<BlockHashSerde, u64>,
+    block_dependency_dag: Arc<BlockDependencyDag>,
+    first_seen_ms: Arc<dashmap::DashMap<BlockHashSerde, u64>>,
     last_prune_ms: Arc<AtomicU64>,
+    state_lock: Arc<RwLock<()>>,
 }
 
 impl CasperBufferKeyValueStorage {
@@ -54,13 +56,22 @@ impl CasperBufferKeyValueStorage {
 
         Ok(Self {
             parents_store: kv_store,
-            block_dependency_dag: in_mem_store,
-            first_seen_ms: dashmap::DashMap::new(),
+            block_dependency_dag: Arc::new(in_mem_store),
+            first_seen_ms: Arc::new(dashmap::DashMap::new()),
             last_prune_ms: Arc::new(AtomicU64::new(0)),
+            state_lock: Arc::new(RwLock::new(())),
         })
     }
 
-    pub fn add_relation(
+    fn read_guard(&self) -> RwLockReadGuard<'_, ()> {
+        self.state_lock.read().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn write_guard(&self) -> RwLockWriteGuard<'_, ()> {
+        self.state_lock.write().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn add_relation_unlocked(
         &self,
         parent: BlockHashSerde,
         child: BlockHashSerde,
@@ -74,14 +85,7 @@ impl CasperBufferKeyValueStorage {
         Ok(())
     }
 
-    pub fn put_pendant(&self, block: BlockHashSerde) -> Result<(), KvStoreError> {
-        let temp_block = BlockHashSerde(prost::bytes::Bytes::from_static(b"tempblock"));
-        self.add_relation(temp_block.clone(), block)?;
-        self.remove(temp_block)?;
-        Ok(())
-    }
-
-    pub fn remove(&self, hash: BlockHashSerde) -> Result<(), KvStoreError> {
+    fn remove_unlocked(&self, hash: BlockHashSerde) -> Result<(), KvStoreError> {
         let (hashes_affected, hashes_removed, orphaned_hashes) =
             self.block_dependency_dag.remove(hash.clone())?;
         self.first_seen_ms.remove(&hash);
@@ -115,7 +119,30 @@ impl CasperBufferKeyValueStorage {
         Ok(())
     }
 
+    pub fn add_relation(
+        &self,
+        parent: BlockHashSerde,
+        child: BlockHashSerde,
+    ) -> Result<(), KvStoreError> {
+        let _guard = self.write_guard();
+        self.add_relation_unlocked(parent, child)
+    }
+
+    pub fn put_pendant(&self, block: BlockHashSerde) -> Result<(), KvStoreError> {
+        let _guard = self.write_guard();
+        let temp_block = BlockHashSerde(prost::bytes::Bytes::from_static(b"tempblock"));
+        self.add_relation_unlocked(temp_block.clone(), block)?;
+        self.remove_unlocked(temp_block)?;
+        Ok(())
+    }
+
+    pub fn remove(&self, hash: BlockHashSerde) -> Result<(), KvStoreError> {
+        let _guard = self.write_guard();
+        self.remove_unlocked(hash)
+    }
+
     pub fn get_parents(&self, block_hash: &BlockHashSerde) -> Option<DashSet<BlockHashSerde>> {
+        let _guard = self.read_guard();
         self.block_dependency_dag
             .child_to_parent_adjacency_list
             .get(&block_hash)
@@ -123,6 +150,7 @@ impl CasperBufferKeyValueStorage {
     }
 
     pub fn get_children(&self, block_hash: &BlockHashSerde) -> Option<DashSet<BlockHashSerde>> {
+        let _guard = self.read_guard();
         self.block_dependency_dag
             .parent_to_child_adjacency_list
             .get(&block_hash)
@@ -130,11 +158,13 @@ impl CasperBufferKeyValueStorage {
     }
 
     pub fn get_pendants(&self) -> DashSet<BlockHashSerde> {
+        let _guard = self.read_guard();
         self.block_dependency_dag.dependency_free.clone()
     }
 
     // Block is considered to be in CasperBuffer when there is a records about its parents
     pub fn contains(&self, block_hash: &BlockHashSerde) -> bool {
+        let _guard = self.read_guard();
         self.block_dependency_dag
             .child_to_parent_adjacency_list
             .get(block_hash)
@@ -142,22 +172,26 @@ impl CasperBufferKeyValueStorage {
     }
 
     pub fn to_doubly_linked_dag(&self) -> BlockDependencyDag {
-        self.block_dependency_dag.clone()
+        let _guard = self.read_guard();
+        self.block_dependency_dag.as_ref().clone()
     }
 
     pub fn requested_as_dependency(&self, block_hash: &BlockHashSerde) -> bool {
+        let _guard = self.read_guard();
         self.block_dependency_dag
             .parent_to_child_adjacency_list
             .contains_key(block_hash)
     }
 
     pub fn size(&self) -> usize {
+        let _guard = self.read_guard();
         self.block_dependency_dag
             .child_to_parent_adjacency_list
             .len()
     }
 
     pub fn approx_node_count(&self) -> usize {
+        let _guard = self.read_guard();
         self.block_dependency_dag
             .child_to_parent_adjacency_list
             .len()
@@ -168,6 +202,7 @@ impl CasperBufferKeyValueStorage {
     }
 
     pub fn is_pendant(&self, block_hash: &BlockHashSerde) -> bool {
+        let _guard = self.read_guard();
         self.block_dependency_dag
             .dependency_free
             .contains(block_hash)

@@ -1075,32 +1075,64 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
     }
 
     fn get_dependency_free_from_buffer(&self) -> Result<Vec<BlockMessage>, CasperError> {
-        // Get pendants from CasperBuffer
-        let pendants = self.casper_buffer_storage.get_pendants();
+        let equivocation_hashes: HashSet<BlockHash> = self
+            .block_dag_storage
+            .access_equivocations_tracker(|tracker| {
+                let equivocation_records = tracker.data()?;
+                let hashes: HashSet<BlockHash> = equivocation_records
+                    .iter()
+                    .flat_map(|record| record.equivocation_detected_block_hashes.iter())
+                    .cloned()
+                    .collect();
+                Ok(hashes)
+            })
+            .map_err(|e| CasperError::RuntimeError(e.to_string()))?;
 
-        // Filter to pendants that exist in block store
-        let mut pendants_stored = Vec::new();
+        let invalid_block_hashes: HashSet<BlockHash> = self
+            .block_dag_storage
+            .get_representation()
+            .invalid_blocks_map()
+            .map_err(|e| CasperError::RuntimeError(e.to_string()))?
+            .into_keys()
+            .collect();
+
+        // Build candidate set from both pendants and buffered children.
+        // Some race/interleaving paths can leave stale parent links in buffer
+        // while block-level dependencies are already satisfied.
+        let mut candidate_hashes: HashSet<BlockHash> = HashSet::new();
+
+        let pendants = self.casper_buffer_storage.get_pendants();
         for pendant_serde in pendants.iter() {
-            let pendant_hash = BlockHash::from(pendant_serde.0.clone());
-            if self.block_store.get(&pendant_hash)?.is_some() {
-                pendants_stored.push(pendant_hash);
+            candidate_hashes.insert(BlockHash::from(pendant_serde.0.clone()));
+        }
+
+        let buffer_dag = self.casper_buffer_storage.to_doubly_linked_dag();
+        for child_entry in buffer_dag.child_to_parent_adjacency_list.iter() {
+            candidate_hashes.insert(BlockHash::from(child_entry.key().0.clone()));
+        }
+
+        // Keep only candidates that exist in block store.
+        let mut candidates_stored = Vec::new();
+        for candidate_hash in candidate_hashes {
+            if self.block_store.get(&candidate_hash)?.is_some() {
+                candidates_stored.push(candidate_hash);
             }
         }
 
-        // Filter to dependency-free pendants
+        // Filter to dependency-free candidates by real block dependencies
+        // (parents + justifications), independent of buffer edge shape.
         let mut dep_free_pendants = Vec::new();
-        for pendant_hash in pendants_stored {
-            let block = self.block_store.get(&pendant_hash)?.unwrap();
-            let justifications = &block.justifications;
+        for candidate_hash in candidates_stored {
+            let block = self.block_store.get(&candidate_hash)?.unwrap();
+            let all_deps = proto_util::dependencies_hashes_of(&block);
+            let all_deps_available = all_deps.into_iter().all(|dep| {
+                self.dag_contains(&dep)
+                    || equivocation_hashes.contains(&dep)
+                    || invalid_block_hashes.contains(&dep)
+            });
 
-            // Check if all justifications are in DAG
-            // If even one justification is not in DAG - block is not dependency free
-            let all_deps_in_dag = justifications
-                .iter()
-                .all(|j| self.dag_contains(&j.latest_block_hash));
-
-            if all_deps_in_dag {
-                dep_free_pendants.push(pendant_hash);
+            if all_deps_available {
+                dep_free_pendants.push(candidate_hash);
             }
         }
 
