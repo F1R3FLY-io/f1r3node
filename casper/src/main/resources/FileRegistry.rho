@@ -73,38 +73,14 @@ in {
        @(_, Either)   <- EitherCh  &
        TreeHashMap    <- TreeHashMapCh) {
 
-    // ── GENESIS INITIALIZATION ────────────────────────────────────────────────
+    // ── SELF-INITIALIZING TOKEN STORAGE ──────────────────────────────────
     //
-    // Called once at genesis by the Scala node runtime:
-    //   FileRegistry!("init", sysAuthToken, *ret)
-    //
-    // Analogous to SystemVault!("init", *ret).
-    // The runtime passes a SysAuthToken Par which FileRegistry stores internally.
-    // After init, the "init" contract is consumed and can never be called again.
-    //
-    new initContinue in {
-      initContinue!() |
-      contract FileRegistry(@"init", @sysAuthToken, ret) = {
-        // Consume the one-shot initContinue gate.
-        // Any subsequent call to FileRegistry!("init", ...) will hang forever.
-        for (<- initContinue) {
-          // Validate that the caller provided a real SysAuthToken, not a spoofed value.
-          new isValidCh in {
-            sysAuthTokenOps!("check", sysAuthToken, *isValidCh) |
-            for (@isValid <- isValidCh) {
-              if (isValid) {
-                // Store the token on the private channel for _deleteTemplate to use.
-                _sysAuthTokenCh!(sysAuthToken) |
-                ret!(true)
-              } else {
-                // Init failed — do NOT produce the token; registry remains inoperable.
-                ret!(false)
-              }
-            }
-          }
-        }
-      }
-    } |
+    // The _sysAuthTokenCh is populated lazily on the first registerNotify
+    // call (i.e., the first file upload). The system process passes a
+    // valid SysAuthToken with every register delegation, so we simply
+    // capture it on first use. This avoids the need for a separate
+    // FileRegistryInitDeploy system deploy at genesis, keeping
+    // FileRegistry as a regular blessed contract like SystemVault or PoS.
 
     // fileMap: TreeHashMap[fileHash:String → fileHandle:Name]
     // Depth 3 → 3*8 = 24-bit prefix parallelism, adequate for millions of files.
@@ -160,11 +136,16 @@ in {
         // Persistent listener on the rho:io:file:registerNotify fixed channel.
         // The rho:io:file system process (Scala) produces (fileHash, fileName,
         // deployerId, sysAuthToken) here after successful sig verification
-        // and phlo charging. This bridge forwards the data to the register
-        // API above, which validates the sysAuthToken and records the file.
+        // and phlo charging.
+        //
+        // On the first call, we also store the sysAuthToken in _sysAuthTokenCh
+        // for later use by _deleteTemplate. This replaces the old genesis init.
         //
         contract registerNotify(@fileHash, @fileName, ownerDeployerId, @sysAuthToken) = {
           new regAckCh in {
+            // Store token for _deleteTemplate (idempotent — all tokens are identical,
+            // and _deleteTemplate uses peek so extra values are harmless).
+            _sysAuthTokenCh!(sysAuthToken) |
             FileRegistry!("register", fileHash, fileName, *ownerDeployerId, sysAuthToken, *regAckCh)
           }
         } |
