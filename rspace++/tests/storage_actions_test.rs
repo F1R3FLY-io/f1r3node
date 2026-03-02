@@ -48,12 +48,21 @@ impl Match<Pattern, String> for StringMatch {
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq)]
 struct StringsCaptor {
+    id: u64,
     res: LinkedList<Vec<String>>,
 }
 
 impl StringsCaptor {
     fn new() -> Self {
         StringsCaptor {
+            id: 0,
+            res: LinkedList::new(),
+        }
+    }
+
+    fn with_id(id: u64) -> Self {
+        StringsCaptor {
+            id,
             res: LinkedList::new(),
         }
     }
@@ -680,21 +689,21 @@ async fn consuming_then_producing_three_times_on_same_channel_should_return_cont
     let _ = rspace.consume(
         vec!["ch1".to_string()],
         vec![Pattern::Wildcard],
-        StringsCaptor::new(),
+        StringsCaptor::with_id(1),
         false,
         BTreeSet::default(),
     );
     let _ = rspace.consume(
         vec!["ch1".to_string()],
         vec![Pattern::Wildcard],
-        StringsCaptor::new(),
+        StringsCaptor::with_id(2),
         false,
         BTreeSet::default(),
     );
     let _ = rspace.consume(
         vec!["ch1".to_string()],
         vec![Pattern::Wildcard],
-        StringsCaptor::new(),
+        StringsCaptor::with_id(3),
         false,
         BTreeSet::default(),
     );

@@ -40,8 +40,9 @@ async fn history_repository_should_process_insert_one_datum() {
         data: vec![test_datum.clone()],
     };
 
-    let next_repo =
-        repo.checkpoint(&vec![HotStoreAction::Insert(InsertAction::InsertData(insert_data))]);
+    let next_repo = repo.checkpoint(vec![HotStoreAction::Insert(InsertAction::InsertData(
+        insert_data,
+    ))]);
     let history_reader = next_repo.get_history_reader(&next_repo.root());
     let data = history_reader
         .unwrap()
@@ -75,7 +76,7 @@ async fn history_repository_should_allow_insert_of_joins_datum_continuation_on_s
         continuations: vec![test_continuation.clone()],
     };
 
-    let next_repo = repo.checkpoint(&vec![
+    let next_repo = repo.checkpoint(vec![
         HotStoreAction::Insert(InsertAction::InsertData(data)),
         HotStoreAction::Insert(InsertAction::InsertJoins(joins.clone())),
         HotStoreAction::Insert(InsertAction::InsertContinuations(continuations)),
@@ -145,7 +146,7 @@ async fn history_repository_should_process_insert_and_delete_of_thirty_mixed_ele
 
     let delete_elems: Vec<_> = [&data_delete[..], &joins_delete[..], &conts_delete[..]].concat();
 
-    let next_repo = repo.checkpoint(&elems);
+    let next_repo = repo.checkpoint(elems);
     let history_reader = next_repo.get_history_reader(&next_repo.root()).unwrap();
     let next_reader = history_reader.base();
 
@@ -193,7 +194,7 @@ async fn history_repository_should_process_insert_and_delete_of_thirty_mixed_ele
         .collect();
     assert_eq!(all_joins, expected_joins);
 
-    let deleted_repo = next_repo.checkpoint(&delete_elems);
+    let deleted_repo = next_repo.checkpoint(delete_elems);
     let history_reader = deleted_repo
         .get_history_reader(&deleted_repo.root())
         .unwrap();
@@ -292,8 +293,9 @@ async fn history_repository_should_record_next_root_as_valid() {
         data: vec![test_datum.clone()],
     };
 
-    let next_repo =
-        repo.checkpoint(&vec![HotStoreAction::Insert(InsertAction::InsertData(insert_data))]);
+    let next_repo = repo.checkpoint(vec![HotStoreAction::Insert(InsertAction::InsertData(
+        insert_data,
+    ))]);
     let _ = repo.reset(&RadixHistory::empty_root_node_hash());
     let binding = next_repo.history();
     let next_repo_history = binding.lock().expect("Failed to acquire history lock");

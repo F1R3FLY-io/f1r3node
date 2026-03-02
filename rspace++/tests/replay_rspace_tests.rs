@@ -1265,22 +1265,29 @@ async fn replay_rspace_should_correctly_remove_things_from_replay_data() {
 
     let channels = vec!["ch1".to_string()];
     let patterns = vec![Pattern::Wildcard];
-    let continuation = "continuation".to_string();
+    let continuation_1 = "continuation-1".to_string();
+    let continuation_2 = "continuation-2".to_string();
     let datum = "datum".to_string();
 
     let empty_point = space.create_checkpoint().unwrap();
 
-    let cr = Consume::create(&channels, &patterns, &continuation, false);
+    let cr_1 = Consume::create(&channels, &patterns, &continuation_1, false);
+    let cr_2 = Consume::create(&channels, &patterns, &continuation_2, false);
 
-    for _ in 0..2 {
-        let _ = space.consume(
-            channels.clone(),
-            patterns.clone(),
-            continuation.clone(),
-            false,
-            BTreeSet::new(),
-        );
-    }
+    let _ = space.consume(
+        channels.clone(),
+        patterns.clone(),
+        continuation_1.clone(),
+        false,
+        BTreeSet::new(),
+    );
+    let _ = space.consume(
+        channels.clone(),
+        patterns.clone(),
+        continuation_2.clone(),
+        false,
+        BTreeSet::new(),
+    );
 
     for _ in 0..2 {
         let _ = space.produce(channels[0].clone(), datum.clone(), false);
@@ -1294,21 +1301,32 @@ async fn replay_rspace_should_correctly_remove_things_from_replay_data() {
         replay_space
             .replay_data
             .map
-            .get(&IOEvent::Consume(cr.clone()))
-            .unwrap()
-            .len(),
+            .get(&IOEvent::Consume(cr_1.clone()))
+            .map(|counter| counter.iter().map(|(_, c)| *c).sum::<usize>())
+            .unwrap_or(0)
+            + replay_space
+                .replay_data
+                .map
+                .get(&IOEvent::Consume(cr_2.clone()))
+                .map(|counter| counter.iter().map(|(_, c)| *c).sum::<usize>())
+                .unwrap_or(0),
         2
     );
 
-    for _ in 0..2 {
-        let _ = replay_space.consume(
-            channels.clone(),
-            patterns.clone(),
-            continuation.clone(),
-            false,
-            BTreeSet::new(),
-        );
-    }
+    let _ = replay_space.consume(
+        channels.clone(),
+        patterns.clone(),
+        continuation_1.clone(),
+        false,
+        BTreeSet::new(),
+    );
+    let _ = replay_space.consume(
+        channels.clone(),
+        patterns.clone(),
+        continuation_2.clone(),
+        false,
+        BTreeSet::new(),
+    );
 
     let _ = replay_space.produce(channels[0].clone(), datum.clone(), false);
 
@@ -1316,20 +1334,34 @@ async fn replay_rspace_should_correctly_remove_things_from_replay_data() {
         replay_space
             .replay_data
             .map
-            .get(&IOEvent::Consume(cr.clone()))
-            .unwrap()
-            .len(),
+            .get(&IOEvent::Consume(cr_1.clone()))
+            .map(|counter| counter.iter().map(|(_, c)| *c).sum::<usize>())
+            .unwrap_or(0)
+            + replay_space
+                .replay_data
+                .map
+                .get(&IOEvent::Consume(cr_2.clone()))
+                .map(|counter| counter.iter().map(|(_, c)| *c).sum::<usize>())
+                .unwrap_or(0),
         1
     );
 
     let _ = replay_space.produce(channels[0].clone(), datum.clone(), false);
 
-    assert!(
+    assert_eq!(
         replay_space
             .replay_data
             .map
-            .get(&IOEvent::Consume(cr))
-            .is_none()
+            .get(&IOEvent::Consume(cr_1))
+            .map(|counter| counter.iter().map(|(_, c)| *c).sum::<usize>())
+            .unwrap_or(0)
+            + replay_space
+                .replay_data
+                .map
+                .get(&IOEvent::Consume(cr_2))
+                .map(|counter| counter.iter().map(|(_, c)| *c).sum::<usize>())
+                .unwrap_or(0),
+        0
     );
 }
 

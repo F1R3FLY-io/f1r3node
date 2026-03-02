@@ -31,6 +31,10 @@ async fn evaluate_with_cost_log(
     initial_phlo: i64,
     contract: String,
 ) -> (EvaluateResult, Vec<Cost>) {
+    // Cost logging is disabled by default unless F1R3_COST_LOG_MAX_ENTRIES > 0.
+    // Integration tests compile the library without cfg(test), so enable logging explicitly.
+    std::env::set_var("F1R3_COST_LOG_MAX_ENTRIES", "100000");
+
     let mut kvm = InMemoryStoreManager::new();
     let store = kvm.r_space_stores().await.unwrap();
     let (mut runtime, _, _) =
