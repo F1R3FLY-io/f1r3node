@@ -403,10 +403,14 @@ async fn check_lfb_and_propose(
         && !has_pending_deploys
         && lfb_lag_blocks > 0
         && lag_recovery_leader
+        && !self_proposed_too_recently
         && !stale_lfb_recovery_due;
     let lag_recovery_threshold = heartbeat_pending_deploy_max_lag();
     let high_lag_recovery_due =
-        !has_pending_deploys && lfb_lag_blocks > lag_recovery_threshold && lag_recovery_leader;
+        !has_pending_deploys
+            && lfb_lag_blocks > lag_recovery_threshold
+            && lag_recovery_leader
+            && !self_proposed_too_recently;
     let should_propose = pending_deploys_due
         || frontier_follow_due
         || stale_lfb_recovery_due

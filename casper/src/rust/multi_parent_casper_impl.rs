@@ -285,7 +285,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
         let tips: Vec<BlockHash> = parents.iter().map(|b| b.block_hash.clone()).collect();
 
         // Log parent selection for debugging
-        tracing::info!(
+        tracing::debug!(
             "Parent selection: {} validators, {} invalid, {} valid, {} after bond filter, {} parents",
             latest_msgs.len(),
             invalid_latest_msgs.len(),
