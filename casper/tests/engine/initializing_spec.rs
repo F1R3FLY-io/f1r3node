@@ -142,57 +142,57 @@ impl InitializingSpec {
         );
         let genesis_exporter_arc = Arc::new(genesis_exporter_impl);
 
-        // Get history and data items from genesis block (two chunks, as in Scala)
-        let (history_items1, data_items1, last_path1) = genesis_export(
-            genesis_exporter_arc.clone(),
-            start_path1.clone(),
-            &fixture.exporter_params,
-        )
-        .expect("Failed to export history and data items 1");
-        let (history_items2, data_items2, last_path2) = genesis_export(
-            genesis_exporter_arc.clone(),
-            last_path1.clone(),
-            &fixture.exporter_params,
-        )
-        .expect("Failed to export history and data items 2");
+        // Build all StoreItems requests/responses dynamically until exporter indicates completion.
+        // The number of chunks can change when genesis tuplespace shape changes.
+        let mut store_request_messages = Vec::new();
+        let mut store_response_messages = Vec::new();
+        let mut next_start_path = start_path1.clone();
+        let mut seen_paths = HashSet::new();
 
-        // Store request messages for two chunks
-        let store_request_message1 = StoreItemsMessageRequest {
-            start_path: start_path1.clone(),
-            skip: 0,
-            take: chunk_size,
-        };
-        let store_request_message2 = StoreItemsMessageRequest {
-            start_path: last_path1.clone(),
-            skip: 0,
-            take: chunk_size,
-        };
+        loop {
+            if !seen_paths.insert(next_start_path.clone()) {
+                break;
+            }
 
-        // Store response messages for two chunks
-        let store_response_message1 = StoreItemsMessage {
-            start_path: start_path1,
-            last_path: last_path1.clone(),
-            history_items: history_items1
-                .into_iter()
-                .map(|(hash, bytes)| (hash, Bytes::from(bytes)))
-                .collect(),
-            data_items: data_items1
-                .into_iter()
-                .map(|(hash, bytes)| (hash, Bytes::from(bytes)))
-                .collect(),
-        };
-        let store_response_message2 = StoreItemsMessage {
-            start_path: last_path1,
-            last_path: last_path2,
-            history_items: history_items2
-                .into_iter()
-                .map(|(hash, bytes)| (hash, prost::bytes::Bytes::from(bytes)))
-                .collect(),
-            data_items: data_items2
-                .into_iter()
-                .map(|(hash, bytes)| (hash, prost::bytes::Bytes::from(bytes)))
-                .collect(),
-        };
+            let request = StoreItemsMessageRequest {
+                start_path: next_start_path.clone(),
+                skip: 0,
+                take: chunk_size,
+            };
+
+            let (history_items, data_items, last_path) = genesis_export(
+                genesis_exporter_arc.clone(),
+                next_start_path.clone(),
+                &fixture.exporter_params,
+            )
+            .expect("Failed to export history and data items");
+
+            let response = StoreItemsMessage {
+                start_path: next_start_path.clone(),
+                last_path: last_path.clone(),
+                history_items: history_items
+                    .into_iter()
+                    .map(|(hash, bytes)| (hash, Bytes::from(bytes)))
+                    .collect(),
+                data_items: data_items
+                    .into_iter()
+                    .map(|(hash, bytes)| (hash, Bytes::from(bytes)))
+                    .collect(),
+            };
+
+            store_request_messages.push(request);
+            store_response_messages.push(response);
+
+            if last_path.is_empty() || last_path == next_start_path {
+                break;
+            }
+            next_start_path = last_path;
+
+            assert!(
+                store_request_messages.len() < 1024,
+                "Too many tuple-space chunks while preparing initializing_spec test"
+            );
+        }
 
         // Block request message
         let block_request_message = BlockRequest {
@@ -219,41 +219,45 @@ impl InitializingSpec {
             .unwrap()
             .clone();
 
-        let store_msg1_clone = store_response_message1.clone();
-        let store_msg2_clone = store_response_message2.clone();
+        let store_msgs_clone = store_response_messages.clone();
         let genesis_clone = genesis.clone();
 
         let enqueue_responses = async move {
             // Write directly to tuple space channel (equivalent to stateResponseQueue.enqueue1)
-            let _ = tuple_space_tx.send(store_msg1_clone);
-            let _ = tuple_space_tx.send(store_msg2_clone);
+            for store_msg in store_msgs_clone {
+                tuple_space_tx
+                    .send(store_msg)
+                    .await
+                    .expect("Failed to enqueue tuple space response");
+            }
             // Write directly to block message channel (equivalent to blockResponseQueue.enqueue1)
-            let _ = block_message_tx.send(genesis_clone);
+            block_message_tx
+                .send(genesis_clone)
+                .await
+                .expect("Failed to enqueue block response");
         };
 
         let local_for_expected = fixture.local.clone();
-        let expected_requests = vec![
-            packet_with_content(
-                &local_for_expected,
-                &fixture.network_id,
-                store_request_message1.to_proto(),
-            ),
-            packet_with_content(
-                &local_for_expected,
-                &fixture.network_id,
-                store_request_message2.to_proto(),
-            ),
-            packet_with_content(
-                &local_for_expected,
-                &fixture.network_id,
-                block_request_message.to_proto(),
-            ),
-            packet_with_content(
-                &local_for_expected,
-                &fixture.network_id,
-                models::casper::ForkChoiceTipRequestProto::default(),
-            ),
-        ];
+        let mut expected_requests: Vec<_> = store_request_messages
+            .iter()
+            .map(|request| {
+                packet_with_content(
+                    &local_for_expected,
+                    &fixture.network_id,
+                    request.clone().to_proto(),
+                )
+            })
+            .collect();
+        expected_requests.push(packet_with_content(
+            &local_for_expected,
+            &fixture.network_id,
+            block_request_message.to_proto(),
+        ));
+        expected_requests.push(packet_with_content(
+            &local_for_expected,
+            &fixture.network_id,
+            models::casper::ForkChoiceTipRequestProto::default(),
+        ));
 
         let test = async {
             engine_cell.set(initializing_engine.clone()).await;
