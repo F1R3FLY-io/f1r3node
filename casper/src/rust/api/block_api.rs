@@ -43,7 +43,9 @@ use block_storage::rust::dag::block_dag_key_value_storage::KeyValueDagRepresenta
 
 use crate::rust::ProposeFunction;
 
-use crate::rust::safety_oracle::{CliqueOracleImpl, SafetyOracle};
+use crate::rust::safety_oracle::{
+    CliqueOracleImpl, SafetyOracle, MAX_FAULT_TOLERANCE, MIN_FAULT_TOLERANCE,
+};
 use block_storage::rust::dag::block_dag_key_value_storage::DeployId;
 use rspace_plus_plus::rspace::history::Either;
 use shared::rust::ByteString;
@@ -1151,12 +1153,13 @@ impl BlockAPI {
         // TODO: Scala this is temporary solution to not calculate fault tolerance all the blocks
         let old_block =
             Some(dag.latest_block_number() - block.body.state.block_number).map(|diff| diff > 100);
+        let block_in_dag = dag.contains(&block.block_hash);
 
-        let normalized_fault_tolerance = if old_block.unwrap_or(false) {
+        let normalized_fault_tolerance = if old_block.unwrap_or(false) || !block_in_dag {
             if dag.is_finalized(&block.block_hash) {
-                1.0f32
+                MAX_FAULT_TOLERANCE
             } else {
-                -1.0f32
+                MIN_FAULT_TOLERANCE
             }
         } else {
             let safety_oracle = CliqueOracleImpl;
@@ -1275,10 +1278,29 @@ impl BlockAPI {
             "Could not get last finalized block, casper instance was not available yet.";
         let eng = engine_cell.get().await;
         if let Some(casper) = eng.with_casper() {
-            let last_finalized_block = casper.last_finalized_block().await?;
-            let block_info =
-                Self::get_full_block_info(casper.as_ref(), &last_finalized_block).await?;
-            Ok(block_info)
+            let dag = casper.block_dag().await?;
+            let lfb_hash = dag.last_finalized_block();
+            let last_finalized_block = casper.block_store().get(&lfb_hash)?.ok_or_else(|| {
+                eyre::eyre!(
+                    "Error: Failure to find last finalized block with hash: {}",
+                    PrettyPrinter::build_string_no_limit(&lfb_hash)
+                )
+            })?;
+
+            // LFB is already finalized; avoid an additional clique-oracle pass in this
+            // read API path and derive fault tolerance directly from finalized status.
+            let weights_map = proto_util::weight_map(&last_finalized_block);
+            let weights_u64: HashMap<Bytes, u64> = weights_map
+                .into_iter()
+                .map(|(k, v)| (k, v as u64))
+                .collect();
+            let initial_fault = casper.normalized_initial_fault(weights_u64)?;
+            let fault_tolerance = MAX_FAULT_TOLERANCE - initial_fault;
+
+            Ok(Self::construct_block_info(
+                &last_finalized_block,
+                fault_tolerance,
+            ))
         } else {
             tracing::warn!("{}", error_message);
             Err(eyre::eyre!("Error: {}", error_message))
