@@ -986,6 +986,23 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
         // Update last finalized block if needed
         self.update_last_finalized_block(block).await?;
 
+        // Wake heartbeat immediately when a new peer block is accepted.
+        // This lets bonded validators react to fresh parents without waiting
+        // for the next heartbeat timer tick.
+        if let Some(validator_id) = &self.validator_id {
+            if block.sender != validator_id.public_key.bytes {
+                if let Ok(signal_guard) = self.heartbeat_signal_ref.try_read() {
+                    if let Some(ref signal) = *signal_guard {
+                        tracing::debug!(
+                            "Triggering heartbeat wake for accepted peer block {}",
+                            PrettyPrinter::build_string_bytes(&block.block_hash)
+                        );
+                        signal.trigger_wake();
+                    }
+                }
+            }
+        }
+
         Ok(updated_dag)
     }
 

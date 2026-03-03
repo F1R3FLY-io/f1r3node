@@ -39,6 +39,8 @@ const HEARTBEAT_FRONTIER_CHASE_MAX_LAG_ENV: &str = "F1R3_HEARTBEAT_FRONTIER_CHAS
 const DEFAULT_HEARTBEAT_FRONTIER_CHASE_MAX_LAG: i64 = 0;
 const HEARTBEAT_PENDING_DEPLOY_MAX_LAG_ENV: &str = "F1R3_HEARTBEAT_PENDING_DEPLOY_MAX_LAG";
 const DEFAULT_HEARTBEAT_PENDING_DEPLOY_MAX_LAG: i64 = 20;
+const HEARTBEAT_SELF_PROPOSE_COOLDOWN_MS_ENV: &str = "F1R3_HEARTBEAT_SELF_PROPOSE_COOLDOWN_MS";
+const DEFAULT_HEARTBEAT_SELF_PROPOSE_COOLDOWN_MS: u128 = 0;
 
 fn heartbeat_frontier_chase_max_lag() -> i64 {
     std::env::var(HEARTBEAT_FRONTIER_CHASE_MAX_LAG_ENV)
@@ -54,6 +56,13 @@ fn heartbeat_pending_deploy_max_lag() -> i64 {
         .and_then(|value| value.parse::<i64>().ok())
         .filter(|value| *value >= 0)
         .unwrap_or(DEFAULT_HEARTBEAT_PENDING_DEPLOY_MAX_LAG)
+}
+
+fn heartbeat_self_propose_cooldown_ms() -> u128 {
+    std::env::var(HEARTBEAT_SELF_PROPOSE_COOLDOWN_MS_ENV)
+        .ok()
+        .and_then(|value| value.parse::<u128>().ok())
+        .unwrap_or(DEFAULT_HEARTBEAT_SELF_PROPOSE_COOLDOWN_MS)
 }
 
 impl HeartbeatProposer {
@@ -350,6 +359,16 @@ async fn check_lfb_and_propose(
         }
         _ => false,
     };
+    let self_latest_block_timestamp_ms = snapshot
+        .dag
+        .latest_message_hash(&validator_identity.public_key.bytes)
+        .and_then(|hash| match casper.block_store().get(&hash) {
+            Ok(Some(block)) => Some(block.header.timestamp as u128),
+            _ => None,
+        });
+    let self_proposed_too_recently = self_latest_block_timestamp_ms.is_some_and(|timestamp_ms| {
+        now.saturating_sub(timestamp_ms) < heartbeat_self_propose_cooldown_ms()
+    });
 
     // Check if we have new parents (new blocks since our last block)
     let has_new_parents = check_has_new_parents(&snapshot, validator_identity);
@@ -358,6 +377,9 @@ async fn check_lfb_and_propose(
     // - Prioritize pending deploys, but avoid lag-amplification loops:
     //   - when this validator is already ahead of finalized and lag is above cap,
     //     temporarily stop heartbeat-driven pending-deploy proposes.
+    // - Keep frontier moving on peer progress:
+    //   - when new parents are observed, allow follow-up propose even before LFB turns stale;
+    //   - when already ahead, guard this with the frontier chase lag cap.
     // - For stale-LFB recovery:
     //   - if we are not ahead of finalized, propose;
     //   - if we are ahead and lag is still small, allow frontier-chasing on new parents;
@@ -368,8 +390,12 @@ async fn check_lfb_and_propose(
         lfb_lag_blocks <= heartbeat_pending_deploy_max_lag();
     let pending_deploys_due =
         has_pending_deploys && (!self_recently_proposed || can_propose_pending_deploys_while_ahead);
-    let can_chase_frontier_while_ahead =
-        lfb_lag_blocks <= heartbeat_frontier_chase_max_lag() && has_new_parents;
+    let can_chase_frontier_while_ahead = lfb_lag_blocks <= heartbeat_frontier_chase_max_lag()
+        && has_new_parents
+        && !self_proposed_too_recently;
+    let frontier_follow_due = !has_pending_deploys
+        && has_new_parents
+        && (!self_recently_proposed || can_chase_frontier_while_ahead);
     let stale_lfb_recovery_due =
         lfb_is_stale && (!self_recently_proposed || can_chase_frontier_while_ahead);
     let lag_recovery_leader = is_lag_recovery_leader(&snapshot, validator_identity);
@@ -382,6 +408,7 @@ async fn check_lfb_and_propose(
     let high_lag_recovery_due =
         !has_pending_deploys && lfb_lag_blocks > lag_recovery_threshold && lag_recovery_leader;
     let should_propose = pending_deploys_due
+        || frontier_follow_due
         || stale_lfb_recovery_due
         || stale_lfb_leader_recovery_due
         || high_lag_recovery_due;
@@ -395,6 +422,14 @@ async fn check_lfb_and_propose(
             )
         } else if has_pending_deploys {
             "pending user deploys in storage".to_string()
+        } else if frontier_follow_due {
+            format!(
+                "new parents observed (lag={}, self_recently_proposed={}, cooldown_ms={}, frontier_chase_cap={}); proposing to keep frontier moving",
+                lfb_lag_blocks,
+                self_recently_proposed,
+                heartbeat_self_propose_cooldown_ms(),
+                heartbeat_frontier_chase_max_lag()
+            )
         } else if stale_lfb_leader_recovery_due {
             format!(
                 "LFB is stale and lag={} while regular stale recovery is throttled; selected recovery leader proposing to prevent deadlock",
@@ -407,8 +442,9 @@ async fn check_lfb_and_propose(
             )
         } else if self_recently_proposed && has_new_parents && !can_chase_frontier_while_ahead {
             format!(
-                "LFB is stale but lag={} exceeds frontier-chase cap={} (throttling recovery proposes)",
+                "LFB is stale but frontier-follow is throttled (lag={}, cooldown_active={}, frontier_chase_cap={})",
                 lfb_lag_blocks,
+                self_proposed_too_recently,
                 heartbeat_frontier_chase_max_lag()
             )
         } else if self_recently_proposed && !has_new_parents {
@@ -472,6 +508,13 @@ async fn check_lfb_and_propose(
                     lfb_lag_blocks,
                     heartbeat_pending_deploy_max_lag()
                 )
+            } else if has_new_parents && self_recently_proposed && !can_chase_frontier_while_ahead {
+                format!(
+                    "frontier-follow throttled: lag {}, cooldown_active={}, cap {} while already ahead",
+                    lfb_lag_blocks,
+                    self_proposed_too_recently,
+                    heartbeat_frontier_chase_max_lag()
+                )
             } else {
                 format!(
                     "LFB age is {}ms (threshold: {}ms)",
@@ -499,8 +542,9 @@ async fn check_lfb_and_propose(
             )
         } else if self_recently_proposed && has_new_parents && !can_chase_frontier_while_ahead {
             format!(
-                "lag {} exceeds frontier-chase cap {} while already ahead of finalized",
+                "frontier-follow throttled while ahead (lag {}, cooldown_active={}, cap {})",
                 lfb_lag_blocks,
+                self_proposed_too_recently,
                 heartbeat_frontier_chase_max_lag()
             )
         } else if !standalone && !has_new_parents {
