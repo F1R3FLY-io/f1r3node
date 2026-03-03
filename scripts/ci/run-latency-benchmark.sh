@@ -27,7 +27,7 @@ POSTLOAD_RETRY_RATIO_MIN_REQUESTS="${POSTLOAD_RETRY_RATIO_MIN_REQUESTS:-100}"
 AUTO_RECREATE_ON_PRELOAD_FAIL="${AUTO_RECREATE_ON_PRELOAD_FAIL:-1}"
 AUTO_RECREATE_MAX_ATTEMPTS="${AUTO_RECREATE_MAX_ATTEMPTS:-1}"
 SERVICES=(validator1 validator2 validator3)
-TRANSIENT_PROPOSE_PATTERNS="(Propose skipped due to transient proposal race|No new blocks from peers yet; synchronize with network first\\.|Must wait for more blocks from other validators)"
+TRANSIENT_PROPOSE_PATTERNS="(Propose skipped due to transient proposal race|No new blocks from peers yet; synchronize with network first\\.|Must wait for more blocks from other validators|Proposal failed: NoNewDeploys)"
 
 mkdir -p "$OUT_DIR"
 
