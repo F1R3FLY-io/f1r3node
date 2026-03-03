@@ -34,37 +34,43 @@ object FileUploadAPI {
       phloPerStorageByte: Long = FileUploadCosts.DEFAULT_PHLO_PER_STORAGE_BYTE,
       baseRegisterPhlo: Long = FileUploadCosts.BASE_REGISTER_PHLO
   ): Task[FileUploadOutput] =
-    chunks.headOptionL.flatMap {
-      case None =>
-        Task.raiseError(new IllegalArgumentException("Stream is empty"))
+    // Collect all chunks into a list first. gRPC streams are hot Observables —
+    // calling headOptionL + drop(1) would create two separate subscriptions,
+    // causing the second one to see zero data bytes. By materializing into a
+    // list we get a single subscription and can safely split head/tail.
+    chunks.toListL.flatMap { allChunks =>
+      allChunks match {
+        case Nil =>
+          Task.raiseError(new IllegalArgumentException("Stream is empty"))
 
-      case Some(firstChunk) =>
-        firstChunk.chunk match {
-          case FileUploadChunk.Chunk.Metadata(metadata) =>
-            validateMetadata(
-              metadata,
-              shardId,
-              minPhloPrice,
-              isNodeReadOnly,
-              phloPerStorageByte,
-              baseRegisterPhlo
-            ) match {
-              case Left(err) => Task.raiseError(new IllegalArgumentException(err))
-              case Right(_) =>
-                processUpload(
-                  metadata,
-                  chunks.drop(1),
-                  uploadDir,
-                  phloPerStorageByte,
-                  baseRegisterPhlo
-                )
-            }
+        case firstChunk :: dataChunks =>
+          firstChunk.chunk match {
+            case FileUploadChunk.Chunk.Metadata(metadata) =>
+              validateMetadata(
+                metadata,
+                shardId,
+                minPhloPrice,
+                isNodeReadOnly,
+                phloPerStorageByte,
+                baseRegisterPhlo
+              ) match {
+                case Left(err) => Task.raiseError(new IllegalArgumentException(err))
+                case Right(_) =>
+                  processUpload(
+                    metadata,
+                    Observable.fromIterable(dataChunks),
+                    uploadDir,
+                    phloPerStorageByte,
+                    baseRegisterPhlo
+                  )
+              }
 
-          case _ =>
-            Task.raiseError(
-              new IllegalArgumentException("First chunk must be FileUploadMetadata")
-            )
-        }
+            case _ =>
+              Task.raiseError(
+                new IllegalArgumentException("First chunk must be FileUploadMetadata")
+              )
+          }
+      }
     }
 
   private def validateMetadata(
