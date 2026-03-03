@@ -13,6 +13,7 @@ pub mod par_set;
 pub mod par_set_type_mapper;
 pub mod path_map_encoder;
 pub mod par_to_sexpr;
+pub mod sexpr_to_par;
 pub mod rholang;
 pub mod sorted_par_hash_set;
 pub mod sorted_par_map;

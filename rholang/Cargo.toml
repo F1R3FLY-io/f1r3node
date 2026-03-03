@@ -57,5 +57,8 @@ typed-arena = "2.0.2"
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 
+[dev-dependencies]
+proptest = "1.4.0"
+
 [build-dependencies]
 cc = "1.0"

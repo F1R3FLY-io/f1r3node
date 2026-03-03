@@ -428,6 +428,38 @@ pub fn new_eset_expr(
     }
 }
 
+pub fn new_epathmap_par(
+    _ps: Vec<Par>,
+    _locally_free: Vec<u8>,
+    _connective_used: bool,
+    _remainder: Option<Var>,
+    _locally_free_par: Vec<u8>,
+    _connective_used_par: bool,
+) -> Par {
+    vector_par(_locally_free_par, _connective_used_par).with_exprs(vec![new_epathmap_expr(
+        _ps,
+        _locally_free,
+        _connective_used,
+        _remainder,
+    )])
+}
+
+pub fn new_epathmap_expr(
+    _ps: Vec<Par>,
+    _locally_free: Vec<u8>,
+    _connective_used: bool,
+    _remainder: Option<Var>,
+) -> Expr {
+    Expr {
+        expr_instance: Some(EPathmapBody(EPathMap {
+            ps: _ps,
+            locally_free: _locally_free,
+            connective_used: _connective_used,
+            remainder: _remainder,
+        })),
+    }
+}
+
 pub fn new_emap_par(
     _kvs: Vec<KeyValuePair>,
     _locally_free: Vec<u8>,
