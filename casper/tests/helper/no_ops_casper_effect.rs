@@ -36,6 +36,7 @@ pub struct NoOpsCasperEffect {
     shared_block_data: Arc<Mutex<HashMap<Vec<u8>, Vec<u8>>>>,
     shared_approved_block_data: Arc<Mutex<HashMap<Vec<u8>, Vec<u8>>>>,
     block_dag_storage: KeyValueDagRepresentation,
+    self_created_should_fail: bool,
 }
 
 unsafe impl Send for NoOpsCasperEffect {}
@@ -65,6 +66,7 @@ impl Clone for NoOpsCasperEffect {
             shared_block_data: self.shared_block_data.clone(),
             shared_approved_block_data: self.shared_approved_block_data.clone(),
             block_dag_storage: self.block_dag_storage.clone(),
+            self_created_should_fail: self.self_created_should_fail,
         }
     }
 }
@@ -100,6 +102,7 @@ impl NoOpsCasperEffect {
             shared_block_data,
             shared_approved_block_data,
             block_dag_storage,
+            self_created_should_fail: false,
         }
     }
 
@@ -126,7 +129,26 @@ impl NoOpsCasperEffect {
             shared_block_data: shared_kvm_data.clone(),
             shared_approved_block_data: shared_kvm_data.clone(),
             block_dag_storage,
+            self_created_should_fail: false,
         }
+    }
+
+    pub fn new_with_self_created_validation_failure(
+        _blocks: Option<HashMap<BlockHash, BlockMessage>>,
+        estimator_func: Option<Vec<BlockHash>>,
+        runtime_manager: Arc<tokio::sync::Mutex<RuntimeManager>>,
+        _block_store: KeyValueBlockStore,
+        block_dag_storage: KeyValueDagRepresentation,
+    ) -> Self {
+        let mut effect = Self::new(
+            None,
+            estimator_func,
+            runtime_manager,
+            _block_store,
+            block_dag_storage,
+        );
+        effect.self_created_should_fail = true;
+        effect
     }
 }
 
@@ -214,12 +236,16 @@ impl Casper for NoOpsCasperEffect {
         1
     }
 
+    fn get_all_from_buffer(&self) -> Result<Vec<BlockMessage>, CasperError> {
+        Ok(Vec::new())
+    }
+
     async fn validate(
         &self,
         _block: &BlockMessage,
         _snapshot: &mut CasperSnapshot,
     ) -> Result<Either<BlockError, ValidBlock>, CasperError> {
-        todo!()
+        Ok(Either::Right(ValidBlock::Valid))
     }
 
     async fn validate_self_created(
@@ -229,14 +255,18 @@ impl Casper for NoOpsCasperEffect {
         _pre_state_hash: Bytes,
         _post_state_hash: Bytes,
     ) -> Result<Either<BlockError, ValidBlock>, CasperError> {
-        todo!()
+        if self.self_created_should_fail {
+            Ok(Either::Left(BlockError::Invalid(InvalidBlock::InvalidFormat)))
+        } else {
+            Ok(Either::Right(ValidBlock::Valid))
+        }
     }
 
     async fn handle_valid_block(
         &self,
         _block: &BlockMessage,
     ) -> Result<KeyValueDagRepresentation, CasperError> {
-        todo!()
+        Ok(self.block_dag_storage.clone())
     }
 
     fn handle_invalid_block(
@@ -245,11 +275,11 @@ impl Casper for NoOpsCasperEffect {
         _status: &InvalidBlock,
         _dag: &KeyValueDagRepresentation,
     ) -> Result<KeyValueDagRepresentation, CasperError> {
-        todo!()
+        Ok(self.block_dag_storage.clone())
     }
 
     fn get_dependency_free_from_buffer(&self) -> Result<Vec<BlockMessage>, CasperError> {
-        todo!()
+        Ok(Vec::new())
     }
 
     fn get_approved_block(&self) -> Result<&BlockMessage, CasperError> {

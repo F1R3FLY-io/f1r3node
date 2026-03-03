@@ -8,15 +8,15 @@ use rholang::rust::build::compile_rholang_source::CompiledRholangSource;
 
 #[tokio::test]
 async fn rev_vault_spec() {
-    let test_object = CompiledRholangSource::load_source("RevVaultTest.rho")
-        .expect("Failed to load RevVaultTest.rho");
+    let test_object = CompiledRholangSource::load_source("SystemVaultTest.rho")
+        .expect("Failed to load SystemVaultTest.rho");
 
     // NormalizerEnv.withDeployerId(deployerPk)
     let normalizer_env = with_deployer_id(&DEFAULT_PUB);
 
     let compiled =
-        CompiledRholangSource::new(test_object, normalizer_env, "RevVaultTest.rho".to_string())
-            .expect("Failed to compile RevVaultTest.rho");
+        CompiledRholangSource::new(test_object, normalizer_env, "SystemVaultTest.rho".to_string())
+            .expect("Failed to compile SystemVaultTest.rho");
 
     let spec = RhoSpec::new(compiled, vec![], GENESIS_TEST_TIMEOUT);
 

@@ -362,7 +362,7 @@ where
     }
 
     pub async fn success(&self, source: &S) -> Result<(), CasperError> {
-        let (message, queue_became_empty) = {
+        let message = {
             let mut state = self
                 .state
                 .lock()
@@ -379,23 +379,12 @@ where
                 CasperError::RuntimeError(format!("No message in queue for {}", source))
             })?;
 
-            let queue_became_empty = queue.is_empty();
-            if queue_became_empty {
-                state.queue.retain(|s| s != source);
-                state.messages.remove(source);
-                state.retries.remove(source);
-            }
-
-            (message, queue_became_empty)
+            message
         };
 
         tracing::info!("Dispatched message {} from {}", message, source);
 
-        if queue_became_empty {
-            tracing::info!("Source {} queue drained, removing from dispatch state", source);
-        } else {
-            self.rotate().await?;
-        }
+        self.rotate().await?;
 
         Ok(())
     }
@@ -463,58 +452,5 @@ where
 
         state.skipped = count;
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc,
-    };
-
-    use super::*;
-    use tokio;
-
-    #[tokio::test]
-    async fn test_drops_source_after_queue_drained() {
-        let handled = Arc::new(AtomicUsize::new(0));
-        let handled_clone = handled.clone();
-
-        let filter = |_: &u32| {
-            Box::pin(async move { Dispatch::Handle }) as std::pin::Pin<
-                Box<dyn std::future::Future<Output = Dispatch> + Send>,
-            >
-        };
-        let handle = move |_source: String, _message: u32| {
-            let handled = handled_clone.clone();
-            Box::pin(async move {
-                handled.fetch_add(1, Ordering::SeqCst);
-            }) as std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>
-        };
-
-        let lock = Arc::new(MetricsSemaphore::single("test-dispatcher"));
-        let config = DispatcherConfig::new(4, 1, 1);
-        let dispatcher = FairRoundRobinDispatcher::new(filter, handle, config, lock);
-
-        dispatcher
-            .dispatch("peer-a".to_string(), 1)
-            .await
-            .expect("dispatch should succeed");
-        dispatcher
-            .dispatch("peer-b".to_string(), 2)
-            .await
-            .expect("dispatch should succeed");
-        dispatcher
-            .dispatch("peer-a".to_string(), 3)
-            .await
-            .expect("dispatch should succeed");
-
-        let (queue, messages, retries, _) = dispatcher.get_test_state().expect("state snapshot");
-
-        assert!(queue.is_empty());
-        assert!(messages.is_empty());
-        assert!(retries.is_empty());
-        assert_eq!(handled.load(Ordering::SeqCst), 3);
     }
 }

@@ -13,7 +13,7 @@ use casper::rust::{
     casper::MultiParentCasper,
     util::construct_deploy,
 };
-use rholang::rust::interpreter::util::rev_address::RevAddress;
+use rholang::rust::interpreter::util::vault_address::VaultAddress as RevAddress;
 use rspace_plus_plus::rspace::history::Either;
 
 use crate::{helper::test_node::TestNode, util::genesis_builder::GenesisBuilder};

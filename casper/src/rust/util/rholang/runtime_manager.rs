@@ -6,6 +6,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use std::sync::OnceLock;
 
+use crypto::rust::hash::blake2b256::Blake2b256;
 use crypto::rust::signatures::signed::Signed;
 use hex::ToHex;
 use models::rhoapi::{BindPattern, ListParWithRandom, Par, TaggedContinuation};
@@ -15,6 +16,7 @@ use models::rust::casper::protocol::casper_message::{
     Bond, DeployData, Event, ProcessedDeploy, ProcessedSystemDeploy,
 };
 use models::rust::validator::Validator;
+use prost::Message;
 use rholang::rust::interpreter::external_services::ExternalServices;
 use rholang::rust::interpreter::matcher::r#match::Matcher;
 use rholang::rust::interpreter::merging::rholang_merging_logic::{
@@ -132,6 +134,29 @@ impl RuntimeManager {
         }
 
         all_logs
+    }
+
+    fn replay_payload_hash(
+        usr_processed: &[ProcessedDeploy],
+        sys_processed: &[ProcessedSystemDeploy],
+        is_genesis: bool,
+    ) -> Vec<u8> {
+        // Fingerprint replay-relevant payload so cache keys stay safe under adversarial input.
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&(usr_processed.len() as u64).to_le_bytes());
+        for pd in usr_processed {
+            let encoded = pd.clone().to_proto().encode_to_vec();
+            bytes.extend_from_slice(&(encoded.len() as u64).to_le_bytes());
+            bytes.extend_from_slice(&encoded);
+        }
+        bytes.extend_from_slice(&(sys_processed.len() as u64).to_le_bytes());
+        for psd in sys_processed {
+            let encoded = psd.clone().to_proto().encode_to_vec();
+            bytes.extend_from_slice(&(encoded.len() as u64).to_le_bytes());
+            bytes.extend_from_slice(&encoded);
+        }
+        bytes.push(u8::from(is_genesis));
+        Blake2b256::hash(bytes)
     }
 
     fn max_block_index_cache_entries() -> usize {
@@ -308,10 +333,16 @@ impl RuntimeManager {
         // Cache replay result for potential replay shortcut (including event logs)
         if let Some(ref cache) = self.replay_cache {
             let all_logs = Self::collect_replay_logs(&usr_processed, &sys_processed);
+            let replay_payload_hash =
+                Self::replay_payload_hash(&usr_processed, &sys_processed, false);
 
             if !all_logs.is_empty() && all_logs.len() <= replay_cache_event_log_cap {
-                let key =
-                    ReplayCacheKey::new(start_hash.clone(), sender.bytes.to_vec(), seq_num as i64);
+                let key = ReplayCacheKey::new(
+                    start_hash.clone(),
+                    sender.bytes.to_vec(),
+                    seq_num as i64,
+                    replay_payload_hash,
+                );
                 let entry = ReplayCacheEntry::new(all_logs, state_hash.clone());
                 cache.put(key, entry);
                 tracing::debug!(
@@ -443,10 +474,16 @@ impl RuntimeManager {
         // Cache replay result for potential replay shortcut (including event logs)
         if let Some(ref cache) = self.replay_cache {
             let all_logs = Self::collect_replay_logs(&usr_processed, &sys_processed);
+            let replay_payload_hash =
+                Self::replay_payload_hash(&usr_processed, &sys_processed, false);
 
             if !all_logs.is_empty() && all_logs.len() <= replay_cache_event_log_cap {
-                let key =
-                    ReplayCacheKey::new(start_hash.clone(), sender.bytes.to_vec(), seq_num as i64);
+                let key = ReplayCacheKey::new(
+                    start_hash.clone(),
+                    sender.bytes.to_vec(),
+                    seq_num as i64,
+                    replay_payload_hash,
+                );
                 let entry = ReplayCacheEntry::new(all_logs, state_hash.clone());
                 cache.put(key, entry);
                 tracing::debug!(
@@ -521,6 +558,7 @@ impl RuntimeManager {
     ) -> Result<StateHash, CasperError> {
         let sender = block_data.sender.clone();
         let seq_num = block_data.seq_num;
+        let replay_payload_hash = Self::replay_payload_hash(&terms, &system_deploys, is_genesis);
 
         // Step 1: Check state-hash cache.
         //
@@ -582,8 +620,12 @@ impl RuntimeManager {
         }
 
         // Step 2: Check replay cache (deterministic replay delta)
-        let replay_cache_key =
-            ReplayCacheKey::new(start_hash.clone(), sender.bytes.to_vec(), seq_num as i64);
+        let replay_cache_key = ReplayCacheKey::new(
+            start_hash.clone(),
+            sender.bytes.to_vec(),
+            seq_num as i64,
+            replay_payload_hash,
+        );
         if let Some(ref cache) = self.replay_cache {
             if let Some(entry) = cache.get(&replay_cache_key) {
                 tracing::info!("[CACHE] ReplayCache hit for sender seq={}", seq_num);
@@ -962,7 +1004,7 @@ impl RuntimeManager {
      * the time. For some situations, we can just use the value directly for better performance.
      */
     pub fn empty_state_hash_fixed() -> StateHash {
-        hex::decode("cb75e7f94e8eac21f95c524a07590f2583fbdaba6fb59291cf52fa16a14c784d")
+        hex::decode("8baa451071791021dcc8461478b960cffc78372e0d1479988daa852fa3685083")
             .unwrap()
             .into()
     }

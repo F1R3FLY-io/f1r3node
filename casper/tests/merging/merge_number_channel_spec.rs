@@ -170,13 +170,15 @@ async fn test_case(
             .zip(num_chan_diffs)
             .zip(terms)
             .map(|((cp, number_chan_diff), deploy)| {
+                let casper_events = cp
+                    .log
+                    .iter()
+                    .map(|event: &rspace_plus_plus::rspace::trace::event::Event| {
+                        event_converter::to_casper_event(event.clone())
+                    })
+                    .collect::<Vec<_>>();
                 let event_log_index = block_index::create_event_log_index(
-                    cp.log
-                        .iter()
-                        .map(|event: &rspace_plus_plus::rspace::trace::event::Event| {
-                            event_converter::to_casper_event(event.clone())
-                        })
-                        .collect(),
+                    &casper_events,
                     rm.get_history_repo(),
                     &pre_state,
                     number_chan_diff,

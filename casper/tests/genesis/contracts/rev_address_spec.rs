@@ -8,8 +8,8 @@ use rholang::rust::build::compile_rholang_source::CompiledRholangSource;
 
 #[tokio::test]
 async fn rev_address_spec() {
-    let test_object = CompiledRholangSource::load_source("RevAddressTest.rho")
-        .expect("Failed to load RevAddressTest.rho");
+    let test_object = CompiledRholangSource::load_source("VaultAddressTest.rho")
+        .expect("Failed to load VaultAddressTest.rho");
 
     // NormalizerEnv.withDeployerId(deployerPk)
     let normalizer_env = with_deployer_id(&DEFAULT_PUB);
@@ -17,9 +17,9 @@ async fn rev_address_spec() {
     let compiled = CompiledRholangSource::new(
         test_object,
         normalizer_env,
-        "RevAddressTest.rho".to_string(),
+        "VaultAddressTest.rho".to_string(),
     )
-    .expect("Failed to compile RevAddressTest.rho");
+    .expect("Failed to compile VaultAddressTest.rho");
 
     let spec = RhoSpec::new(compiled, vec![], GENESIS_TEST_TIMEOUT);
 

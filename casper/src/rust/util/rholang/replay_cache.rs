@@ -5,21 +5,29 @@ use models::rust::block::state_hash::StateHash;
 use models::rust::casper::protocol::casper_message::Event;
 use std::sync::{Arc, Mutex};
 
-/// Cache key: parent state + block identity (sender, seqNum).
-/// Using (sender, seqNum) avoids ambiguity across forks.
+/// Cache key: parent state + block identity (sender, seqNum) + replay payload fingerprint.
+/// Including a payload fingerprint prevents unsafe cache hits for mutated deploy content
+/// that happens to share (parent, sender, seqNum).
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ReplayCacheKey {
     pub parent_state: StateHash,
     pub sender_pk: Vec<u8>,
     pub seq_num: i64,
+    pub payload_hash: Vec<u8>,
 }
 
 impl ReplayCacheKey {
-    pub fn new(parent_state: StateHash, sender_pk: Vec<u8>, seq_num: i64) -> Self {
+    pub fn new(
+        parent_state: StateHash,
+        sender_pk: Vec<u8>,
+        seq_num: i64,
+        payload_hash: Vec<u8>,
+    ) -> Self {
         Self {
             parent_state,
             sender_pk,
             seq_num,
+            payload_hash,
         }
     }
 }
@@ -104,6 +112,7 @@ mod tests {
             parent.as_bytes().to_vec().into(),
             sender.as_bytes().to_vec(),
             seq,
+            vec![0u8; 32],
         )
     }
 

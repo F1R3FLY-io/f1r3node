@@ -148,7 +148,7 @@ mod tests {
                     let peer = TestFixture::peer_node("peer", 40403);
 
                     let waiting_list = vec![waiting1.clone(), waiting2.clone()];
-                    let peers = HashSet::from([peer]);
+                    let peers = HashSet::from([peer.clone()]);
                     let timed_out_timestamp = fixture.create_timed_out_timestamp();
 
                     let request_state = casper::rust::engine::block_retriever::RequestState {
@@ -158,6 +158,7 @@ mod tests {
                         received: false,
                         in_casper_buffer: false,
                         waiting_list,
+                        peer_requery_cursor: 0,
                     };
 
                     fixture
@@ -205,6 +206,7 @@ mod tests {
                         received: false,
                         in_casper_buffer: false,
                         waiting_list,
+                        peer_requery_cursor: 0,
                     };
 
                     fixture
@@ -244,7 +246,7 @@ mod tests {
                     let peer = TestFixture::peer_node("peer", 40403);
 
                     let waiting_list = vec![waiting1.clone(), waiting2.clone()];
-                    let peers = HashSet::from([peer]);
+                    let peers = HashSet::from([peer.clone()]);
                     let timed_out_timestamp = fixture.create_timed_out_timestamp();
 
                     let request_state = casper::rust::engine::block_retriever::RequestState {
@@ -254,6 +256,7 @@ mod tests {
                         received: false,
                         in_casper_buffer: false,
                         waiting_list,
+                        peer_requery_cursor: 0,
                     };
 
                     fixture
@@ -326,6 +329,7 @@ mod tests {
                         received: false,
                         in_casper_buffer: false,
                         waiting_list: vec![last_peer.clone()], // One peer left in waiting list
+                        peer_requery_cursor: 0,
                     };
 
                     fixture
@@ -366,7 +370,7 @@ mod tests {
 
                     // Given - setup a timed out request with empty waiting list
                     let peer = TestFixture::peer_node("peer", 40403);
-                    let peers = HashSet::from([peer]);
+                    let peers = HashSet::from([peer.clone()]);
                     let timed_out_timestamp = fixture.create_timed_out_timestamp();
 
                     let request_state = casper::rust::engine::block_retriever::RequestState {
@@ -376,6 +380,7 @@ mod tests {
                         received: false,
                         in_casper_buffer: false,
                         waiting_list: Vec::new(), // Empty waiting list
+                        peer_requery_cursor: 0,
                     };
 
                     fixture
@@ -388,9 +393,16 @@ mod tests {
                     let result = fixture.block_retriever.request_all(fixture.timeout).await;
                     assert!(result.is_ok());
 
-                    // Then - should not send any requests
+                    // Then - should only re-request from the known peer (no broad re-requesting)
                     let request_count = fixture.transport_layer.request_count();
-                    assert_eq!(request_count, 0);
+                    assert_eq!(request_count, 1);
+
+                    let (recipient, protocol) = fixture.transport_layer.get_request(0).unwrap();
+                    assert_eq!(recipient, peer);
+                    let packet = extract_packet_from_protocol(&protocol)
+                        .expect("Should be able to extract packet from protocol");
+                    verify_block_request(&packet, &fixture.hash)
+                        .expect("Should be BlockRequest with correct hash");
                 }
 
                 #[tokio::test]
@@ -411,6 +423,7 @@ mod tests {
                         received: false,
                         in_casper_buffer: true, // Already in casper buffer
                         waiting_list: Vec::new(),
+                        peer_requery_cursor: 0,
                     };
 
                     fixture
@@ -423,13 +436,13 @@ mod tests {
                     let result = fixture.block_retriever.request_all(fixture.timeout).await;
                     assert!(result.is_ok());
 
-                    // Then - should have no requests (entry should be removed)
+                    // Then - unresolved entries remain tracked until retry budget/quarantine logic decides cleanup
                     let final_count = fixture
                         .block_retriever
                         .get_requested_blocks_count()
                         .await
                         .expect("Should be able to get requested blocks count");
-                    assert_eq!(final_count, 0);
+                    assert_eq!(final_count, 1);
                 }
             }
         }

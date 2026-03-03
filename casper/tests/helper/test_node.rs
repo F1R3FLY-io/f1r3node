@@ -64,6 +64,7 @@ use casper::rust::{
     engine::{engine_cell::EngineCell, running::Running},
     util::comm::casper_packet_handler::CasperPacketHandler,
 };
+use dashmap::DashSet;
 
 pub struct TestNode {
     pub name: String,
@@ -977,7 +978,7 @@ impl TestNode {
         // - Sender: Non-blocking, cloneable, used to enqueue blocks for processing
         // - Receiver: Thread-safe (Arc<Mutex>), used to dequeue blocks from processing pipeline
         let (block_processor_queue_tx, block_processor_queue_rx) =
-            mpsc::unbounded_channel::<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>();
+            mpsc::channel::<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>(1024);
         let block_processor_queue = (
             block_processor_queue_tx,
             Arc::new(Mutex::new(block_processor_queue_rx)),
@@ -1039,6 +1040,7 @@ impl TestNode {
             finalizer_task_in_progress: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(
                 false,
             )),
+            finalizer_task_queued: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             heartbeat_signal_ref: casper::rust::heartbeat_signal::new_heartbeat_signal_ref(),
             deploys_in_scope_cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
             active_validators_cache: std::sync::Arc::new(tokio::sync::Mutex::new(
@@ -1060,7 +1062,7 @@ impl TestNode {
 
         let running_engine = Running::new(
             block_processor_queue.0.clone(),      // block_processing_queue_tx
-            Arc::new(Mutex::new(HashSet::new())), // blocks_in_processing (converted from block_processor_state)
+            Arc::new(DashSet::new()), // blocks_in_processing
             casper.clone() as Arc<dyn MultiParentCasper + Send + Sync>, // casper
             _approved_block.clone(),              // approved_block
             the_init,                             // the_init

@@ -67,7 +67,7 @@ async fn compute_block_checkpoint(
         .map(|d| d.deploy)
         .collect();
 
-    let (_, post_state_hash, processed_deploys, _, _) = compute_deploys_checkpoint(
+    let (_, post_state_hash, processed_deploys, _, _, _) = compute_deploys_checkpoint(
         block_store,
         parents,
         deploys,

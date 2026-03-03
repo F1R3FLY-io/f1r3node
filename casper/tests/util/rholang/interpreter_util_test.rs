@@ -20,7 +20,7 @@ use models::rhoapi::PCost;
 use models::rust::block::state_hash::StateHash;
 use models::rust::block_hash::BlockHash;
 use models::rust::casper::protocol::casper_message::{
-    BlockMessage, DeployData, ProcessedDeploy, ProcessedSystemDeploy,
+    BlockMessage, Bond, DeployData, ProcessedDeploy, ProcessedSystemDeploy,
 };
 use prost::bytes::Bytes;
 use rholang::rust::interpreter::system_processes::BlockData;
@@ -179,6 +179,7 @@ impl TestContext {
             Vec<ProcessedDeploy>,
             Vec<Bytes>,
             Vec<ProcessedSystemDeploy>,
+            Vec<Bond>,
         ),
         CasperError,
     > {
@@ -928,7 +929,7 @@ async fn validate_block_checkpoint_should_return_a_checkpoint_with_the_right_has
             .await
             .expect("Failed to compute deploys checkpoint");
 
-            let (pre_state_hash, computed_ts_hash, processed_deploys, _, _) = deploys_checkpoint;
+            let (pre_state_hash, computed_ts_hash, processed_deploys, _, _, _) = deploys_checkpoint;
 
             let creator = ctx.genesis_context.validator_pks()[0].bytes.clone();
             let block = block_generator::create_block(
@@ -1039,7 +1040,7 @@ contract @"recursionTest"(@list) = {
             .await
             .expect("Failed to compute deploys checkpoint");
 
-            let (pre_state_hash, computed_ts_hash, processed_deploys, _, _) = deploys_checkpoint;
+            let (pre_state_hash, computed_ts_hash, processed_deploys, _, _, _) = deploys_checkpoint;
 
             let creator = ctx.genesis_context.validator_pks()[0].bytes.clone();
             let block = block_generator::create_block(
@@ -1154,7 +1155,7 @@ async fn validate_block_checkpoint_should_pass_persistent_produce_test_with_caus
             .await
             .expect("Failed to compute deploys checkpoint");
 
-            let (pre_state_hash, computed_ts_hash, processed_deploys, _, _) = deploys_checkpoint;
+            let (pre_state_hash, computed_ts_hash, processed_deploys, _, _, _) = deploys_checkpoint;
 
             let creator = ctx.genesis_context.validator_pks()[0].bytes.clone();
             let block = block_generator::create_block(
@@ -1265,7 +1266,7 @@ new loop, primeCheck, stdoutAck(`rho:io:stdoutAck`) in {
             .await
             .expect("Failed to compute deploys checkpoint");
 
-            let (pre_state_hash, computed_ts_hash, processed_deploys, _, _) = deploys_checkpoint;
+            let (pre_state_hash, computed_ts_hash, processed_deploys, _, _, _) = deploys_checkpoint;
 
             let creator = ctx.genesis_context.validator_pks()[0].bytes.clone();
             let block = block_generator::create_block(
@@ -1368,7 +1369,7 @@ async fn validate_block_checkpoint_should_pass_tests_involving_races() {
                 .await
                 .expect("Failed to compute deploys checkpoint");
 
-                let (pre_state_hash, computed_ts_hash, processed_deploys, _, _) =
+                let (pre_state_hash, computed_ts_hash, processed_deploys, _, _, _) =
                     deploys_checkpoint;
 
                 let creator = ctx.genesis_context.validator_pks()[0].bytes.clone();
@@ -1462,7 +1463,7 @@ async fn validate_block_checkpoint_should_return_none_for_logs_containing_extra_
             .await
             .expect("Failed to compute deploys checkpoint");
 
-            let (pre_state_hash, computed_ts_hash, processed_deploys, _, _) = deploys_checkpoint;
+            let (pre_state_hash, computed_ts_hash, processed_deploys, _, _, _) = deploys_checkpoint;
 
             // create single deploy with log that includes excess comm events
             let mut bad_processed_deploy = processed_deploys[0].clone();
@@ -1587,7 +1588,7 @@ async fn validate_block_checkpoint_should_pass_map_update_test() {
                 .await
                 .expect("Failed to compute deploys checkpoint");
 
-                let (pre_state_hash, computed_ts_hash, processed_deploys, _, _) =
+                let (pre_state_hash, computed_ts_hash, processed_deploys, _, _, _) =
                     deploys_checkpoint;
 
                 let creator = ctx.genesis_context.validator_pks()[0].bytes.clone();

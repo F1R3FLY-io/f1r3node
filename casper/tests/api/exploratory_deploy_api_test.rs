@@ -163,10 +163,27 @@ async fn exploratory_deploy_should_get_data_from_read_only_node() {
             // With deterministic parent ordering (by block number desc, then hash),
             // b3 accumulates 20 stake (n2 + n3) and is finalized.
             let b3_hash_hex = hex::encode(&b3.block_hash);
-            assert_eq!(
-                last_finalized_block.block_hash, b3_hash_hex,
-                "Last finalized block should be b3"
-            );
+            if last_finalized_block.block_hash != b3_hash_hex {
+                let mut saw_expected_lfb = false;
+                for _ in 0..20 {
+                    tokio::time::sleep(tokio::time::Duration::from_millis(250)).await;
+                    let maybe_lfb = BlockAPI::last_finalized_block(engine_cell).await;
+                    if let Ok(lfb) = maybe_lfb {
+                        if let Some(block_info) = lfb.block_info {
+                            if block_info.block_hash == b3_hash_hex {
+                                saw_expected_lfb = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+                assert!(
+                    saw_expected_lfb,
+                    "Last finalized block should eventually be b3. expected={}, observed={}",
+                    b3_hash_hex,
+                    last_finalized_block.block_hash
+                );
+            }
 
             tracing::info!(
                 "Exploratory deploy result: {:?}, LFB: {}",

@@ -28,7 +28,7 @@ use models::rust::casper::protocol::casper_message::{
     BlockMessage, Body, Bond, F1r3flyState, Header,
 };
 use prost::bytes;
-use rholang::rust::interpreter::util::rev_address::RevAddress;
+use rholang::rust::interpreter::util::vault_address::VaultAddress as RevAddress;
 
 use crate::util::rholang::resources::{generate_scope_id, mk_test_rnode_store_manager_shared};
 

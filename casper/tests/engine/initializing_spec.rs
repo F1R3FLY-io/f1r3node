@@ -383,9 +383,9 @@ async fn create_initializing_engine(
     engine_cell: Arc<EngineCell>,
 ) -> Result<Arc<Initializing<TransportLayerStub>>, String> {
     // Create engine-specific channels (each Initializing instance needs its own)
-    let (block_tx, block_rx) = mpsc::unbounded_channel::<BlockMessage>();
-    let (tuple_tx, tuple_rx) = mpsc::unbounded_channel::<StoreItemsMessage>();
-    let (block_processing_queue_tx, _block_processing_queue_rx) = mpsc::unbounded_channel();
+    let (block_tx, block_rx) = mpsc::channel::<BlockMessage>(50);
+    let (tuple_tx, tuple_rx) = mpsc::channel::<StoreItemsMessage>(50);
+    let (block_processing_queue_tx, _block_processing_queue_rx) = mpsc::channel(1024);
 
     // Use all stores and managers from fixture (matching Scala's Setup pattern)
     Ok(Arc::new(Initializing::new(

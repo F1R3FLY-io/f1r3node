@@ -5,7 +5,7 @@ use crate::util::genesis_builder::GenesisBuilder;
 use casper::rust::genesis::contracts::vault::Vault;
 use crypto::rust::public_key::PublicKey;
 use rholang::rust::build::compile_rholang_source::CompiledRholangSource;
-use rholang::rust::interpreter::util::rev_address::RevAddress;
+use rholang::rust::interpreter::util::vault_address::VaultAddress as RevAddress;
 use std::collections::HashMap;
 use std::time::Duration;
 
