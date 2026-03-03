@@ -13,7 +13,9 @@ use models::{
     },
 };
 use shared::rust::shared::{printer::Printer, string_ops::wrap_with_braces};
+#[cfg(feature = "mettatron")]
 use std::collections::HashMap;
+#[cfg(feature = "mettatron")]
 use mettatron::pathmap_par_integration::par_to_environment;
 
 use super::errors::InterpreterError;
@@ -22,12 +24,16 @@ use super::errors::InterpreterError;
 // MeTTa Byte Array Detection and Formatting Helpers
 // ============================================================================
 
+#[cfg(feature = "mettatron")]
 // Magic numbers for MeTTa Environment byte arrays
 // These identify byte arrays as MeTTa-specific data
 const METTA_MULTIPLICITIES_MAGIC: &[u8] = b"MTTM"; // MeTTa Multiplicities
+#[cfg(feature = "mettatron")]
 const METTA_SPACE_MAGIC: &[u8] = b"MTTS";          // MeTTa Space
+#[cfg(feature = "mettatron")]
 const METTA_LARGE_EXPRS_MAGIC: &[u8] = b"MTTL";    // MeTTa Large Expressions (arity >= 64)
 
+#[cfg(feature = "mettatron")]
 /// Detect if byte array might be MeTTa multiplicities format
 /// Format: [magic: 4 bytes "MTTM"][count: 8 bytes][key1_len: 4 bytes][key1_bytes][value1: 8 bytes]...
 fn is_metta_multiplicities_bytes(bs: &[u8]) -> bool {
@@ -75,6 +81,7 @@ fn is_metta_multiplicities_bytes(bs: &[u8]) -> bool {
     offset == bs.len()
 }
 
+#[cfg(feature = "mettatron")]
 /// Detect if byte array might be MeTTa space format
 /// Format: [magic: 4 bytes "MTTS"][sym_table_len: 8][sym_table_bytes][path_count: 8][path1_len: 4][path1_bytes]...
 fn is_metta_space_bytes(bs: &[u8]) -> bool {
@@ -133,6 +140,7 @@ fn is_metta_space_bytes(bs: &[u8]) -> bool {
     offset == bs.len()
 }
 
+#[cfg(feature = "mettatron")]
 /// Detect if byte array might be MeTTa large expressions format
 /// Format: [magic: 4 bytes "MTTL"][count: 8 bytes BE][expr1_len: 4 bytes BE][expr1_bytes]...
 /// Large expressions are those with arity >= 64 (exceeding MORK's 63-arity limit)
@@ -181,6 +189,7 @@ fn is_metta_large_exprs_bytes(bs: &[u8]) -> bool {
     offset == bs.len()
 }
 
+#[cfg(feature = "mettatron")]
 /// Decode MeTTa multiplicities byte array into a HashMap
 fn decode_metta_multiplicities(bs: &[u8]) -> Result<HashMap<String, usize>, String> {
     // Must have magic + count (4 + 8 = 12 bytes minimum)
@@ -232,6 +241,7 @@ fn decode_metta_multiplicities(bs: &[u8]) -> Result<HashMap<String, usize>, Stri
     Ok(map)
 }
 
+#[cfg(feature = "mettatron")]
 /// Check if a Par represents a MeTTa environment tuple
 /// Environment structure: ETuple(ETuple("space", ...), ETuple("multiplicities", ...))
 fn is_metta_environment(par: &Par) -> bool {
@@ -313,6 +323,7 @@ fn is_metta_environment(par: &Par) -> bool {
     }
 }
 
+#[cfg(feature = "mettatron")]
 /// Format MeTTa environment tuple by deserializing and displaying its contents
 /// Returns a formatted string showing both space facts and multiplicities with rule definitions
 /// Optionally includes large expressions (arity >= 64) if present
@@ -1209,6 +1220,7 @@ impl PrettyPrinter {
             }
         } else if let Some(p) = m.downcast_ref::<Par>() {
             // Check if this is a MeTTa environment tuple - if so, use custom formatting
+            #[cfg(feature = "mettatron")]
             if is_metta_environment(p) {
                 return Ok(format_metta_environment(p));
             }

@@ -96,8 +96,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Box<dyn rspace_plus_plus::rspace::r#match::Match<BindPattern, ListParWithRandom>>,
         > = Arc::new(Box::new(matcher_impl));
 
-        // Add MeTTa system processes
-        let mut additional_system_processes: Vec<Definition> = rholang::rust::interpreter::system_processes::metta_contracts();
+        // Add MeTTa system processes (when mettatron feature is enabled)
+        let mut additional_system_processes: Vec<Definition> = {
+            #[cfg(feature = "mettatron")]
+            { rholang::rust::interpreter::system_processes::metta_contracts() }
+            #[cfg(not(feature = "mettatron"))]
+            { Vec::new() }
+        };
 
         let mut rho_runtime = create_runtime_from_kv_store(
             stores,

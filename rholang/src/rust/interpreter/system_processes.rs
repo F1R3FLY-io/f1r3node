@@ -9,6 +9,7 @@ use super::rho_type::{
     RhoBoolean, RhoByteArray, RhoDeployerId, RhoName, RhoNumber, RhoString, RhoSysAuthToken, RhoUri,
 };
 use super::util::rev_address::RevAddress;
+#[cfg(feature = "mettatron")]
 use mettatron::{
     backend::compile as metta_compile_src,
     metta_state_to_pathmap_par,
@@ -175,6 +176,7 @@ impl FixedChannels {
         byte_name(24)
     }
 
+    #[cfg(feature = "mettatron")]
     pub fn metta_compile() -> Par {
         byte_name(200)
     }
@@ -204,6 +206,7 @@ impl BodyRefs {
     pub const RANDOM: i64 = 20;
     pub const GRPC_TELL: i64 = 21;
     pub const DEV_NULL: i64 = 22;
+    #[cfg(feature = "mettatron")]
     pub const METTA_COMPILE: i64 = 200;
 }
 
@@ -991,6 +994,7 @@ impl SystemProcesses {
     ///   }
     /// }
     /// ```
+    #[cfg(feature = "mettatron")]
     pub async fn metta_compile(
         &mut self,
         contract_args: (Vec<ListParWithRandom>, bool, Vec<Par>),
@@ -1476,6 +1480,7 @@ pub fn test_framework_contracts() -> Vec<Definition> {
 }
 
 /// MeTTa compiler contracts for Rholang integration
+#[cfg(feature = "mettatron")]
 pub fn metta_contracts() -> Vec<Definition> {
     vec![
         Definition {

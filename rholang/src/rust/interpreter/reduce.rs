@@ -56,6 +56,7 @@ use super::substitute::Substitute;
 use super::unwrap_option_safe;
 use super::util::GeneratedMessage;
 use models::rust::pathmap_crate_type_mapper::PathMapCrateTypeMapper;
+#[cfg(feature = "mettatron")]
 use mettatron::{
     metta_state_to_pathmap_par, pathmap_par_to_metta_state, run_state_async, MettaState,
 };
@@ -2516,6 +2517,7 @@ impl DebruijnInterpreter {
         impl<'a> RunMethod<'a> {
             fn run(&self, base_expr: &Expr, other_expr: &Expr) -> Result<Expr, InterpreterError> {
                 match (base_expr.expr_instance.clone().unwrap(), other_expr.expr_instance.clone().unwrap()) {
+                    #[cfg(feature = "mettatron")]
                     (ExprInstance::EPathmapBody(accumulated_pathmap), ExprInstance::EPathmapBody(compiled_pathmap)) => {
                         // Charge cost for method call
                         self.outer.cost.charge(method_call_cost())?;
@@ -2572,6 +2574,13 @@ impl DebruijnInterpreter {
                         } else {
                             Err(InterpreterError::ReduceError("Failed to extract PathMap from result".to_string()))
                         }
+                    }
+
+                    #[cfg(not(feature = "mettatron"))]
+                    (ExprInstance::EPathmapBody(_), ExprInstance::EPathmapBody(_)) => {
+                        Err(InterpreterError::ReduceError(
+                            "MeTTa evaluation requires the 'mettatron' feature to be enabled".to_string()
+                        ))
                     }
 
                     (ExprInstance::EPathmapBody(_), other) => Err(InterpreterError::MethodNotDefined {

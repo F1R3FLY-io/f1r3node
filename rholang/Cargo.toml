@@ -12,12 +12,15 @@ path = "src/rholang_cli.rs"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[features]
+mettatron = ["dep:mettatron"]
+
 [dependencies]
 crypto = { path = "../crypto" }
 models = { path = "../models" }
 shared = { path = "../shared" }
 rspace_plus_plus = { path = "../rspace++" }
-mettatron = { path = "../../MeTTa-Compiler" }
+mettatron = { path = "../../MeTTa-Compiler", optional = true }
 itertools = { workspace = true }
 serde = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
