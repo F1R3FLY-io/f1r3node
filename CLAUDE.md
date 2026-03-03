@@ -221,8 +221,9 @@ cargo test --release         # Performance tests
 sbt test                     # Unit tests
 sbt "project casper" test    # Specific project tests
 
-# Integration tests
-cd integration-tests && python -m pytest
+# Integration tests (moved to the system-integration repository)
+# Clone system-integration and run:
+# poetry run pytest integration-tests/test/ -v
 ```
 
 ## Security Considerations

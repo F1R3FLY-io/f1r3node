@@ -298,6 +298,11 @@ impl ConfigMapper<Options> for NodeConf {
             } else if run.heartbeat_enabled {
                 self.casper.heartbeat_conf.enabled = true;
             }
+            // --heartbeat-disabled is a dedicated flag that explicitly sets enabled=false.
+            // It takes precedence over --heartbeat-enabled if both are somehow provided.
+            if run.heartbeat_disabled {
+                self.casper.heartbeat_conf.enabled = false;
+            }
             Self::try_override_value(
                 &mut self.casper.heartbeat_conf.check_interval,
                 run.heartbeat_check_interval,
@@ -420,6 +425,7 @@ mod tests {
         "--zipkin",
         "--sigar",
         "--heartbeat-enabled",
+        "--heartbeat-disabled",
         "--heartbeat-check-interval=111111seconds",
         "--heartbeat-max-lfb-age=222222seconds"
         ];
@@ -444,7 +450,7 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_args_rejects_conflicting_heartbeat_flags() {
+    fn test_parse_args_conflicting_heartbeat_flags_prefer_disabled() {
         let argv = vec![
             "rnode",
             "run",
@@ -453,7 +459,14 @@ mod tests {
         ];
 
         let res = Options::try_parse_from(argv);
-        assert!(res.is_err());
+        assert!(res.is_ok());
+
+        if let Some(OptionsSubCommand::Run(run)) = res.unwrap().subcommand {
+            assert!(run.heartbeat_disabled);
+            assert!(run.heartbeat_enabled);
+        } else {
+            panic!("Expected run subcommand");
+        }
     }
 
     #[test]
@@ -548,7 +561,7 @@ mod tests {
                 deployer_private_key: Some("test-key".to_string()),
                 min_phlo_price: Some(1),
                 heartbeat_enabled: true,
-                heartbeat_disabled: false,
+                heartbeat_disabled: true,
                 heartbeat_check_interval: Some(Duration::from_secs(111111)),
                 heartbeat_max_lfb_age: Some(Duration::from_secs(222222)),
             })),
@@ -856,7 +869,8 @@ mod tests {
         assert_eq!(default_config.casper.min_phlo_price, 1);
 
         // Heartbeat configuration
-        assert!(default_config.casper.heartbeat_conf.enabled);
+        // --heartbeat-disabled takes precedence over --heartbeat-enabled (both set in test options)
+        assert!(!default_config.casper.heartbeat_conf.enabled);
         assert_eq!(
             default_config.casper.heartbeat_conf.check_interval,
             Duration::from_secs(111111)

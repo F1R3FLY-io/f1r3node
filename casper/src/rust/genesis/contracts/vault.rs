@@ -1,6 +1,6 @@
 // See casper/src/main/scala/coop/rchain/casper/genesis/contracts/Vault.scala
 
-use rholang::rust::interpreter::util::rev_address::RevAddress;
+use rholang::rust::interpreter::util::vault_address::VaultAddress as RevAddress;
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct Vault {

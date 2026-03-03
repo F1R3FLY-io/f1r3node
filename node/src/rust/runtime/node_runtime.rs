@@ -631,7 +631,7 @@ impl NodeRuntime {
                     Arc::new(block_processor),
                     block_processor_state,
                     trigger_propose_opt,
-                    10, // max_parallel_blocks - reasonable default
+                    100, // max_parallel_blocks - match Scala parallelism
                 );
 
                 // BlockProcessorInstance::create spawns the processing task and returns a result receiver
@@ -994,9 +994,9 @@ async fn node_discovery_loop(
 /// failed peers. Also handles dynamic IP changes and orphaned channel cleanup.
 /// Uses configured cleanup_interval from peers_discovery settings.
 ///
-/// For failed peers, this loop performs aggressive cleanup:
-/// 1. Removes peers from ConnectionsCell (done by clear_connections)
-/// 2. Removes peers from KademliaStore (via node_discovery.remove_peer)
+/// The clear_connections function handles the full cleanup cycle:
+/// 1. Removes peers from ConnectionsCell
+/// 2. Removes peers from KademliaStore (except bootstrap, which is pinned)
 /// 3. Disconnects the gRPC channel immediately (via transport.disconnect)
 async fn clear_connections_loop(
     connections: comm::rust::rp::connect::ConnectionsCell,
@@ -1069,28 +1069,12 @@ async fn clear_connections_loop(
             }
         };
 
-        // Clear connections (send heartbeats, remove failed peers from ConnectionsCell)
-        match comm::rust::rp::connect::clear_connections(&connections, &rp_conf, &transport).await {
-            Ok((cleared_count, failed_peers)) => {
+        // Clear connections: heartbeats, ConnectionsCell update, Kademlia removal
+        // (with bootstrap pinning), and gRPC disconnect — all handled inside clear_connections.
+        match comm::rust::rp::connect::clear_connections(&connections, &rp_conf, &transport, &*node_discovery).await {
+            Ok((cleared_count, _failed_peers)) => {
                 if cleared_count > 0 {
                     info!("Cleared {} failed connection(s)", cleared_count);
-
-                    // Aggressive cleanup for failed peers - remove from Kademlia and disconnect immediately
-                    for peer in &failed_peers {
-                        // Remove from Kademlia store
-                        if let Err(e) = node_discovery.remove_peer(peer) {
-                            tracing::warn!("Failed to remove peer {} from Kademlia: {}", peer, e);
-                        } else {
-                            tracing::debug!("Removed peer {} from Kademlia store", peer);
-                        }
-
-                        // Disconnect the gRPC channel immediately
-                        if let Err(e) = transport.disconnect(peer).await {
-                            tracing::warn!("Failed to disconnect failed peer {}: {}", peer, e);
-                        } else {
-                            tracing::debug!("Disconnected failed peer {}", peer);
-                        }
-                    }
                 }
             }
             Err(e) => {

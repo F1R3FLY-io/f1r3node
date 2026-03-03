@@ -352,7 +352,7 @@ pub struct RunOptions {
     #[arg(long = "bonds-file")]
     pub bonds_file: Option<String>,
 
-    /// Plain text file consisting of lines of the form `<algorithm> <pk> <revBalance>`, which defines the Rev wallets that exist at genesis
+    /// Plain text file consisting of lines of the form `<algorithm> <pk> <balance>`, which defines the wallets that exist at genesis
     #[arg(long = "wallets-file")]
     pub wallets_file: Option<String>,
 
@@ -436,12 +436,9 @@ pub struct RunOptions {
     #[arg(long = "heartbeat-enabled", action = ArgAction::SetTrue)]
     pub heartbeat_enabled: bool,
 
-    /// Disable heartbeat block proposing for compatibility with existing test harnesses
-    #[arg(
-        long = "heartbeat-disabled",
-        action = ArgAction::SetTrue,
-        conflicts_with = "heartbeat_enabled"
-    )]
+    /// Disable heartbeat block proposing for liveness.
+    /// Takes precedence over --heartbeat-enabled if both are provided.
+    #[arg(long = "heartbeat-disabled", action = ArgAction::SetTrue)]
     pub heartbeat_disabled: bool,
 
     /// Heartbeat check interval - how often to check if heartbeat is needed

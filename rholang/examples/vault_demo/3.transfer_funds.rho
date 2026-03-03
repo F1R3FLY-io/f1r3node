@@ -16,20 +16,20 @@ in {
     ) {
       (from, to, amount) => {
 
-        new vaultCh, targetVaultCh, authKeyCh, deployerId(`rho:system:deployerId`) in {
+        new vaultCh, targetVaultCh, systemVaultkeyCh, deployerId(`rho:system:deployerId`) in {
           @SystemVault!("findOrCreate", from, *vaultCh) |
           // make sure the target vault it created and the transfer would be done
           @SystemVault!("findOrCreate", to, *targetVaultCh) |
-          @SystemVault!("deployerAuthKey", *deployerId, *authKeyCh) |
-          for (@(true, vault) <- vaultCh & key <- authKeyCh & @(true, _) <- targetVaultCh) {
+          @SystemVault!("deployerAuthKey", *deployerId, *systemVaultkeyCh) |
+          for (@(true, vault) <- vaultCh & key <- systemVaultkeyCh & @(true, _) <- targetVaultCh) {
 
-            stdout!(("Beginning transfer of ", amount, "tokens from", from, "to", to)) |
+            stdout!(("Beginning transfer of ", amount, "from", from, "to", to)) |
 
             new resultCh in {
               @vault!("transfer", to, amount, *key, *resultCh) |
               for (@result <- resultCh) {
 
-                stdout!(("Finished transfer of ", amount, "tokens to", to, "result was:", result))
+                stdout!(("Finished transfer of ", amount, "to", to, "result was:", result))
               }
             }
           }

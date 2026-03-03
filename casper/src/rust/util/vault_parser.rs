@@ -2,7 +2,7 @@ use std::fs;
 use std::path::Path;
 
 use regex::Regex;
-use rholang::rust::interpreter::util::rev_address::RevAddress;
+use rholang::rust::interpreter::util::vault_address::VaultAddress as RevAddress;
 
 use crate::rust::genesis::contracts::vault::Vault;
 

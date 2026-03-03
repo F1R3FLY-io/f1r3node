@@ -672,13 +672,13 @@ fn std_system_processes() -> Vec<Definition> {
         },
         Definition {
             urn: "rho:vault:address".to_string(),
-            fixed_channel: FixedChannels::rev_address(),
+            fixed_channel: FixedChannels::vault_address(),
             arity: 3,
-            body_ref: BodyRefs::REV_ADDRESS,
+            body_ref: BodyRefs::VAULT_ADDRESS,
             handler: Box::new(|ctx| {
                 Box::new(move |args| {
                     let ctx = ctx.clone();
-                    Box::pin(async move { ctx.system_processes.clone().rev_address(args).await })
+                    Box::pin(async move { ctx.system_processes.clone().vault_address(args).await })
                 })
             }),
             remainder: None,

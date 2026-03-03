@@ -613,8 +613,7 @@ fn check_has_new_parents(
 
     // Check if any of the latest blocks are new (not in ancestor set)
     for entry in all_latest_blocks.iter() {
-        let hash = entry.value();
-        if !ancestor_set.contains(hash) {
+        if !ancestor_set.contains(entry.value()) {
             return true;
         }
     }
@@ -941,7 +940,7 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn do_heartbeat_check_skips_when_lfb_fresh() {
+        async fn do_heartbeat_check_proposes_when_lfb_fresh_and_validator_has_no_latest_block() {
             // Create validator identity
             let validator = create_test_validator_identity();
             let validator_id = validator.public_key.bytes.clone();
@@ -979,8 +978,8 @@ mod tests {
             assert!(result.is_ok(), "do_heartbeat_check should succeed");
             assert_eq!(
                 propose_count.load(Ordering::SeqCst),
-                0,
-                "Should NOT trigger propose when LFB is fresh and no pending deploys"
+                1,
+                "Should trigger propose when validator has no latest block (frontier-follow path), even if LFB is fresh"
             );
         }
 

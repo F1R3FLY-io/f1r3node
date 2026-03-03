@@ -28,8 +28,10 @@ use prost::Message;
 use rspace_plus_plus::rspace::util::unpack_option_with_peek;
 use std::collections::{BTreeMap, BTreeSet};
 use std::collections::{HashMap, HashSet};
+use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, RwLock};
+use std::task::{Context, Poll};
 
 use crate::rust::interpreter::accounting::costs::{
     add_cost, bytes_to_hex_cost, diff_cost, hex_to_bytes_cost, interpolate_cost, keys_method_cost,
@@ -56,6 +58,46 @@ use super::substitute::Substitute;
 use super::unwrap_option_safe;
 use super::util::GeneratedMessage;
 use models::rust::pathmap_crate_type_mapper::PathMapCrateTypeMapper;
+
+/// Minimum remaining stack space (in bytes) before growing.
+/// When the current stack has less than this amount remaining, a new stack segment is allocated.
+// 128 KB is too small: a single recursion frame in the Rholang interpreter
+// (eval → produce/consume → dispatch → eval) consumes more than 128 KB between
+// stacker checks, so the overflow happens before stacker can grow the stack.
+const STACK_RED_ZONE: usize = 1024 * 1024; // 1 MB
+
+/// Size of each new stack segment allocated when the red zone is reached.
+const STACK_GROW_SIZE: usize = 2 * 1024 * 1024; // 2 MB
+
+/// A Future wrapper that dynamically grows the thread stack during polling.
+///
+/// The Rholang interpreter uses deep async recursion: eval → produce/consume → dispatch → eval.
+/// Each poll of this recursive future chain adds stack frames. In debug builds, unoptimized
+/// async state machines consume ~1-2KB per recursion level, causing stack overflow with the
+/// default 2MB thread stack.
+///
+/// `StackGrowingFuture` wraps each recursive entry point (eval, produce, consume, dispatch).
+/// On each poll, `stacker::maybe_grow` checks remaining stack space. If below STACK_RED_ZONE,
+/// it allocates a new STACK_GROW_SIZE segment and runs the poll there. This allows arbitrarily
+/// deep Rholang recursion (e.g., longslow.rho with 32768 iterations) without stack overflow.
+///
+/// See: https://github.com/F1R3FLY-io/f1r3node/issues/305
+/// See: https://github.com/F1R3FLY-io/f1r3node/issues/306
+struct StackGrowingFuture<F> {
+    inner: F,
+}
+
+impl<F: Future> Future for StackGrowingFuture<F> {
+    type Output = F::Output;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        // SAFETY: Structural pin projection on a single-field struct with no Drop impl.
+        // `inner` is only accessed through this pinned projection, and StackGrowingFuture
+        // does not implement Unpin when F doesn't, preserving pin guarantees.
+        let inner = unsafe { self.map_unchecked_mut(|s| &mut s.inner) };
+        stacker::maybe_grow(STACK_RED_ZONE, STACK_GROW_SIZE, || inner.poll(cx))
+    }
+}
 
 /**
  * Reduce is the interface for evaluating Rholang expressions.
@@ -94,12 +136,8 @@ impl DebruijnInterpreter {
         par: Par,
         env: &'a Env<Par>,
         rand: Blake2b512Random,
-    ) -> Pin<
-        Box<
-            dyn std::future::Future<Output = Result<(), InterpreterError>> + std::marker::Send + 'a,
-        >,
-    > {
-        Box::pin(self.eval_inner(par, env, rand))
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<(), InterpreterError>> + std::marker::Send + 'a>> {
+        Box::pin(StackGrowingFuture { inner: self.eval_inner(par, env, rand) })
     }
 
     async fn eval_inner(
@@ -335,14 +373,8 @@ impl DebruijnInterpreter {
         chan: Par,
         data: ListParWithRandom,
         persistent: bool,
-    ) -> Pin<
-        Box<
-            dyn std::future::Future<Output = Result<DispatchType, InterpreterError>>
-                + std::marker::Send
-                + 'a,
-        >,
-    > {
-        Box::pin(self.produce_inner(chan, data, persistent))
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<DispatchType, InterpreterError>> + std::marker::Send + 'a>> {
+        Box::pin(StackGrowingFuture { inner: self.produce_inner(chan, data, persistent) })
     }
 
     async fn produce_inner(
@@ -456,14 +488,8 @@ impl DebruijnInterpreter {
         body: ParWithRandom,
         persistent: bool,
         peek: bool,
-    ) -> Pin<
-        Box<
-            dyn std::future::Future<Output = Result<DispatchType, InterpreterError>>
-                + std::marker::Send
-                + 'a,
-        >,
-    > {
-        Box::pin(self.consume_inner(binds, body, persistent, peek))
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<DispatchType, InterpreterError>> + std::marker::Send + 'a>> {
+        Box::pin(StackGrowingFuture { inner: self.consume_inner(binds, body, persistent, peek) })
     }
 
     async fn consume_inner(
@@ -814,14 +840,8 @@ impl DebruijnInterpreter {
         data_list: Vec<(Par, ListParWithRandom, ListParWithRandom, bool)>,
         is_replay: bool,
         previous_output: Vec<Par>,
-    ) -> Pin<
-        Box<
-            dyn std::future::Future<Output = Result<DispatchType, InterpreterError>>
-                + std::marker::Send
-                + 'a,
-        >,
-    > {
-        Box::pin(self.dispatch_inner(continuation, data_list, is_replay, previous_output))
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<DispatchType, InterpreterError>> + std::marker::Send + 'a>> {
+        Box::pin(StackGrowingFuture { inner: self.dispatch_inner(continuation, data_list, is_replay, previous_output) })
     }
 
     async fn dispatch_inner(
@@ -1660,6 +1680,9 @@ impl DebruijnInterpreter {
                 ExprInstance::EDivBody(EDiv { p1, p2 }) => {
                     let v1 = self.eval_to_i64(&p1.clone().unwrap(), env)?;
                     let v2 = self.eval_to_i64(&p2.clone().unwrap(), env)?;
+                    if v2 == 0 {
+                      return Err(InterpreterError::ReduceError("Division by zero".to_string()));
+                    }
                     self.cost.charge(division_cost())?;
                     Ok(Expr {
                         expr_instance: Some(ExprInstance::GInt(v1 / v2)),
@@ -1669,6 +1692,9 @@ impl DebruijnInterpreter {
                 ExprInstance::EModBody(EMod { p1, p2 }) => {
                     let v1 = self.eval_to_i64(&p1.clone().unwrap(), env)?;
                     let v2 = self.eval_to_i64(&p2.clone().unwrap(), env)?;
+                    if v2 == 0 {
+                      return Err(InterpreterError::ReduceError("Modulo by zero".to_string()));
+                    }
                     self.cost.charge(modulo_cost())?;
                     Ok(Expr {
                         expr_instance: Some(ExprInstance::GInt(v1 % v2)),

@@ -322,20 +322,30 @@ impl CasperShardConf {
 pub mod test_helpers {
     use super::*;
     use async_trait::async_trait;
+    use rspace_plus_plus::rspace::shared::in_mem_key_value_store::InMemoryKeyValueStore;
 
     /// A test implementation of MultiParentCasper that returns a configurable snapshot and LFB.
     pub struct TestCasperWithSnapshot {
         snapshot: CasperSnapshot,
         lfb: BlockMessage,
         pending_deploy_count: usize,
+        block_store: KeyValueBlockStore,
     }
 
     impl TestCasperWithSnapshot {
+        fn create_test_block_store() -> KeyValueBlockStore {
+            KeyValueBlockStore::new(
+                Arc::new(InMemoryKeyValueStore::new()),
+                Arc::new(InMemoryKeyValueStore::new()),
+            )
+        }
+
         pub fn new(snapshot: CasperSnapshot, lfb: BlockMessage) -> Self {
             Self {
                 snapshot,
                 lfb,
                 pending_deploy_count: 0,
+                block_store: Self::create_test_block_store(),
             }
         }
 
@@ -348,6 +358,7 @@ pub mod test_helpers {
                 snapshot,
                 lfb,
                 pending_deploy_count,
+                block_store: Self::create_test_block_store(),
             }
         }
 
@@ -490,7 +501,7 @@ pub mod test_helpers {
         }
 
         fn block_store(&self) -> &KeyValueBlockStore {
-            unimplemented!("block_store not needed for heartbeat tests")
+            &self.block_store
         }
 
         fn runtime_manager(&self) -> Arc<tokio::sync::Mutex<RuntimeManager>> {

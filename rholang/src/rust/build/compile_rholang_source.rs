@@ -41,6 +41,8 @@ impl CompiledRholangSource {
             format!("src/test/resources/{}", filepath),
             format!("../casper/src/main/resources/{}", filepath),
             format!("../casper/src/test/resources/{}", filepath),
+            format!("rholang/examples/{}", filepath),
+            format!("../rholang/examples/{}", filepath),
         ];
 
         for path in &possible_paths {

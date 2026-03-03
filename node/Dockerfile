@@ -63,14 +63,19 @@ COPY node/ ./node/
 
 # Configure pkg-config for cross-compilation to find target OpenSSL libraries
 # xx-apt installs target libs in the xx sysroot, we need to tell pkg-config where they are
-# Enable AES/SSE2 CPU features for gxhash dependency (required by PathMap crate)
-RUN export TARGET_TRIPLE=$(xx-cargo --print-target-triple) && \
+# Enable AES CPU features for gxhash dependency (required by PathMap crate).
+# +sse2 is x86-only; on aarch64 only +aes is valid (avoids warning spam on ARM hosts).
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
+    --mount=type=cache,target=/build/build \
+    export TARGET_TRIPLE=$(xx-cargo --print-target-triple) && \
     export PKG_CONFIG_SYSROOT_DIR=$(xx-info sysroot) && \
     export PKG_CONFIG_PATH=$(xx-info sysroot)/usr/lib/$(xx-info triple)/pkgconfig:$(xx-info sysroot)/usr/share/pkgconfig && \
     export PKG_CONFIG_ALLOW_CROSS=1 && \
-    # Use codeload endpoint to avoid truncated archive responses from github redirect chain.
-    export SWAGGER_UI_DOWNLOAD_URL="${SWAGGER_UI_DOWNLOAD_URL:-https://codeload.github.com/swagger-api/swagger-ui/zip/refs/tags/v5.17.14}" && \
-    export RUSTFLAGS="-C target-feature=+aes,+sse2" && \
+    case "${TARGET_TRIPLE}" in \
+        aarch64*) export RUSTFLAGS="-C target-feature=+aes" ;; \
+        *) export RUSTFLAGS="-C target-feature=+aes,+sse2" ;; \
+    esac && \
     xx-cargo build --release -p node --target-dir ./build && \
     xx-verify ./build/${TARGET_TRIPLE}/release/node && \
     cp ./build/${TARGET_TRIPLE}/release/node /build/node_binary && \
