@@ -1359,6 +1359,14 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasper for MultiParentCasperImp
 
     async fn has_pending_deploys_in_storage(&self) -> Result<bool, CasperError> {
         let snapshot = self.get_snapshot().await?;
+        self.has_pending_deploys_in_storage_for_snapshot(&snapshot)
+            .await
+    }
+
+    async fn has_pending_deploys_in_storage_for_snapshot(
+        &self,
+        snapshot: &CasperSnapshot,
+    ) -> Result<bool, CasperError> {
         let latest_block_number = snapshot.dag.latest_block_number();
         let earliest_block_number =
             latest_block_number - snapshot.on_chain_state.shard_conf.deploy_lifespan;

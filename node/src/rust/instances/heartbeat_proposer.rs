@@ -298,7 +298,9 @@ async fn check_lfb_and_propose(
     let snapshot: CasperSnapshot = casper.get_snapshot().await?;
 
     // Check if we have pending user deploys in storage (not yet included in blocks)
-    let has_pending_deploys = casper.has_pending_deploys_in_storage().await?;
+    let has_pending_deploys = casper
+        .has_pending_deploys_in_storage_for_snapshot(&snapshot)
+        .await?;
 
     // Check if LFB is stale
     let now = SystemTime::now()

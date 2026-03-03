@@ -162,6 +162,15 @@ pub trait MultiParentCasper: Casper + Send + Sync {
 
     /// Check if pending deploys exist in storage (not yet included in blocks).
     async fn has_pending_deploys_in_storage(&self) -> Result<bool, CasperError>;
+
+    /// Check if pending deploys exist in storage using an already computed snapshot.
+    /// Default fallback uses the legacy method and may compute a fresh snapshot.
+    async fn has_pending_deploys_in_storage_for_snapshot(
+        &self,
+        _snapshot: &CasperSnapshot,
+    ) -> Result<bool, CasperError> {
+        self.has_pending_deploys_in_storage().await
+    }
 }
 
 pub fn hash_set_casper<T: TransportLayer + Send + Sync>(
