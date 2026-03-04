@@ -530,18 +530,7 @@ class Initializing[F[_]
   private def createCasperAndTransitionToRunning(approvedBlock: ApprovedBlock): F[Unit] = {
     val ab = approvedBlock.candidate.block
     for {
-      // Create heartbeat signal ref for triggering fast proposals on deploy submission
-      heartbeatSignalRef <- Ref[F].of(Option.empty[HeartbeatSignal[F]])
-      casper <- MultiParentCasper
-                 .hashSetCasper[F](
-                   validatorId,
-                   casperShardConf,
-                   ab,
-                   heartbeatSignalRef,
-                   onBlockFinalized,
-                   (_: BlockMessage, _: List[String]) => List.empty[String].pure[F]
-                 )
-      _ <- Log[F].info("MultiParentCasper instance created.")
+      // Create FileRequester for P2P file transfers
       dataDir <- cats.effect.Sync[F].delay {
                   val dir = casperShardConf.fileReplicationDir.getOrElse(
                     java.nio.file.Paths.get("file-replication")
@@ -554,6 +543,32 @@ class Initializing[F[_]
         casperShardConf.fileChunkSize,
         casperShardConf.fileSyncTimeout
       )
+      // DA-gating callback: request missing files from all peers and await with timeout.
+      // Broadcasts FileRequest to all connected peers, then polls until the files
+      // arrive (via the FilePacket handler) or the timeout expires.
+      daCallback = (block: BlockMessage, missingHashes: List[String]) =>
+        for {
+          peers <- ConnectionsCell[F].read
+          // Broadcast file requests to ALL peers
+          _ <- peers.toList.traverse_(peer => fileRequester.requestFiles(peer, missingHashes))
+          // Wait for files to arrive via P2P (with bounded timeout)
+          stillMissing <- fileRequester.awaitFiles(
+                           missingHashes,
+                           casperShardConf.fileSyncTimeout
+                         )
+        } yield stillMissing
+      // Create heartbeat signal ref for triggering fast proposals on deploy submission
+      heartbeatSignalRef <- Ref[F].of(Option.empty[HeartbeatSignal[F]])
+      casper <- MultiParentCasper
+                 .hashSetCasper[F](
+                   validatorId,
+                   casperShardConf,
+                   ab,
+                   heartbeatSignalRef,
+                   onBlockFinalized,
+                   daCallback
+                 )
+      _ <- Log[F].info("MultiParentCasper instance created.")
       _ <- transitionToRunning[F](
             blockProcessingQueue,
             blocksInProcessing,
