@@ -24,7 +24,6 @@ pub struct CliqueOracleRunCache {
     latest_message_cache: BTreeMap<V, Option<M>>,
     latest_justifications_cache: BTreeMap<V, BTreeMap<V, M>>,
     self_justification_cache: BTreeMap<M, Option<M>>,
-    self_justification_chain_cache: BTreeMap<M, Vec<M>>,
     in_main_chain_cache: BTreeMap<(M, M), bool>,
     yield_check_interval: usize,
     yield_timeslice: Duration,
@@ -36,7 +35,6 @@ impl CliqueOracle {
             latest_message_cache: BTreeMap::new(),
             latest_justifications_cache: BTreeMap::new(),
             self_justification_cache: BTreeMap::new(),
-            self_justification_chain_cache: BTreeMap::new(),
             in_main_chain_cache: BTreeMap::new(),
             yield_check_interval: Self::cooperative_yield_check_interval(),
             yield_timeslice: Duration::from_millis(Self::cooperative_yield_timeslice_ms()),
@@ -103,7 +101,6 @@ impl CliqueOracle {
         yield_check_interval: usize,
         yield_timeslice: Duration,
         self_justification_cache: &mut BTreeMap<M, Option<M>>,
-        self_justification_chain_cache: &mut BTreeMap<M, Vec<M>>,
         in_main_chain_cache: &mut BTreeMap<(M, M), bool>,
     ) -> Result<bool, KvStoreError> {
         /// Check if there might be eventual disagreement between validators
@@ -113,7 +110,6 @@ impl CliqueOracle {
             dag: &KeyValueDagRepresentation,
             target_msg: &M,
             self_justification_cache: &mut BTreeMap<M, Option<M>>,
-            self_justification_chain_cache: &mut BTreeMap<M, Vec<M>>,
             in_main_chain_cache: &mut BTreeMap<(M, M), bool>,
             yield_check_interval: usize,
             yield_timeslice: Duration,
@@ -128,37 +124,45 @@ impl CliqueOracle {
                 value.unwrap_or_else(|| lm_a_j_b.clone())
             };
 
-            // Stream self-justification chain and stop as soon as stopper is reached.
-            // This avoids scanning full historical chains when both messages are near tip.
-            let full_chain = if let Some(cached) = self_justification_chain_cache.get(lm_b) {
+            // Traverse only until stopper instead of materializing full history to genesis.
+            let mut current = if let Some(cached) = self_justification_cache.get(lm_b) {
                 cached.clone()
             } else {
-                let chain = dag.self_justification_chain(lm_b.clone())?;
-                self_justification_chain_cache.insert(lm_b.clone(), chain.clone());
-                chain
+                let value = dag.self_justification(lm_b)?;
+                self_justification_cache.insert(lm_b.clone(), value.clone());
+                value
             };
-
             let mut last_yield = Instant::now();
-            for (idx, hash) in full_chain.iter().enumerate() {
-                if hash == &stopper {
+            let mut idx: usize = 0;
+            while let Some(hash) = current {
+                if hash == stopper {
                     break;
                 }
                 if idx % yield_check_interval == 0 && last_yield.elapsed() >= yield_timeslice {
                     tokio::task::yield_now().await;
                     last_yield = Instant::now();
                 }
+                idx += 1;
                 let in_main_chain_key = (target_msg.clone(), hash.clone());
                 let is_in_main_chain =
                     if let Some(cached) = in_main_chain_cache.get(&in_main_chain_key) {
                         *cached
                     } else {
-                        let value = dag.is_in_main_chain(target_msg, hash)?;
+                        let value = dag.is_in_main_chain(target_msg, &hash)?;
                         in_main_chain_cache.insert(in_main_chain_key, value);
                         value
                     };
                 if !is_in_main_chain {
                     return Ok(true);
                 }
+
+                current = if let Some(cached) = self_justification_cache.get(&hash) {
+                    cached.clone()
+                } else {
+                    let value = dag.self_justification(&hash)?;
+                    self_justification_cache.insert(hash, value.clone());
+                    value
+                };
             }
             Ok(false)
         }
@@ -169,7 +173,6 @@ impl CliqueOracle {
             dag,
             target_msg,
             self_justification_cache,
-            self_justification_chain_cache,
             in_main_chain_cache,
             yield_check_interval,
             yield_timeslice,
@@ -290,7 +293,6 @@ impl CliqueOracle {
                         yield_check_interval,
                         yield_timeslice,
                         &mut run_cache.self_justification_cache,
-                        &mut run_cache.self_justification_chain_cache,
                         &mut run_cache.in_main_chain_cache,
                     )
                     .await?;
@@ -302,7 +304,6 @@ impl CliqueOracle {
                         yield_check_interval,
                         yield_timeslice,
                         &mut run_cache.self_justification_cache,
-                        &mut run_cache.self_justification_chain_cache,
                         &mut run_cache.in_main_chain_cache,
                     )
                     .await?;

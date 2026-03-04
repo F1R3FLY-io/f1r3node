@@ -296,8 +296,12 @@ impl KeyValueDagRepresentation {
         &self,
         block_hash: &BlockHash,
     ) -> Result<Option<BlockHash>, KvStoreError> {
-        self.self_justification_chain(block_hash.clone())
-            .map(|chain| chain.into_iter().next())
+        let metadata = self.lookup_unsafe(block_hash)?;
+        Ok(metadata
+            .justifications
+            .iter()
+            .find(|justification| justification.validator == metadata.sender)
+            .map(|justification| justification.latest_block_hash.clone()))
     }
 
     pub fn main_parent_chain(
@@ -338,11 +342,20 @@ impl KeyValueDagRepresentation {
         }
 
         let metadata_ancestor = self.lookup_unsafe(ancestor)?;
-        let height = metadata_ancestor.block_number;
+        let stop_height = metadata_ancestor.block_number;
+        let mut current_hash = descendant.clone();
 
-        let main_chain = self.main_parent_chain(descendant.clone(), height)?;
+        loop {
+            let metadata = self.lookup_unsafe(&current_hash)?;
+            if metadata.block_number <= stop_height {
+                return Ok(&current_hash == ancestor);
+            }
 
-        Ok(main_chain.contains(ancestor))
+            let Some(main_parent) = metadata.parents.first() else {
+                return Ok(false);
+            };
+            current_hash = main_parent.clone();
+        }
     }
 
     pub fn parents_unsafe(&self, block_hash: &BlockHash) -> Result<Vec<BlockHash>, KvStoreError> {
