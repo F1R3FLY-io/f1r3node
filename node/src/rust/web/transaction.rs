@@ -299,47 +299,55 @@ where
 
     /// Get transaction response for a block hash with caching
     pub async fn get_transaction(&self, block_hash: String) -> Result<TransactionResponse> {
-        let transaction_response = {
+        // Check cache first — treat missing/empty results as cache miss, not error
+        let cached = {
             let store = self.store.read().await;
             store
                 .get(&vec![block_hash.clone()])?
-                .first()
-                .ok_or(eyre::eyre!("No response found"))?
-                .clone()
+                .into_iter()
+                .next()
+                .flatten()
         };
 
-        if let Some(transaction_response) = transaction_response {
-            return Ok(transaction_response.clone());
+        if let Some(response) = cached {
+            return Ok(response);
         }
 
-        let fetch_task = {
-            self.block_defer_map
-                .get(&block_hash)
-                .map(|entry| entry.value().clone())
-        }
-        .unwrap_or_else(|| {
-            let transaction_api = self.transaction_api.clone();
-            let block_hash_str = block_hash.clone();
-            let store = self.store.clone();
+        // Check for in-flight request (deduplication)
+        let fetch_task = match self
+            .block_defer_map
+            .get(&block_hash)
+            .map(|entry| entry.value().clone())
+        {
+            Some(existing) => existing,
+            None => {
+                let transaction_api = self.transaction_api.clone();
+                let block_hash_str = block_hash.clone();
+                let store = self.store.clone();
 
-            async move {
-                let data = transaction_api
-                    .get_transaction(Blake2b256Hash::from_hex(&block_hash_str))
-                    .await
-                    .map_err(|e| e.to_string())?;
+                let shared_future = async move {
+                    let data = transaction_api
+                        .get_transaction(Blake2b256Hash::from_hex(&block_hash_str))
+                        .await
+                        .map_err(|e| e.to_string())?;
 
-                let response = TransactionResponse { data };
+                    let response = TransactionResponse { data };
 
-                let store = store.write().await;
-                store
-                    .put(vec![(block_hash_str, response.clone())])
-                    .map_err(|e| e.to_string())?;
+                    let store = store.write().await;
+                    store
+                        .put(vec![(block_hash_str, response.clone())])
+                        .map_err(|e| e.to_string())?;
 
-                Ok(response)
+                    Ok(response)
+                }
+                .boxed()
+                .shared();
+
+                self.block_defer_map
+                    .insert(block_hash.clone(), shared_future.clone());
+                shared_future
             }
-            .boxed()
-            .shared()
-        });
+        };
 
         let res = fetch_task.await.map_err(|e| eyre::eyre!(e))?;
 
@@ -485,7 +493,6 @@ mod helpers {
     ) -> Option<Transaction> {
         let pars = &produce.data.as_ref()?.pars;
 
-        // Extract transaction fields
         if pars.len() >= 6 {
             let from_addr = pars[0].get_g_string()?;
             let to_addr = pars[2].get_g_string()?;
@@ -500,6 +507,11 @@ mod helpers {
                 fail_reason: None,
             })
         } else {
+            tracing::warn!(
+                target: "f1r3fly.transaction",
+                par_count = pars.len(),
+                "Malformed produce data in transfer channel: expected >= 6 pars"
+            );
             None
         }
     }

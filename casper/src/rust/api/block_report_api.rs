@@ -28,7 +28,26 @@ use crate::rust::{
     safety_oracle::CliqueOracleImpl,
 };
 
-pub type ApiErr<T> = eyre::Result<T>;
+/// Domain-specific errors for BlockReportAPI operations
+#[derive(Debug, thiserror::Error)]
+pub enum BlockReportError {
+    #[error("Casper instance not available")]
+    CasperNotInitialized,
+    #[error("Block report can only be executed on read-only RNode")]
+    ReadOnlyRequired,
+    #[error("Block {0:?} not found")]
+    BlockNotFound(BlockHash),
+    #[error("Failed to trace block: {0}")]
+    ReplayFailed(String),
+    #[error("Block info error: {0}")]
+    BlockInfoError(String),
+    #[error("Report store error: {0}")]
+    StoreError(String),
+    #[error("Failed to acquire semaphore: {0}")]
+    SemaphoreError(String),
+}
+
+pub type ApiErr<T> = Result<T, BlockReportError>;
 
 /// BlockReportAPI provides functionality to replay blocks and generate event reports
 #[derive(Clone)]
@@ -45,17 +64,19 @@ pub struct BlockReportAPI {
     block_lock_map: Arc<DashMap<BlockHash, Arc<Semaphore>>>,
     /// Transformer for converting reporting events to protobuf format
     report_transformer: Arc<ReportingProtoTransformer>,
+    /// When true, allows block reports on validator nodes (bypasses read-only check)
+    dev_mode: bool,
 }
 
 impl BlockReportAPI {
     /// Create a new BlockReportAPI
-    /// 
     pub fn new(
         reporting_casper: Arc<dyn ReportingCasper>,
         report_store: ReportStore,
         engine_cell: EngineCell,
         block_store: KeyValueBlockStore,
         oracle: CliqueOracleImpl,
+        dev_mode: bool,
     ) -> Self {
         Self {
             reporting_casper,
@@ -65,6 +86,7 @@ impl BlockReportAPI {
             oracle,
             block_lock_map: Arc::new(DashMap::new()),
             report_transformer: Arc::new(ReportingProtoTransformer::new()),
+            dev_mode,
         }
     }
 
@@ -72,17 +94,13 @@ impl BlockReportAPI {
     async fn replay_block(
         &self,
         block: &BlockMessage,
+        casper: &Arc<dyn crate::rust::casper::MultiParentCasper + Send + Sync>,
     ) -> ApiErr<BlockEventInfo> {
-        let eng = self.engine_cell.get().await;
-        let casper = eng.with_casper().ok_or_else(|| {
-            eyre::eyre!("Casper instance not available")
-        })?;
-
         let report_result = self.reporting_casper.trace(block).await
-            .map_err(|e| eyre::eyre!("Failed to trace block: {}", e))?;
+            .map_err(|e| BlockReportError::ReplayFailed(e))?;
 
         let light_block = BlockAPI::get_light_block_info(casper.as_ref(), block).await
-            .map_err(|e| eyre::eyre!("Failed to get light block info: {}", e))?;
+            .map_err(|e| BlockReportError::BlockInfoError(e.to_string()))?;
 
         let deploys = self.create_deploy_report(&report_result.deploy_report_result);
 
@@ -102,6 +120,7 @@ impl BlockReportAPI {
         &self,
         force_replay: bool,
         block: &BlockMessage,
+        casper: &Arc<dyn crate::rust::casper::MultiParentCasper + Send + Sync>,
     ) -> ApiErr<BlockEventInfo> {
         let block_hash = block.block_hash.clone();
 
@@ -110,12 +129,16 @@ impl BlockReportAPI {
             .or_insert_with(|| Arc::new(Semaphore::new(1)))
             .clone();
 
+        metrics::gauge!("block_report.lock.queue_size", "source" => "casper")
+            .increment(1.0);
         let _permit = semaphore.acquire().await
-            .map_err(|e| eyre::eyre!("Failed to acquire semaphore: {}", e))?;
+            .map_err(|e| BlockReportError::SemaphoreError(e.to_string()))?;
+        metrics::gauge!("block_report.lock.queue_size", "source" => "casper")
+            .decrement(1.0);
 
         let block_hash_bytes: ByteString = block_hash.to_vec().into();
         let cached = self.report_store.get(&vec![block_hash_bytes.clone()])
-            .map_err(|e| eyre::eyre!("Failed to get from report store: {}", e))?;
+            .map_err(|e| BlockReportError::StoreError(e.to_string()))?;
 
         if let Some(Some(cached_report)) = cached.first() {
             if !force_replay {
@@ -123,10 +146,10 @@ impl BlockReportAPI {
             }
         }
 
-        let report = self.replay_block(block).await?;
-        
+        let report = self.replay_block(block, casper).await?;
+
         self.report_store.put(vec![(block_hash_bytes, report.clone())])
-            .map_err(|e| eyre::eyre!("Failed to put to report store: {}", e))?;
+            .map_err(|e| BlockReportError::StoreError(e.to_string()))?;
 
         Ok(report)
     }
@@ -138,26 +161,20 @@ impl BlockReportAPI {
         force_replay: bool,
     ) -> ApiErr<BlockEventInfo> {
         let eng = self.engine_cell.get().await;
-        let casper = eng.with_casper().ok_or_else(|| {
-            eyre::eyre!("Could not get event data.")
-        })?;
+        let casper = eng.with_casper().ok_or(BlockReportError::CasperNotInitialized)?;
 
         let validator_opt = casper.get_validator();
-        if validator_opt.is_some() {
-            return Err(eyre::eyre!("Block report can only be executed on read-only RNode."));
+        if validator_opt.is_some() && !self.dev_mode {
+            return Err(BlockReportError::ReadOnlyRequired);
         }
 
-        // Use the casper's block_store instead of self.block_store to ensure we're using
-        // the same store that has all the blocks (including parent blocks)
         let casper_block_store = casper.block_store();
         let block_opt = casper_block_store.get(&hash)
-            .map_err(|e| eyre::eyre!("Failed to get block from store: {}", e))?;
+            .map_err(|e| BlockReportError::StoreError(e.to_string()))?;
 
-        let block = block_opt.ok_or_else(|| {
-            eyre::eyre!("Block {:?} not found", hash)
-        })?;
+        let block = block_opt.ok_or_else(|| BlockReportError::BlockNotFound(hash))?;
 
-        self.block_report_within_lock(force_replay, &block).await
+        self.block_report_within_lock(force_replay, &block, &casper).await
     }
 
     /// Create system deploy report from replay results

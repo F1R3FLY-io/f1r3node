@@ -69,18 +69,11 @@ impl ReportingCasper for NoopReportingCasper {
 }
 
 /// Real implementation using RhoReporter
-/*
-At the moment, we have only one dead_code annotation in Casper, related to RhoReporterCasper.
-In practice, this is not truly dead code, since the fields are stored and used within the rho_reporter function.
-However, Rust treats fields that are stored but never read as dead code.
-This annotation will no longer be needed once the trace logic is implemented,
-which is currently marked as todo!("RhoReporter.trace implementation pending")
- */
-#[allow(dead_code)]
 pub struct RhoReporterCasper {
     rspace_store: RSpaceStore,
     block_store: KeyValueBlockStore,
     block_dag_storage: BlockDagKeyValueStorage,
+    external_services: rholang::rust::interpreter::external_services::ExternalServices,
 }
 
 #[async_trait]
@@ -98,6 +91,7 @@ impl ReportingCasper for RhoReporterCasper {
             reporting_rspace,
             mergeable_tag_name,
             &mut extra_system_processes,
+            self.external_services.clone(),
         )
         .await
         .map_err(|e| format!("Failed to create reporting runtime: {}", e))?;
@@ -167,14 +161,29 @@ impl RhoReporterCasper {
         runtime.set_invalid_blocks(invalid_blocks).await;
 
         let mut deploy_results = Vec::new();
-        for term in terms {
+        for (idx, term) in terms.iter().enumerate() {
+            tracing::debug!(
+                target: "f1r3fly.casper.reporting",
+                deploy_index = idx,
+                total_deploys = terms.len(),
+                "Replaying deploy for report"
+            );
+
             let replay_result = runtime
                 .replay_deploy_e(with_cost_accounting, term)
                 .await;
 
             let events = match replay_result {
                 Ok(_) => runtime.get_report().unwrap_or_default(),
-                Err(_) => Vec::new(),
+                Err(e) => {
+                    tracing::warn!(
+                        target: "f1r3fly.casper.reporting",
+                        deploy_index = idx,
+                        error = %e,
+                        "Deploy replay failed, returning empty events"
+                    );
+                    Vec::new()
+                }
             };
 
             deploy_results.push(DeployReportResult {
@@ -184,14 +193,29 @@ impl RhoReporterCasper {
         }
 
         let mut system_deploy_results = Vec::new();
-        for system_deploy in system_deploys {
+        for (idx, system_deploy) in system_deploys.iter().enumerate() {
+            tracing::debug!(
+                target: "f1r3fly.casper.reporting",
+                system_deploy_index = idx,
+                total_system_deploys = system_deploys.len(),
+                "Replaying system deploy for report"
+            );
+
             let replay_result = runtime
                 .replay_block_system_deploy(block_data, system_deploy)
                 .await;
 
             let events = match replay_result {
                 Ok(_) => runtime.get_report().unwrap_or_default(),
-                Err(_) => Vec::new(),
+                Err(e) => {
+                    tracing::warn!(
+                        target: "f1r3fly.casper.reporting",
+                        system_deploy_index = idx,
+                        error = %e,
+                        "System deploy replay failed, returning empty events"
+                    );
+                    Vec::new()
+                }
             };
 
             let system_deploy_data = match system_deploy {
@@ -226,11 +250,13 @@ pub fn rho_reporter(
     rspace_store: &RSpaceStore,
     block_store: &KeyValueBlockStore,
     block_dag_storage: &BlockDagKeyValueStorage,
+    external_services: rholang::rust::interpreter::external_services::ExternalServices,
 ) -> Arc<dyn ReportingCasper> {
     Arc::new(RhoReporterCasper {
         rspace_store: rspace_store.clone(),
         block_store: block_store.clone(),
         block_dag_storage: block_dag_storage.clone(),
+        external_services,
     })
 }
 
@@ -263,7 +289,6 @@ impl ReportingRuntime {
 
     /// Create a checkpoint and return the root hash
     pub fn create_checkpoint(&mut self) -> rspace_plus_plus::rspace::checkpoint::Checkpoint {
-        let _ = self.space.create_checkpoint();
         RhoRuntime::create_checkpoint(&mut self.runtime)
     }
 
@@ -321,30 +346,30 @@ impl ReportingRuntime {
     }
 
     /// Create a ReportingRuntime from a ReportingRspace
+    ///
+    /// Bootstraps registry without checkpoint, since the reporting space is
+    /// ephemeral and only used for event collection.
     pub async fn create_reporting_runtime(
         reporting_space: RhoReportingRspace,
         mergeable_tag_name: Par,
         extra_system_processes: &mut Vec<Definition>,
+        external_services: rholang::rust::interpreter::external_services::ExternalServices,
     ) -> Result<Self, String> {
         use rholang::rust::interpreter::rho_runtime::create_replay_rho_runtime;
 
-        // Create the runtime using the reporting space
-        // Now that ReportingRspace implements ISpace, we can use it directly
         let runtime = create_replay_rho_runtime(
             reporting_space.clone(),
             mergeable_tag_name,
-            true, // init_registry - bootstrap registry for reporting
+            false,
             extra_system_processes,
-            rholang::rust::interpreter::external_services::ExternalServices::noop(),
+            external_services,
         )
         .await;
 
         rholang::rust::interpreter::rho_runtime::bootstrap_registry(&runtime).await;
-        let mut runtime_mut = runtime;
-        RhoRuntime::create_checkpoint(&mut runtime_mut);
 
         Ok(ReportingRuntime {
-            runtime: runtime_mut,
+            runtime,
             space: reporting_space,
         })
     }

@@ -86,6 +86,7 @@ async fn check_transaction_api(
         &rspace_stores,
         &readonly.block_store,
         &readonly.block_dag_storage,
+        rholang::rust::interpreter::external_services::ExternalServices::noop(),
     );
 
     // Create store manager for ReportStore
@@ -116,6 +117,7 @@ async fn check_transaction_api(
         engine_cell,
         block_store,
         oracle,
+        false,
     );
 
     // Create TransactionAPI

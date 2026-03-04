@@ -243,7 +243,12 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
                 .r_space_stores()
                 .await
                 .map_err(|e| CasperError::Other(format!("Failed to get rspace stores: {}", e)))?;
-            reporting_casper::rho_reporter(&rspace_stores, &block_store, &block_dag_storage)
+            reporting_casper::rho_reporter(
+                &rspace_stores,
+                &block_store,
+                &block_dag_storage,
+                rholang::rust::interpreter::external_services::ExternalServices::noop(),
+            )
         } else {
             reporting_casper::noop()
         }
@@ -437,6 +442,7 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
         engine_cell.clone(),
         block_store.clone(),
         oracle,
+        conf.dev_mode,
     );
 
     // API Servers - gRPC services for REPL, Deploy, Propose, and LSP
