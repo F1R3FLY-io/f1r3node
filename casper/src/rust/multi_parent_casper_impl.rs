@@ -1407,7 +1407,13 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasper for MultiParentCasperImp
                 continue;
             }
 
-            let is_future = deploy.data.valid_after_block_number >= latest_block_number;
+            // Align with BlockCreator::not_future_deploy(next_block_num):
+            // a deploy is eligible for the *next* block when valid_after < next_block_num,
+            // i.e. valid_after <= latest_block_number.
+            let is_future = pending_deploy_is_future_for_next_block(
+                latest_block_number,
+                deploy.data.valid_after_block_number,
+            );
             let already_in_scope = snapshot.deploys_in_scope.contains(&deploy.sig);
 
             if !is_future && !already_in_scope {
@@ -1427,6 +1433,14 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasper for MultiParentCasperImp
 
         Ok(has_eligible_pending)
     }
+}
+
+#[inline]
+fn pending_deploy_is_future_for_next_block(
+    latest_block_number: i64,
+    valid_after_block_number: i64,
+) -> bool {
+    valid_after_block_number > latest_block_number
 }
 
 async fn compute_last_finalized_block(
@@ -1822,4 +1836,24 @@ pub fn finalised_event(block: &BlockMessage) -> F1r3flyEvent {
         creator,
         seq_num,
     )
+}
+
+#[cfg(test)]
+mod pending_deploy_tests {
+    use super::pending_deploy_is_future_for_next_block;
+
+    #[test]
+    fn pending_deploy_equal_to_latest_block_is_not_future_for_next_block() {
+        assert!(!pending_deploy_is_future_for_next_block(100, 100));
+    }
+
+    #[test]
+    fn pending_deploy_above_latest_block_is_future_for_next_block() {
+        assert!(pending_deploy_is_future_for_next_block(100, 101));
+    }
+
+    #[test]
+    fn pending_deploy_below_latest_block_is_not_future_for_next_block() {
+        assert!(!pending_deploy_is_future_for_next_block(100, 99));
+    }
 }
