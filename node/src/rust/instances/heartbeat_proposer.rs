@@ -339,6 +339,25 @@ async fn check_lfb_and_propose(
         0
     };
     let lfb_is_stale = time_since_lfb > config.max_lfb_age.as_millis();
+    // Use latest observed frontier timestamp as a second staleness signal.
+    // LFB may remain behind head under healthy operation; proposing recovery blocks
+    // while the frontier is already active creates avoidable empty-block churn.
+    let frontier_latest_timestamp_ms = snapshot
+        .dag
+        .latest_message_hashes()
+        .iter()
+        .filter_map(|entry| {
+            casper
+                .block_store()
+                .get(entry.value())
+                .ok()
+                .flatten()
+                .map(|block| block.header.timestamp as u128)
+        })
+        .max()
+        .unwrap_or(lfb_timestamp_ms);
+    let frontier_age_ms = now.saturating_sub(frontier_latest_timestamp_ms);
+    let frontier_is_stale = frontier_age_ms > config.max_lfb_age.as_millis();
     let last_finalized_block_number = snapshot
         .dag
         .lookup(&snapshot.last_finalized_block)?
@@ -401,13 +420,15 @@ async fn check_lfb_and_propose(
     let stale_lfb_recovery_due =
         lfb_is_stale && (!self_recently_proposed || can_chase_frontier_while_ahead);
     let lag_recovery_leader = is_lag_recovery_leader(&snapshot, validator_identity);
+    let lag_recovery_threshold = heartbeat_pending_deploy_max_lag();
+    let moderate_lag_recovery_threshold = std::cmp::max(1, lag_recovery_threshold / 2);
     let stale_lfb_leader_recovery_due = lfb_is_stale
+        && (frontier_is_stale || lfb_lag_blocks > moderate_lag_recovery_threshold)
         && !has_pending_deploys
         && lfb_lag_blocks > 0
         && lag_recovery_leader
         && !self_proposed_too_recently
         && !stale_lfb_recovery_due;
-    let lag_recovery_threshold = heartbeat_pending_deploy_max_lag();
     let high_lag_recovery_due =
         !has_pending_deploys
             && lfb_lag_blocks > lag_recovery_threshold
@@ -438,8 +459,8 @@ async fn check_lfb_and_propose(
             )
         } else if stale_lfb_leader_recovery_due {
             format!(
-                "LFB is stale and lag={} while regular stale recovery is throttled; selected recovery leader proposing to prevent deadlock",
-                lfb_lag_blocks
+                "LFB is stale ({}ms) with lag={}; regular stale recovery is throttled, selected recovery leader proposing (frontier_stale={}, moderate_lag_threshold={})",
+                time_since_lfb, lfb_lag_blocks, frontier_is_stale, moderate_lag_recovery_threshold
             )
         } else if high_lag_recovery_due {
             format!(
@@ -537,6 +558,16 @@ async fn check_lfb_and_propose(
             format!(
                 "LFB is stale with lag {}, regular stale recovery is throttled, waiting for selected recovery leader",
                 lfb_lag_blocks
+            )
+        } else if lfb_is_stale
+            && !has_pending_deploys
+            && !frontier_is_stale
+            && lfb_lag_blocks <= moderate_lag_recovery_threshold
+            && !stale_lfb_recovery_due
+        {
+            format!(
+                "LFB is stale ({}ms) but frontier is active ({}ms old) and lag={} <= moderate threshold {}; skipping leader recovery",
+                time_since_lfb, frontier_age_ms, lfb_lag_blocks, moderate_lag_recovery_threshold
             )
         } else if !has_pending_deploys
             && lfb_lag_blocks > lag_recovery_threshold
