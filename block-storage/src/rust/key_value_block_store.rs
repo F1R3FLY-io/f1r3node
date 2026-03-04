@@ -128,6 +128,35 @@ impl KeyValueBlockStore {
         Ok(has_any)
     }
 
+    /// Fetch deploy signatures for a block without decoding a full BlockMessage.
+    /// Uses the same bounded thread-local cache as `has_any_deploy_sig`.
+    pub fn deploy_sigs(&self, block_hash: &BlockHash) -> Result<Option<Vec<Vec<u8>>>, KvStoreError> {
+        let key = block_hash.to_vec();
+        if let Some(cached) = Self::cached_deploy_sigs(&key) {
+            return Ok(Some(cached));
+        }
+
+        let bytes = match self.store.get_one(&key)? {
+            Some(bytes) => bytes,
+            None => return Ok(None),
+        };
+
+        let body = Self::decode_block_deploy_sigs(&bytes)?;
+        let mut block_deploy_sigs = Vec::with_capacity(body.deploys.len());
+        for processed_deploy in body.deploys {
+            let deploy = processed_deploy.deploy.ok_or_else(|| {
+                KvStoreError::SerializationError(Self::error_block(
+                    block_hash.clone(),
+                    "Missing deploy field".to_string(),
+                ))
+            })?;
+            block_deploy_sigs.push(deploy.sig);
+        }
+
+        Self::cache_deploy_sigs(key, block_deploy_sigs.clone());
+        Ok(Some(block_deploy_sigs))
+    }
+
     pub fn has_any_deploy_sig_unsafe(
         &self,
         block_hash: &BlockHash,
@@ -281,6 +310,16 @@ impl KeyValueBlockStore {
                 .entries
                 .get(block_hash)
                 .map(|cached_sigs| cached_sigs.iter().any(|sig| deploy_sigs.contains(sig)))
+        })
+    }
+
+    fn cached_deploy_sigs(block_hash: &[u8]) -> Option<Vec<Vec<u8>>> {
+        DEPLOY_SIG_CACHE.with(|cache| {
+            cache
+                .borrow()
+                .entries
+                .get(block_hash)
+                .cloned()
         })
     }
 

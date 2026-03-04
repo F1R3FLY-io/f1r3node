@@ -378,10 +378,17 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
 
                 let all_deploys = Arc::new(dashmap::DashSet::new());
                 for block_metadata in traversal_result {
-                    let block = self.block_store.get(&block_metadata.block_hash)?.unwrap();
-                    let block_deploys = proto_util::deploys(&block);
-                    for processed_deploy in block_deploys {
-                        all_deploys.insert(processed_deploy.deploy.sig.clone());
+                    let block_deploy_sigs = self
+                        .block_store
+                        .deploy_sigs(&block_metadata.block_hash)?
+                        .ok_or_else(|| {
+                            CasperError::RuntimeError(format!(
+                                "Missing block {} during deploys_in_scope traversal",
+                                PrettyPrinter::build_string_bytes(&block_metadata.block_hash)
+                            ))
+                        })?;
+                    for deploy_sig in block_deploy_sigs {
+                        all_deploys.insert(deploy_sig.into());
                     }
                 }
 
