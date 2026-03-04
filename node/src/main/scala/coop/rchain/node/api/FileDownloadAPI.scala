@@ -34,28 +34,31 @@ object FileDownloadAPI {
       uploadDir: Path,
       ipAddress: String = "unknown",
       chunkSize: Int = 4 * 1024 * 1024,
-      maxConcurrentPerIp: Int = 4
+      maxConcurrentPerIp: Int = 4,
+      devMode: Boolean = false
   ): Observable[FileDownloadChunk] =
-    // Observer gate
-    if (!isNodeReadOnly)
+    // Observer gate — in dev mode, allow downloads from any node
+    if (!isNodeReadOnly && !devMode) {
       Observable.raiseError(
         new IllegalArgumentException(
           "File download can only be executed on a read-only f1r3node."
         )
       )
+    }
     // Hash format validation
-    else if (!HashPattern.pattern.matcher(request.fileHash).matches())
+    else if (!HashPattern.pattern.matcher(request.fileHash).matches()) {
       Observable.raiseError(
         new IllegalArgumentException(s"INVALID_ARGUMENT: fileHash format invalid")
       )
-    else {
+    } else {
       val filePath = uploadDir.resolve(request.fileHash)
-      if (!Files.exists(filePath))
+      if (!Files.exists(filePath)) {
         Observable.raiseError(
           new IllegalArgumentException(s"NOT_FOUND: file ${request.fileHash} not found")
         )
-      else
+      } else {
         acquireAndStream(filePath, request, ipAddress, chunkSize, maxConcurrentPerIp)
+      }
     }
 
   /**

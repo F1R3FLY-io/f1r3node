@@ -480,7 +480,8 @@ object DeployGrpcServiceV1 {
           isNodeReadOnly,
           uploadDir,
           chunkSize = fileChunkSize,
-          maxConcurrentPerIp = maxConcurrentDownloadsPerIp
+          maxConcurrentPerIp = maxConcurrentDownloadsPerIp,
+          devMode = devMode
         )
     }
 }

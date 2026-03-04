@@ -27,13 +27,11 @@ object FileAvailability {
     * @param block the block to scan
     * @return list of file hashes referenced by file-registration deploys
     */
-  def extractFileHashes(block: BlockMessage): List[String] =
-    block.body.deploys
-      .map(_.deploy)
-      .filter(d => OrphanFileCleanup.isFileRegistrationDeploy(d.data))
-      .flatMap(d => OrphanFileCleanup.extractFileHash(d.data))
-      .distinct
-      .toList
+  def extractFileHashes(block: BlockMessage): List[String] = {
+    val allDeploys  = block.body.deploys.map(_.deploy)
+    val fileDeploys = allDeploys.filter(d => OrphanFileCleanup.isFileRegistrationDeploy(d.data))
+    fileDeploys.flatMap(d => OrphanFileCleanup.extractFileHash(d.data)).distinct.toList
+  }
 
   /**
     * Checks whether all files referenced by a block's file-registration deploys
