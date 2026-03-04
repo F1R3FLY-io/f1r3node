@@ -9,6 +9,11 @@ use crate::rust::{
         engine::{self, Engine},
         engine_cell::EngineCell,
     },
+    metrics_constants::{
+        RUNNING_METRICS_SOURCE,
+        BLOCK_HASH_RECEIVED_METRIC,
+        BLOCK_REQUEST_RECEIVED_METRIC,
+    },
     errors::CasperError,
 };
 use async_trait::async_trait;
@@ -98,8 +103,7 @@ pub async fn update_fork_choice_tips_if_stuck<T: TransportLayer + Send + Sync>(
 
         // Check if any latest message is recent
         let mut has_recent_latest_message = false;
-        for entry in latest_messages.iter() {
-            let block_hash = entry.value();
+        for (_, block_hash) in latest_messages.iter() {
             if let Ok(Some(block)) = casper.block_store().get(block_hash) {
                 let block_timestamp = block.header.timestamp;
                 if (now - block_timestamp) < delay_threshold.as_millis() as i64 {
@@ -150,6 +154,7 @@ impl<T: TransportLayer + Send + Sync + 'static> Engine for Running<T> {
     async fn handle(&self, peer: PeerNode, msg: CasperMessage) -> Result<(), CasperError> {
         match msg {
             CasperMessage::BlockHashMessage(h) => {
+                metrics::counter!(BLOCK_HASH_RECEIVED_METRIC, "source" => RUNNING_METRICS_SOURCE).increment(1);
                 self.handle_block_hash_message(peer, h, |hash| self.ignore_casper_message(hash))
                     .await
             }
@@ -185,7 +190,10 @@ impl<T: TransportLayer + Send + Sync + 'static> Engine for Running<T> {
                 }
                 Ok(())
             }
-            CasperMessage::BlockRequest(br) => self.handle_block_request(peer, br).await,
+            CasperMessage::BlockRequest(br) => {
+                metrics::counter!(BLOCK_REQUEST_RECEIVED_METRIC, "source" => RUNNING_METRICS_SOURCE).increment(1);
+                self.handle_block_request(peer, br).await
+            }
 
             // TODO should node say it has block only after it is in DAG, or CasperBuffer is enough? Or even just BlockStore?
             // https://github.com/rchain/rchain/pull/2943#discussion_r449887701 -- OLD
@@ -456,7 +464,7 @@ impl<T: TransportLayer + Send + Sync> Running<T> {
         let latest_messages = self.casper.block_dag().await?.latest_message_hashes();
         let tips: Vec<BlockHash> = latest_messages
             .iter()
-            .map(|entry| entry.value().clone())
+            .map(|(_, v)| v.clone())
             .collect::<HashSet<_>>()
             .into_iter()
             .collect();

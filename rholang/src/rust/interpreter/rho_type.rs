@@ -5,7 +5,7 @@ use models::rhoapi::ETuple;
 use models::rhoapi::GPrivate;
 use models::rhoapi::GSysAuthToken;
 use models::rhoapi::GUnforgeable;
-use models::rhoapi::{expr::ExprInstance, Expr, GDeployerId, Par};
+use models::rhoapi::{expr::ExprInstance, Expr, GDeployerId, GDeployId, Par};
 use models::rust::rholang::implicits::{single_expr, single_unforgeable};
 use rspace_plus_plus::rspace::history::Either;
 
@@ -189,6 +189,30 @@ impl RhoDeployerId {
     }
 }
 
+pub struct RhoDeployId;
+
+impl RhoDeployId {
+    pub fn create_par(bytes: Vec<u8>) -> Par {
+        Par::default().with_unforgeables(vec![GUnforgeable {
+            unf_instance: Some(UnfInstance::GDeployIdBody(GDeployId {
+                sig: bytes,
+            })),
+        }])
+    }
+
+    pub fn unapply(p: &Par) -> Option<Vec<u8>> {
+        if let Some(expr) = single_unforgeable(&p) {
+            if let GUnforgeable {
+                unf_instance: Some(UnfInstance::GDeployIdBody(id)),
+            } = expr
+            {
+                return Some(id.sig);
+            }
+        }
+        None
+    }
+}
+
 pub struct RhoName;
 
 impl RhoName {
@@ -304,6 +328,14 @@ impl Extractor<RhoDeployerId> for RhoDeployerId {
 
     fn unapply(p: &Par) -> Option<Self::RustType> {
         RhoDeployerId::unapply(p)
+    }
+}
+
+impl Extractor<RhoDeployId> for RhoDeployId {
+    type RustType = Vec<u8>;
+
+    fn unapply(p: &Par) -> Option<Self::RustType> {
+        RhoDeployId::unapply(p)
     }
 }
 

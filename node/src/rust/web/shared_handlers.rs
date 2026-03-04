@@ -5,7 +5,7 @@ use crate::rust::api::{
     serde_types::{block_info::BlockInfoSerde, light_block_info::LightBlockInfoSerde},
     web_api::{
         DataAtNameRequest, DataAtNameResponse, DeployRequest, ExploreDeployRequest,
-        RhoDataResponse, WebApi,
+        RhoDataResponse, SimpleExploreDeployRequest, WebApi,
     },
 };
 use axum::{
@@ -111,7 +111,7 @@ pub async fn deploy_handler(
 #[utoipa::path(
     post,
     path = "/explore-deploy",
-    request_body(content = String, content_type = "application/json"),
+    request_body = SimpleExploreDeployRequest,
     responses(
         (status = 200, description = "Exploratory deploy successful", body = RhoDataResponse),
         (status = 400, description = "Invalid term or execution error"),
@@ -120,11 +120,11 @@ pub async fn deploy_handler(
 )]
 pub async fn explore_deploy_handler(
     State(app_state): State<AppState>,
-    Json(term): Json<String>,
+    Json(request): Json<SimpleExploreDeployRequest>,
 ) -> Response {
     match app_state
         .web_api
-        .exploratory_deploy(term, None, false)
+        .exploratory_deploy(request.term, None, false)
         .await
     {
         Ok(response) => Json(response).into_response(),

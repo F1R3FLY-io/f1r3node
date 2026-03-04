@@ -61,6 +61,109 @@ pub fn are_conflicting(a: &EventLogIndex, b: &EventLogIndex) -> bool {
     conflicts(a, b).0.is_empty() == false
 }
 
+/// Debug version that returns the reason for conflict.
+/// Returns None if no conflict, or Some(reason_string) if there is a conflict.
+pub fn conflict_reason(a: &EventLogIndex, b: &EventLogIndex) -> Option<String> {
+    // Check #1: Races for same IO event
+    let races_for_same_io_event = {
+        let shared_consumes: HashableSet<Consume> = HashableSet(
+            a.consumes_produced
+                .0
+                .intersection(&b.consumes_produced.0)
+                .cloned()
+                .collect(),
+        );
+        let mergeable_consumes: HashableSet<Consume> = HashableSet(
+            a.consumes_mergeable
+                .0
+                .intersection(&b.consumes_mergeable.0)
+                .cloned()
+                .collect(),
+        );
+        let consume_races: HashSet<Consume> = shared_consumes
+            .0
+            .difference(&mergeable_consumes.0)
+            .filter(|c| !c.persistent)
+            .cloned()
+            .collect();
+
+        let shared_produces: HashableSet<Produce> = HashableSet(
+            a.produces_consumed
+                .0
+                .intersection(&b.produces_consumed.0)
+                .cloned()
+                .collect(),
+        );
+        let mergeable_produces: HashableSet<Produce> = HashableSet(
+            a.produces_mergeable
+                .0
+                .intersection(&b.produces_mergeable.0)
+                .cloned()
+                .collect(),
+        );
+        let produce_races: HashSet<Produce> = shared_produces
+            .0
+            .difference(&mergeable_produces.0)
+            .filter(|p| !p.persistent)
+            .cloned()
+            .collect();
+
+        match (consume_races.is_empty(), produce_races.is_empty()) {
+            (false, false) => Some(format!(
+                "racesForSameIOEvent: consumeRaces={}, produceRaces={}",
+                consume_races.len(),
+                produce_races.len()
+            )),
+            (false, true) => Some(format!("racesForSameIOEvent: consumeRaces={}", consume_races.len())),
+            (true, false) => Some(format!("racesForSameIOEvent: produceRaces={}", produce_races.len())),
+            (true, true) => None,
+        }
+    };
+
+    // Check #2: Potential COMMs
+    let potential_comms = || {
+        fn match_found(consume: &Consume, produce: &Produce) -> bool {
+            consume.channel_hashes.contains(&produce.channel_hash)
+        }
+
+        fn check(left: &EventLogIndex, right: &EventLogIndex) -> usize {
+            let p = produces_created_and_not_destroyed(left);
+            let c = consumes_created_and_not_destroyed(right);
+            let mut count = 0;
+            for produce in &p.0 {
+                for consume in &c.0 {
+                    if match_found(consume, produce) {
+                        count += 1;
+                    }
+                }
+            }
+            count
+        }
+
+        let a_to_b = check(a, b);
+        let b_to_a = check(b, a);
+        if a_to_b > 0 || b_to_a > 0 {
+            Some(format!("potentialCOMMs: a->b={}, b->a={}", a_to_b, b_to_a))
+        } else {
+            None
+        }
+    };
+
+    // Check #3: Produce touch base join
+    let produce_touch_base_join = || {
+        let count = a.produces_touching_base_joins.0.len() + b.produces_touching_base_joins.0.len();
+        if count > 0 {
+            Some(format!("produceTouchBaseJoin: count={}", count))
+        } else {
+            None
+        }
+    };
+
+    races_for_same_io_event
+        .or_else(potential_comms)
+        .or_else(produce_touch_base_join)
+}
+
 /// Channels conflicting between a pair of event logs.
 pub fn conflicts(a: &EventLogIndex, b: &EventLogIndex) -> HashableSet<Blake2b256Hash> {
     // Check #1
@@ -727,6 +830,7 @@ mod tests {
             hash: Blake2b256Hash::from_bytes(vec![10]),
             is_deterministic: true,
             output_value: vec![],
+            failed: false,
         };
 
         let consume1 = Consume {
@@ -773,6 +877,7 @@ mod tests {
             hash: Blake2b256Hash::from_bytes(vec![10]),
             is_deterministic: true,
             output_value: vec![],
+            failed: false,
         };
 
         let produce2 = Produce {
@@ -781,6 +886,7 @@ mod tests {
             hash: Blake2b256Hash::from_bytes(vec![11]),
             is_deterministic: true,
             output_value: vec![],
+            failed: false,
         };
 
         // Test 1: No conflicts initially
@@ -832,6 +938,7 @@ mod tests {
             hash: Blake2b256Hash::from_bytes(vec![10]),
             is_deterministic: true,
             output_value: vec![],
+            failed: false,
         };
 
         let produce_persistent = Produce {
@@ -840,6 +947,7 @@ mod tests {
             hash: Blake2b256Hash::from_bytes(vec![11]),
             is_deterministic: true,
             output_value: vec![],
+            failed: false,
         };
 
         let produce_peek = Produce {
@@ -848,6 +956,7 @@ mod tests {
             hash: Blake2b256Hash::from_bytes(vec![12]),
             is_deterministic: true,
             output_value: vec![],
+            failed: false,
         };
 
         let consume = Consume {
@@ -892,6 +1001,7 @@ mod tests {
             hash: Blake2b256Hash::from_bytes(vec![10]),
             is_deterministic: true,
             output_value: vec![],
+            failed: false,
         };
 
         let produce_linear2 = Produce {
@@ -900,6 +1010,7 @@ mod tests {
             hash: Blake2b256Hash::from_bytes(vec![11]),
             is_deterministic: true,
             output_value: vec![],
+            failed: false,
         };
 
         let produce_persistent = Produce {
@@ -908,6 +1019,7 @@ mod tests {
             hash: Blake2b256Hash::from_bytes(vec![12]),
             is_deterministic: true,
             output_value: vec![],
+            failed: false,
         };
 
         let consume = Consume {
@@ -959,6 +1071,7 @@ mod tests {
             hash: Blake2b256Hash::from_bytes(vec![10]),
             is_deterministic: true,
             output_value: vec![],
+            failed: false,
         };
 
         // External produce that is consumed
@@ -968,6 +1081,7 @@ mod tests {
             hash: Blake2b256Hash::from_bytes(vec![11]),
             is_deterministic: true,
             output_value: vec![],
+            failed: false,
         };
 
         // Persistent external - shouldn't count as "affected"
@@ -977,6 +1091,7 @@ mod tests {
             hash: Blake2b256Hash::from_bytes(vec![12]),
             is_deterministic: true,
             output_value: vec![],
+            failed: false,
         };
 
         // Set up similar consumes
@@ -1038,6 +1153,7 @@ mod tests {
             hash: Blake2b256Hash::from_bytes(vec![10]),
             is_deterministic: true,
             output_value: vec![],
+            failed: false,
         };
 
         // Produce that's copied by peek in both but not created in either
@@ -1047,6 +1163,7 @@ mod tests {
             hash: Blake2b256Hash::from_bytes(vec![11]),
             is_deterministic: true,
             output_value: vec![],
+            failed: false,
         };
 
         // Set up data
@@ -1092,6 +1209,7 @@ mod tests {
             hash: Blake2b256Hash::from_bytes(vec![1]),
             is_deterministic: true,
             output_value: vec![],
+            failed: false,
         };
 
         e.produces_linear.0.insert(p.clone());
@@ -1105,5 +1223,41 @@ mod tests {
 
         // Not affected since it's consumed but also created in the same log
         assert!(produces_affected(&e).0.is_empty());
+    }
+
+    #[test]
+    fn compute_rejection_options_deterministic_regardless_of_iteration() {
+        // Create a conflict map where multiple rejection options have equal cost
+        let mut conflict_map: HashMap<i32, HashableSet<i32>> = HashMap::new();
+        conflict_map.insert(1, HashableSet(HashSet::from_iter(vec![2, 3])));
+        conflict_map.insert(2, HashableSet(HashSet::from_iter(vec![1, 3])));
+        conflict_map.insert(3, HashableSet(HashSet::from_iter(vec![1, 2])));
+
+        // Run multiple times to verify determinism
+        let results: Vec<_> = (0..10)
+            .map(|_| compute_rejection_options(&conflict_map))
+            .collect();
+
+        // All results must be identical
+        for r in &results[1..] {
+            assert_eq!(results[0], *r, "compute_rejection_options must be deterministic");
+        }
+    }
+
+    #[test]
+    fn compute_rejection_options_deterministic_with_larger_conflict_maps() {
+        let mut conflict_map: HashMap<i32, HashableSet<i32>> = HashMap::new();
+        conflict_map.insert(1, HashableSet(HashSet::from_iter(vec![2, 4])));
+        conflict_map.insert(2, HashableSet(HashSet::from_iter(vec![1, 3])));
+        conflict_map.insert(3, HashableSet(HashSet::from_iter(vec![2, 4])));
+        conflict_map.insert(4, HashableSet(HashSet::from_iter(vec![1, 3])));
+
+        let results: Vec<_> = (0..10)
+            .map(|_| compute_rejection_options(&conflict_map))
+            .collect();
+
+        for r in &results[1..] {
+            assert_eq!(results[0], *r, "compute_rejection_options must be deterministic");
+        }
     }
 }

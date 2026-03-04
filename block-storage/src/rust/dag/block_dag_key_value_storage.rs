@@ -1,9 +1,8 @@
 // See block-storage/src/main/scala/coop/rchain/blockstorage/dag/BlockDagKeyValueStorage.scala
 
-use dashmap::{DashMap, DashSet};
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
+    collections::{BTreeSet, HashMap, HashSet},
     sync::{Arc, RwLock},
 };
 
@@ -26,15 +25,18 @@ use super::{
 
 pub type DeployId = shared::rust::ByteString;
 
+/// Immutable point-in-time snapshot of the DAG state.
+/// Uses imbl persistent collections for O(1) clone via structural sharing.
+/// Safe to use concurrently — snapshot is fully independent of live DAG mutations.
 #[derive(Clone)]
 pub struct KeyValueDagRepresentation {
-    pub dag_set: Arc<DashSet<BlockHash>>,
-    pub latest_messages_map: Arc<DashMap<Validator, BlockHash>>,
-    pub child_map: Arc<DashMap<BlockHash, Arc<DashSet<BlockHash>>>>,
-    pub height_map: Arc<RwLock<BTreeMap<i64, DashSet<BlockHash>>>>,
-    pub invalid_blocks_set: Arc<DashSet<BlockMetadata>>,
+    pub dag_set: imbl::HashSet<BlockHash>,
+    pub latest_messages_map: imbl::HashMap<Validator, BlockHash>,
+    pub child_map: imbl::HashMap<BlockHash, imbl::HashSet<BlockHash>>,
+    pub height_map: imbl::OrdMap<i64, imbl::HashSet<BlockHash>>,
+    pub invalid_blocks_set: imbl::HashSet<BlockMetadata>,
     pub last_finalized_block_hash: BlockHash,
-    pub finalized_blocks_set: Arc<DashSet<BlockHash>>,
+    pub finalized_blocks_set: imbl::HashSet<BlockHash>,
     pub block_metadata_index: Arc<RwLock<BlockMetadataStore>>,
     pub deploy_index: Arc<RwLock<KeyValueTypedStoreImpl<DeployId, BlockHashSerde>>>,
 }
@@ -53,21 +55,19 @@ impl KeyValueDagRepresentation {
         block_hash.len() == block_hash::LENGTH && self.dag_set.contains(block_hash)
     }
 
-    pub fn children(&self, block_hash: &BlockHash) -> Option<Arc<DashSet<BlockHash>>> {
-        self.child_map.get(block_hash).map(|v| v.value().clone())
+    pub fn children(&self, block_hash: &BlockHash) -> Option<imbl::HashSet<BlockHash>> {
+        self.child_map.get(block_hash).cloned()
     }
 
     pub fn latest_message_hash(&self, validator: &Validator) -> Option<BlockHash> {
-        self.latest_messages_map
-            .get(validator)
-            .map(|v| v.value().clone())
+        self.latest_messages_map.get(validator).cloned()
     }
 
-    pub fn latest_message_hashes(&self) -> Arc<DashMap<Validator, BlockHash>> {
+    pub fn latest_message_hashes(&self) -> imbl::HashMap<Validator, BlockHash> {
         self.latest_messages_map.clone()
     }
 
-    pub fn invalid_blocks(&self) -> Arc<DashSet<BlockMetadata>> {
+    pub fn invalid_blocks(&self) -> imbl::HashSet<BlockMetadata> {
         self.invalid_blocks_set.clone()
     }
 
@@ -79,12 +79,11 @@ impl KeyValueDagRepresentation {
     // Do they need to be part of the DAG current state or they can be moved to DAG storage directly?
 
     pub fn get_max_height(&self) -> i64 {
-        let height_map_guard = self.height_map.read().unwrap();
-        if height_map_guard.is_empty() {
+        if self.height_map.is_empty() {
             0
         } else {
-            height_map_guard
-                .last_key_value()
+            self.height_map
+                .get_max()
                 .expect("height_map is empty")
                 .0
                 + 1
@@ -105,7 +104,7 @@ impl KeyValueDagRepresentation {
             self.dag_set
                 .iter()
                 .find(|hash| hash.starts_with(&truncated_bytes))
-                .map(|v| v.clone())
+                .cloned()
         } else {
             // if truncatedHash is odd length string we cannot convert it to ByteString with 8 bit resolution
             // because each symbol has 4 bit resolution. Need to make a string of even length by removing the last symbol,
@@ -116,7 +115,7 @@ impl KeyValueDagRepresentation {
                 .iter()
                 .filter(|hash| hash.starts_with(&truncated_bytes))
                 .find(|hash| hex::encode(&**hash).starts_with(truncated_hash))
-                .map(|v| v.clone())
+                .cloned()
         }
     }
 
@@ -134,10 +133,8 @@ impl KeyValueDagRepresentation {
         if start_number >= 0 && start_number <= end_number {
             Ok(self
                 .height_map
-                .read()
-                .unwrap()
                 .range(start_number..=end_number)
-                .map(|(_, hashes)| hashes.iter().map(|hash_ref| hash_ref.clone()).collect())
+                .map(|(_, hashes)| hashes.iter().cloned().collect())
                 .collect())
         } else {
             Err(KvStoreError::InvalidArgument(format!(
@@ -195,10 +192,7 @@ impl KeyValueDagRepresentation {
         validator: &Validator,
     ) -> Result<Option<BlockMetadata>, KvStoreError> {
         match self.latest_message_hash(validator) {
-          // Use lookup() instead of lookup_unsafe() to handle race conditions gracefully
-          // In parallel test execution with shared LMDB, the hash might exist in latest_messages_map
-          // but the metadata might not be persisted yet in block_metadata_index
-          Some(hash) => self.lookup(&hash),
+            Some(hash) => self.lookup_unsafe(&hash).map(Some),
             None => Ok(None),
         }
     }
@@ -207,14 +201,9 @@ impl KeyValueDagRepresentation {
         let latest_messages = self.latest_message_hashes();
 
         let mut result = HashMap::new();
-        for pair in latest_messages.iter() {
-            let validator = pair.key().clone();
-            let hash = pair.value();
-            // Use lookup() instead of lookup_unsafe() to handle race conditions gracefully
-            // Skip entries where metadata is not yet available (can happen in parallel tests)
-            if let Some(metadata) = self.lookup(&hash)? {
-                result.insert(validator, metadata);
-            }
+        for (validator, hash) in latest_messages.iter() {
+            let metadata = self.lookup_unsafe(hash)?;
+            result.insert(validator.clone(), metadata);
         }
 
         Ok(result)
@@ -433,6 +422,9 @@ impl KeyValueDagRepresentation {
 
 #[derive(Clone)]
 pub struct BlockDagKeyValueStorage {
+    /// Global lock to ensure atomic snapshots, similar to Scala's lock.withPermit.
+    /// This prevents race conditions during concurrent DAG modifications.
+    pub global_lock: Arc<std::sync::Mutex<()>>,
     pub latest_messages_index: KeyValueTypedStoreImpl<ValidatorSerde, BlockHashSerde>,
     pub block_metadata_index: Arc<RwLock<BlockMetadataStore>>,
     pub deploy_index: Arc<RwLock<KeyValueTypedStoreImpl<DeployId, BlockHashSerde>>>,
@@ -467,6 +459,7 @@ impl BlockDagKeyValueStorage {
             KeyValueTypedStoreImpl::new(deploy_index_kv_store);
 
         Ok(Self {
+            global_lock: Arc::new(std::sync::Mutex::new(())),
             block_metadata_index: Arc::new(RwLock::new(block_metadata_store)),
             deploy_index: Arc::new(RwLock::new(deploy_index_db)),
             invalid_blocks_index: invalid_blocks_db,
@@ -497,8 +490,19 @@ impl BlockDagKeyValueStorage {
         })
     }
 
+    /// Public method to get DAG representation with global lock protection.
+    /// Matches Scala's lock.withPermit(representation).
     pub fn get_representation(&self) -> KeyValueDagRepresentation {
-        let latest_messages = self
+        // Acquire global lock to ensure atomic snapshot
+        let _lock_guard = self.global_lock.lock().unwrap();
+        self.get_representation_internal()
+    }
+
+    /// Internal method to get representation without acquiring lock.
+    /// Used when lock is already held by the caller.
+    /// Public to allow IndexedBlockDagStorage to use it.
+    pub fn get_representation_internal(&self) -> KeyValueDagRepresentation {
+        let latest_messages: imbl::HashMap<Validator, BlockHash> = self
             .latest_messages_index
             .to_map()
             .expect("Failed to convert latest_messages_index to map")
@@ -506,7 +510,7 @@ impl BlockDagKeyValueStorage {
             .map(|(k, v)| (k.into(), v.into()))
             .collect();
 
-        let invalid_blocks = self
+        let invalid_blocks: imbl::HashSet<BlockMetadata> = self
             .invalid_blocks_index
             .to_map()
             .expect("Failed to convert invalid_blocks_index to map")
@@ -514,19 +518,32 @@ impl BlockDagKeyValueStorage {
             .map(|(_, v)| v)
             .collect();
 
+        // Take O(1) snapshot of DagState via imbl structural sharing.
+        // This is the key fix: the cloned collections are fully independent
+        // of any concurrent mutations to the live DagState.
         let block_metadata_index_guard = self.block_metadata_index.read().unwrap();
-        let dag_set = block_metadata_index_guard.dag_set();
-        let child_map = block_metadata_index_guard.child_map();
-        let height_map = block_metadata_index_guard.height_map();
-        let last_finalized_block = block_metadata_index_guard.last_finalized_block();
-        let finalized_blocks = block_metadata_index_guard.finalized_block_set();
+        let dag_state_guard = block_metadata_index_guard.dag_state().read().unwrap();
+
+        let dag_set = dag_state_guard.dag_set.clone();
+        let child_map = dag_state_guard.child_map.clone();
+        let height_map = dag_state_guard.height_map.clone();
+        let last_finalized_block = dag_state_guard
+            .last_finalized_block
+            .as_ref()
+            .expect("DagState does not contain lastFinalizedBlock.")
+            .0
+            .clone();
+        let finalized_blocks = dag_state_guard.finalized_block_set.clone();
+
+        drop(dag_state_guard);
+        drop(block_metadata_index_guard);
 
         KeyValueDagRepresentation {
             dag_set,
-            latest_messages_map: Arc::new(latest_messages),
+            latest_messages_map: latest_messages,
             child_map,
             height_map,
-            invalid_blocks_set: Arc::new(invalid_blocks),
+            invalid_blocks_set: invalid_blocks,
             last_finalized_block_hash: last_finalized_block,
             finalized_blocks_set: finalized_blocks,
             block_metadata_index: self.block_metadata_index.clone(),
@@ -535,6 +552,20 @@ impl BlockDagKeyValueStorage {
     }
 
     pub fn insert(
+        &self,
+        block: &BlockMessage,
+        invalid: bool,
+        approved: bool,
+    ) -> Result<KeyValueDagRepresentation, KvStoreError> {
+        // Acquire global lock to ensure atomic insert operation
+        let _lock_guard = self.global_lock.lock().unwrap();
+        self.insert_internal(block, invalid, approved)
+    }
+
+    /// Internal method to insert without acquiring lock.
+    /// Used when lock is already held by the caller.
+    /// Public to allow IndexedBlockDagStorage to use it.
+    pub fn insert_internal(
         &self,
         block: &BlockMessage,
         invalid: bool,
@@ -593,7 +624,7 @@ impl BlockDagKeyValueStorage {
 
         if block_exists {
             tracing::warn!("{}", log_already_stored);
-            Ok(self.get_representation())
+            Ok(self.get_representation_internal())
         } else {
             let block_hash = block.block_hash.clone();
             let block_hash_is_invalid = !(block_hash.len() == block_hash::LENGTH);
@@ -680,7 +711,7 @@ impl BlockDagKeyValueStorage {
                 block_metadata_guard.record_finalized(block_hash, HashSet::new())?;
             }
 
-            Ok(self.get_representation())
+            Ok(self.get_representation_internal())
         }
     }
 
@@ -688,6 +719,8 @@ impl BlockDagKeyValueStorage {
         &self,
         f: impl Fn(&EquivocationTrackerStore) -> Result<A, KvStoreError>,
     ) -> Result<A, KvStoreError> {
+        // Acquire global lock for consistent equivocation tracker access
+        let _lock_guard = self.global_lock.lock().unwrap();
         f(&self.equivocation_tracker_index)
     }
 
@@ -701,27 +734,39 @@ impl BlockDagKeyValueStorage {
         F: FnMut(&HashSet<BlockHash>) -> Fut,
         Fut: std::future::Future<Output = Result<(), KvStoreError>>,
     {
-        let dag = self.get_representation();
-        if !dag.contains(&directly_finalized_hash) {
-            return Err(KvStoreError::InvalidArgument(format!(
-                "Attempting to finalize nonexistent hash {}",
-                PrettyPrinter::build_string_bytes(&directly_finalized_hash)
-            )));
-        }
+        // Compute finalized blocks under lock (must drop before .await)
+        let (indirectly_finalized, all_finalized) = {
+            let _lock_guard = self.global_lock.lock().unwrap();
+            
+            let dag = self.get_representation_internal();
+            if !dag.contains(&directly_finalized_hash) {
+                return Err(KvStoreError::InvalidArgument(format!(
+                    "Attempting to finalize nonexistent hash {}",
+                    PrettyPrinter::build_string_bytes(&directly_finalized_hash)
+                )));
+            }
 
-        let dag = self.get_representation();
-        let indirectly_finalized = dag.ancestors(directly_finalized_hash.clone(), |hash| {
-            !dag.is_finalized(&hash)
-        })?;
+            let indirectly_finalized = dag.ancestors(directly_finalized_hash.clone(), |hash| {
+                !dag.is_finalized(&hash)
+            })?;
 
-        let mut all_finalized = indirectly_finalized.clone();
-        all_finalized.insert(directly_finalized_hash.clone());
+            let mut all_finalized = indirectly_finalized.clone();
+            all_finalized.insert(directly_finalized_hash.clone());
+            
+            (indirectly_finalized, all_finalized)
+            // Lock is dropped here before .await
+        };
 
+        // Execute async effect without holding lock
         finalization_effect(&all_finalized).await?;
 
-        let mut block_metadata_index_guard = self.block_metadata_index.write().unwrap();
-        block_metadata_index_guard
-            .record_finalized(directly_finalized_hash, indirectly_finalized)?;
+        // Re-acquire lock to persist changes
+        {
+            let _lock_guard = self.global_lock.lock().unwrap();
+            let mut block_metadata_index_guard = self.block_metadata_index.write().unwrap();
+            block_metadata_index_guard
+                .record_finalized(directly_finalized_hash, indirectly_finalized)?;
+        }
 
         Ok(())
     }

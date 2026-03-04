@@ -58,7 +58,7 @@ pub fn source_deploy(
         phlo_limit,
         valid_after_block_number,
         shard_id,
-        language: "rholang".to_string(),
+        expiration_timestamp: None,
     };
 
     Signed::create(data, Box::new(Secp256k1), sec).map_err(|e| CasperError::SigningError(e))

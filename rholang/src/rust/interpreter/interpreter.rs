@@ -155,6 +155,13 @@ impl InterpreterImpl {
                 mergeable: HashSet::new(),
             }),
 
+            // User triggered abort - execution failed, return cost consumed so far
+            InterpreterError::UserAbortError => Ok(EvaluateResult {
+                cost: initial_cost.clone() - self.c.get(),
+                errors: vec![error],
+                mergeable: HashSet::new(),
+            }),
+
             // InterpreterError(s) - multiple errors are result of parallel execution
             InterpreterError::AggregateError { interpreter_errors } => Ok(EvaluateResult {
                 cost: initial_cost,

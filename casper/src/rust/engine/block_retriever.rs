@@ -15,6 +15,12 @@ use tracing::{debug, info};
 use models::rust::{block_hash::BlockHash, casper::pretty_printer::PrettyPrinter};
 
 use crate::rust::errors::CasperError;
+use crate::rust::metrics_constants::{
+    BLOCK_RETRIEVER_METRICS_SOURCE,
+    BLOCK_REQUESTS_TOTAL_METRIC,
+    BLOCK_REQUESTS_RETRIES_METRIC,
+    BLOCK_DOWNLOAD_END_TO_END_TIME_METRIC,
+};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum AdmitHashReason {
@@ -41,6 +47,7 @@ pub struct AdmitHashResult {
 #[derive(Debug, Clone)]
 pub struct RequestState {
     pub timestamp: u64,
+    pub initial_timestamp: u64,
     pub peers: HashSet<PeerNode>,
     pub received: bool,
     pub in_casper_buffer: bool,
@@ -132,6 +139,7 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
                 hash,
                 RequestState {
                     timestamp: now,
+                    initial_timestamp: now,
                     peers: HashSet::new(),
                     received: mark_as_received,
                     in_casper_buffer: false,
@@ -168,6 +176,7 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
 
             if unknown_hash {
                 // Add new request
+                metrics::counter!(BLOCK_REQUESTS_TOTAL_METRIC, "source" => BLOCK_RETRIEVER_METRICS_SOURCE).increment(1);
                 Self::add_new_request(&mut state, hash.clone(), now, false, peer.as_ref());
                 AdmitHashResult {
                     status: AdmitHashStatus::NewRequestAdded,
@@ -305,6 +314,7 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
 
             // Try to re-request if needed
             if should_rerequest {
+                metrics::counter!(BLOCK_REQUESTS_RETRIES_METRIC, "source" => BLOCK_RETRIEVER_METRICS_SOURCE).increment(1);
                 self.try_rerequest(&hash).await?;
             }
 
@@ -395,7 +405,7 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
         let now = Self::current_millis();
 
         // Lock the requested_blocks mutex and modify state atomically
-        let result = {
+        let (result, request_timestamp) = {
             let mut state = self.requested_blocks.lock().map_err(|_| {
                 CasperError::RuntimeError("Failed to acquire requested_blocks lock".to_string())
             })?;
@@ -404,17 +414,26 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
                 // There might be blocks that are not maintained by RequestedBlocks, e.g. fork-choice tips
                 None => {
                     Self::add_new_request(&mut state, hash.clone(), now, true, None);
-                    AckReceiveResult::AddedAsReceived
+                    (AckReceiveResult::AddedAsReceived, None)
                 }
                 Some(requested) => {
+                    let initial_timestamp = requested.initial_timestamp;
                     // Make Casper loop aware that the block has been received
                     let mut updated_request = requested.clone();
                     updated_request.received = true;
                     state.insert(hash.clone(), updated_request);
-                    AckReceiveResult::MarkedAsReceived
+                    (AckReceiveResult::MarkedAsReceived, Some(initial_timestamp))
                 }
             }
         };
+
+        // Record block download end-to-end time if we have the original request timestamp
+        if let Some(timestamp) = request_timestamp {
+            let download_time_ms = now.saturating_sub(timestamp);
+            let download_time_seconds = download_time_ms as f64 / 1000.0;
+            metrics::histogram!(BLOCK_DOWNLOAD_END_TO_END_TIME_METRIC, "source" => BLOCK_RETRIEVER_METRICS_SOURCE)
+                .record(download_time_seconds);
+        }
 
         // Log based on the result
         match result {

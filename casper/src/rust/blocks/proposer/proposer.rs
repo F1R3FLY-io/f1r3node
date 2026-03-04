@@ -16,6 +16,7 @@ use models::rust::casper::protocol::casper_message::BlockMessage;
 use shared::rust::shared::f1r3fly_events::F1r3flyEvents;
 
 use crate::rust::{
+    block_status::{BlockError, InvalidBlock},
     blocks::proposer::{
         block_creator,
         propose_result::{
@@ -103,6 +104,9 @@ pub trait ProposeEffectHandler {
         casper: Arc<dyn Casper + Send + Sync + 'static>,
         block: &BlockMessage,
     ) -> Result<(), CasperError>;
+
+    /// Publish BlockCreated event immediately after block creation (before validation).
+    fn publish_block_created(&self, block: &BlockMessage) -> Result<(), CasperError>;
 }
 
 pub enum ProposerResult {
@@ -149,6 +153,9 @@ where
     pub block_creator: BC,
     pub block_validator: BV,
     pub propose_effect_handler: E,
+    /// When true, allows creating blocks with only system deploys (no user deploys).
+    /// This is required for heartbeat to create empty blocks for liveness.
+    pub allow_empty_blocks: bool,
 }
 
 impl<C, A, S, H, BC, BV, E> Proposer<C, A, S, H, BC, BV, E>
@@ -171,6 +178,7 @@ where
         block_creator: BC,
         block_validator: BV,
         propose_effect_handler: E,
+        allow_empty_blocks: bool,
     ) -> Self {
         Self {
             validator,
@@ -182,6 +190,7 @@ where
             block_creator,
             block_validator,
             propose_effect_handler,
+            allow_empty_blocks,
         }
     }
 
@@ -206,7 +215,7 @@ where
                         casper_snapshot,
                         &self.validator,
                         self.dummy_deploy_opt.clone(),
-                        false,
+                        self.allow_empty_blocks,
                     )
                     .await?;
 
@@ -215,6 +224,9 @@ where
                         Ok((ProposeResult::failure(ProposeFailure::NoNewDeploys), None))
                     }
                     BlockCreatorResult::Created(block) => {
+                        // Publish BlockCreated event immediately after block is created (before validation)
+                        self.propose_effect_handler.publish_block_created(&block)?;
+
                         let validation_result = self
                             .block_validator
                             .validate_block(casper.clone(), casper_snapshot, &block)
@@ -228,10 +240,43 @@ where
                                 Ok((ProposeResult::success(valid_status), Some(block)))
                             }
                             ValidBlockProcessing::Left(invalid_reason) => {
-                                return Err(CasperError::RuntimeError(format!(
-                                    "Validation of self created block failed with reason: {:?}, cancelling propose.",
-                                    invalid_reason
-                                )));
+                                // Transient conditions: DAG/state changed between snapshot
+                                // and block creation. These are expected in a concurrent
+                                // multi-validator network and will resolve on the next
+                                // heartbeat cycle with a fresh snapshot.
+                                let is_transient = matches!(
+                                    invalid_reason,
+                                    BlockError::Invalid(
+                                        InvalidBlock::InvalidParents
+                                            | InvalidBlock::InvalidBondsCache
+                                            | InvalidBlock::InvalidTransaction
+                                            | InvalidBlock::InvalidRejectedDeploy
+                                            | InvalidBlock::ContainsExpiredDeploy
+                                            | InvalidBlock::ContainsTimeExpiredDeploy
+                                            | InvalidBlock::InvalidTimestamp
+                                    )
+                                );
+
+                                if is_transient {
+                                    tracing::error!(
+                                        "Self-created block validation failed with transient reason: {:?} \
+                                         -- discarding block and will retry on next heartbeat",
+                                        invalid_reason
+                                    );
+                                    Ok((
+                                        ProposeResult::failure(ProposeFailure::InternalDeployError),
+                                        None,
+                                    ))
+                                } else {
+                                    // Structural errors: indicate a bug in block creation code.
+                                    // These will never self-heal on retry, so error to make
+                                    // the problem immediately visible to the operator.
+                                    Err(CasperError::RuntimeError(format!(
+                                        "Self-created block validation failed with structural error: {:?} \
+                                         -- this indicates a bug in block creation",
+                                        invalid_reason
+                                    )))
+                                }
                             }
                         }
                     }
@@ -301,10 +346,27 @@ where
         let start_time = std::time::Instant::now();
 
         // get snapshot to serve as a base for propose
-        let mut casper_snapshot = self
+        let mut casper_snapshot = match self
             .casper_snapshot_provider
             .get_casper_snapshot(casper.clone())
-            .await?;
+            .await
+        {
+            Ok(snapshot) => snapshot,
+            Err(CasperError::FinalizationInProgress) => {
+                // Finalization is in progress -- the snapshot cannot be obtained right now.
+                // This is a transient condition that resolves within seconds once finalization
+                // completes. Skip this propose cycle; the heartbeat will trigger another attempt.
+                tracing::info!(
+                    "Snapshot unavailable: finalization in progress, skipping propose cycle"
+                );
+                return Ok(ProposeReturnType {
+                    propose_result: ProposeResult::failure(ProposeFailure::InternalDeployError),
+                    propose_result_to_send: ProposerResult::empty(),
+                    block_message_opt: None,
+                });
+            }
+            Err(e) => return Err(e),
+        };
 
         let elapsed = start_time.elapsed();
         tracing::info!("getCasperSnapshot [{}ms]", elapsed.as_millis());
@@ -374,6 +436,7 @@ pub fn new_proposer<T: TransportLayer + Send + Sync>(
     connections_cell: ConnectionsCell,
     conf: RPConf,
     event_publisher: F1r3flyEvents,
+    allow_empty_blocks: bool,
 ) -> ProductionProposer<T> {
     let validator_arc = Arc::new(validator);
 
@@ -398,6 +461,7 @@ pub fn new_proposer<T: TransportLayer + Send + Sync>(
             conf,
             event_publisher,
         ),
+        allow_empty_blocks,
     )
 }
 
@@ -575,7 +639,7 @@ impl<T: TransportLayer + Send + Sync> ProposeEffectHandler for ProductionPropose
         // store block
         self.block_store.put_block_message(block)?;
 
-        // save changes to Casper
+        // save changes to Casper (publishes BlockAdded and BlockFinalised events)
         casper.handle_valid_block(block).await?;
 
         // inform block retriever about block
@@ -593,11 +657,13 @@ impl<T: TransportLayer + Send + Sync> ProposeEffectHandler for ProductionPropose
             )
             .await?;
 
-        // Publish event
+        Ok(())
+    }
+
+    fn publish_block_created(&self, block: &BlockMessage) -> Result<(), CasperError> {
+        // Publish BlockCreated event
         self.event_publisher
             .publish(multi_parent_casper_impl::created_event(block))
-            .map_err(|e| CasperError::RuntimeError(e.to_string()))?;
-
-        Ok(())
+            .map_err(|e| CasperError::RuntimeError(e.to_string()))
     }
 }

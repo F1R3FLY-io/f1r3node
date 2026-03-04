@@ -156,7 +156,7 @@ impl DeployRuntime {
                 phlo_limit,
                 valid_after_block_number: valid_after_block,
                 shard_id: shard_id.to_string(),
-                language: "rho".to_string(), // Default language
+                expiration_timestamp: None,
             };
 
             // Signed(d, Secp256k1, privateKey)

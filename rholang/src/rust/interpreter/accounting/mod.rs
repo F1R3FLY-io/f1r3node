@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use costs::Cost;
-use tokio::sync::Semaphore;
+use shared::rust::{metrics_constants::COST_ACCOUNTING_METRICS_SOURCE, metrics_semaphore::MetricsSemaphore};
 
 use super::errors::InterpreterError;
 
@@ -16,7 +16,7 @@ pub type _cost = CostManager;
 #[derive(Clone)]
 pub struct CostManager {
     state: Arc<Mutex<Cost>>,
-    semaphore: Arc<Semaphore>,
+    semaphore: Arc<MetricsSemaphore>,
     log: Arc<Mutex<Vec<Cost>>>,
 }
 
@@ -24,18 +24,28 @@ impl CostManager {
     pub fn new(initial_value: Cost, semaphore_count: usize) -> Self {
         Self {
             state: Arc::new(Mutex::new(initial_value)),
-            semaphore: Arc::new(Semaphore::new(semaphore_count)),
+            semaphore: Arc::new(MetricsSemaphore::new(
+                semaphore_count,
+                COST_ACCOUNTING_METRICS_SOURCE,
+            )),
             log: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
     pub fn charge(&self, amount: Cost) -> Result<(), InterpreterError> {
-        let permit = self
-            .semaphore
-            .try_acquire()
-            .map_err(|_| InterpreterError::SetupError("Failed to acquire semaphore".to_string()))?;
+        let permit = self.semaphore.try_acquire();
+        // Scala: if (permit == None) throw SetupError
+        if permit.is_none() {
+            return Err(InterpreterError::SetupError(
+                "Failed to acquire semaphore".to_string(),
+            ));
+        }
+        let permit = permit.unwrap();
 
-        let mut current_cost = self.state.try_lock().unwrap();
+        let mut current_cost = self
+            .state
+            .try_lock()
+            .map_err(|_| InterpreterError::SetupError("Failed to lock cost state".to_string()))?;
 
         // Scala: if (c.value < 0) error.raiseError[Unit](OutOfPhlogistonsError)
         if current_cost.value < 0 {
@@ -53,7 +63,10 @@ impl CostManager {
         // 2. After:  error.ensure(cost.get)(...)(_.value >= 0)
         // The second check catches cases where: current_value - amount < 0
         // Example: current=1, amount=3 → after=(-2) → OutOfPhlogistonsError
-        let final_cost = self.state.try_lock().unwrap();
+        let final_cost = self
+            .state
+            .try_lock()
+            .map_err(|_| InterpreterError::SetupError("Failed to lock cost state".to_string()))?;
         if final_cost.value < 0 {
             return Err(InterpreterError::OutOfPhlogistonsError);
         }

@@ -129,7 +129,6 @@ impl<T: TransportLayer + Send + Sync + 'static> BlockApproverProtocol<T> {
         runtime_manager: &mut RuntimeManager,
         candidate: &ApprovedBlockCandidate,
         required_sigs: i32,
-        deploy_timestamp: i64,
         vaults: &Vec<Vault>,
         bonds: &HashMap<Bytes, i64>,
         minimum_bond: i64,
@@ -183,10 +182,10 @@ impl<T: TransportLayer + Send + Sync + 'static> BlockApproverProtocol<T> {
             pos_multi_sig_quorum,
         };
 
-        // Expected blessed contracts
+        // Expected blessed contracts — must use hardcoded genesis timestamp
+        // so that all validators produce identical blessed contracts regardless of wall-clock time.
         let genesis_blessed_contracts =
-            crate::rust::genesis::genesis::Genesis::default_blessed_terms_with_timestamp(
-                deploy_timestamp,
+            crate::rust::genesis::genesis::Genesis::default_blessed_terms(
                 &pos_params,
                 vaults,
                 i64::MAX,
@@ -272,7 +271,6 @@ impl<T: TransportLayer + Send + Sync + 'static> BlockApproverProtocol<T> {
             runtime_manager,
             candidate,
             self.required_sigs,
-            self.deploy_timestamp,
             &self.vaults,
             &self.bonds_bytes,
             self.minimum_bond,

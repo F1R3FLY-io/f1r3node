@@ -1036,6 +1036,7 @@ impl TestNode {
             rspace_store,
             mergeable_store,
             Genesis::non_negative_mergeable_tag_name(),
+            rholang::rust::interpreter::external_services::ExternalServices::noop(),
         );
 
         let rho_history_repository = runtime_manager.get_history_repo();
@@ -1076,6 +1077,7 @@ impl TestNode {
                 connections_cell.clone(),
                 rp_conf.clone(),
                 event_publisher.clone(),
+                false, // allow_empty_blocks
             )),
             None => None,
         };
@@ -1134,6 +1136,10 @@ impl TestNode {
             epoch_length: 10000,
             quarantine_length: 20000,
             min_phlo_price: 1,
+            disable_late_block_filtering: true,
+            disable_validator_progress_check: false,
+            enable_mergeable_channel_gc: false,
+            mergeable_channels_gc_depth_buffer: 10,
         };
 
         let casper_impl = MultiParentCasperImpl {
@@ -1148,6 +1154,8 @@ impl TestNode {
             validator_id: validator_id_opt.clone(),
             casper_shard_conf: shard_conf,
             approved_block: genesis.clone(),
+            finalization_in_progress: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            heartbeat_signal_ref: crate::rust::heartbeat_signal::new_heartbeat_signal_ref(),
         };
 
         let casper = Arc::new(casper_impl);
@@ -1169,6 +1177,8 @@ impl TestNode {
                 validator_id: casper_guard.validator_id.clone(),
                 casper_shard_conf: casper_guard.casper_shard_conf.clone(),
                 approved_block: casper_guard.approved_block.clone(),
+                finalization_in_progress: casper_guard.finalization_in_progress.clone(),
+                heartbeat_signal_ref: casper_guard.heartbeat_signal_ref.clone(),
             })
         };
         let engine_with_casper = EngineWithCasper::new(casper_for_engine);

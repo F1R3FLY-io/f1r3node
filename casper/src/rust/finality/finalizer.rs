@@ -118,13 +118,30 @@ impl Finalizer {
         let mut sorted_latest_messages: Vec<(Validator, BlockMetadata)> = lms.into_iter().collect();
         sorted_latest_messages.sort_by(|(v1, _), (v2, _)| v1.cmp(v2));
 
-        // Step 1: Generate stream of agreements (equivalent to mkAgreementsStream)
+        // Step 1: Generate stream of agreements
+        // Scala's unfoldLoopEval outputs the current layer, then checks if next is non-empty to continue.
+        // So ALL layers are output, including the last one where next would be empty.
         let mut mk_agreements_stream = Vec::new();
         let mut current_layer = sorted_latest_messages;
 
         loop {
-            // output current visits
+            // output current visits - process agreements for this layer
             let out = current_layer.clone();
+
+            // evalMap: map visits to message agreements: validator v agrees on message m
+            // The agreement is on the MESSAGE itself (from the current layer), not on its parent.
+            for (validator, message) in out {
+                if let Ok(message_weight_map) = Self::message_weight_map_f(&message, dag).await {
+                    if let Some(agreement) = Self::record_agreement(&message_weight_map, &validator)
+                    {
+                        mk_agreements_stream.push(MessageAgreement {
+                            message: message,
+                            message_weight_map,
+                            stake_agreed: [agreement].into_iter().collect(),
+                        });
+                    }
+                }
+            }
 
             // proceed to main parents
             let next_layer: Vec<(Validator, BlockMetadata)> = current_layer
@@ -140,32 +157,10 @@ impl Finalizer {
                 })
                 .collect();
 
-            // Check if we should continue (equivalent to next.nonEmpty.guard[Option].as(next))
+            // Check if we should continue
+            // If next is empty, we've processed all layers and should stop
             if next_layer.is_empty() {
                 break;
-            }
-
-            // evalMap: map visits to message agreements: validator v agrees on message m
-            for (validator, message) in out {
-                if let Some(main_parent_hash) = message.parents.first() {
-                    if let Ok(main_parent_meta) = dag.lookup_unsafe(main_parent_hash) {
-                        if main_parent_meta.block_number > curr_lfb_height {
-                            if let Ok(message_weight_map) =
-                                Self::message_weight_map_f(&main_parent_meta, dag).await
-                            {
-                                if let Some(agreement) =
-                                    Self::record_agreement(&message_weight_map, &validator)
-                                {
-                                    mk_agreements_stream.push(MessageAgreement {
-                                        message: main_parent_meta,
-                                        message_weight_map,
-                                        stake_agreed: [agreement].into_iter().collect(),
-                                    });
-                                }
-                            }
-                        }
-                    }
-                }
             }
 
             current_layer = next_layer;
@@ -243,7 +238,10 @@ impl Finalizer {
             .next()
         {
             let lfb_hash = lfb.block_hash;
-            new_lfb_found_effect(lfb_hash.clone()).await?;
+            // Only process blocks that aren't already finalized
+            if !dag.is_finalized(&lfb_hash) {
+                new_lfb_found_effect(lfb_hash.clone()).await?;
+            }
             Some(lfb_hash)
         } else {
             None

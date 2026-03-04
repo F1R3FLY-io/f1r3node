@@ -18,7 +18,6 @@ use models::casper::{DataWithBlockInfo, LightBlockInfo};
 use models::rust::casper::protocol::casper_message::DeployData;
 use serde::{Deserialize, Serialize};
 use shared::rust::store::key_value_typed_store::KeyValueTypedStore;
-use shared::rust::ByteString;
 use std::collections::HashMap;
 use std::sync::Arc;
 use utoipa::ToSchema;
@@ -146,8 +145,28 @@ where
     async fn status(&self) -> Result<ApiStatus> {
         let rp_conf = self.rp_conf_cell.read()?;
         let address = rp_conf.local.to_address();
-        let peers = self.connections_cell.read()?.len() as i32;
-        let nodes = self.node_discovery.peers()?.len() as i32;
+        let connections = self.connections_cell.read()?;
+        let discovered_nodes = self.node_discovery.peers()?;
+
+        let peers = connections.len() as i32;
+        let nodes = discovered_nodes.len() as i32;
+
+        // Create a set of connected peer IDs for quick lookup
+        let connected_ids: std::collections::HashSet<_> =
+            connections.iter().map(|p| p.id.key.clone()).collect();
+
+        // Convert PeerNode to PeerInfoData with connection status
+        let peer_list: Vec<PeerInfoData> = discovered_nodes
+            .iter()
+            .map(|node| PeerInfoData {
+                address: node.to_address(),
+                node_id: node.id.to_string(),
+                host: node.endpoint.host.clone(),
+                protocol_port: node.endpoint.tcp_port as i32,
+                discovery_port: node.endpoint.udp_port as i32,
+                is_connected: connected_ids.contains(&node.id.key),
+            })
+            .collect();
 
         Ok(ApiStatus {
             version: VersionInfo {
@@ -160,6 +179,7 @@ where
             peers,
             nodes,
             min_phlo_price: self.min_phlo_price,
+            peer_list,
         })
     }
 
@@ -170,7 +190,11 @@ where
             .unwrap_or(-1);
 
         let names = if let Some(req) = request {
-            BlockAPI::preview_private_names(&req.deployer, req.timestamp, req.name_qty)?
+            let deployer_bytes = hex::decode(&req.deployer)
+                .map_err(|e| eyre!("Deployer is not valid hex format: {}", e))?;
+            let name_bytes =
+                BlockAPI::preview_private_names(&deployer_bytes, req.timestamp, req.name_qty)?;
+            name_bytes.into_iter().map(hex::encode).collect()
         } else {
             vec![]
         };
@@ -303,45 +327,51 @@ where
 // Rholang terms interesting for translation to JSON
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[schema(no_recursion)]
-#[serde(tag = "type")]
 pub enum RhoExpr {
     /// Nested expressions (Par, Tuple, List and Set are converted to JSON list)
-    #[serde(rename = "par")]
-    ExprPar { data: Vec<RhoExpr> },
-    #[serde(rename = "tuple")]
-    ExprTuple { data: Vec<RhoExpr> },
-    #[serde(rename = "list")]
-    ExprList { data: Vec<RhoExpr> },
-    #[serde(rename = "set")]
-    ExprSet { data: Vec<RhoExpr> },
-    #[serde(rename = "map")]
-    ExprMap { data: HashMap<String, RhoExpr> },
+    ExprPar {
+        data: Vec<RhoExpr>,
+    },
+    ExprTuple {
+        data: Vec<RhoExpr>,
+    },
+    ExprList {
+        data: Vec<RhoExpr>,
+    },
+    ExprSet {
+        data: Vec<RhoExpr>,
+    },
+    ExprMap {
+        data: HashMap<String, RhoExpr>,
+    },
 
     /// Terminal expressions (here is the data)
-    #[serde(rename = "bool")]
-    ExprBool { data: bool },
-    #[serde(rename = "int")]
-    ExprInt { data: i64 },
-    #[serde(rename = "string")]
-    ExprString { data: String },
-    #[serde(rename = "uri")]
-    ExprUri { data: String },
+    ExprBool {
+        data: bool,
+    },
+    ExprInt {
+        data: i64,
+    },
+    ExprString {
+        data: String,
+    },
+    ExprUri {
+        data: String,
+    },
     /// Binary data is encoded as base16 string
-    #[serde(rename = "bytes")]
-    ExprBytes { data: String },
-    #[serde(rename = "unforg")]
-    ExprUnforg { data: RhoUnforg },
+    ExprBytes {
+        data: String,
+    },
+    ExprUnforg {
+        data: RhoUnforg,
+    },
 }
 
 /// Unforgeable name types
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-#[serde(tag = "type")]
 pub enum RhoUnforg {
-    #[serde(rename = "private")]
     UnforgPrivate { data: String },
-    #[serde(rename = "deploy")]
     UnforgDeploy { data: String },
-    #[serde(rename = "deployer")]
     UnforgDeployer { data: String },
 }
 
@@ -362,6 +392,13 @@ pub struct ExploreDeployRequest {
     pub block_hash: String,
     #[serde(rename = "usePreStateHash")]
     pub use_pre_state_hash: bool,
+}
+
+/// Simple explore deploy request with only the term field.
+/// Used by the /explore-deploy endpoint which doesn't require block hash or pre-state hash.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct SimpleExploreDeployRequest {
+    pub term: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -408,7 +445,7 @@ pub struct RhoDataResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct PrepareRequest {
-    pub deployer: ByteString,
+    pub deployer: String,
     pub timestamp: i64,
     #[serde(rename = "nameQty")]
     pub name_qty: i32,
@@ -416,9 +453,23 @@ pub struct PrepareRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct PrepareResponse {
-    pub names: Vec<ByteString>,
+    pub names: Vec<String>,
     #[serde(rename = "seqNumber")]
     pub seq_number: i32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct PeerInfoData {
+    pub address: String,
+    #[serde(rename = "nodeId")]
+    pub node_id: String,
+    pub host: String,
+    #[serde(rename = "protocolPort")]
+    pub protocol_port: i32,
+    #[serde(rename = "discoveryPort")]
+    pub discovery_port: i32,
+    #[serde(rename = "isConnected")]
+    pub is_connected: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -433,6 +484,8 @@ pub struct ApiStatus {
     pub nodes: i32,
     #[serde(rename = "minPhloPrice")]
     pub min_phlo_price: i64,
+    #[serde(rename = "peerList")]
+    pub peer_list: Vec<PeerInfoData>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -730,7 +783,7 @@ mod tests {
                 phlo_limit: 1000000,
                 valid_after_block_number: 0,
                 shard_id: "".to_string(),
-                language: "rho".to_string(),
+                expiration_timestamp: None,
             },
             deployer: "0123456789abcdef".to_string(),
             signature: "fedcba9876543210".to_string(),

@@ -5,7 +5,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
-use tokio::sync::Semaphore;
+use shared::rust::metrics_semaphore::MetricsSemaphore;
 
 use casper::rust::util::comm::fair_round_robin_dispatcher::{
     Dispatch, DispatcherConfig, FairRoundRobinDispatcher,
@@ -83,7 +83,7 @@ impl TestFixture {
             drop_source_after_retries,
         );
 
-        let lock = Arc::new(Semaphore::new(1));
+        let lock = Arc::new(MetricsSemaphore::single("test.FairRoundRobinDispatcher"));
 
         let dispatcher = FairRoundRobinDispatcher::new(filter, handle, config, lock);
 

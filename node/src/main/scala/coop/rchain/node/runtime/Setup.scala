@@ -177,7 +177,7 @@ object Setup {
 
       // Reporting runtime
       reportingRuntime <- {
-        implicit val (bs, bd, sp) = (blockStore, blockDagStorage, span)
+        implicit val (_, _, _) = (blockStore, blockDagStorage, span)
         if (conf.apiServer.enableReporting) {
           // In reporting replay channels map is not needed
           // rnodeStoreManager.rSpaceStores.map(ReportingCasper.rhoReporter(_))

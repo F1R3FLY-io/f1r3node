@@ -1,6 +1,5 @@
 // See casper/src/main/scala/coop/rchain/casper/blocks/proposer/BlockCreator.scala
 
-use dashmap::DashSet;
 use prost::bytes::Bytes;
 use std::sync::{Arc, Mutex};
 use std::{collections::HashSet, time::SystemTime};
@@ -46,32 +45,127 @@ use crate::rust::{
 async fn prepare_user_deploys(
     casper_snapshot: &CasperSnapshot,
     block_number: i64,
+    current_time_millis: i64,
     deploy_storage: Arc<Mutex<KeyValueDeployStorage>>,
 ) -> Result<HashSet<Signed<DeployData>>, CasperError> {
-    let deploy_storage_guard = deploy_storage
+    let mut deploy_storage_guard = deploy_storage
         .lock()
         .map_err(|e| CasperError::LockError(e.to_string()))?;
 
     // Read all unfinalized deploys from storage
-    let unfinalized = deploy_storage_guard.read_all()?;
+    let unfinalized: HashSet<Signed<DeployData>> = deploy_storage_guard.read_all()?;
 
     let earliest_block_number =
         block_number - casper_snapshot.on_chain_state.shard_conf.deploy_lifespan;
 
-    // Filter valid deploys (not expired and not future)
-    let valid: DashSet<Signed<DeployData>> = unfinalized
-        .into_iter()
+    // Categorize deploys for logging
+    let future_deploys: Vec<_> = unfinalized
+        .iter()
+        .filter(|d| !not_future_deploy(block_number, &d.data))
+        .collect();
+    let block_expired_deploys: Vec<_> = unfinalized
+        .iter()
+        .filter(|d| !not_expired_deploy(earliest_block_number, &d.data))
+        .collect();
+    let time_expired_deploys: Vec<_> = unfinalized
+        .iter()
+        .filter(|d| d.data.is_expired_at(current_time_millis))
+        .collect();
+
+    // Filter valid deploys (not expired by block, not expired by time, and not future)
+    let valid: HashSet<Signed<DeployData>> = unfinalized
+        .iter()
         .filter(|deploy| {
             not_future_deploy(block_number, &deploy.data)
                 && not_expired_deploy(earliest_block_number, &deploy.data)
+                && !deploy.data.is_expired_at(current_time_millis)
         })
+        .cloned()
         .collect();
 
+    let valid_count = valid.len();
+
     // Remove deploys that are already in scope to prevent resending
+    let already_in_scope: Vec<Signed<DeployData>> = valid
+        .iter()
+        .filter(|deploy| casper_snapshot.deploys_in_scope.contains(&*deploy))
+        .map(|deploy| (*deploy).clone())
+        .collect();
     let valid_unique: HashSet<Signed<DeployData>> = valid
         .into_iter()
         .filter(|deploy| !casper_snapshot.deploys_in_scope.contains(deploy))
         .collect();
+
+    let already_in_scope_count = already_in_scope.len();
+
+    // Log deploy selection details when there are any deploys in the pool
+    if !unfinalized.is_empty() || !casper_snapshot.deploys_in_scope.is_empty() {
+        tracing::info!(
+            "Deploy selection for block #{}: pool={}, future={} (validAfterBlockNumber >= {}), \
+             blockExpired={} (validAfterBlockNumber <= {}), timeExpired={} (expirationTimestamp <= {}), \
+             valid={}, alreadyInScope={}, selected={}",
+            block_number,
+            unfinalized.len(),
+            future_deploys.len(),
+            block_number,
+            block_expired_deploys.len(),
+            earliest_block_number,
+            time_expired_deploys.len(),
+            current_time_millis,
+            valid_count,
+            already_in_scope_count,
+            valid_unique.len()
+        );
+    }
+
+    // Log details for filtered-out deploys (to help debug why deploys aren't included)
+    for d in &future_deploys {
+        tracing::warn!(
+            "Deploy {}... FILTERED (future): validAfterBlockNumber={} >= currentBlock={}",
+            hex::encode(&d.sig[..std::cmp::min(8, d.sig.len())]),
+            d.data.valid_after_block_number,
+            block_number
+        );
+    }
+    for d in &block_expired_deploys {
+        tracing::warn!(
+            "Deploy {}... FILTERED (block-expired): validAfterBlockNumber={} <= earliestBlock={}",
+            hex::encode(&d.sig[..std::cmp::min(8, d.sig.len())]),
+            d.data.valid_after_block_number,
+            earliest_block_number
+        );
+    }
+    for d in &time_expired_deploys {
+        tracing::warn!(
+            "Deploy {}... FILTERED (time-expired): expirationTimestamp={:?} <= currentTime={}",
+            hex::encode(&d.sig[..std::cmp::min(8, d.sig.len())]),
+            d.data.expiration_timestamp,
+            current_time_millis
+        );
+    }
+    for d in &already_in_scope {
+        tracing::warn!(
+            "Deploy {}... FILTERED (already in scope): deploy already exists in DAG within lifespan window",
+            hex::encode(&d.sig[..std::cmp::min(8, d.sig.len())])
+        );
+    }
+
+    // Remove all expired deploys from storage to prevent them from triggering future proposals
+    // Combine block-expired and time-expired, avoiding duplicates
+    let all_expired: HashSet<&Signed<DeployData>> = block_expired_deploys
+        .iter()
+        .chain(time_expired_deploys.iter())
+        .cloned()
+        .collect();
+    if !all_expired.is_empty() {
+        tracing::info!(
+            "Removing {} expired deploy(s) from storage",
+            all_expired.len()
+        );
+        let expired_list: Vec<Signed<DeployData>> =
+            all_expired.into_iter().cloned().collect();
+        deploy_storage_guard.remove(expired_list)?;
+    }
 
     Ok(valid_unique)
 }
@@ -154,6 +248,25 @@ pub async fn create(
     block_store: &mut KeyValueBlockStore,
     allow_empty_blocks: bool,
 ) -> Result<BlockCreatorResult, CasperError> {
+    // Capture current time once to ensure consistency between deploy filtering and block timestamp.
+    // This prevents race condition where a deploy could pass filtering but expire before block creation.
+    let now = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map_err(|e| CasperError::RuntimeError(format!("Failed to get current time: {}", e)))?
+        .as_millis() as i64;
+
+    // Ensure the block timestamp is strictly after all parent timestamps. This
+    // prevents InvalidTimestamp validation failures caused by clock skew between
+    // validators (a parent created by a validator whose clock is slightly ahead
+    // would have a timestamp greater than our local `now`).
+    let max_parent_ts = casper_snapshot
+        .parents
+        .iter()
+        .map(|p| p.header.timestamp)
+        .max()
+        .unwrap_or(0);
+    let block_timestamp = std::cmp::max(now, max_parent_ts + 1);
+
     let next_seq_num = casper_snapshot
         .max_seq_nums
         .get(&validator_identity.public_key.bytes)
@@ -173,7 +286,8 @@ pub async fn create(
 
     // Prepare deploys
     let user_deploys =
-        prepare_user_deploys(casper_snapshot, next_block_num, deploy_storage).await?;
+        prepare_user_deploys(casper_snapshot, next_block_num, block_timestamp, deploy_storage)
+            .await?;
     let dummy_deploys = prepare_dummy_deploy(next_block_num, shard_id.clone(), dummy_deploy_opt)?;
     let slashing_deploys =
         prepare_slashing_deploys(casper_snapshot, validator_identity, next_seq_num).await?;
@@ -212,15 +326,12 @@ pub async fn create(
         ),
     }));
 
-    // Get current time
-    let now = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .map_err(|e| CasperError::RuntimeError(format!("Failed to get current time: {}", e)))?
-        .as_millis() as i64;
-
+    // Use block_timestamp (max of now and max_parent_ts + 1) for block creation.
+    // This ensures the same time is used for deploy filtering and block creation,
+    // and that the timestamp is strictly after all parent timestamps.
     let invalid_blocks = casper_snapshot.invalid_blocks.clone();
     let block_data = BlockData {
-        time_stamp: now,
+        time_stamp: block_timestamp,
         block_number: next_block_num,
         sender: validator_identity.public_key.clone(),
         seq_num: next_seq_num,

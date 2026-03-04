@@ -8,7 +8,7 @@ use crypto::rust::{
     signatures::{secp256k1::Secp256k1, signatures_alg::SignaturesAlg},
 };
 use node::rust::web::transaction::{TransactionAPI, TransactionAPIImpl, TransactionType};
-use rholang::rust::interpreter::util::rev_address::RevAddress;
+use rholang::rust::interpreter::util::vault_address::VaultAddress;
 use rspace_plus_plus::rspace::hashing::blake2b256_hash::Blake2b256Hash;
 
 // Helper function equivalent to checkTransactionAPI in Scala
@@ -146,13 +146,13 @@ async fn transfer_rev_should_be_gotten_in_transaction_api() {
 
     let from_sk = genesis.genesis_vaults_sks()[0].clone();
     let from_pk = Secp256k1.to_public(&from_sk);
-    let from_addr = RevAddress::from_public_key(&from_pk)
+    let from_addr = VaultAddress::from_public_key(&from_pk)
         .expect("Failed to create from address")
         .to_base58();
 
     let to_sk = genesis.genesis_vaults_sks().last().unwrap().clone();
     let to_pk = Secp256k1.to_public(&to_sk);
-    let to_addr = RevAddress::from_public_key(&to_pk)
+    let to_addr = VaultAddress::from_public_key(&to_pk)
         .expect("Failed to create to address")
         .to_base58();
 
@@ -162,13 +162,13 @@ async fn transfer_rev_should_be_gotten_in_transaction_api() {
 
     let transfer_rho = format!(
         r#"
-new rl(`rho:registry:lookup`), RevVaultCh, vaultCh, toVaultCh, deployerId(`rho:rchain:deployerId`), revVaultKeyCh, resultCh in {{
-  rl!(`rho:rchain:revVault`, *RevVaultCh) |
-  for (@(_, RevVault) <- RevVaultCh) {{
-    @RevVault!("findOrCreate", "{}", *vaultCh) |
-    @RevVault!("findOrCreate", "{}", *toVaultCh) |
-    @RevVault!("deployerAuthKey", *deployerId, *revVaultKeyCh) |
-    for (@(true, vault) <- vaultCh; key <- revVaultKeyCh; @(true, toVault) <- toVaultCh) {{
+new rl(`rho:registry:lookup`), SystemVaultCh, vaultCh, toVaultCh, deployerId(`rho:system:deployerId`), vaultKeyCh, resultCh in {{
+  rl!(`rho:vault:system`, *SystemVaultCh) |
+  for (@(_, SystemVault) <- SystemVaultCh) {{
+    @SystemVault!("findOrCreate", "{}", *vaultCh) |
+    @SystemVault!("findOrCreate", "{}", *toVaultCh) |
+    @SystemVault!("deployerAuthKey", *deployerId, *vaultKeyCh) |
+    for (@(true, vault) <- vaultCh; key <- vaultKeyCh; @(true, toVault) <- toVaultCh) {{
       @vault!("transfer", "{}", {}, *key, *resultCh) |
       for (_ <- resultCh) {{ Nil }}
     }}
@@ -219,7 +219,7 @@ async fn no_user_deploy_log_should_return_only_precharge_and_refund_transaction(
 
     let from_sk = genesis.genesis_vaults_sks()[0].clone();
     let from_pk = Secp256k1.to_public(&from_sk);
-    let from_addr = RevAddress::from_public_key(&from_pk)
+    let from_addr = VaultAddress::from_public_key(&from_pk)
         .expect("Failed to create from address")
         .to_base58();
 
@@ -263,7 +263,7 @@ async fn precharge_failed_case_should_return_1_precharge_transaction() {
 
     let from_sk = genesis.genesis_vaults_sks()[0].clone();
     let from_pk = Secp256k1.to_public(&from_sk);
-    let from_addr = RevAddress::from_public_key(&from_pk)
+    let from_addr = VaultAddress::from_public_key(&from_pk)
         .expect("Failed to create from address")
         .to_base58();
 

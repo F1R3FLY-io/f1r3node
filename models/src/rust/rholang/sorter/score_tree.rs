@@ -206,6 +206,7 @@ impl Score {
     pub const ETUPLE: i32 = 7;
     pub const ESET: i32 = 8;
     pub const EMAP: i32 = 9;
+    pub const EPATHMAP: i32 = 13;
     pub const DEPLOYER_AUTH: i32 = 10;
     pub const DEPLOY_ID: i32 = 11;
     pub const SYS_AUTH_TOKEN: i32 = 12;

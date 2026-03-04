@@ -116,6 +116,10 @@ impl KeyValueStore for MockKeyValueStore {
             .sum::<usize>()
             + data.len() * 8
     }
+
+    fn non_empty(&self) -> Result<bool, KvStoreError> {
+        Ok(!self.data.lock().unwrap().is_empty())
+    }
 }
 
 /// A simple empty KeyValueStore implementation that always returns empty results.
@@ -159,6 +163,10 @@ impl KeyValueStore for EmptyKeyValueStore {
 
     fn size_bytes(&self) -> usize {
         0 // Always empty
+    }
+
+    fn non_empty(&self) -> Result<bool, KvStoreError> {
+        Ok(false)
     }
 }
 

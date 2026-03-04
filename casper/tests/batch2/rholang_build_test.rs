@@ -2,7 +2,7 @@
 
 use casper::rust::genesis::contracts::vault::Vault;
 use casper::rust::util::construct_deploy;
-use casper::rust::util::rholang::registry_sig_gen::RegistrySigGen;
+use casper::rust::util::rholang::tools::Tools;
 use casper::rust::util::rspace_util;
 use crypto::rust::signatures::secp256k1::Secp256k1;
 use crypto::rust::signatures::signatures_alg::SignaturesAlg;
@@ -13,10 +13,9 @@ use crate::util::genesis_builder::GenesisBuilder;
 fn calculate_unforgeable_name(timestamp: i64) -> String {
     let secp256k1 = Secp256k1;
     let public_key = secp256k1.to_public(&construct_deploy::DEFAULT_SEC);
-    hex::encode(RegistrySigGen::generate_unforgeable_name_id(
-        &public_key,
-        timestamp,
-    ))
+    let unforgeable_id = Tools::unforgeable_name_rng(&public_key, timestamp).next();
+    let unforgeable_id_u8: Vec<u8> = unforgeable_id.iter().map(|&b| b as u8).collect();
+    hex::encode(unforgeable_id_u8)
 }
 
 #[tokio::test]
@@ -76,19 +75,19 @@ in {
 #[tokio::test]
 #[ignore = "Scala ignore"]
 async fn our_build_system_should_execute_the_genesis_block() {
-    const REV_ADDRESS_COUNT: i32 = 16000;
+    const VAULT_ADDRESS_COUNT: i32 = 16000;
 
     let mut vaults = Vec::new();
     let secp256k1 = Secp256k1;
 
-    for i in 1..=REV_ADDRESS_COUNT {
+    for i in 1..=VAULT_ADDRESS_COUNT {
         let (_, public_key) = secp256k1.new_key_pair();
-        let rev_address =
-            rholang::rust::interpreter::util::rev_address::RevAddress::from_public_key(&public_key)
-                .expect("Failed to create RevAddress from public key");
+        let vault_address =
+            rholang::rust::interpreter::util::vault_address::VaultAddress::from_public_key(&public_key)
+                .expect("Failed to create VaultAddress from public key");
 
         vaults.push(Vault {
-            rev_address,
+            vault_address,
             initial_balance: i as u64,
         });
     }

@@ -254,6 +254,7 @@ pub async fn transition_to_initializing<U: TransportLayer + Send + Sync + Clone 
     engine_cell: &Arc<EngineCell>,
     runtime_manager_arc: &Arc<tokio::sync::Mutex<RuntimeManager>>,
     estimator: &Estimator,
+    heartbeat_signal_ref: &crate::rust::heartbeat_signal::HeartbeatSignalRef,
 ) -> Result<(), CasperError> {
     // Create channels and return senders so caller can feed LFS responses (Scala: expose queues)
     let (block_tx, block_rx) = mpsc::unbounded_channel::<BlockMessage>();
@@ -288,6 +289,7 @@ pub async fn transition_to_initializing<U: TransportLayer + Send + Sync + Clone 
         engine_cell.clone(),
         runtime_manager,
         estimator.clone(),
+        heartbeat_signal_ref.clone(),
     );
 
     engine_cell.set(Arc::new(initializing)).await;

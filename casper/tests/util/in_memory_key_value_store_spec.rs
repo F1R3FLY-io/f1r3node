@@ -113,6 +113,10 @@ impl KeyValueTypedStore<i64, String> for Int64StringStore {
 
         Ok(result)
     }
+
+    fn non_empty(&self) -> Result<bool, KvStoreError> {
+        self.store.non_empty()
+    }
 }
 
 pub struct KeyValueStoreSut {
@@ -264,7 +268,13 @@ mod tests {
                 // Note: Fixed the bug here - using max() instead of min()
                 let k_min = *keys.iter().min().unwrap();
                 let k_max = *keys.iter().max().unwrap(); // Fixed: was keys.min in Scala
-                let k_avg = k_max - k_min / 2;
+                // Old formula: k_max - k_min / 2 — when k_min is negative, subtracting
+                // a negative becomes addition, which overflows i64. In --release Rust
+                // silently wraps and the test "passes" with an incorrect result.
+                // In debug mode — panic.
+                // New formula: computes the average without overflow for any i64 values,
+                // even at extreme ranges.
+                let k_avg = k_min / 2 + k_max / 2 + (k_min % 2 + k_max % 2) / 2;
 
                 let expected_filtered: HashMap<i64, String> = expected
                     .iter()

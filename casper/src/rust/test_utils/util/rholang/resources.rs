@@ -6,13 +6,13 @@ use block_storage::rust::dag::block_dag_key_value_storage::KeyValueDagRepresenta
 use block_storage::rust::dag::block_metadata_store::BlockMetadataStore;
 use crate::rust::casper::{CasperShardConf, CasperSnapshot, OnChainCasperState};
 use crate::rust::errors::CasperError;
-use dashmap::{DashMap, DashSet};
+use std::collections::HashSet;
 use models::rust::block_hash::BlockHash;
 use models::rust::casper::protocol::casper_message::BlockMessage;
 use prost::bytes::Bytes;
 use rspace_plus_plus::rspace::shared::in_mem_key_value_store::InMemoryKeyValueStore;
 use shared::rust::store::key_value_typed_store_impl::KeyValueTypedStoreImpl;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::fs;
 use std::future::Future;
 use std::io;
@@ -341,6 +341,7 @@ pub async fn block_dag_storage_from_dyn(
         KeyValueTypedStoreImpl::new(deploy_index_kv_store);
 
     Ok(BlockDagKeyValueStorage {
+        global_lock: Arc::new(std::sync::Mutex::new(())),
         block_metadata_index: Arc::new(RwLock::new(block_metadata_store)),
         deploy_index: Arc::new(RwLock::new(deploy_index_db)),
         invalid_blocks_index: invalid_blocks_db,
@@ -401,7 +402,12 @@ pub async fn mk_runtime_manager_at(
 
     let r_store = kvm.r_space_stores().await.unwrap();
     let m_store = mergeable_store_from_dyn(kvm).await.unwrap();
-    RuntimeManager::create_with_store(r_store, m_store, mergeable_tag_name)
+    RuntimeManager::create_with_store(
+        r_store,
+        m_store,
+        mergeable_tag_name,
+        rholang::rust::interpreter::external_services::ExternalServices::noop(),
+    )
 }
 
 pub async fn mk_runtime_manager_with_history_at(
@@ -413,6 +419,7 @@ pub async fn mk_runtime_manager_with_history_at(
         r_store,
         m_store,
         Genesis::non_negative_mergeable_tag_name(),
+        rholang::rust::interpreter::external_services::ExternalServices::noop(),
     );
     (rt_manager, history_repo)
 }
@@ -487,13 +494,13 @@ fn new_key_value_dag_representation() -> KeyValueDagRepresentation {
     let block_metadata_store = KeyValueTypedStoreImpl::new(Arc::new(InMemoryKeyValueStore::new()));
 
     KeyValueDagRepresentation {
-        dag_set: Arc::new(DashSet::new()),
-        latest_messages_map: Arc::new(DashMap::new()),
-        child_map: Arc::new(DashMap::new()),
-        height_map: Arc::new(RwLock::new(BTreeMap::new())),
-        invalid_blocks_set: Arc::new(DashSet::new()),
+        dag_set: imbl::HashSet::new(),
+        latest_messages_map: imbl::HashMap::new(),
+        child_map: imbl::HashMap::new(),
+        height_map: imbl::OrdMap::new(),
+        invalid_blocks_set: imbl::HashSet::new(),
         last_finalized_block_hash: BlockHash::new(),
-        finalized_blocks_set: Arc::new(DashSet::new()),
+        finalized_blocks_set: imbl::HashSet::new(),
         block_metadata_index: Arc::new(RwLock::new(BlockMetadataStore::new(block_metadata_store))),
         deploy_index: Arc::new(RwLock::new(KeyValueTypedStoreImpl::new(Arc::new(
             InMemoryKeyValueStore::new(),
@@ -510,11 +517,11 @@ pub fn mk_dummy_casper_snapshot() -> CasperSnapshot {
         lca: Bytes::new(),
         tips: Vec::new(),
         parents: Vec::new(),
-        justifications: DashSet::new(),
+        justifications: HashSet::new(),
         invalid_blocks: HashMap::new(),
-        deploys_in_scope: DashSet::new(),
+        deploys_in_scope: HashSet::new(),
         max_block_num: 0,
-        max_seq_nums: DashMap::new(),
+        max_seq_nums: HashMap::new(),
         on_chain_state: OnChainCasperState {
             shard_conf: CasperShardConf::new(),
             bonds_map: HashMap::new(),

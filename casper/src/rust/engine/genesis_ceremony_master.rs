@@ -82,6 +82,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisCeremonyMaster<T>
         casper_shard_conf: CasperShardConf,
         validator_id: Option<ValidatorIdentity>,
         disable_state_exporter: bool,
+        heartbeat_signal_ref: crate::rust::heartbeat_signal::HeartbeatSignalRef,
     ) -> Result<(), CasperError> {
         sleep(Duration::from_secs(2)).await;
 
@@ -108,6 +109,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisCeremonyMaster<T>
                     casper_shard_conf,
                     validator_id,
                     disable_state_exporter,
+                    heartbeat_signal_ref,
                 ))
                 .await
             }
@@ -135,6 +137,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisCeremonyMaster<T>
                     validator_id.clone(),
                     &casper_shard_conf,
                     ab,
+                    &heartbeat_signal_ref,
                 )?;
 
                 // Scala: Engine.transitionToRunning[F](..., init = ().pure[F], ...)
@@ -185,6 +188,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisCeremonyMaster<T>
         validator_id: Option<ValidatorIdentity>,
         casper_shard_conf: &CasperShardConf,
         ab: BlockMessage,
+        heartbeat_signal_ref: &crate::rust::heartbeat_signal::HeartbeatSignalRef,
     ) -> Result<crate::rust::multi_parent_casper_impl::MultiParentCasperImpl<T>, CasperError> {
         // Scala: implicit val requestedBlocks: RequestedBlocks[F] = Ref.unsafe[F, Map[BlockHash, RequestState]](Map.empty)
         let requested_blocks = Arc::new(Mutex::new(HashMap::new()));
@@ -211,6 +215,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisCeremonyMaster<T>
             validator_id,
             casper_shard_conf.clone(),
             ab,
+            heartbeat_signal_ref.clone(),
         )
     }
 }

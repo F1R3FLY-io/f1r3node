@@ -1,6 +1,8 @@
 pub mod dag;
 pub mod grpc;
 pub mod hashable_set;
+pub mod metrics_constants;
+pub mod metrics_semaphore;
 pub mod shared;
 pub mod store;
 

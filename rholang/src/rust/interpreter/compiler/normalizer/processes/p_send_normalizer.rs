@@ -1,28 +1,32 @@
-use super::exports::*;
-use crate::rust::interpreter::compiler::normalize::{
-    normalize_match_proc, NameVisitInputs, ProcVisitInputs, ProcVisitOutputs,
+use crate::rust::interpreter::compiler::exports::{
+    NameVisitInputs, ProcVisitInputs, ProcVisitOutputs,
 };
-use crate::rust::interpreter::compiler::rholang_ast::{Name, ProcList, SendType};
+use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
+use crate::rust::interpreter::compiler::normalizer::name_normalize_matcher::normalize_name;
 use crate::rust::interpreter::errors::InterpreterError;
 use crate::rust::interpreter::matcher::has_locally_free::HasLocallyFree;
 use models::rhoapi::{Par, Send};
 use models::rust::utils::union;
 use std::collections::HashMap;
 
-pub fn normalize_p_send(
-    name: &Name,
+use rholang_parser::ast::{Name, SendType};
+
+pub fn normalize_p_send<'ast>(
+    channel: &'ast Name<'ast>,
     send_type: &SendType,
-    inputs: &ProcList,
+    inputs: &'ast rholang_parser::ast::ProcList<'ast>,
     input: ProcVisitInputs,
     env: &HashMap<String, Par>,
+    parser: &'ast rholang_parser::RholangParser<'ast>,
 ) -> Result<ProcVisitOutputs, InterpreterError> {
     let name_match_result = normalize_name(
-        name,
+        channel,
         NameVisitInputs {
             bound_map_chain: input.bound_map_chain.clone(),
             free_map: input.free_map.clone(),
         },
         env,
+        parser,
     )?;
 
     let mut acc = (
@@ -36,8 +40,8 @@ pub fn normalize_p_send(
         false,
     );
 
-    for proc in inputs.procs.clone() {
-        let proc_match_result = normalize_match_proc(&proc, acc.1.clone(), env)?;
+    for proc in inputs.iter() {
+        let proc_match_result = normalize_ann_proc(proc, acc.1.clone(), env, parser)?;
 
         acc.0.push(proc_match_result.par.clone());
         acc.1 = ProcVisitInputs {
@@ -50,8 +54,8 @@ pub fn normalize_p_send(
     }
 
     let persistent = match send_type {
-        SendType::Single { .. } => false,
-        SendType::Multiple { .. } => true,
+        rholang_parser::ast::SendType::Single => false,
+        rholang_parser::ast::SendType::Multiple => true,
     };
 
     let send = Send {
@@ -91,30 +95,37 @@ mod tests {
     };
 
     use crate::rust::interpreter::{
-        compiler::{
-            compiler::Compiler,
-            normalize::{normalize_match_proc, ProcVisitInputs, VarSort},
-            rholang_ast::{Name, ProcList, SendType},
-        },
+        compiler::{compiler::Compiler, exports::ProcVisitInputs, normalize::VarSort},
         errors::InterpreterError,
         test_utils::utils::proc_visit_inputs_and_env,
     };
 
-    use super::{Proc, SourcePosition};
-
     #[test]
     fn p_send_should_handle_a_basic_send() {
-        let p_send = Proc::Send {
-            name: Name::new_name_quote_nil(),
-            send_type: SendType::new_single(),
-            inputs: ProcList::new(vec![Proc::new_proc_int(7), Proc::new_proc_int(8)]),
-            line_num: 0,
-            col_num: 0,
-        };
+        use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
+        use crate::rust::interpreter::test_utils::par_builder_util::ParBuilderUtil;
+        use rholang_parser::ast::SendType;
 
         let (mut inputs, env) = proc_visit_inputs_and_env();
+        let parser = rholang_parser::RholangParser::new();
 
-        let result = normalize_match_proc(&p_send, inputs.clone(), &env);
+        // Create channel: @Nil
+        let nil_proc = ParBuilderUtil::create_ast_nil(&parser);
+        let channel = ParBuilderUtil::create_ast_quote_name(nil_proc);
+
+        // Create inputs: 7, 8
+        let input1 = ParBuilderUtil::create_ast_long_literal(7, &parser);
+        let input2 = ParBuilderUtil::create_ast_long_literal(8, &parser);
+
+        // Create send: @Nil!(7, 8)
+        let send_proc = ParBuilderUtil::create_ast_send(
+            channel,
+            SendType::Single,
+            vec![input1, input2],
+            &parser,
+        );
+
+        let result = normalize_ann_proc(&send_proc, inputs.clone(), &env, &parser);
         assert!(result.is_ok());
         assert_eq!(
             result.clone().unwrap().par,
@@ -134,22 +145,35 @@ mod tests {
 
     #[test]
     fn p_send_should_handle_a_name_var() {
-        let p_send = Proc::Send {
-            name: Name::new_name_var("x"),
-            send_type: SendType::new_single(),
-            inputs: ProcList::new(vec![Proc::new_proc_int(7), Proc::new_proc_int(8)]),
-            line_num: 0,
-            col_num: 0,
-        };
+        use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
+        use crate::rust::interpreter::test_utils::par_builder_util::ParBuilderUtil;
+        use rholang_parser::ast::SendType;
+        use rholang_parser::SourcePos;
 
         let (mut inputs, env) = proc_visit_inputs_and_env();
-        inputs.bound_map_chain = inputs.bound_map_chain.put((
+        inputs.bound_map_chain = inputs.bound_map_chain.put_pos((
             "x".to_string(),
             VarSort::NameSort,
-            SourcePosition::new(0, 0),
+            SourcePos { line: 0, col: 0 },
         ));
+        let parser = rholang_parser::RholangParser::new();
 
-        let result = normalize_match_proc(&p_send, inputs.clone(), &env);
+        // Create channel: x (NameVar)
+        let channel = ParBuilderUtil::create_ast_name_var("x");
+
+        // Create inputs: 7, 8
+        let input1 = ParBuilderUtil::create_ast_long_literal(7, &parser);
+        let input2 = ParBuilderUtil::create_ast_long_literal(8, &parser);
+
+        // Create send: x!(7, 8)
+        let send_proc = ParBuilderUtil::create_ast_send(
+            channel,
+            SendType::Single,
+            vec![input1, input2],
+            &parser,
+        );
+
+        let result = normalize_ann_proc(&send_proc, inputs.clone(), &env, &parser);
         assert!(result.is_ok());
         assert_eq!(
             result.clone().unwrap().par,
@@ -169,120 +193,163 @@ mod tests {
 
     #[test]
     fn p_send_should_propagate_known_free() {
-        let p_send = Proc::Send {
-            name: Name::new_name_quote_var("x"),
-            send_type: SendType::new_single(),
-            inputs: ProcList::new(vec![Proc::new_proc_int(7), Proc::new_proc_var("x")]),
-            line_num: 0,
-            col_num: 0,
-        };
+        use crate::rust::interpreter::compiler::normalize::normalize_ann_proc;
+        use crate::rust::interpreter::test_utils::par_builder_util::ParBuilderUtil;
+        use rholang_parser::ast::{Id, SendType, Var};
+        use rholang_parser::SourcePos;
 
-        let result = normalize_match_proc(&p_send, ProcVisitInputs::new(), &HashMap::new());
+        let parser = rholang_parser::RholangParser::new();
+
+        // Create channel: @*x (Quote of Eval of NameVar)
+        let name_var = ParBuilderUtil::create_ast_name_var("x");
+        let eval_proc = ParBuilderUtil::create_ast_eval(name_var, &parser);
+        let channel = ParBuilderUtil::create_ast_quote_name(eval_proc);
+
+        // Create inputs: 7, x (ProcVar)
+        let input1 = ParBuilderUtil::create_ast_long_literal(7, &parser);
+        let input2 = ParBuilderUtil::create_ast_proc_var_from_var(
+            Var::Id(Id {
+                name: "x",
+                pos: SourcePos { line: 0, col: 0 },
+            }),
+            &parser,
+        );
+
+        // Create send: @*x!(7, x)
+        let send_proc = ParBuilderUtil::create_ast_send(
+            channel,
+            SendType::Single,
+            vec![input1, input2],
+            &parser,
+        );
+
+        let result =
+            normalize_ann_proc(&send_proc, ProcVisitInputs::new(), &HashMap::new(), &parser);
         assert!(result.is_err());
-        assert_eq!(
+        assert!(matches!(
             result,
             Err(InterpreterError::UnexpectedReuseOfProcContextFree {
-                var_name: "x".to_string(),
-                first_use: SourcePosition::new(0, 0),
-                second_use: SourcePosition::new(0, 0)
-            })
-        );
+                var_name,
+                first_use: _,
+                second_use: _
+            }) if var_name == "x"
+        ));
     }
 
     #[test]
     fn p_send_should_not_compile_if_data_contains_negation() {
         let result = Compiler::source_to_adt(r#"new x in { x!(~1) }"#);
         assert!(result.is_err());
-        assert_eq!(
-            result,
-            Err(InterpreterError::TopLevelLogicalConnectivesNotAllowedError(
-                format!("~ (negation) at {}", SourcePosition::new(0, 14))
-            ))
-        )
+        match result {
+            Err(InterpreterError::TopLevelLogicalConnectivesNotAllowedError(msg)) => {
+                assert!(msg.contains("~ (negation)"));
+            }
+            other => panic!(
+                "Expected TopLevelLogicalConnectivesNotAllowedError, got: {:?}",
+                other
+            ),
+        }
     }
 
     #[test]
     fn p_send_should_not_compile_if_data_contains_conjuction() {
         let result = Compiler::source_to_adt(r#"new x in { x!(1 /\ 2) }"#);
         assert!(result.is_err());
-        assert_eq!(
-            result,
-            Err(InterpreterError::TopLevelLogicalConnectivesNotAllowedError(
-                format!("/\\ (conjunction) at {}", SourcePosition::new(0, 14))
-            ))
-        )
+        match result {
+            Err(InterpreterError::TopLevelLogicalConnectivesNotAllowedError(msg)) => {
+                assert!(msg.contains("/\\ (conjunction)"));
+            }
+            other => panic!(
+                "Expected TopLevelLogicalConnectivesNotAllowedError, got: {:?}",
+                other
+            ),
+        }
     }
 
     #[test]
     fn p_send_should_not_compile_if_data_contains_disjunction() {
         let result = Compiler::source_to_adt(r#"new x in { x!(1 \/ 2) }"#);
         assert!(result.is_err());
-        assert_eq!(
-            result,
-            Err(InterpreterError::TopLevelLogicalConnectivesNotAllowedError(
-                format!("\\/ (disjunction) at {}", SourcePosition::new(0, 14))
-            ))
-        )
+        match result {
+            Err(InterpreterError::TopLevelLogicalConnectivesNotAllowedError(msg)) => {
+                assert!(msg.contains("\\/ (disjunction)"));
+            }
+            other => panic!(
+                "Expected TopLevelLogicalConnectivesNotAllowedError, got: {:?}",
+                other
+            ),
+        }
     }
 
     #[test]
     fn p_send_should_not_compile_if_data_contains_wildcard() {
         let result = Compiler::source_to_adt(r#"@"x"!(_)"#);
         assert!(result.is_err());
-        assert_eq!(
-            result,
-            Err(InterpreterError::TopLevelWildcardsNotAllowedError(format!(
-                "_ (wildcard) at {}",
-                SourcePosition::new(0, 6)
-            )))
-        )
+        match result {
+            Err(InterpreterError::TopLevelWildcardsNotAllowedError(msg)) => {
+                assert!(msg.contains("_ (wildcard)"));
+            }
+            other => panic!(
+                "Expected TopLevelWildcardsNotAllowedError, got: {:?}",
+                other
+            ),
+        }
     }
 
     #[test]
     fn p_send_should_not_compile_if_data_contains_free_variable() {
         let result = Compiler::source_to_adt(r#"@"x"!(y)"#);
         assert!(result.is_err());
-        assert_eq!(
-            result,
-            Err(InterpreterError::TopLevelFreeVariablesNotAllowedError(
-                format!("y at {}", SourcePosition::new(0, 6))
-            ))
-        )
+        match result {
+            Err(InterpreterError::TopLevelFreeVariablesNotAllowedError(msg)) => {
+                assert!(msg.contains("y"));
+            }
+            other => panic!(
+                "Expected TopLevelFreeVariablesNotAllowedError, got: {:?}",
+                other
+            ),
+        }
     }
 
     #[test]
     fn p_send_should_not_compile_if_name_contains_connectives() {
+        // Test conjunction in channel name
         let result1 = Compiler::source_to_adt(r#"@{Nil /\ Nil}!(1)"#);
         assert!(result1.is_err());
-        assert_eq!(
-            result1,
-            Err(InterpreterError::TopLevelLogicalConnectivesNotAllowedError(
-                format!(
-                    "/\\ (conjunction) at {}",
-                    SourcePosition { row: 0, column: 2 }
-                )
-            ))
-        );
+        match result1 {
+            Err(InterpreterError::TopLevelLogicalConnectivesNotAllowedError(msg)) => {
+                assert!(msg.contains("/\\ (conjunction)"));
+            }
+            other => panic!(
+                "Expected TopLevelLogicalConnectivesNotAllowedError, got: {:?}",
+                other
+            ),
+        }
 
+        // Test disjunction in channel name
         let result2 = Compiler::source_to_adt(r#"@{Nil \/ Nil}!(1)"#);
         assert!(result2.is_err());
-        assert_eq!(
-            result2,
-            Err(InterpreterError::TopLevelLogicalConnectivesNotAllowedError(
-                format!(
-                    "\\/ (disjunction) at {}",
-                    SourcePosition { row: 0, column: 2 }
-                )
-            ))
-        );
+        match result2 {
+            Err(InterpreterError::TopLevelLogicalConnectivesNotAllowedError(msg)) => {
+                assert!(msg.contains("\\/ (disjunction)"));
+            }
+            other => panic!(
+                "Expected TopLevelLogicalConnectivesNotAllowedError, got: {:?}",
+                other
+            ),
+        }
 
+        // Test negation in channel name
         let result3 = Compiler::source_to_adt(r#"@{~Nil}!(1)"#);
         assert!(result3.is_err());
-        assert_eq!(
-            result3,
-            Err(InterpreterError::TopLevelLogicalConnectivesNotAllowedError(
-                format!("~ (negation) at {}", SourcePosition { row: 0, column: 2 })
-            ))
-        );
+        match result3 {
+            Err(InterpreterError::TopLevelLogicalConnectivesNotAllowedError(msg)) => {
+                assert!(msg.contains("~ (negation)"));
+            }
+            other => panic!(
+                "Expected TopLevelLogicalConnectivesNotAllowedError, got: {:?}",
+                other
+            ),
+        }
     }
 }

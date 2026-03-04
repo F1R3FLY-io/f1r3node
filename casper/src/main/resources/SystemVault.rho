@@ -1,0 +1,290 @@
+/*
+ The table below describes the required computations and their dependencies
+
+ No. | Dependency | Computation method | Result
+ ----+------------+--------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------
+ 1.  |            | given              | sk = 27e5718bf55dd673cc09f13c2bcf12ed7949b178aef5dcb6cd492ad422d05e9d
+ 2.  |            | given              | timestamp = 1559156183943
+ 3.  |            | lastNonce          | nonce = 9223372036854775807
+ 4.  | 1,         | secp256k1          | pk = 040f035630a5d2199184890b4b6b83440c842da0b6becca539f788f7b35d6e873561f673cd6ebe2e32236398a86f29dad992e8fba32534734300fcc5104bcfea0e
+ 5.  | 2, 4, 3,   | registry           | value = (1559156183943, 040f035630a5d2199184890b4b6b83440c842da0b6becca539f788f7b35d6e873561f673cd6ebe2e32236398a86f29dad992e8fba32534734300fcc5104bcfea0e, 9223372036854775807)
+ 6.  | 5,         | protobuf           | toSign = 2a65aa01620a092a07108ece9acfe05a0a462a44ca0141040f035630a5d2199184890b4b6b83440c842da0b6becca539f788f7b35d6e873561f673cd6ebe2e32236398a86f29dad992e8fba32534734300fcc5104bcfea0e0a0d2a0b10feffffffffffffffff01
+ 7.  | 6, 1,      | secp256k1          | sig = 3045022100c58cd73cd1a5c153d4edb3fc6e48aa2344c549a9225bde3def9b98c35e44399902205c3b615a1f19b8b2de23aecfea24dea30ae96eecd5f8bda1c125f47cb92a08d2
+ 8.  | 4,         | registry           | uri = rho:id:6zcfqnwnaqcwpeyuysx1rm48ndr6sgsbbgjuwf45i5nor3io7dr76j
+ ----+------------+--------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------
+ */
+new
+  SystemVault, rs(`rho:registry:insertSigned:secp256k1`), uriOut,
+  rl(`rho:registry:lookup`), VaultAddress(`rho:vault:address`),
+  MakeMintCh, AuthKeyCh, EitherCh, TreeHashMapCh,
+  _makeVault,
+  _newVault,
+  _create,
+  _systemVault,
+  _transferTemplate,
+  _depositTemplate
+in {
+  rl!(`rho:system:makeMint`, *MakeMintCh) |
+  rl!(`rho:system:authKey`, *AuthKeyCh) |
+  rl!(`rho:lang:either`, *EitherCh) |
+  rl!(`rho:lang:treeHashMap`, *TreeHashMapCh) |
+  for (@(_, MakeMint) <- MakeMintCh &
+       @(_, AuthKey)  <- AuthKeyCh &
+       @(_, Either)   <- EitherCh &
+       TreeHashMap    <- TreeHashMapCh) {
+    // Each invocation of the SystemVault contract uses a different mint.
+    new mintCh, vaultMapStore, initVault in {
+      // Initializes the vaultMapStore.
+      TreeHashMap!("init", 2, *vaultMapStore) |
+      for (@vaultMap <- vaultMapStore) {
+        // Called from VaultsGenerator:
+        //   SystemVault!("init", *ret)
+        new initContinue in {
+          // System vault initialization in genesis is done in batches.
+          // In the last batch `initContinue` channel will not receive
+          // anything so further access to `SystemVault(@"init", _)` is impossible.
+          initContinue!() |
+          contract SystemVault(@"init", ret) = {
+            for (<- initContinue) {
+              ret!(*TreeHashMap, vaultMap, *initVault, *initContinue)
+            }
+          }
+        } |
+        @MakeMint!(*mintCh) |
+        for (mint <- mintCh) {
+          // Initializes a vault with given name, address, and purse containing the amount.
+          contract initVault(name, @address, @initialAmount) = {
+            new purseCh in {
+              mint!("makePurse", initialAmount, *purseCh) |
+              for (purse <- purseCh) {
+                _newVault!(*name, address, *purse)
+              }
+            }
+          } |
+
+          contract SystemVault(@"deployerAuthKey", deployerId, ret) = {
+            new VaultAddress(`rho:vault:address`), DeployerIdOps(`rho:system:deployerId:ops`),
+                vaultAddrCh, deployerPubKeyBytesCh
+            in {
+              DeployerIdOps!("pubKeyBytes", *deployerId, *deployerPubKeyBytesCh) |
+              for (@deployerPubKeyBytes <- deployerPubKeyBytesCh) {
+                VaultAddress!("fromPublicKey", deployerPubKeyBytes, *vaultAddrCh) |
+                for (@deployerVaultAddress <- vaultAddrCh) {
+                  @AuthKey!("make", (*_systemVault, deployerVaultAddress), *ret)
+                }
+              }
+            }
+          } |
+          // Creates authKey from System vault name.
+          contract SystemVault(@"unforgeableAuthKey", unf, ret) = {
+            new VaultAddress(`rho:vault:address`), vaultAddrCh in {
+              VaultAddress!("fromUnforgeable", *unf, *vaultAddrCh) |
+              for (@unfVaultAddress <- vaultAddrCh) {
+                @AuthKey!("make", (*_systemVault, unfVaultAddress), *ret)
+              }
+            }
+          } |
+          // Either retrieves or creates corresponding System vault either.
+          contract SystemVault(@"findOrCreate", @vaultAddress, retCh) = {
+            new vaultAddressValidCh, vaultAddressValidEitherCh in {
+              // Validate Vault address first.
+              VaultAddress!("validate", vaultAddress, *vaultAddressValidCh) |
+              @Either!("fromNillableError <-", *vaultAddressValidCh, *vaultAddressValidEitherCh) |
+              for (@vaultAddressEither <- vaultAddressValidEitherCh) {
+                match vaultAddressEither {
+                  // Invalid Vault address returns Left.
+                  (false, _) => {
+                    retCh!(vaultAddressEither)
+                  }
+                  // Valid Vault address returns Right and we proceed with creation/search.
+                  _ => {
+                    new createVault, vaultCh, getVaultCh in {
+                      TreeHashMap!("get", vaultMap, vaultAddress, *getVaultCh) |
+                      for (@vault <- getVaultCh) {
+                        if (vault != Nil) {
+                          // If vault is in the store, return (true, vault).
+                          retCh!((true, vault))
+                        } else {
+                          // If vault was not found in store, create it and put it in the store.
+                          _create!(vaultAddress, *createVault, *vaultCh) |
+                          for (vaultRetCh <- createVault) {
+                            // Creates System vault and returns on vaultRetCh, consumed within _create contract.
+                            _makeVault!(vaultAddress, 0, *vaultRetCh) |
+                            // Blocks until both the vault is created and set in the store.
+                            for (@eitherVault <- vaultCh) {
+                              retCh!(eitherVault)
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          } |
+          // Used during genesis to create PoS vault with initial balance = sum of initial bonds.
+          // Can only be used to create the PoS vault, i.e. Vault address = "1111gW5kkGxHg7xDg6dRkZx2f7qxTizJzaCH9VEM1oJKWRvSX9Sk5".
+          for (@"createWithBalance", @"1111gW5kkGxHg7xDg6dRkZx2f7qxTizJzaCH9VEM1oJKWRvSX9Sk5", @amount, retCh <- SystemVault) {
+            new createVault, vaultCh in {
+              _create!("1111gW5kkGxHg7xDg6dRkZx2f7qxTizJzaCH9VEM1oJKWRvSX9Sk5", *createVault, *vaultCh) |
+              for (vaultRetCh <- createVault) {
+                _makeVault!("1111gW5kkGxHg7xDg6dRkZx2f7qxTizJzaCH9VEM1oJKWRvSX9Sk5", amount, *vaultRetCh) |
+                for (@eitherVault <- vaultCh) {
+                  retCh!(eitherVault)
+                }
+              }
+            }
+          } |
+          // Retrieves vault corresponding to vaultAddress if one exists, creates a vault otherwise.
+          // Returns either (true, vault) or (false, _) on retCh.
+          contract _create(@vaultAddress, constructor, retCh) = {
+            // The vault was not found, create a new one and set it in the vaultMap.
+            new resCh, ackCh in {
+              constructor!(*resCh) |
+              for (@eitherVault <- resCh) {
+                match eitherVault {
+                  (true, vault) => {
+                    TreeHashMap!("set", vaultMap, vaultAddress, vault, *ackCh) |
+                    for (_ <- ackCh) {
+                      retCh!(eitherVault)
+                    }
+                  }
+                  (false, _)    => {
+                    retCh!(eitherVault)
+                  }
+                }
+              }
+            }
+          } |
+          // Creates a System vault and returns Either on ret.
+          contract _makeVault(@ownerVaultAddress, @initialAmount, ret) = {
+            new vaultAddrCh, eitherVaultAddrCh, purseCh, eitherPurseCh, mkVault in {
+              @Either!("fromNillable", ownerVaultAddress, "Required `vaultAddress` parameter was Nil", *eitherVaultAddrCh) |
+              mint!("makePurse", initialAmount, *purseCh) |
+              @Either!("fromNillable <-", *purseCh, "Couldn't create purse", *eitherPurseCh) |
+              @Either!("map2 <-", *eitherVaultAddrCh, *eitherPurseCh,
+                for (@addr, purse, r <- mkVault) {
+                  new systemVault in {
+                    _newVault!(*systemVault, addr, *purse) |
+                    r!(bundle+{*systemVault})
+                  }
+                },
+                *ret
+              )
+            }
+          } |
+          // Supplies balance, transfer, and setLog methods on systemVault.
+          contract _newVault(systemVault, @ownVaultAddress, purse) = {
+            new logStore in {
+              logStore!(Nil) |
+              contract systemVault(@"balance", ret) = {
+                purse!("getBalance", *ret)
+              } |
+              // Transfers from systemVault to toVaultAddress.
+              contract systemVault(@"transfer", @targetAddress, @amount, authKey, ret) = {
+                new ret2 in {
+                  _transferTemplate!(ownVaultAddress, *purse, targetAddress, amount, *authKey, *ret2) |
+                  for (@result <- ret2) {
+                    ret!(result) |
+                    for (logCh <<- logStore) {
+                      if (Nil != *logCh) {
+                        new bd(`rho:block:data`), bdCh in {
+                          bd!(*bdCh) |
+                          for (@blockNumber, @timestamp, @sender <- bdCh) {
+                            logCh!(["transfer", targetAddress, amount, result, blockNumber, timestamp, sender])
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              } |
+              // Set to Nil to disable logging
+              contract systemVault(@"setLog", logCh, authKey, ret) = {
+                new authKeyValidCh in {
+                  @AuthKey!("check", *authKey, (*_systemVault, ownVaultAddress), *authKeyValidCh) |
+                  for (@result <- authKeyValidCh) {
+                    if (result) {
+                      new ack in {
+                        for (_ <- logStore) {
+                          logStore!(*logCh) |
+                          // Set logging on the purse so that we also see deposits into the vault
+                          purse!("setLog", *logCh, *ack) |
+                          for (_ <- ack) {
+                            ret!(true)
+                          }
+                        }
+                      }
+                    } else {
+                      ret!(false)
+                    }
+                  }
+                }
+              } |
+              // Internal SystemVault method for making deposits between purses.
+              contract @{ownVaultAddress | bundle0{*_systemVault}}(@"_deposit", depositPurse, retCh) = {
+                _depositTemplate!(*purse, *depositPurse, *retCh)
+              }
+            }
+          } |
+          // Checks all necessary validation and authentication prerequisites. If everything checks out,
+          // amount is transferred from purse (ownVaultAddress) to vault at targetAddress.
+          contract _transferTemplate(@ownVaultAddress, purse, @targetAddress, @amount, authKey, ret) = {
+            new vaultAddressValid, vaultAddressValidEither, amountNonNegative,
+                authKeyValidCh, authKeyValidEitherCh,
+                parametersOkCh, parametersAndAuthOkCh,
+                split, eitherPurseCh, doDeposit
+            in {
+              VaultAddress!("validate", targetAddress, *vaultAddressValid) |
+              @Either!("fromNillableError <-", *vaultAddressValid, *vaultAddressValidEither) |
+              @Either!("fromBoolean", amount > 0, "Amount must be positive value", *amountNonNegative) |
+              @AuthKey!("check", *authKey, (*_systemVault, ownVaultAddress), *authKeyValidCh) |
+              @Either!("fromBoolean <-", *authKeyValidCh, "Invalid AuthKey", *authKeyValidEitherCh) |
+              @Either!("productR <-", *vaultAddressValidEither, *amountNonNegative, *parametersOkCh) |
+              @Either!("productR <-", *parametersOkCh, *authKeyValidEitherCh, *parametersAndAuthOkCh) |
+              @Either!("flatMap <-", *parametersAndAuthOkCh, *split, *eitherPurseCh) |
+              for (_, retCh <- split) {
+                new destPurseCh, depositSuccessCh in {
+                  purse!("sprout", *destPurseCh) |
+                  for (@destPurse <- destPurseCh) {
+                    @destPurse!("deposit", amount, *purse, *depositSuccessCh) |
+                    for (@depositSuccess <- depositSuccessCh) {
+                      if (depositSuccess) {
+                        retCh!((true, destPurse))
+                      } else {
+                        retCh!((false, "Insufficient funds"))
+                      }
+                    }
+                  }
+                }
+              } |
+              @Either!("flatMap <-", *eitherPurseCh, *doDeposit, *ret) |
+              for (@p, retCh <- doDeposit) {
+                @{targetAddress | bundle0{*_systemVault}}!("_deposit", p, *retCh)
+              }
+            }
+          } |
+          // Deposits the entire balance in the fromPurse to the toPurse.
+          contract _depositTemplate(fromPurse, toPurse, retCh) = {
+            new amountCh, depositSuccessCh in {
+              toPurse!("getBalance", *amountCh) |
+              for (@amount <- amountCh) {
+                // Calls purse deposit method in MakeMint contract; adds amount to toPurse and subtracts from fromPurse.
+                fromPurse!("deposit", amount, *toPurse, *depositSuccessCh) |
+                @Either!("fromBoolean <-", *depositSuccessCh, "BUG FOUND: purse deposit failed", *retCh)
+              }
+            }
+          } |
+
+          rs!(
+            "040f035630a5d2199184890b4b6b83440c842da0b6becca539f788f7b35d6e873561f673cd6ebe2e32236398a86f29dad992e8fba32534734300fcc5104bcfea0e".hexToBytes(),
+            (9223372036854775807, bundle+{*SystemVault}),
+            "3045022100c58cd73cd1a5c153d4edb3fc6e48aa2344c549a9225bde3def9b98c35e44399902205c3b615a1f19b8b2de23aecfea24dea30ae96eecd5f8bda1c125f47cb92a08d2".hexToBytes(),
+            *uriOut
+          )
+        }
+      }
+    }
+  }
+}

@@ -274,13 +274,13 @@ impl ReportingRuntime {
         processed_deploy: &ProcessedDeploy,
     ) -> Result<(), crate::rust::errors::CasperError> {
         use crate::rust::rholang::replay_runtime::ReplayRuntimeOps;
-        
+
         let mut replay_ops = ReplayRuntimeOps::new_from_runtime(self.runtime.clone());
-        
+
         replay_ops.replay_deploy_e(with_cost_accounting, processed_deploy).await?;
-        
+
         self.runtime = replay_ops.runtime_ops.runtime;
-        
+
         Ok(())
     }
 
@@ -291,16 +291,16 @@ impl ReportingRuntime {
         processed_system_deploy: &models::rust::casper::protocol::casper_message::ProcessedSystemDeploy,
     ) -> Result<(), crate::rust::errors::CasperError> {
         use crate::rust::rholang::replay_runtime::ReplayRuntimeOps;
-        
+
         // Create ReplayRuntimeOps from the runtime
         let mut replay_ops = ReplayRuntimeOps::new_from_runtime(self.runtime.clone());
-        
+
         // Replay the system deploy
         replay_ops.replay_block_system_deploy(block_data, processed_system_deploy).await?;
-        
+
         // Update the runtime from replay_ops
         self.runtime = replay_ops.runtime_ops.runtime;
-        
+
         Ok(())
     }
 }
@@ -313,10 +313,10 @@ impl ReportingRuntime {
     ) -> Result<RhoReportingRspace, RSpaceError> {
         use rholang::rust::interpreter::matcher::r#match::Matcher;
         use rspace_plus_plus::rspace::r#match::Match;
-        
-        let matcher: Arc<Box<dyn Match<BindPattern, ListParWithRandom>>> = 
+
+        let matcher: Arc<Box<dyn Match<BindPattern, ListParWithRandom>>> =
             Arc::new(Box::new(Matcher));
-        
+
         RhoReportingRspace::create(store, matcher)
     }
 
@@ -327,7 +327,7 @@ impl ReportingRuntime {
         extra_system_processes: &mut Vec<Definition>,
     ) -> Result<Self, String> {
         use rholang::rust::interpreter::rho_runtime::create_replay_rho_runtime;
-        
+
         // Create the runtime using the reporting space
         // Now that ReportingRspace implements ISpace, we can use it directly
         let runtime = create_replay_rho_runtime(
@@ -335,13 +335,14 @@ impl ReportingRuntime {
             mergeable_tag_name,
             true, // init_registry - bootstrap registry for reporting
             extra_system_processes,
+            rholang::rust::interpreter::external_services::ExternalServices::noop(),
         )
         .await;
-        
+
         rholang::rust::interpreter::rho_runtime::bootstrap_registry(&runtime).await;
         let mut runtime_mut = runtime;
         RhoRuntime::create_checkpoint(&mut runtime_mut);
-        
+
         Ok(ReportingRuntime {
             runtime: runtime_mut,
             space: reporting_space,

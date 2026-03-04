@@ -8,11 +8,7 @@ use std::sync::Arc;
 use tokio::task::JoinSet;
 use tracing::info;
 
-use crate::rust::{
-    configuration::NodeConf,
-    effects::node_discover,
-    node_environment,
-};
+use crate::rust::{configuration::NodeConf, effects::node_discover, node_environment};
 
 // Type aliases for repeatable async operations
 pub type CasperLoop =
@@ -61,10 +57,7 @@ impl NodeRuntime {
     /// * `node_conf` - Node configuration
     /// * `id` - Node identifier derived from TLS certificate
     pub fn new(node_conf: NodeConf, id: NodeIdentifier) -> Self {
-        Self {
-            node_conf,
-            id,
-        }
+        Self { node_conf, id }
     }
 
     /// Main node entry point
@@ -268,6 +261,14 @@ impl NodeRuntime {
             trigger_propose_f,
             block_report_api,
             _block_store, // Kept in scope to ensure LMDB cleanup happens on drop
+            // Heartbeat dependencies
+            validator_identity_for_heartbeat,
+            engine_cell_for_heartbeat,
+            heartbeat_conf,
+            max_number_of_parents,
+            heartbeat_signal_ref,
+            // Mergeable channels GC loop
+            mergeable_channels_gc_loop,
         ) = result;
 
         info!("setup_node_program completed successfully");
@@ -304,6 +305,12 @@ impl NodeRuntime {
             packet_handler,
             event_bus,
             block_report_api,
+            validator_identity_for_heartbeat,
+            engine_cell_for_heartbeat,
+            heartbeat_conf,
+            max_number_of_parents,
+            heartbeat_signal_ref,
+            mergeable_channels_gc_loop,
         );
 
         // Wrap with error handling
@@ -373,6 +380,15 @@ impl NodeRuntime {
         >,
         event_bus: shared::rust::shared::f1r3fly_events::F1r3flyEvents,
         block_report_api: Arc<casper::rust::api::block_report_api::BlockReportAPI>,
+        // Heartbeat dependencies
+        validator_identity_for_heartbeat: Option<
+            casper::rust::validator_identity::ValidatorIdentity,
+        >,
+        engine_cell_for_heartbeat: Arc<casper::rust::engine::engine_cell::EngineCell>,
+        heartbeat_conf: casper::rust::casper_conf::HeartbeatConf,
+        max_number_of_parents: i32,
+        heartbeat_signal_ref: casper::rust::heartbeat_signal::HeartbeatSignalRef,
+        mergeable_channels_gc_loop: Option<CasperLoop>,
     ) -> eyre::Result<()> {
         // Display node startup info
         if self.node_conf.standalone {
@@ -504,9 +520,17 @@ impl NodeRuntime {
         let rp_conn_clone = rp_connections.clone();
         let rp_conf_cell_clone = rp_conf_cell.clone();
         let transport_clone = transport.clone();
+        let node_conf_clone = self.node_conf.clone();
 
         spawn_named_task(&mut critical_tasks, "Node Discovery Loop", async move {
-            node_discovery_loop(nd_clone, rp_conn_clone, rp_conf_cell_clone, transport_clone).await
+            node_discovery_loop(
+                nd_clone,
+                rp_conn_clone,
+                rp_conf_cell_clone,
+                transport_clone,
+                node_conf_clone,
+            )
+            .await
         });
 
         // Clear connections loop (Tier 3: Supportive)
@@ -514,6 +538,7 @@ impl NodeRuntime {
         let rp_conn_clone2 = rp_connections.clone();
         let rp_conf_cell_clone2 = rp_conf_cell.clone();
         let transport_clone2 = transport.clone();
+        let nd_clone2 = node_discovery.clone();
         let node_conf_clone2 = self.node_conf.clone();
 
         spawn_named_task(&mut critical_tasks, "Clear Connections Loop", async move {
@@ -521,6 +546,7 @@ impl NodeRuntime {
                 rp_conn_clone2,
                 rp_conf_cell_clone2,
                 transport_clone2,
+                nd_clone2,
                 node_conf_clone2,
             )
             .await
@@ -565,7 +591,18 @@ impl NodeRuntime {
             run_update_fork_choice_loop(update_fork_choice_loop).await
         });
 
+        // Mergeable channels GC loop (Tier 2: Critical - runs indefinitely when enabled)
+        if let Some(gc_loop) = mergeable_channels_gc_loop {
+            spawn_named_task(
+                &mut critical_tasks,
+                "Mergeable Channels GC Loop",
+                async move { run_mergeable_channels_gc_loop(gc_loop).await },
+            );
+        }
+
         // Block processor instance (Tier 2: Critical)
+        // Clone for heartbeat before moving into block processor
+        let trigger_propose_for_heartbeat = trigger_propose_f.clone();
         let trigger_propose_opt = if self.node_conf.autopropose {
             trigger_propose_f
         } else {
@@ -598,7 +635,7 @@ impl NodeRuntime {
                     Arc::new(block_processor),
                     blocks_in_processing,
                     trigger_propose_opt,
-                    10, // max_parallel_blocks - reasonable default
+                    100, // max_parallel_blocks - match Scala parallelism
                 );
 
                 // BlockProcessorInstance::create spawns the processing task and returns a result receiver
@@ -658,6 +695,37 @@ impl NodeRuntime {
             });
         } else {
             info!("Node not configured as validator - proposer instance will not start");
+        }
+
+        // Heartbeat proposer (Tier 2: Critical - if configured as validator)
+        // Heartbeat runs on bonded validators to maintain network liveness
+        if let Some(validator_identity) = validator_identity_for_heartbeat {
+            use crate::rust::instances::heartbeat_proposer::HeartbeatProposer;
+
+            if let Some(heartbeat_handle) = HeartbeatProposer::create(
+                engine_cell_for_heartbeat,
+                trigger_propose_for_heartbeat,
+                validator_identity,
+                heartbeat_conf,
+                max_number_of_parents,
+                heartbeat_signal_ref,
+                self.node_conf.standalone,
+            ) {
+                spawn_named_task(&mut critical_tasks, "Heartbeat Proposer", async move {
+                    match heartbeat_handle.await {
+                        Ok(()) => {
+                            info!("Heartbeat proposer completed");
+                            Ok(())
+                        }
+                        Err(e) => {
+                            tracing::error!("Heartbeat proposer panicked: {}", e);
+                            Err(eyre::eyre!("Heartbeat proposer failed: {}", e))
+                        }
+                    }
+                });
+            } else {
+                info!("Heartbeat proposer not started (disabled or no propose function)");
+            }
         }
 
         // === CRITICAL TASKS: Tier 3 - API Servers ===
@@ -866,16 +934,19 @@ async fn shutdown_signal() {
 /// Node discovery loop - runs indefinitely
 ///
 /// Periodically discovers new peers and attempts to connect to them.
-/// Runs every 20 seconds.
+/// Uses configured lookup_interval from peers_discovery settings.
 async fn node_discovery_loop(
     node_discovery: Arc<dyn comm::rust::discovery::node_discovery::NodeDiscovery + Send + Sync>,
     connections: comm::rust::rp::connect::ConnectionsCell,
     rp_conf_cell: comm::rust::rp::rp_conf::RPConfCell,
     transport: comm::rust::transport::grpc_transport_client::GrpcTransportClient,
+    node_conf: NodeConf,
 ) -> eyre::Result<()> {
-    use tokio::time::{sleep, Duration};
+    use tokio::time::sleep;
 
     loop {
+        tracing::debug!("nodeDiscoveryLoop: Starting iteration");
+
         // Discover new peers
         if let Err(e) = node_discovery.discover().await {
             tracing::warn!("Node discovery failed: {}", e);
@@ -886,7 +957,7 @@ async fn node_discovery_loop(
             Ok(conf) => conf,
             Err(e) => {
                 tracing::warn!("Failed to read RPConf: {}", e);
-                sleep(Duration::from_secs(20)).await;
+                sleep(node_conf.peers_discovery.lookup_interval).await;
                 continue;
             }
         };
@@ -914,30 +985,40 @@ async fn node_discovery_loop(
             }
         }
 
-        // Sleep for 20 seconds before next iteration
-        sleep(Duration::from_secs(20)).await;
+        // Sleep for configured lookup interval before next iteration
+        sleep(node_conf.peers_discovery.lookup_interval).await;
     }
 }
 
 /// Clear connections loop - runs indefinitely
 ///
 /// Periodically checks connection health by sending heartbeats and removes
-/// failed peers. Also handles dynamic IP changes. Runs every 10 minutes.
+/// failed peers. Also handles dynamic IP changes and orphaned channel cleanup.
+/// Uses configured cleanup_interval from peers_discovery settings.
+///
+/// The clear_connections function handles the full cleanup cycle:
+/// 1. Removes peers from ConnectionsCell
+/// 2. Removes peers from KademliaStore (except bootstrap, which is pinned)
+/// 3. Disconnects the gRPC channel immediately (via transport.disconnect)
 async fn clear_connections_loop(
     connections: comm::rust::rp::connect::ConnectionsCell,
     rp_conf_cell: comm::rust::rp::rp_conf::RPConfCell,
     transport: comm::rust::transport::grpc_transport_client::GrpcTransportClient,
+    node_discovery: Arc<dyn comm::rust::discovery::node_discovery::NodeDiscovery + Send + Sync>,
     node_conf: NodeConf,
 ) -> eyre::Result<()> {
-    use tokio::time::{sleep, Duration};
+    use comm::rust::transport::transport_layer::TransportLayer;
+    use tokio::time::sleep;
 
     loop {
+        tracing::debug!("clearConnectionsLoop: Starting iteration");
+
         // Read current RPConf
         let rp_conf = match rp_conf_cell.read() {
             Ok(conf) => conf,
             Err(e) => {
                 tracing::warn!("Failed to read RPConf: {}", e);
-                sleep(Duration::from_secs(600)).await;
+                sleep(node_conf.peers_discovery.cleanup_interval).await;
                 continue;
             }
         };
@@ -985,14 +1066,15 @@ async fn clear_connections_loop(
             Ok(conf) => conf,
             Err(e) => {
                 tracing::warn!("Failed to read RPConf after IP check: {}", e);
-                sleep(Duration::from_secs(600)).await;
+                sleep(node_conf.peers_discovery.cleanup_interval).await;
                 continue;
             }
         };
 
-        // Clear connections (send heartbeats, remove failed peers)
-        match comm::rust::rp::connect::clear_connections(&connections, &rp_conf, &transport).await {
-            Ok(cleared_count) => {
+        // Clear connections: heartbeats, ConnectionsCell update, Kademlia removal
+        // (with bootstrap pinning), and gRPC disconnect — all handled inside clear_connections.
+        match comm::rust::rp::connect::clear_connections(&connections, &rp_conf, &transport, &*node_discovery).await {
+            Ok((cleared_count, _failed_peers)) => {
                 if cleared_count > 0 {
                     info!("Cleared {} failed connection(s)", cleared_count);
                 }
@@ -1002,8 +1084,43 @@ async fn clear_connections_loop(
             }
         }
 
-        // Sleep for 10 minutes before next iteration
-        sleep(Duration::from_secs(600)).await;
+        // Clean up orphaned channels - channels for peers no longer in ConnectionsCell
+        let updated_conns = match connections.read() {
+            Ok(conns) => conns,
+            Err(e) => {
+                tracing::warn!("Failed to read connections for orphaned cleanup: {}", e);
+                sleep(node_conf.peers_discovery.cleanup_interval).await;
+                continue;
+            }
+        };
+
+        match transport.get_channeled_peers().await {
+            Ok(channeled_peers) => {
+                let connection_set: std::collections::HashSet<_> =
+                    updated_conns.iter().cloned().collect();
+                let orphaned_peers: Vec<_> = channeled_peers
+                    .iter()
+                    .filter(|p| !connection_set.contains(*p))
+                    .cloned()
+                    .collect();
+
+                if !orphaned_peers.is_empty() {
+                    tracing::debug!("Disconnecting {} orphaned channels", orphaned_peers.len());
+                    for peer in orphaned_peers {
+                        tracing::debug!("Orphaned channel cleanup: {}", peer);
+                        if let Err(e) = transport.disconnect(&peer).await {
+                            tracing::warn!("Failed to disconnect orphaned peer {}: {}", peer, e);
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!("Failed to get channeled peers: {}", e);
+            }
+        }
+
+        // Sleep for configured cleanup interval before next iteration
+        sleep(node_conf.peers_discovery.cleanup_interval).await;
     }
 }
 
@@ -1060,6 +1177,27 @@ async fn run_update_fork_choice_loop(update_fork_choice_loop: CasperLoop) -> eyr
             }
             Err(e) => {
                 tracing::error!("Update fork choice loop iteration failed: {}", e);
+                // Sleep a bit before retrying to avoid tight error loops
+                tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+            }
+        }
+    }
+}
+
+/// Run the mergeable channels garbage collection loop indefinitely
+///
+/// Periodically garbage collects mergeable channel data for blocks that are
+/// provably unreachable. Required for multi-parent mode to prevent early deletion.
+/// Errors are logged but don't stop the loop.
+async fn run_mergeable_channels_gc_loop(gc_loop: CasperLoop) -> eyre::Result<()> {
+    tracing::info!("Mergeable channels GC loop started");
+    loop {
+        match gc_loop().await {
+            Ok(_) => {
+                // GC iteration completed successfully
+            }
+            Err(e) => {
+                tracing::error!("Mergeable channels GC loop iteration failed: {}", e);
                 // Sleep a bit before retrying to avoid tight error loops
                 tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
             }

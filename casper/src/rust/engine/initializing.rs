@@ -45,6 +45,7 @@ use shared::rust::{
 use crate::rust::block_status::ValidBlock;
 use crate::rust::engine::lfs_tuple_space_requester::StatePartPath;
 use crate::rust::estimator::Estimator;
+use crate::rust::merging::{dag_merger, deploy_chain_index::DeployChainIndex};
 use crate::rust::validate::Validate;
 use crate::rust::{
     casper::{CasperShardConf, MultiParentCasper},
@@ -105,6 +106,8 @@ pub struct Initializing<T: TransportLayer + Send + Sync + Clone + 'static> {
     engine_cell: Arc<EngineCell>,
     runtime_manager: Arc<tokio::sync::Mutex<RuntimeManager>>,
     estimator: Arc<Mutex<Option<Estimator>>>,
+    /// Shared reference to heartbeat signal for triggering immediate wake on deploy
+    heartbeat_signal_ref: crate::rust::heartbeat_signal::HeartbeatSignalRef,
 }
 
 impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
@@ -143,6 +146,7 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
         engine_cell: Arc<EngineCell>,
         runtime_manager: Arc<tokio::sync::Mutex<RuntimeManager>>,
         estimator: Estimator,
+        heartbeat_signal_ref: crate::rust::heartbeat_signal::HeartbeatSignalRef,
     ) -> Self {
         Self {
             transport_layer,
@@ -171,6 +175,7 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
             engine_cell,
             runtime_manager,
             estimator: Arc::new(Mutex::new(Some(estimator))),
+            heartbeat_signal_ref,
         }
     }
 }
@@ -178,7 +183,15 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
 #[async_trait]
 impl<T: TransportLayer + Send + Sync + Clone + 'static> Engine for Initializing<T> {
     async fn init(&self) -> Result<(), CasperError> {
-        (self.the_init)().await
+        (self.the_init)().await?;
+        // Proactively request ApprovedBlock on init to handle the race condition where
+        // the ApprovedBlock was broadcast while this node was still in GenesisValidator state
+        // (verifying the UnapprovedBlock). Without this, the node could get stuck forever
+        // waiting for an ApprovedBlock that was already sent and dropped.
+        self.transport_layer
+            .request_approved_block(&self.rp_conf_ask, Some(self.trim_state))
+            .await
+            .map_err(CasperError::CommError)
     }
 
     async fn handle(&self, peer: PeerNode, msg: CasperMessage) -> Result<(), CasperError> {
@@ -502,6 +515,14 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
             );
         }
 
+        // Replay blocks to populate mergeable channel cache
+        // This is needed for multi-parent block validation
+        self.replay_blocks_for_mergeable_channels(
+            approved_block,
+            min_block_number_for_deploy_lifespan,
+        )
+        .await?;
+
         // Transition to Running state
         tracing::info!("request_approved_state: transitioning to Running");
         self.create_casper_and_transition_to_running(&approved_block)
@@ -595,6 +616,324 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
         Ok(())
     }
 
+    /// Replay blocks in topological order to populate the mergeable channel cache.
+    /// This is necessary for multi-parent block validation, which requires mergeable
+    /// channel data from parent blocks to compute merged state.
+    ///
+    /// The LFS sync transfers the RSpace trie but not the mergeable channel store,
+    /// so we must regenerate it by replaying blocks.
+    async fn replay_blocks_for_mergeable_channels(
+        &self,
+        _approved_block: &ApprovedBlock,
+        min_block_number: i64,
+    ) -> Result<(), CasperError> {
+        tracing::info!("Replaying blocks to populate mergeable channel cache...");
+
+        // Get DAG representation for traversal
+        let dag = self.block_dag_storage.get_representation();
+
+        // Get all blocks in the DAG that need replay (from minBlockNumber to LFB)
+        // We process in topological order (by block number, then by hash for determinism)
+        let all_blocks = dag.topo_sort(min_block_number, None)?;
+        let blocks_to_replay: Vec<BlockHash> = all_blocks.into_iter().flatten().collect();
+
+        tracing::info!(
+            "Found {} blocks to replay for mergeable channel cache.",
+            blocks_to_replay.len()
+        );
+
+        // Bootstrap emptyStateHashFixed into the roots store.
+        // After LFS import, the LMDB current root is the LFS state hash. Without this
+        // explicit bootstrap, the genesis replay below fails with "unknown root" because
+        // emptyStateHashFixed was never recorded in the roots store.
+        {
+            let runtime_manager = self.runtime_manager.lock().await;
+            let empty_hash = RuntimeManager::empty_state_hash_fixed();
+            let empty_blake = Blake2b256Hash::from_bytes_prost(&empty_hash);
+            match runtime_manager.history_repo.record_root(&empty_blake) {
+                Ok(()) => {
+                    tracing::debug!(
+                        "emptyStateHash bootstrap OK: {}",
+                        PrettyPrinter::build_string_bytes(&empty_hash)
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "emptyStateHash bootstrap failed: {:?}",
+                        e
+                    );
+                }
+            }
+        }
+
+        // Replay each block to populate mergeable channels
+        for block_hash in blocks_to_replay {
+            let block = self.block_store.get_unsafe(&block_hash);
+            let parents = &block.header.parents_hash_list;
+
+            if parents.is_empty() {
+                // Genesis block - replay from empty state
+                self.replay_genesis_block(&block).await?;
+            } else {
+                self.replay_single_block(&block).await?;
+            }
+        }
+
+        tracing::info!("Mergeable channel cache populated successfully.");
+        Ok(())
+    }
+
+    /// Replay genesis block to populate its mergeable channel cache entry.
+    /// Genesis is special because it starts from empty state.
+    async fn replay_genesis_block(&self, block: &BlockMessage) -> Result<(), CasperError> {
+        let block_hash = &block.block_hash;
+        let block_number = proto_util::block_number(block);
+
+        tracing::debug!(
+            "Replaying genesis block #{} ({})",
+            block_number,
+            PrettyPrinter::build_string_bytes(block_hash)
+        );
+
+        let deploys = proto_util::deploys(block);
+        let system_deploys = proto_util::system_deploys(block);
+        let block_data = rholang::rust::interpreter::system_processes::BlockData::from_block(block);
+
+        // Genesis starts from empty state
+        let pre_state_hash = RuntimeManager::empty_state_hash_fixed();
+
+        // Replay genesis - this will save mergeable channels to the store
+        let mut runtime_manager = self.runtime_manager.lock().await;
+        let result = runtime_manager
+            .replay_compute_state(
+                &pre_state_hash,
+                deploys,
+                system_deploys,
+                &block_data,
+                None, // No invalid blocks for genesis
+                true, // isGenesis = true
+            )
+            .await;
+
+        match result {
+            Ok(computed_post_state) => {
+                let expected_post_state = &block.body.state.post_state_hash;
+                if computed_post_state == *expected_post_state {
+                    tracing::debug!("Genesis block replayed successfully.");
+                } else {
+                    tracing::warn!(
+                        "Genesis block replay state mismatch: computed={}, expected={}",
+                        PrettyPrinter::build_string_bytes(&computed_post_state),
+                        PrettyPrinter::build_string_bytes(expected_post_state)
+                    );
+                }
+            }
+            Err(e) => {
+                tracing::warn!("Genesis block replay error: {:?}", e);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Replay a single block to populate its mergeable channel cache entry.
+    async fn replay_single_block(&self, block: &BlockMessage) -> Result<(), CasperError> {
+        let block_hash = &block.block_hash;
+        let block_number = proto_util::block_number(block);
+        let parents = &block.header.parents_hash_list;
+
+        // For single-parent blocks, use parent's post-state directly.
+        // For multi-parent blocks, compute the merged pre-state via DagMerger.
+        // The block's recorded preStateHash was computed by DagMerger on the proposer;
+        // it doesn't exist in the joiner's LMDB after LFS import. We must compute it
+        // locally so the merged trie is created and the root is recorded.
+        let pre_state_hash = if parents.len() == 1 {
+            let parent_block = self.block_store.get_unsafe(&parents[0]);
+            parent_block.body.state.post_state_hash.clone()
+        } else {
+            let dag = self.block_dag_storage.get_representation();
+            self.compute_merged_pre_state(block, parents, &dag).await?
+        };
+
+        let deploys = proto_util::deploys(block);
+        let system_deploys = proto_util::system_deploys(block);
+        let block_data = rholang::rust::interpreter::system_processes::BlockData::from_block(block);
+        let is_genesis = parents.is_empty();
+
+        // Get invalid blocks map for replay
+        let dag = self.block_dag_storage.get_representation();
+        let invalid_blocks_map = dag.invalid_blocks_map()?;
+
+        tracing::debug!(
+            "Replaying block #{} ({}) with {} deploys, {} parents",
+            block_number,
+            PrettyPrinter::build_string_bytes(block_hash),
+            deploys.len(),
+            parents.len()
+        );
+
+        // Replay the block - this will save mergeable channels to the store
+        let mut runtime_manager = self.runtime_manager.lock().await;
+        let result = runtime_manager
+            .replay_compute_state(
+                &pre_state_hash,
+                deploys,
+                system_deploys,
+                &block_data,
+                Some(invalid_blocks_map),
+                is_genesis,
+            )
+            .await;
+
+        match result {
+            Ok(computed_post_state) => {
+                let expected_post_state = &block.body.state.post_state_hash;
+                if computed_post_state == *expected_post_state {
+                    tracing::debug!("Block #{} replayed successfully.", block_number);
+                } else {
+                    tracing::warn!(
+                        "Block #{} replay state mismatch: computed={}, expected={}",
+                        block_number,
+                        PrettyPrinter::build_string_bytes(&computed_post_state),
+                        PrettyPrinter::build_string_bytes(expected_post_state)
+                    );
+                }
+            }
+            Err(e) => {
+                tracing::warn!("Block #{} replay error: {:?}", block_number, e);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Compute the merged pre-state hash for a multi-parent block.
+    ///
+    /// This mirrors the logic from `InterpreterUtil::compute_parents_post_state` but
+    /// does not require a `CasperSnapshot` (which is unavailable during LFS replay).
+    /// It finds the lowest common ancestor (LCA) of all parents, then runs
+    /// `DagMerger::merge` from the LCA's post-state to produce the merged trie.
+    async fn compute_merged_pre_state(
+        &self,
+        block: &BlockMessage,
+        parents: &[prost::bytes::Bytes],
+        dag: &block_storage::rust::dag::block_dag_key_value_storage::KeyValueDagRepresentation,
+    ) -> Result<prost::bytes::Bytes, CasperError> {
+        let block_number = proto_util::block_number(block);
+
+        // Get ancestor sets for each parent (includes the parent itself)
+        let ancestor_sets: Vec<HashSet<BlockHash>> = parents
+            .iter()
+            .map(|h| dag.with_ancestors(h.clone(), |_| true).map_err(CasperError::from))
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let visible_blocks: HashSet<BlockHash> =
+            ancestor_sets.iter().flat_map(|s| s.iter().cloned()).collect();
+
+        // Find the lowest common ancestor (LCA): the highest-numbered block reachable from ALL parents
+        let common_ancestors: HashSet<BlockHash> = ancestor_sets
+            .iter()
+            .skip(1)
+            .fold(ancestor_sets[0].clone(), |acc, set| {
+                acc.intersection(set).cloned().collect()
+            });
+
+        let mut lca: Option<(BlockHash, i64)> = None;
+        for h in &common_ancestors {
+            let meta = dag.lookup_unsafe(h)?;
+            match &lca {
+                Some((_, best_num)) if meta.block_number <= *best_num => {}
+                _ => {
+                    lca = Some((h.clone(), meta.block_number));
+                }
+            }
+        }
+
+        let (lca_hash, _) = lca.ok_or_else(|| {
+            CasperError::RuntimeError(format!(
+                "Block #{}: no common ancestor found for {} parents",
+                block_number,
+                parents.len()
+            ))
+        })?;
+
+        let lca_block = self.block_store.get_unsafe(&lca_hash);
+        let lca_state = Blake2b256Hash::from_bytes_prost(&lca_block.body.state.post_state_hash);
+
+        tracing::info!(
+            "Block #{}: computing merged pre-state for {} parents, LCA={} (block {}), visibleBlocks={}",
+            block_number,
+            parents.len(),
+            PrettyPrinter::build_string_bytes(&lca_hash),
+            lca_block.body.state.block_number,
+            visible_blocks.len()
+        );
+
+        // Build block index function: loads mergeable channels from the merge store.
+        // Acquires the runtime_manager lock for the duration of the merge computation.
+        let runtime_manager = self.runtime_manager.lock().await;
+        let block_store_ref = &self.block_store;
+        let history_repo = &runtime_manager.history_repo;
+
+        let block_index_f = |v: &BlockHash| -> Result<Vec<DeployChainIndex>, CasperError> {
+            // Check cache first
+            if let Some(cached) = runtime_manager.block_index_cache.get(v) {
+                return Ok(cached.value().deploy_chains.clone());
+            }
+
+            let b = block_store_ref.get_unsafe(v);
+            let pre_state = &b.body.state.pre_state_hash;
+            let post_state = &b.body.state.post_state_hash;
+            let sender = b.sender.clone();
+            let seq_num = b.seq_num;
+
+            let mergeable_chs =
+                runtime_manager.load_mergeable_channels(post_state, sender, seq_num)?;
+
+            let block_index = crate::rust::merging::block_index::new(
+                &b.block_hash,
+                &b.body.deploys,
+                &b.body.system_deploys,
+                &Blake2b256Hash::from_bytes_prost(pre_state),
+                &Blake2b256Hash::from_bytes_prost(post_state),
+                history_repo,
+                &mergeable_chs,
+            )?;
+
+            // Cache the result
+            runtime_manager
+                .block_index_cache
+                .insert(v.clone(), block_index.clone());
+
+            Ok(block_index.deploy_chains)
+        };
+
+        // Run DagMerger to compute the merged trie and record its root.
+        // disable_late_block_filtering = false (default for replay)
+        let merge_result = dag_merger::merge(
+            dag,
+            &lca_hash,
+            &lca_state,
+            block_index_f,
+            history_repo,
+            dag_merger::cost_optimal_rejection_alg(),
+            Some(visible_blocks),
+            false,
+            None,
+        )?;
+
+        let (merged_state, _) = merge_result;
+        let merged_state_hash = prost::bytes::Bytes::copy_from_slice(&merged_state.bytes());
+
+        tracing::info!(
+            "Block #{}: merged pre-state computed: {}",
+            block_number,
+            PrettyPrinter::build_string_bytes(&merged_state_hash)
+        );
+
+        Ok(merged_state_hash)
+    }
+
     /// **Scala equivalent**: `private def createCasperAndTransitionToRunning(approvedBlock: ApprovedBlock): F[Unit]`
     async fn create_casper_and_transition_to_running(
         &self,
@@ -636,6 +975,7 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
             self.validator_id.clone(),
             self.casper_shard_conf.clone(),
             ab,
+            self.heartbeat_signal_ref.clone(),
         )?;
 
         tracing::info!(

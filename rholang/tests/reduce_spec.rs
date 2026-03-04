@@ -10,9 +10,9 @@ use crypto::rust::hash::blake2b512_random::Blake2b512Random;
 use models::{
     rhoapi::{
         connective::ConnectiveInstance::VarRefBody, expr::ExprInstance, g_unforgeable::UnfInstance,
-        Bundle, Connective, EEq, EList, EMatches, EMethod, EMinus, EMinusMinus, EPercentPercent,
-        EPlus, EPlusPlus, ETuple, GPrivate, GUnforgeable, Match, MatchCase, New, Receive,
-        ReceiveBind, VarRef,
+        Bundle, Connective, EDiv, EEq, EList, EMatches, EMethod, EMinus, EMinusMinus, EMod,
+        EPercentPercent, EPlus, EPlusPlus, ETuple, GPrivate, GUnforgeable, Match, MatchCase, New,
+        Receive, ReceiveBind, VarRef,
     },
     rust::{
         par_map::ParMap,
@@ -153,6 +153,86 @@ async fn eval_expr_should_handle_long_addition() {
 
     assert!(result.is_ok());
     assert_eq!(result.unwrap().exprs, expected);
+}
+
+#[tokio::test]
+async fn eval_expr_should_handle_simple_division() {
+    let (_, reducer) =
+        create_test_space::<RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>()
+            .await;
+    let div_expr = Par::default().with_exprs(vec![Expr {
+        expr_instance: Some(ExprInstance::EDivBody(EDiv {
+            p1: Some(new_gint_par(15, Vec::new(), false)),
+            p2: Some(new_gint_par(3, Vec::new(), false)),
+        })),
+    }]);
+    let env: Env<Par> = Env::new();
+    let result = reducer.eval_expr(&div_expr, &env);
+    let expected = vec![new_gint_expr(5)];
+
+    assert!(result.is_ok());
+    assert_eq!(result.unwrap().exprs, expected);
+}
+
+#[tokio::test]
+async fn eval_expr_should_return_error_for_division_by_zero() {
+    let (_, reducer) =
+        create_test_space::<RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>()
+            .await;
+    let div_expr = Par::default().with_exprs(vec![Expr {
+        expr_instance: Some(ExprInstance::EDivBody(EDiv {
+            p1: Some(new_gint_par(1, Vec::new(), false)),
+            p2: Some(new_gint_par(0, Vec::new(), false)),
+        })),
+    }]);
+    let env: Env<Par> = Env::new();
+    let result = reducer.eval_expr(&div_expr, &env);
+
+    assert!(result.is_err());
+    assert_eq!(
+        result.unwrap_err(),
+        InterpreterError::ReduceError("Division by zero".to_string())
+    );
+}
+
+#[tokio::test]
+async fn eval_expr_should_handle_simple_modulo() {
+    let (_, reducer) =
+        create_test_space::<RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>()
+            .await;
+    let mod_expr = Par::default().with_exprs(vec![Expr {
+        expr_instance: Some(ExprInstance::EModBody(EMod {
+            p1: Some(new_gint_par(17, Vec::new(), false)),
+            p2: Some(new_gint_par(5, Vec::new(), false)),
+        })),
+    }]);
+    let env: Env<Par> = Env::new();
+    let result = reducer.eval_expr(&mod_expr, &env);
+    let expected = vec![new_gint_expr(2)];
+
+    assert!(result.is_ok());
+    assert_eq!(result.unwrap().exprs, expected);
+}
+
+#[tokio::test]
+async fn eval_expr_should_return_error_for_modulo_by_zero() {
+    let (_, reducer) =
+        create_test_space::<RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>()
+            .await;
+    let mod_expr = Par::default().with_exprs(vec![Expr {
+        expr_instance: Some(ExprInstance::EModBody(EMod {
+            p1: Some(new_gint_par(1, Vec::new(), false)),
+            p2: Some(new_gint_par(0, Vec::new(), false)),
+        })),
+    }]);
+    let env: Env<Par> = Env::new();
+    let result = reducer.eval_expr(&mod_expr, &env);
+
+    assert!(result.is_err());
+    assert_eq!(
+        result.unwrap_err(),
+        InterpreterError::ReduceError("Modulo by zero".to_string())
+    );
 }
 
 #[tokio::test]

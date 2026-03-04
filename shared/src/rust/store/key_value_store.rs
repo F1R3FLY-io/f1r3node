@@ -19,6 +19,9 @@ pub trait KeyValueStore: Send + Sync {
 
     fn print_store(&self) -> Result<(), KvStoreError>;
 
+    /// Check if the store contains any entries. O(1) time and space.
+    fn non_empty(&self) -> Result<bool, KvStoreError>;
+
     fn contains(&self, keys: &Vec<ByteBuffer>) -> Result<Vec<bool>, KvStoreError> {
         let results = self.get(keys)?;
 

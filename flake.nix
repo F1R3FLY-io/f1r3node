@@ -134,6 +134,25 @@
               package = cross;
               help = "Cross-compilation of Rust projects made easy";
             }
+            {
+              name = "python3";
+              package = python310;
+              help = "Python 3.10 interpreter";
+            }
+            {
+              name = "pipenv";
+              package = pipenv;
+              help = "Python dependency management tool";
+            }
+            {
+              name = "just";
+              package = just;
+              help = "Just command runner for local development tasks";
+            }
+          ];
+          packages = [
+            # Required for Python packages with native extensions (grpcio, etc.)
+            stdenv.cc.cc.lib
           ];
           imports = [ typelevel-nix.typelevelShell ];
           name = "f1r3fly-shell";
@@ -141,6 +160,10 @@
 		        jdk.package = holyGraal;
           };
           env = [
+              {
+                name = "LD_LIBRARY_PATH";
+                value = "${stdenv.cc.cc.lib}/lib:${pkgs.openssl.out}/lib";
+              }
               {
                 name = "PROTOBUF_LOCATION";
                 value = "${pkgs.protobuf}";
@@ -152,10 +175,6 @@
               {
                 name = "PROTOC_INCLUDE";
                 value = "${pkgs.protobuf}/include";
-              }
-              {
-                name = "OPENSSL_STATIC";
-                value = "1";
               }
               {
                 name = "OPENSSL_INCLUDE_DIR";
