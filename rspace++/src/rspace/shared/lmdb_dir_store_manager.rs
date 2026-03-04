@@ -105,22 +105,21 @@ impl KeyValueStoreManager for LmdbDirStoreManager {
             self.create_lmdb_manager(man_cfg, sender)?;
         }
 
-        let mut manager = {
+        let receiver = {
             let mut state = self.managers_state.lock().await;
-            let receiver = state.envs.remove(&man_cfg.name).ok_or({
+            state.envs.remove(&man_cfg.name).ok_or({
                 heed::Error::Io(std::io::Error::new(
                     std::io::ErrorKind::Other,
                     format!("LMDB_Dir_Store_Manager: Receiver not found"),
                 ))
-            })?;
-
-            receiver.await.map_err(|e| {
-                heed::Error::Io(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("LMDB_Dir_Store_Manager: Failed to receive manager, {}", e),
-                ))
             })?
         };
+        let mut manager = receiver.await.map_err(|e| {
+            heed::Error::Io(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("LMDB_Dir_Store_Manager: Failed to receive manager, {}", e),
+            ))
+        })?;
 
         let database_name = db.name_override.clone().unwrap_or(db.id.clone());
         let database = manager.store(database_name);
@@ -129,9 +128,17 @@ impl KeyValueStoreManager for LmdbDirStoreManager {
     }
 
     async fn shutdown(&mut self) -> Result<(), heed::Error> {
-        let mut state = self.managers_state.lock().await;
-        for manager_future in state.envs.values_mut() {
-            if let Ok(mut manager) = manager_future.await {
+        let pending_manager_receivers = {
+            let mut state = self.managers_state.lock().await;
+            state
+                .envs
+                .drain()
+                .map(|(_, manager_receiver)| manager_receiver)
+                .collect::<Vec<_>>()
+        };
+
+        for manager_receiver in pending_manager_receivers {
+            if let Ok(mut manager) = manager_receiver.await {
                 let _ = manager.shutdown().await;
             }
         }

@@ -72,6 +72,7 @@ pub type MessageBuffers = (
     Arc<FlumeLimitedBuffer<CommSend>>,
     Arc<FlumeLimitedBuffer<StreamMessage>>,
     Arc<JoinHandle<()>>,
+    Arc<JoinHandle<()>>,
 );
 
 #[derive(Clone)]
@@ -175,14 +176,15 @@ impl TransportLayerService {
             tracing::info!("Creating inbound message queue for {}.", peer.to_address());
 
             // Create the actual buffers
-            let (tell_buffer, blob_buffer, task_handle) =
+            let (tell_buffer, blob_buffer, tell_task_handle, blob_task_handle) =
                 self.create_buffers_with_subscriptions().await;
 
             // Store in OnceCell
             let buffers = (
                 Arc::new(tell_buffer),
                 Arc::new(blob_buffer),
-                Arc::new(task_handle),
+                Arc::new(tell_task_handle),
+                Arc::new(blob_task_handle),
             );
             let _ = once_cell.set(buffers);
         }
@@ -191,12 +193,13 @@ impl TransportLayerService {
         // This will wait if another thread is creating them, or return immediately if they exist
         let buffers = once_cell
             .get_or_try_init(|| async {
-                let (tell_buffer, blob_buffer, task_handle) =
+                let (tell_buffer, blob_buffer, tell_task_handle, blob_task_handle) =
                     self.create_buffers_with_subscriptions().await;
                 Ok((
                     Arc::new(tell_buffer),
                     Arc::new(blob_buffer),
-                    Arc::new(task_handle),
+                    Arc::new(tell_task_handle),
+                    Arc::new(blob_task_handle),
                 ))
             })
             .await?;
@@ -259,8 +262,9 @@ impl TransportLayerService {
         let mut buffers_map = self.buffers_map.lock().await;
         for peer in evict_peers {
             if let Some(slot) = buffers_map.remove(&peer) {
-                if let Some((_, _, task_handle)) = slot.once_cell.get() {
-                    task_handle.abort();
+                if let Some((_, _, tell_task_handle, blob_task_handle)) = slot.once_cell.get() {
+                    tell_task_handle.abort();
+                    blob_task_handle.abort();
                 }
                 evicted += 1;
             }
@@ -282,6 +286,7 @@ impl TransportLayerService {
     ) -> (
         FlumeLimitedBuffer<CommSend>,
         FlumeLimitedBuffer<StreamMessage>,
+        tokio::task::JoinHandle<()>,
         tokio::task::JoinHandle<()>,
     ) {
         // Create the buffers
@@ -333,20 +338,8 @@ impl TransportLayerService {
                 .await;
         });
 
-        // Combine both cancellables
-        let combined_task = tokio::spawn(async move {
-            tokio::select! {
-                _ = tell_cancellable => {
-                    tracing::debug!("Tell buffer processing completed");
-                }
-                _ = blob_cancellable => {
-                    tracing::debug!("Blob buffer processing completed");
-                }
-            }
-        });
-
         // Return the buffers (they can still be pushed to via the sender)
-        (tell_buffer, blob_buffer, combined_task)
+        (tell_buffer, blob_buffer, tell_cancellable, blob_cancellable)
     }
 
     /// Get the tell buffer for a peer
@@ -354,7 +347,7 @@ impl TransportLayerService {
         &self,
         peer: &PeerNode,
     ) -> Result<Arc<FlumeLimitedBuffer<CommSend>>, CommError> {
-        let (tell_buffer, _, _) = self.get_buffers(peer).await?;
+        let (tell_buffer, _, _, _) = self.get_buffers(peer).await?;
         Ok(tell_buffer)
     }
 
@@ -363,7 +356,7 @@ impl TransportLayerService {
         &self,
         peer: &PeerNode,
     ) -> Result<Arc<FlumeLimitedBuffer<StreamMessage>>, CommError> {
-        let (_, blob_buffer, _) = self.get_buffers(peer).await?;
+        let (_, blob_buffer, _, _) = self.get_buffers(peer).await?;
         Ok(blob_buffer)
     }
 

@@ -10,9 +10,7 @@ use models::rust::casper::pretty_printer::PrettyPrinter;
 use models::rust::casper::protocol::casper_message::BlockMessage;
 
 use casper::rust::blocks::proposer::{
-    propose_result::{
-        CheckProposeConstraintsFailure, ProposeFailure, ProposeResult, ProposeStatus,
-    },
+    propose_result::{ProposeFailure, ProposeResult, ProposeStatus},
     proposer::{ProductionProposer, ProposeReturnType, ProposerResult},
 };
 use casper::rust::casper::Casper;
@@ -22,9 +20,6 @@ use casper::rust::metrics_constants::{
 };
 use comm::rust::transport::transport_layer::TransportLayer;
 
-/// Default timeout for propose operations (5 minutes)
-/// If a propose takes longer than this, it's likely stuck and should be abandoned
-const PROPOSE_TIMEOUT: Duration = Duration::from_secs(300);
 const PROPOSER_RESULT_QUEUE_CAPACITY: usize = 64;
 const PROPOSER_MAX_IMMEDIATE_RETRIES: u8 = 2;
 const DEFAULT_PROPOSER_MIN_INTERVAL_MS: u64 = 250;
@@ -72,6 +67,7 @@ pub struct ProposerInstance<T: TransportLayer + Send + Sync + 'static> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use casper::rust::blocks::proposer::propose_result::CheckProposeConstraintsFailure;
 
     #[test]
     fn should_not_retry_internal_deploy_error_immediately() {
@@ -189,7 +185,7 @@ impl<T: TransportLayer + Send + Sync + 'static> ProposerInstance<T> {
                 }
 
                 // Try to acquire the propose lock (NON-BLOCKING)
-                if let Ok(permit) = propose_lock.clone().try_acquire_owned() {
+                if let Ok(_permit) = propose_lock.clone().try_acquire_owned() {
                     last_propose_started_at = Some(Instant::now());
                     // Lock acquired - execute the propose
                     tracing::info!("Propose started");
@@ -208,31 +204,11 @@ impl<T: TransportLayer + Send + Sync + 'static> ProposerInstance<T> {
                         state_guard.curr_propose_result = Some(curr_result_rx);
                     }
 
-                    // Execute the propose with timeout protection
-                    // Production safety: If propose hangs (bad RSpace, network issue, etc.),
-                    // we timeout after PROPOSE_TIMEOUT to prevent blocking forever
                     let mut proposer_guard = proposer_clone.lock().await;
                     let validator_public_key = proposer_guard.validator.public_key.bytes.clone();
-                    let propose_future = proposer_guard.propose(casper.clone(), is_async);
-                    let res = match tokio::time::timeout(PROPOSE_TIMEOUT, propose_future).await {
-                        Ok(result) => result,
-                        Err(_) => {
-                            tracing::error!(
-                                "Propose operation timed out after {:?} - this indicates a serious issue",
-                                PROPOSE_TIMEOUT
-                            );
-                            // Send timeout error result to caller
-                            let timeout_result = ProposerResult::empty(); // or create a timeout-specific result
-                            let _ = propose_id_sender.send(timeout_result);
-
-                            // Clear current propose state
-                            let mut state_guard = state_clone.write().await;
-                            state_guard.curr_propose_result = None;
-                            drop(proposer_guard);
-                            drop(permit);
-                            continue;
-                        }
-                    };
+                    // Await propose directly to avoid canceling in-flight block creation/replay
+                    // through timeout-driven future drops.
+                    let res = proposer_guard.propose(casper.clone(), is_async).await;
                     drop(proposer_guard); // Release proposer lock explicitly
 
                     let should_retry_on_result = match res {

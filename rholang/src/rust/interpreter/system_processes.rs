@@ -853,7 +853,10 @@ impl SystemProcesses {
             return Ok(previous_output);
         }
 
-        let openai_service = self.openai_service.lock().await;
+        let openai_service = {
+            let service_guard = self.openai_service.lock().await;
+            service_guard.clone()
+        };
         let response = match openai_service.gpt4_chat_completion(&prompt).await {
             Ok(response) => response,
             Err(e) => {
@@ -892,7 +895,10 @@ impl SystemProcesses {
             return Ok(previous_output);
         }
 
-        let openai_service = self.openai_service.lock().await;
+        let openai_service = {
+            let service_guard = self.openai_service.lock().await;
+            service_guard.clone()
+        };
         let response = match openai_service.dalle3_create_image(&prompt).await {
             Ok(response) => response,
             Err(e) => {
@@ -931,7 +937,10 @@ impl SystemProcesses {
             return Ok(previous_output);
         }
 
-        let openai_service = self.openai_service.lock().await;
+        let openai_service = {
+            let service_guard = self.openai_service.lock().await;
+            service_guard.clone()
+        };
         match openai_service
             .create_audio_speech(&input, "audio.mp3")
             .await
@@ -982,7 +991,10 @@ impl SystemProcesses {
             content: prompt,
         }];
 
-        let ollama_service = self.ollama_service.lock().await;
+        let ollama_service = {
+            let service_guard = self.ollama_service.lock().await;
+            service_guard.clone()
+        };
         let response = match ollama_service.chat(Some(&model), messages).await {
             Ok(response) => response,
             Err(e) => {
@@ -1030,7 +1042,10 @@ impl SystemProcesses {
             ));
         };
 
-        let ollama_service = self.ollama_service.lock().await;
+        let ollama_service = {
+            let service_guard = self.ollama_service.lock().await;
+            service_guard.clone()
+        };
         let response = match ollama_service.generate(Some(&model), &prompt).await {
             Ok(response) => response,
             Err(e) => {
@@ -1066,7 +1081,10 @@ impl SystemProcesses {
             return Ok(previous_output);
         }
 
-        let ollama_service = self.ollama_service.lock().await;
+        let ollama_service = {
+            let service_guard = self.ollama_service.lock().await;
+            service_guard.clone()
+        };
         let models = match ollama_service.list_models().await {
             Ok(models) => models,
             Err(e) => {

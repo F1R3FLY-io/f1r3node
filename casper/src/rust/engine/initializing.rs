@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use dashmap::DashSet;
 use futures::stream::StreamExt;
 use std::{
-    collections::{BTreeMap, HashMap, HashSet, VecDeque},
+    collections::{BTreeMap, HashSet, VecDeque},
     future::Future,
     pin::Pin,
     sync::atomic::{AtomicUsize, Ordering},
@@ -610,8 +610,11 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
         };
 
         // **Scala equivalent**: `fs2.Stream(blockRequestAddDagStream, tupleSpaceLogStream).parJoinUnbounded.compile.drain`
-        // Run both futures in parallel until completion
-        let (final_state_result, _) = tokio::try_join!(block_request_future, tuple_space_future)?;
+        // Run both futures to completion; avoid canceling one branch if the other errors first.
+        let (final_state_result, tuple_space_result) =
+            tokio::join!(block_request_future, tuple_space_future);
+        let final_state_result = final_state_result?;
+        tuple_space_result?;
 
         // Now populate DAG with the final state (equivalent to evalMap in Scala)
         if let Some(st) = final_state_result {
