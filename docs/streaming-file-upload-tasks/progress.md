@@ -21,8 +21,9 @@
 | 9 | [DA-Optimistic Consensus](./task-09-da-consensus.md) | L4 | ✅ Done |
 | 10 | [Storage-Proportional Phlo Pricing](./task-10-phlo-pricing.md) | L5 | ✅ Done |
 | 11 | [Configuration & CLI Flags](./task-11-configuration.md) | Cross-cutting | ✅ Done |
-| 12 | [Integration Tests](./task-12-integration-tests.md) | Cross-cutting | ⬜ Not Started |
+| 12 | [Integration Tests](./task-12-integration-tests.md) | Cross-cutting | ✅ Done |
 | 13 | [Genesis Hash Mismatch Fix](./task-13-genesis-hash-fix.md) | L3 | ✅ Done |
+| 14 | [P2P Replication Bug Fix](./task-14-p2p-replication-fix.md) | L2 | ✅ Done |
 
 ---
 
