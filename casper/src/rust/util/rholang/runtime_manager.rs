@@ -3,6 +3,7 @@
 
 use dashmap::DashMap;
 use std::collections::{BTreeMap, HashMap};
+use std::hash::Hash;
 use std::sync::Arc;
 use std::sync::OnceLock;
 
@@ -80,7 +81,9 @@ pub struct RuntimeManager {
 #[derive(Clone, Hash, PartialEq, Eq)]
 pub struct ParentsPostStateCacheKey {
     pub sorted_parent_hashes: Vec<BlockHash>,
-    pub snapshot_lfb: BlockHash,
+    // Snapshot LFB is intentionally excluded from the cache key.
+    // Parent-post-state merge is derived from the parent set and config; keying by
+    // moving LFB destroys cache locality and causes repeated recomputation.
     pub disable_late_block_filtering: bool,
 }
 
@@ -244,6 +247,16 @@ impl RuntimeManager {
     }
 
     pub fn trim_allocator() { Self::maybe_trim_allocator(); }
+
+    fn evict_one_dashmap_entry<K, V>(map: &DashMap<K, V>)
+    where
+        K: Eq + Hash + Clone,
+    {
+        let evict_key = map.iter().next().map(|entry| entry.key().clone());
+        if let Some(key) = evict_key {
+            map.remove(&key);
+        }
+    }
 
     pub async fn spawn_runtime(&self) -> RhoRuntimeImpl {
         let new_space = self.space.spawn().expect("Failed to spawn RSpace");
@@ -704,8 +717,9 @@ impl RuntimeManager {
         let mut runtime_ops = RuntimeOps::new(runtime);
         let computed = runtime_ops.get_active_validators(start_hash).await?;
 
-        if self.active_validators_cache.len() >= Self::max_active_validators_cache_entries() {
-            self.active_validators_cache.clear();
+        let max_entries = Self::max_active_validators_cache_entries();
+        if self.active_validators_cache.len() >= max_entries {
+            Self::evict_one_dashmap_entry(&self.active_validators_cache);
         }
         self.active_validators_cache
             .insert(start_hash.clone(), computed.clone());
@@ -789,8 +803,9 @@ impl RuntimeManager {
 
         // Keep index cache bounded for long-running validators.
         // Avoid DashMap re-entrant calls while holding an entry guard.
-        if self.block_index_cache.len() >= Self::max_block_index_cache_entries() {
-            self.block_index_cache.clear();
+        let max_entries = Self::max_block_index_cache_entries();
+        if self.block_index_cache.len() >= max_entries {
+            Self::evict_one_dashmap_entry(&self.block_index_cache);
         }
 
         self.block_index_cache
@@ -826,8 +841,9 @@ impl RuntimeManager {
         value: ParentsPostStateCacheVal,
     ) {
         // Keep cache bounded with simple eviction strategy.
-        if self.parents_post_state_cache.len() >= Self::max_parents_post_state_cache_entries() {
-            self.parents_post_state_cache.clear();
+        let max_entries = Self::max_parents_post_state_cache_entries();
+        if self.parents_post_state_cache.len() >= max_entries {
+            Self::evict_one_dashmap_entry(&self.parents_post_state_cache);
         }
         self.parents_post_state_cache.insert(key, value);
         metrics::gauge!(PARENTS_POST_STATE_CACHE_SIZE_METRIC, "source" => CASPER_METRICS_SOURCE)

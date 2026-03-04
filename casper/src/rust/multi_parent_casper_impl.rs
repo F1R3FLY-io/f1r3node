@@ -1680,27 +1680,44 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasperImpl<T> {
         block: &BlockMessage,
     ) -> Result<OnChainCasperState, CasperError> {
         let cache_key = block.body.state.post_state_hash.to_vec();
+        let (cached_hit, cache_len) = {
+            let cache = self.active_validators_cache.lock().await;
+            (cache.get(&cache_key).cloned(), cache.len())
+        };
+        if let Some(cached) = cached_hit {
+            metrics::gauge!(ACTIVE_VALIDATORS_CACHE_SIZE_METRIC, "source" => CASPER_METRICS_SOURCE)
+                .set(cache_len as f64);
+            // bonds are available in block message, but please remember this is just a cache, source of truth is RSpace.
+            let bm = &block.body.state.bonds;
+            return Ok(OnChainCasperState {
+                shard_conf: self.casper_shard_conf.clone(),
+                bonds_map: bm
+                    .iter()
+                    .map(|v| (v.validator.clone(), v.stake))
+                    .collect::<HashMap<_, _>>(),
+                active_validators: cached,
+            });
+        }
+
+        let fetched = self
+            .runtime_manager
+            .lock()
+            .await
+            .get_active_validators(&block.body.state.post_state_hash)
+            .await?;
+
         let av = {
             let mut cache = self.active_validators_cache.lock().await;
-            let result = if let Some(cached) = cache.get(&cache_key) {
-                cached.clone()
-            } else {
-                // Bound cache growth across long-running validators.
-                if cache.len() >= MAX_ACTIVE_VALIDATORS_CACHE_ENTRIES {
-                    cache.clear();
+            if cache.len() >= MAX_ACTIVE_VALIDATORS_CACHE_ENTRIES {
+                if let Some(first_key) = cache.keys().next().cloned() {
+                    cache.remove(&first_key);
                 }
-                let fetched = self
-                    .runtime_manager
-                    .lock()
-                    .await
-                    .get_active_validators(&block.body.state.post_state_hash)
-                    .await?;
-                cache.insert(cache_key, fetched.clone());
-                fetched
-            };
+            }
+            let entry = cache.entry(cache_key).or_insert_with(|| fetched.clone()).clone();
+            let cache_len = cache.len();
             metrics::gauge!(ACTIVE_VALIDATORS_CACHE_SIZE_METRIC, "source" => CASPER_METRICS_SOURCE)
-                .set(cache.len() as f64);
-            result
+                .set(cache_len as f64);
+            entry
         };
 
         // bonds are available in block message, but please remember this is just a cache, source of truth is RSpace.

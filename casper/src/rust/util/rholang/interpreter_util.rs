@@ -648,7 +648,6 @@ pub fn compute_parents_post_state(
                 .unwrap_or(s.on_chain_state.shard_conf.disable_late_block_filtering);
             let cache_key = super::runtime_manager::ParentsPostStateCacheKey {
                 sorted_parent_hashes: parent_hashes_for_key,
-                snapshot_lfb: s.last_finalized_block.clone(),
                 disable_late_block_filtering,
             };
             if let Some((cached_state, cached_rejected)) =
@@ -837,6 +836,7 @@ pub fn compute_parents_post_state(
                 })
                 .map(|(hash, _)| hash.clone());
             let lca_ms = lca_started.elapsed().as_millis();
+            let used_snapshot_lfb_fallback = lca_opt.is_none();
 
             // Use LCA as the LFB for computing descendants, fall back to snapshot LFB
             let lfb_for_descendants = lca_opt.unwrap_or_else(|| s.last_finalized_block.clone());
@@ -937,10 +937,17 @@ pub fn compute_parents_post_state(
             let (state, rejected) = merger_result;
 
             let computed_state = prost::bytes::Bytes::copy_from_slice(&state.bytes());
-            runtime_manager.put_cached_parents_post_state(
-                cache_key,
-                (computed_state.clone(), rejected.clone()),
-            );
+            if used_snapshot_lfb_fallback {
+                tracing::warn!(
+                    target: "f1r3fly.compute_parents_post_state.cache",
+                    "Skipping parents_post_state cache store because merge used snapshot LFB fallback"
+                );
+            } else {
+                runtime_manager.put_cached_parents_post_state(
+                    cache_key,
+                    (computed_state.clone(), rejected.clone()),
+                );
+            }
             tracing::info!(
                 target: "f1r3fly.compute_parents_post_state.timing",
                 "compute_parents_post_state timing: path=merged, parents={}, cache_lookup_ms={}, collect_ancestors_ms={}, flatten_visible_ms={}, lca_ms={}, merge_ms={}, visible_blocks={}, rejected_deploys={}, total_ms={}",
