@@ -20,20 +20,12 @@ const COOPERATIVE_YIELD_TIMESLICE_MS: u64 = 1;
 const COOPERATIVE_YIELD_CHECK_INTERVAL_ENV: &str = "F1R3_CLIQUE_YIELD_CHECK_INTERVAL";
 const COOPERATIVE_YIELD_TIMESLICE_MS_ENV: &str = "F1R3_CLIQUE_YIELD_TIMESLICE_MS";
 
-#[derive(Clone)]
-struct ChainScanSummary {
-    stopper_index_map: BTreeMap<M, usize>,
-    chain_len: usize,
-    first_disagreement_index: Option<usize>,
-}
-
 pub struct CliqueOracleRunCache {
     latest_message_cache: BTreeMap<V, Option<M>>,
     latest_justifications_cache: BTreeMap<V, BTreeMap<V, M>>,
     self_justification_cache: BTreeMap<M, Option<M>>,
     self_justification_chain_cache: BTreeMap<M, Vec<M>>,
     in_main_chain_cache: BTreeMap<(M, M), bool>,
-    chain_scan_summary_cache: BTreeMap<(M, M), ChainScanSummary>,
     yield_check_interval: usize,
     yield_timeslice: Duration,
 }
@@ -46,7 +38,6 @@ impl CliqueOracle {
             self_justification_cache: BTreeMap::new(),
             self_justification_chain_cache: BTreeMap::new(),
             in_main_chain_cache: BTreeMap::new(),
-            chain_scan_summary_cache: BTreeMap::new(),
             yield_check_interval: Self::cooperative_yield_check_interval(),
             yield_timeslice: Duration::from_millis(Self::cooperative_yield_timeslice_ms()),
         }
@@ -114,7 +105,6 @@ impl CliqueOracle {
         self_justification_cache: &mut BTreeMap<M, Option<M>>,
         self_justification_chain_cache: &mut BTreeMap<M, Vec<M>>,
         in_main_chain_cache: &mut BTreeMap<(M, M), bool>,
-        chain_scan_summary_cache: &mut BTreeMap<(M, M), ChainScanSummary>,
     ) -> Result<bool, KvStoreError> {
         /// Check if there might be eventual disagreement between validators
         async fn might_eventually_disagree(
@@ -125,7 +115,6 @@ impl CliqueOracle {
             self_justification_cache: &mut BTreeMap<M, Option<M>>,
             self_justification_chain_cache: &mut BTreeMap<M, Vec<M>>,
             in_main_chain_cache: &mut BTreeMap<(M, M), bool>,
-            chain_scan_summary_cache: &mut BTreeMap<(M, M), ChainScanSummary>,
             yield_check_interval: usize,
             yield_timeslice: Duration,
         ) -> Result<bool, KvStoreError> {
@@ -139,61 +128,39 @@ impl CliqueOracle {
                 value.unwrap_or_else(|| lm_a_j_b.clone())
             };
 
-            let summary_key = (target_msg.clone(), lm_b.clone());
-            if !chain_scan_summary_cache.contains_key(&summary_key) {
-                // stream of self justifications till stopper
-                let full_chain = if let Some(cached) = self_justification_chain_cache.get(lm_b) {
-                    cached.clone()
-                } else {
-                    let chain = dag.self_justification_chain(lm_b.clone())?;
-                    self_justification_chain_cache.insert(lm_b.clone(), chain.clone());
-                    chain
-                };
+            // Stream self-justification chain and stop as soon as stopper is reached.
+            // This avoids scanning full historical chains when both messages are near tip.
+            let full_chain = if let Some(cached) = self_justification_chain_cache.get(lm_b) {
+                cached.clone()
+            } else {
+                let chain = dag.self_justification_chain(lm_b.clone())?;
+                self_justification_chain_cache.insert(lm_b.clone(), chain.clone());
+                chain
+            };
 
-                // Build chain summary once per lm_b for O(1) stopper queries.
-                let mut stopper_index_map = BTreeMap::new();
-                let mut first_disagreement_index: Option<usize> = None;
-                let mut last_yield = Instant::now();
-                for (idx, hash) in full_chain.iter().enumerate() {
-                    stopper_index_map.insert(hash.clone(), idx);
-                    if idx % yield_check_interval == 0 && last_yield.elapsed() >= yield_timeslice {
-                        tokio::task::yield_now().await;
-                        last_yield = Instant::now();
-                    }
-                    if first_disagreement_index.is_none() {
-                        let in_main_chain_key = (target_msg.clone(), hash.clone());
-                        let is_in_main_chain =
-                            if let Some(cached) = in_main_chain_cache.get(&in_main_chain_key) {
-                                *cached
-                            } else {
-                                let value = dag.is_in_main_chain(target_msg, hash)?;
-                                in_main_chain_cache.insert(in_main_chain_key, value);
-                                value
-                            };
-                        if !is_in_main_chain {
-                            first_disagreement_index = Some(idx);
-                        }
-                    }
+            let mut last_yield = Instant::now();
+            for (idx, hash) in full_chain.iter().enumerate() {
+                if hash == &stopper {
+                    break;
                 }
-                let summary = ChainScanSummary {
-                    stopper_index_map,
-                    chain_len: full_chain.len(),
-                    first_disagreement_index,
-                };
-                chain_scan_summary_cache.insert(summary_key.clone(), summary);
+                if idx % yield_check_interval == 0 && last_yield.elapsed() >= yield_timeslice {
+                    tokio::task::yield_now().await;
+                    last_yield = Instant::now();
+                }
+                let in_main_chain_key = (target_msg.clone(), hash.clone());
+                let is_in_main_chain =
+                    if let Some(cached) = in_main_chain_cache.get(&in_main_chain_key) {
+                        *cached
+                    } else {
+                        let value = dag.is_in_main_chain(target_msg, hash)?;
+                        in_main_chain_cache.insert(in_main_chain_key, value);
+                        value
+                    };
+                if !is_in_main_chain {
+                    return Ok(true);
+                }
             }
-
-            let summary = chain_scan_summary_cache
-                .get(&summary_key)
-                .expect("chain summary must be cached");
-            let stopper_idx = summary
-                .stopper_index_map
-                .get(&stopper)
-                .copied()
-                .unwrap_or(summary.chain_len);
-            Ok(summary
-                .first_disagreement_index
-                .is_some_and(|idx| idx < stopper_idx))
+            Ok(false)
         }
 
         might_eventually_disagree(
@@ -204,7 +171,6 @@ impl CliqueOracle {
             self_justification_cache,
             self_justification_chain_cache,
             in_main_chain_cache,
-            chain_scan_summary_cache,
             yield_check_interval,
             yield_timeslice,
         )
@@ -326,7 +292,6 @@ impl CliqueOracle {
                         &mut run_cache.self_justification_cache,
                         &mut run_cache.self_justification_chain_cache,
                         &mut run_cache.in_main_chain_cache,
-                        &mut run_cache.chain_scan_summary_cache,
                     )
                     .await?;
                     let no_b_a_disagreement = CliqueOracle::never_eventually_see_disagreement(
@@ -339,7 +304,6 @@ impl CliqueOracle {
                         &mut run_cache.self_justification_cache,
                         &mut run_cache.self_justification_chain_cache,
                         &mut run_cache.in_main_chain_cache,
-                        &mut run_cache.chain_scan_summary_cache,
                     )
                     .await?;
 
