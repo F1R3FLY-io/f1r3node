@@ -22,7 +22,7 @@ import coop.rchain.rholang.externalservices.ExternalServices
 import coop.rchain.rholang.interpreter.RhoRuntime.RhoTuplespace
 import coop.rchain.rholang.interpreter.registry.Registry
 import coop.rchain.rholang.interpreter.RholangAndScalaDispatcher.RhoDispatch
-import coop.rchain.rholang.interpreter.errors.NonDeterministicProcessFailure
+import coop.rchain.rholang.interpreter.errors.{NonDeterministicProcessFailure, ReduceError}
 import coop.rchain.rholang.interpreter.util.VaultAddress
 import coop.rchain.rspace.{ContResult, Result}
 import coop.rchain.shared.{Base16, Log}
@@ -253,7 +253,7 @@ object SystemProcesses {
       private val logger       = Logger("coop.rchain.rholang.ollama")
 
       private def illegalArgumentException(msg: String): F[Seq[Par]] =
-        F.raiseError(new IllegalArgumentException(msg))
+        ReduceError(msg).raiseError[F, Seq[Par]]
 
       def verifySignatureContract(
           name: String,
@@ -271,9 +271,12 @@ object SystemProcesses {
             )
             ) =>
           for {
-            verified <- F.fromTry(Try(algorithm(data, signature, pub)))
-            output   = Seq(RhoType.Boolean(verified): Par)
-            _        <- produce(output, ack)
+            verified <- F.fromTry(Try(algorithm(data, signature, pub))).handleErrorWith {
+                         case e: Throwable =>
+                           ReduceError(s"$name: ${e.getMessage}").raiseError[F, Boolean]
+                       }
+            output = Seq(RhoType.Boolean(verified): Par)
+            _      <- produce(output, ack)
           } yield output
         case _ =>
           illegalArgumentException(
@@ -284,7 +287,10 @@ object SystemProcesses {
       def hashContract(name: String, algorithm: Array[Byte] => Array[Byte]): Contract[F] = {
         case isContractCall(produce, _, _, Seq(RhoType.ByteArray(input), ack)) =>
           for {
-            hash   <- F.fromTry(Try(algorithm(input)))
+            hash <- F.fromTry(Try(algorithm(input))).handleErrorWith {
+                     case e: Throwable =>
+                       ReduceError(s"$name: ${e.getMessage}").raiseError[F, Array[Byte]]
+                   }
             output = Seq(RhoType.ByteArray(hash))
             _      <- produce(output, ack)
           } yield output
