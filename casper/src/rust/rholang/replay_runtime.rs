@@ -3,7 +3,6 @@
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     future::Future,
-    sync::{Arc, Mutex},
     time::Instant,
 };
 
@@ -188,27 +187,25 @@ impl ReplayRuntimeOps {
         with_cost_accounting: bool,
         processed_deploy: &ProcessedDeploy,
     ) -> Result<NumberChannelsEndVal, CasperError> {
-        let mergeable_channels = Arc::new(Mutex::new(HashSet::new()));
+        let mut mergeable_channels = HashSet::new();
 
         self.rig(processed_deploy)?;
 
         let eval_successful = if with_cost_accounting {
-            self.process_deploy_with_cost_accounting(&processed_deploy, &mergeable_channels)
+            self.process_deploy_with_cost_accounting(&processed_deploy, &mut mergeable_channels)
                 .await?
         } else {
-            self.process_deploy_without_cost_accounting(&processed_deploy, &mergeable_channels)
+            self.process_deploy_without_cost_accounting(&processed_deploy, &mut mergeable_channels)
                 .await?
         };
 
         self.check_replay_data_with_fix(eval_successful)?;
 
-        let final_mergeable = mergeable_channels.lock().unwrap().clone();
-
         // Time checkpoint-mergeable operation (matches Scala RuntimeReplaySyntax.scala:L322)
         let checkpoint_mergeable_start = Instant::now();
         let channels_data = self
             .runtime_ops
-            .get_number_channels_data(&final_mergeable)?;
+            .get_number_channels_data(&mergeable_channels)?;
         metrics::histogram!(BLOCK_REPLAY_SYSDEPLOY_CHECKPOINT_MERGEABLE_TIME_METRIC, "source" => CASPER_METRICS_SOURCE)
             .record(checkpoint_mergeable_start.elapsed().as_secs_f64());
 
@@ -218,7 +215,7 @@ impl ReplayRuntimeOps {
     async fn process_deploy_with_cost_accounting(
         &mut self,
         processed_deploy: &ProcessedDeploy,
-        mergeable_channels: &Arc<Mutex<HashSet<Par>>>,
+        mergeable_channels: &mut HashSet<Par>,
     ) -> Result<bool, CasperError> {
         let mut pre_charge_deploy = PreChargeDeploy {
             charge_amount: processed_deploy.deploy.data.total_phlo_charge(),
@@ -240,8 +237,7 @@ impl ReplayRuntimeOps {
             Ok((_, mut system_eval_result)) => {
                 let _ = self.runtime_ops.runtime.take_event_log();
                 if system_eval_result.errors.is_empty() {
-                    let mut mc_lock = mergeable_channels.lock().unwrap();
-                    mc_lock.extend(system_eval_result.mergeable.drain());
+                    mergeable_channels.extend(system_eval_result.mergeable.drain());
                 }
                 tracing::debug!(target: "f1r3fly.casper.replay-rho-runtime", "precharge-done");
             }
@@ -274,8 +270,7 @@ impl ReplayRuntimeOps {
                 Ok((_, mut system_eval_result)) => {
                     let _ = self.runtime_ops.runtime.take_event_log();
                     if system_eval_result.errors.is_empty() {
-                        let mut mc_lock = mergeable_channels.lock().unwrap();
-                        mc_lock.extend(system_eval_result.mergeable.drain());
+                        mergeable_channels.extend(system_eval_result.mergeable.drain());
                     }
                     tracing::debug!(target: "f1r3fly.casper.replay-rho-runtime", "refund-done");
                 }
@@ -298,7 +293,7 @@ impl ReplayRuntimeOps {
     async fn process_deploy_without_cost_accounting(
         &mut self,
         processed_deploy: &ProcessedDeploy,
-        mergeable_channels: &Arc<Mutex<HashSet<Par>>>,
+        mergeable_channels: &mut HashSet<Par>,
     ) -> Result<bool, CasperError> {
         self.run_user_deploy(processed_deploy, mergeable_channels)
             .await
@@ -308,7 +303,7 @@ impl ReplayRuntimeOps {
     async fn run_user_deploy(
         &mut self,
         processed_deploy: &ProcessedDeploy,
-        mergeable_channels: &Arc<Mutex<HashSet<Par>>>,
+        mergeable_channels: &mut HashSet<Par>,
     ) -> Result<(EvaluateResult, bool), CasperError> {
         // Mirror RuntimeOps behavior: rollback failed user deploy via soft checkpoint
         // so pre-charge context remains available for refund replay.
@@ -329,8 +324,7 @@ impl ReplayRuntimeOps {
             );
             self.runtime_ops.runtime.revert_to_soft_checkpoint(fallback);
         } else {
-            let mut mc_lock = mergeable_channels.lock().unwrap();
-            mc_lock.extend(user_eval_result.mergeable.drain());
+            mergeable_channels.extend(user_eval_result.mergeable.drain());
         }
 
         // Verify that our execution matches the expected result
