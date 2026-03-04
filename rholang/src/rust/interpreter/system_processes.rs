@@ -622,9 +622,9 @@ impl SystemProcesses {
                 }
             }
 
-            "fromPublicKey" => match RhoByteArray::unapply(second_par)
-                .map(|public_key| VaultAddress::from_public_key(&PublicKey::from_bytes(&public_key)))
-            {
+            "fromPublicKey" => match RhoByteArray::unapply(second_par).map(|public_key| {
+                VaultAddress::from_public_key(&PublicKey::from_bytes(&public_key))
+            }) {
                 Some(Some(ra)) => RhoString::create_par(ra.to_base58()),
                 _ => Par::default(),
             },

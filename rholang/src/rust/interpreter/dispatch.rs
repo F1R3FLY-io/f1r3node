@@ -61,9 +61,7 @@ impl RholangAndScalaDispatcher {
                         .get()
                         .and_then(|weak| weak.upgrade())
                         .ok_or_else(|| {
-                            InterpreterError::BugFoundError(
-                                "Reducer not initialized".to_string(),
-                            )
+                            InterpreterError::BugFoundError("Reducer not initialized".to_string())
                         })?;
                     let body = unwrap_option_safe(par_with_rand.body)?;
                     let merged_rand = Blake2b512Random::merge(randoms);

@@ -3,9 +3,9 @@
 
 use dashmap::DashSet;
 use std::collections::HashSet;
-use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use models::rust::block_hash::BlockHashSerde;
@@ -208,14 +208,15 @@ impl CasperBufferKeyValueStorage {
             .contains(block_hash)
     }
 
-    fn dependency_free_nodes_with_age_ms(
-        &self,
-        now_ms: u64,
-    ) -> Vec<(u64, BlockHashSerde)> {
+    fn dependency_free_nodes_with_age_ms(&self, now_ms: u64) -> Vec<(u64, BlockHashSerde)> {
         let mut nodes = Vec::new();
 
         for hash in self.block_dependency_dag.dependency_free.iter() {
-            let seen_ms = self.first_seen_ms.get(hash.key()).map(|seen| *seen).unwrap_or(now_ms);
+            let seen_ms = self
+                .first_seen_ms
+                .get(hash.key())
+                .map(|seen| *seen)
+                .unwrap_or(now_ms);
             nodes.push((now_ms.saturating_sub(seen_ms), hash.key().clone()));
         }
 
@@ -255,7 +256,9 @@ impl CasperBufferKeyValueStorage {
         let mut overflow_pruned = 0usize;
         let mut approx_nodes = self.approx_node_count();
         let mut attempts = 0usize;
-        while overflow_pruned < max_prune_batch && attempts < max_prune_batch && approx_nodes > max_approx_nodes
+        while overflow_pruned < max_prune_batch
+            && attempts < max_prune_batch
+            && approx_nodes > max_approx_nodes
         {
             let mut oldest_nodes: Vec<(u64, BlockHashSerde)> = self
                 .dependency_free_nodes_with_age_ms(now)

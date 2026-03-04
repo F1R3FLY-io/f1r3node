@@ -234,7 +234,8 @@ impl BlockAPI {
                 {
                     Ok(true) => {
                         let block = casper.block_store().get_unsafe(&hash);
-                        let light_block_info = BlockAPI::get_light_block_info(casper, &block).await?;
+                        let light_block_info =
+                            BlockAPI::get_light_block_info(casper, &block).await?;
                         tracing::debug!(
                             "Deploy {:?} found via fallback scan in block {}",
                             PrettyPrinter::build_string_no_limit(deploy_id),
@@ -301,7 +302,10 @@ impl BlockAPI {
                             ProposerResult::Success(_, block) => {
                                 let block_hash_hex =
                                     PrettyPrinter::build_string_no_limit(&block.block_hash);
-                                tracing::info!("Success! Block {} created and added.", block_hash_hex);
+                                tracing::info!(
+                                    "Success! Block {} created and added.",
+                                    block_hash_hex
+                                );
                             }
                         },
                         Err(err) => {
@@ -1049,16 +1053,12 @@ impl BlockAPI {
                 Some(block_hash) => {
                     let block = casper.block_store().get_unsafe(&block_hash);
                     let light_block_info =
-                    BlockAPI::get_light_block_info(casper.as_ref(), &block).await?;
+                        BlockAPI::get_light_block_info(casper.as_ref(), &block).await?;
                     Ok(light_block_info)
                 }
                 None => {
-                    if let Some(fallback_block_info) = Self::find_deploy_by_recent_blocks(
-                        casper.as_ref(),
-                        &dag,
-                        deploy_id,
-                    )
-                    .await?
+                    if let Some(fallback_block_info) =
+                        Self::find_deploy_by_recent_blocks(casper.as_ref(), &dag, deploy_id).await?
                     {
                         Ok(fallback_block_info)
                     } else {

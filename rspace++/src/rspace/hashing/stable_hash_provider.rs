@@ -87,7 +87,8 @@ pub fn hash_vec<C: Serialize>(channels: &Vec<C>) -> Vec<Blake2b256Hash> {
 
     if profile_enabled && (serialize_delta_total_kb != 0 || hash_delta_total_kb != 0) {
         eprintln!(
-            "stable_hash.hash_vec.summary channels={} serialize_delta_total_kb={} serialize_nonzero_count={} hash_delta_total_kb={} hash_nonzero_count={}",
+            "stable_hash.hash_vec.summary channels={} serialize_delta_total_kb={} \
+             serialize_nonzero_count={} hash_delta_total_kb={} hash_nonzero_count={}",
             channels.len(),
             serialize_delta_total_kb,
             serialize_delta_nonzero_count,
@@ -131,11 +132,7 @@ pub fn hash_from_vec<C: Serialize>(channels: &Vec<C>) -> Blake2b256Hash {
         None
     };
     let result = hash_from_hashes(&hashes);
-    log_step_delta(
-        "hash_from_vec",
-        "after_hash_from_hashes",
-        before_hash_from_hashes,
-    );
+    log_step_delta("hash_from_vec", "after_hash_from_hashes", before_hash_from_hashes);
     result
 }
 

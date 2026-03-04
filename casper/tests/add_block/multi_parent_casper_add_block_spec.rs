@@ -885,8 +885,8 @@ async fn multi_parent_casper_should_succeed_at_slashing() {
         .await
         .unwrap();
 
-    let deploy_data = construct_deploy::basic_deploy_data(0, None, Some(ctx.shard_id.clone()))
-        .unwrap();
+    let deploy_data =
+        construct_deploy::basic_deploy_data(0, None, Some(ctx.shard_id.clone())).unwrap();
 
     let signed_block = {
         nodes[0]
@@ -906,8 +906,8 @@ async fn multi_parent_casper_should_succeed_at_slashing() {
 
     let status2 = nodes[2].process_block(invalid_block).await;
 
-    let deploy_data2 = construct_deploy::basic_deploy_data(1, None, Some(ctx.shard_id.clone()))
-        .unwrap();
+    let deploy_data2 =
+        construct_deploy::basic_deploy_data(1, None, Some(ctx.shard_id.clone())).unwrap();
     nodes[1]
         .casper
         .deploy(deploy_data2)
@@ -937,8 +937,8 @@ async fn multi_parent_casper_should_succeed_at_slashing() {
         .await
         .expect("Node 2 should handle receive");
 
-    let deploy_data3 = construct_deploy::basic_deploy_data(2, None, Some(ctx.shard_id.clone()))
-        .unwrap();
+    let deploy_data3 =
+        construct_deploy::basic_deploy_data(2, None, Some(ctx.shard_id.clone())).unwrap();
     nodes[2]
         .casper
         .deploy(deploy_data3)

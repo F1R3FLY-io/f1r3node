@@ -38,10 +38,7 @@ impl RootRepository {
             .validate_and_set_current_root(root.clone())?
         {
             Some(_) => {
-                tracing::debug!(
-                    "[RootRepository] validateAndSetCurrentRoot OK: {}",
-                    root
-                );
+                tracing::debug!("[RootRepository] validateAndSetCurrentRoot OK: {}", root);
                 Ok(())
             }
             None => {
@@ -49,10 +46,7 @@ impl RootRepository {
                     "[RootRepository] validateAndSetCurrentRoot FAILED: {} not in roots store",
                     root
                 );
-                Err(RootError::UnknownRootError(format!(
-                    "unknown root: {}",
-                    root
-                )))
+                Err(RootError::UnknownRootError(format!("unknown root: {}", root)))
             }
         }
     }

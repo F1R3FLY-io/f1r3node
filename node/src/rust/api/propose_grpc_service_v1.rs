@@ -75,7 +75,6 @@ impl ProposeGrpcServiceV1Impl {
             )),
         }
     }
-
 }
 
 #[async_trait::async_trait]

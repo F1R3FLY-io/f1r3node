@@ -674,14 +674,11 @@ impl<T: TransportLayer + Send + Sync> BlockProcessorDependencies<T> {
 
     fn sweep_orphaned_missing_dependency_attempts(&self) -> Result<(), CasperError> {
         let to_clear: Vec<BlockHash> = {
-            let attempts = self
-                .missing_dependency_attempts
-                .lock()
-                .map_err(|_| {
-                    CasperError::RuntimeError(
-                        "Failed to acquire missing_dependency_attempts lock".to_string(),
-                    )
-                })?;
+            let attempts = self.missing_dependency_attempts.lock().map_err(|_| {
+                CasperError::RuntimeError(
+                    "Failed to acquire missing_dependency_attempts lock".to_string(),
+                )
+            })?;
 
             attempts
                 .keys()
@@ -703,14 +700,11 @@ impl<T: TransportLayer + Send + Sync> BlockProcessorDependencies<T> {
             return Ok(());
         }
 
-        let mut attempts = self
-            .missing_dependency_attempts
-            .lock()
-            .map_err(|_| {
-                CasperError::RuntimeError(
-                    "Failed to acquire missing_dependency_attempts lock".to_string(),
-                )
-            })?;
+        let mut attempts = self.missing_dependency_attempts.lock().map_err(|_| {
+            CasperError::RuntimeError(
+                "Failed to acquire missing_dependency_attempts lock".to_string(),
+            )
+        })?;
 
         for block_hash in to_clear {
             attempts.remove(&block_hash);
@@ -793,7 +787,10 @@ impl<T: TransportLayer + Send + Sync> BlockProcessorDependencies<T> {
         Ok(())
     }
 
-    fn clear_missing_dependency_quarantine(&self, block_hash: &BlockHash) -> Result<(), CasperError> {
+    fn clear_missing_dependency_quarantine(
+        &self,
+        block_hash: &BlockHash,
+    ) -> Result<(), CasperError> {
         let mut quarantine = self
             .missing_dependency_quarantine_until
             .lock()

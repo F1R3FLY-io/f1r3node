@@ -171,7 +171,8 @@ where
         if mem_profile_enabled {
             if let Some(rss_kb) = start_kb {
                 eprintln!(
-                    "history_repo.calculate_storage_actions.mem step=start action_kind={} rss_kb={}",
+                    "history_repo.calculate_storage_actions.mem step=start action_kind={} \
+                     rss_kb={}",
                     action_kind, rss_kb
                 );
             }
@@ -313,7 +314,8 @@ where
                 let base_kb = start_kb.unwrap_or(end_kb);
                 let delta_kb = end_kb as i64 - base_kb as i64;
                 eprintln!(
-                    "history_repo.calculate_storage_actions.mem step=finish action_kind={} rss_kb={} delta_total_kb={}",
+                    "history_repo.calculate_storage_actions.mem step=finish action_kind={} \
+                     rss_kb={} delta_total_kb={}",
                     action_kind, end_kb, delta_kb
                 );
             }
@@ -354,7 +356,8 @@ where
                 let delta_kb = after as i64 - before as i64;
                 if delta_kb != 0 {
                     eprintln!(
-                        "history_repo.transform.step.mem action_kind={} step={} rss_kb={} delta_kb={}",
+                        "history_repo.transform.step.mem action_kind={} step={} rss_kb={} \
+                         delta_kb={}",
                         action_kind, step, after, delta_kb
                     );
                 }
@@ -387,9 +390,8 @@ where
                 } else {
                     None
                 };
-                let trie_insert_action = TrieInsertAction::TrieInsertProduce(
-                    TrieInsertProduce::new(key, data),
-                );
+                let trie_insert_action =
+                    TrieInsertAction::TrieInsertProduce(TrieInsertProduce::new(key, data));
                 log_step_delta("after_new_trie_insert_produce", before_new);
                 HotStoreTrieAction::TrieInsertAction(trie_insert_action)
             }
@@ -413,9 +415,8 @@ where
                 } else {
                     None
                 };
-                let trie_insert_action = TrieInsertAction::TrieInsertConsume(
-                    TrieInsertConsume::new(key, continuations),
-                );
+                let trie_insert_action =
+                    TrieInsertAction::TrieInsertConsume(TrieInsertConsume::new(key, continuations));
                 log_step_delta("after_new_trie_insert_consume", before_new);
                 HotStoreTrieAction::TrieInsertAction(trie_insert_action)
             }
@@ -557,7 +558,8 @@ where
                 let delta_prev_kb = curr_kb as i64 - prev_kb as i64;
                 let delta_total_kb = curr_kb as i64 - base_kb as i64;
                 eprintln!(
-                    "history_repo.checkpoint.mem step={} rss_kb={} delta_prev_kb={} delta_total_kb={}",
+                    "history_repo.checkpoint.mem step={} rss_kb={} delta_prev_kb={} \
+                     delta_total_kb={}",
                     step, curr_kb, delta_prev_kb, delta_total_kb
                 );
                 mem_prev_kb = Some(curr_kb);
@@ -620,7 +622,8 @@ where
                 let delta_prev_kb = curr_kb as i64 - prev_kb as i64;
                 let delta_total_kb = curr_kb as i64 - base_kb as i64;
                 eprintln!(
-                    "history_repo.do_checkpoint.mem step={} rss_kb={} delta_prev_kb={} delta_total_kb={}",
+                    "history_repo.do_checkpoint.mem step={} rss_kb={} delta_prev_kb={} \
+                     delta_total_kb={}",
                     step, curr_kb, delta_prev_kb, delta_total_kb
                 );
                 mem_prev_kb = Some(curr_kb);

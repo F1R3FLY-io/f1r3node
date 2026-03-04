@@ -30,8 +30,8 @@ use models::casper::{
     PrivateNamePreviewQuery, ReportQuery, Status, VersionInfo, VisualizeDagQuery,
 };
 use models::servicemodelapi::ServiceError;
-use tracing::error;
 use tokio::time::{sleep, Duration};
+use tracing::error;
 
 trait IntoServiceError {
     fn into_service_error(self) -> ServiceError;
@@ -508,19 +508,24 @@ impl DeployService for DeployGrpcServiceV1Impl {
                 Ok(block_info) => {
                     return Ok(tonic::Response::new(FindDeployResponse {
                         message: Some(
-                            models::casper::v1::find_deploy_response::Message::BlockInfo(block_info),
+                            models::casper::v1::find_deploy_response::Message::BlockInfo(
+                                block_info,
+                            ),
                         ),
                     }))
                 }
                 Err(e) => {
-                    let not_found =
-                        e.to_string().starts_with("Couldn't find block containing deploy with id:");
+                    let not_found = e
+                        .to_string()
+                        .starts_with("Couldn't find block containing deploy with id:");
                     if !not_found || attempt >= FIND_DEPLOY_MAX_ATTEMPTS {
                         error!("Deploy service method error find_deploy");
                         return Ok(tonic::Response::new(FindDeployResponse {
-                            message: Some(models::casper::v1::find_deploy_response::Message::Error(
-                                e.into_service_error(),
-                            )),
+                            message: Some(
+                                models::casper::v1::find_deploy_response::Message::Error(
+                                    e.into_service_error(),
+                                ),
+                            ),
                         }));
                     }
 

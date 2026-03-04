@@ -183,7 +183,9 @@ where
         self.event_log = Vec::new();
         self.produce_counter = BTreeMap::new();
 
-        let history_reader = self.history_repository.get_history_reader(&effective_root)?;
+        let history_reader = self
+            .history_repository
+            .get_history_reader(&effective_root)?;
         self.create_new_hot_store(history_reader);
         self.restore_installs();
 

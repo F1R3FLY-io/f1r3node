@@ -460,8 +460,7 @@ impl StateChange {
         for (key, value) in other.datums_changes {
             match datums_changes.entry(key) {
                 dashmap::mapref::entry::Entry::Occupied(mut entry) => {
-                    let current =
-                        std::mem::replace(entry.get_mut(), ChannelChange::empty());
+                    let current = std::mem::replace(entry.get_mut(), ChannelChange::empty());
                     *entry.get_mut() = current.combine(value);
                 }
                 dashmap::mapref::entry::Entry::Vacant(entry) => {
@@ -474,8 +473,7 @@ impl StateChange {
         for (key, value) in other.cont_changes {
             match cont_changes.entry(key) {
                 dashmap::mapref::entry::Entry::Occupied(mut entry) => {
-                    let current =
-                        std::mem::replace(entry.get_mut(), ChannelChange::empty());
+                    let current = std::mem::replace(entry.get_mut(), ChannelChange::empty());
                     *entry.get_mut() = current.combine(value);
                 }
                 dashmap::mapref::entry::Entry::Vacant(entry) => {

@@ -109,14 +109,12 @@ where
 
     pub fn add_binding(&self, k: K, v: V) {
         match self.map.get_mut(&k) {
-            Some(mut current) => {
-                match current.get_mut(&v) {
-                    Some(count) => *count += 1,
-                    None => {
-                        current.insert(v, 1);
-                    }
+            Some(mut current) => match current.get_mut(&v) {
+                Some(count) => *count += 1,
+                None => {
+                    current.insert(v, 1);
                 }
-            }
+            },
             None => {
                 let mut ms = Counter::new();
                 ms.insert(v, 1);

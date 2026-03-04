@@ -31,8 +31,7 @@ impl KeyValueBlockStore {
     const DECOMPRESS_BUFFER_RETAIN_BYTES_DEFAULT: usize = 64 * 1024;
     const DECOMPRESS_BUFFER_RETAIN_BYTES_ENV: &str = "F1R3_BLOCK_PROTO_DECODE_BUFFER_BYTES";
     const DEPLOY_SIG_CACHE_MAX_ENTRIES_DEFAULT: usize = 1024;
-    const DEPLOY_SIG_CACHE_MAX_ENTRIES_ENV: &str =
-        "F1R3_BLOCK_STORE_DEPLOY_SIG_CACHE_MAX_ENTRIES";
+    const DEPLOY_SIG_CACHE_MAX_ENTRIES_ENV: &str = "F1R3_BLOCK_STORE_DEPLOY_SIG_CACHE_MAX_ENTRIES";
 
     pub fn new(
         store: Arc<dyn KeyValueStore>,
@@ -130,7 +129,10 @@ impl KeyValueBlockStore {
 
     /// Fetch deploy signatures for a block without decoding a full BlockMessage.
     /// Uses the same bounded thread-local cache as `has_any_deploy_sig`.
-    pub fn deploy_sigs(&self, block_hash: &BlockHash) -> Result<Option<Vec<Vec<u8>>>, KvStoreError> {
+    pub fn deploy_sigs(
+        &self,
+        block_hash: &BlockHash,
+    ) -> Result<Option<Vec<Vec<u8>>>, KvStoreError> {
         let key = block_hash.to_vec();
         if let Some(cached) = Self::cached_deploy_sigs(&key) {
             return Ok(Some(cached));
@@ -314,13 +316,7 @@ impl KeyValueBlockStore {
     }
 
     fn cached_deploy_sigs(block_hash: &[u8]) -> Option<Vec<Vec<u8>>> {
-        DEPLOY_SIG_CACHE.with(|cache| {
-            cache
-                .borrow()
-                .entries
-                .get(block_hash)
-                .cloned()
-        })
+        DEPLOY_SIG_CACHE.with(|cache| cache.borrow().entries.get(block_hash).cloned())
     }
 
     fn cache_deploy_sigs(block_hash: Vec<u8>, deploy_sigs: Vec<Vec<u8>>) {
@@ -763,16 +759,16 @@ mod tests {
                 let cap_delta_from_limit = cap as isize - retain_limit as isize;
                 let cap_delta_from_base = cap as isize - baseline_cap as isize;
 
-                let (rss_value, rss_delta_iter, rss_delta_total) = match (rss, last_rss, baseline_rss)
-                {
-                    (Some(curr), Some(prev), Some(base)) => (
-                        curr,
-                        curr as isize - prev as isize,
-                        curr as isize - base as isize,
-                    ),
-                    (Some(curr), _, _) => (curr, 0, 0),
-                    _ => (0, 0, 0),
-                };
+                let (rss_value, rss_delta_iter, rss_delta_total) =
+                    match (rss, last_rss, baseline_rss) {
+                        (Some(curr), Some(prev), Some(base)) => (
+                            curr,
+                            curr as isize - prev as isize,
+                            curr as isize - base as isize,
+                        ),
+                        (Some(curr), _, _) => (curr, 0, 0),
+                        _ => (0, 0, 0),
+                    };
 
                 println!(
                     "decode iter #{:>2}: cap={}B ({:.2} MiB) delta_base={:+}B delta_limit={:+}B rss={}KB ({:.2} MiB) rss_delta_iter={:+}KB ({:+.2} MiB) rss_delta_total={:+}KB ({:+.2} MiB)",

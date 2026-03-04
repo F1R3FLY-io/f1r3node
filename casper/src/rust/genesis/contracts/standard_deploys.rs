@@ -155,8 +155,7 @@ pub fn auth_key(shard_id: &str) -> Signed<DeployData> {
 
 pub fn rev_vault(shard_id: &str) -> Signed<DeployData> {
     to_deploy(
-        CompiledRholangSource::apply("SystemVault.rho")
-            .expect("Failed to compile SystemVault.rho"),
+        CompiledRholangSource::apply("SystemVault.rho").expect("Failed to compile SystemVault.rho"),
         REV_VAULT_PK,
         REV_VAULT_TIMESTAMP,
         shard_id,

@@ -43,6 +43,9 @@ const DEFAULT_HEARTBEAT_SELF_PROPOSE_COOLDOWN_MS: u128 = 0;
 const HEARTBEAT_STALE_RECOVERY_MIN_INTERVAL_MS_ENV: &str =
     "F1R3_HEARTBEAT_STALE_RECOVERY_MIN_INTERVAL_MS";
 const DEFAULT_HEARTBEAT_STALE_RECOVERY_MIN_INTERVAL_MS: u128 = 12_000;
+const HEARTBEAT_DEPLOY_FINALIZATION_GRACE_MS_ENV: &str =
+    "F1R3_HEARTBEAT_DEPLOY_FINALIZATION_GRACE_MS";
+const DEFAULT_HEARTBEAT_DEPLOY_FINALIZATION_GRACE_MS: u128 = 25_000;
 
 fn heartbeat_frontier_chase_max_lag() -> i64 {
     std::env::var(HEARTBEAT_FRONTIER_CHASE_MAX_LAG_ENV)
@@ -72,6 +75,19 @@ fn heartbeat_stale_recovery_min_interval_ms() -> u128 {
         .ok()
         .and_then(|value| value.parse::<u128>().ok())
         .unwrap_or(DEFAULT_HEARTBEAT_STALE_RECOVERY_MIN_INTERVAL_MS)
+}
+
+fn heartbeat_deploy_finalization_grace_ms() -> u128 {
+    std::env::var(HEARTBEAT_DEPLOY_FINALIZATION_GRACE_MS_ENV)
+        .ok()
+        .and_then(|value| value.parse::<u128>().ok())
+        .unwrap_or(DEFAULT_HEARTBEAT_DEPLOY_FINALIZATION_GRACE_MS)
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct HeartbeatCheckResult {
+    bug_failure: bool,
+    refresh_deploy_grace_window: bool,
 }
 
 impl HeartbeatProposer {
@@ -182,6 +198,7 @@ impl HeartbeatProposer {
             tokio::time::sleep(initial_delay).await;
             let mut consecutive_failures: u32 = 0;
             let mut backoff_until: Option<std::time::Instant> = None;
+            let mut deploy_grace_until: Option<std::time::Instant> = None;
 
             loop {
                 // Race between timer and signal - whichever completes first triggers wake
@@ -197,9 +214,14 @@ impl HeartbeatProposer {
                 // Errors are logged but don't stop the heartbeat loop - transient errors
                 // (DB contention, lock timeouts) should not kill the heartbeat
                 if let Some(casper) = eng.with_casper() {
-                    if backoff_until.is_some_and(|deadline| std::time::Instant::now() < deadline) {
+                    let now = std::time::Instant::now();
+                    if backoff_until.is_some_and(|deadline| now < deadline) {
                         continue;
                     }
+                    if deploy_grace_until.is_some_and(|deadline| now >= deadline) {
+                        deploy_grace_until = None;
+                    }
+                    let deploy_grace_active = deploy_grace_until.is_some();
 
                     match do_heartbeat_check(
                         casper,
@@ -207,10 +229,32 @@ impl HeartbeatProposer {
                         &validator_identity,
                         &config,
                         standalone,
+                        deploy_grace_active,
                     )
                     .await
                     {
-                        Ok(true) => {
+                        Ok(outcome) => {
+                            if outcome.refresh_deploy_grace_window {
+                                let grace_ms = heartbeat_deploy_finalization_grace_ms();
+                                let grace_duration = Duration::from_millis(std::cmp::min(
+                                    grace_ms,
+                                    u128::from(u64::MAX),
+                                )
+                                    as u64);
+                                let deadline = std::time::Instant::now() + grace_duration;
+                                deploy_grace_until = Some(deadline);
+                                tracing::debug!(
+                                    "Heartbeat: refreshed deploy finalization grace window for {:?}",
+                                    grace_duration
+                                );
+                            }
+
+                            if !outcome.bug_failure {
+                                consecutive_failures = 0;
+                                backoff_until = None;
+                                continue;
+                            }
+
                             consecutive_failures = consecutive_failures.saturating_add(1);
                             // Exponential backoff capped at 60s to avoid invalid-propose churn.
                             let shift = consecutive_failures.min(4);
@@ -226,10 +270,6 @@ impl HeartbeatProposer {
                                 delay,
                                 consecutive_failures
                             );
-                        }
-                        Ok(false) => {
-                            consecutive_failures = 0;
-                            backoff_until = None;
                         }
                         Err(err) => {
                             tracing::warn!(
@@ -266,13 +306,14 @@ fn random_initial_delay(check_interval: Duration) -> Duration {
 ///
 /// # Arguments
 /// * `standalone` - If true, skips hasNewParents check (single validator can always propose)
-pub async fn do_heartbeat_check(
+async fn do_heartbeat_check(
     casper: Arc<dyn MultiParentCasper + Send + Sync>,
     trigger_propose: &ProposeFunction,
     validator_identity: &ValidatorIdentity,
     config: &HeartbeatConf,
     standalone: bool,
-) -> Result<bool, casper::rust::errors::CasperError> {
+    deploy_grace_active: bool,
+) -> Result<HeartbeatCheckResult, casper::rust::errors::CasperError> {
     let snapshot: CasperSnapshot = casper.get_snapshot().await?;
 
     let is_bonded = snapshot
@@ -282,7 +323,7 @@ pub async fn do_heartbeat_check(
 
     if !is_bonded {
         tracing::info!("Heartbeat: Validator is not bonded, skipping heartbeat propose");
-        return Ok(false);
+        return Ok(HeartbeatCheckResult::default());
     } else {
         tracing::debug!("Heartbeat: Validator is bonded, checking LFB age");
         return Ok(check_lfb_and_propose(
@@ -292,6 +333,7 @@ pub async fn do_heartbeat_check(
             validator_identity,
             config,
             standalone,
+            deploy_grace_active,
         )
         .await?);
     }
@@ -304,7 +346,8 @@ async fn check_lfb_and_propose(
     validator_identity: &ValidatorIdentity,
     config: &HeartbeatConf,
     standalone: bool,
-) -> Result<bool, casper::rust::errors::CasperError> {
+    deploy_grace_active: bool,
+) -> Result<HeartbeatCheckResult, casper::rust::errors::CasperError> {
     // Check if we have pending user deploys in storage (not yet included in blocks)
     let has_pending_deploys = casper
         .has_pending_deploys_in_storage_for_snapshot(&snapshot)
@@ -404,10 +447,16 @@ async fn check_lfb_and_propose(
     let parent_update = inspect_parent_updates(&snapshot, validator_identity, &casper);
     let has_new_parents = parent_update.has_new_parents;
     let has_new_parent_with_user_deploys = parent_update.has_new_parent_with_user_deploys;
+    let deploy_recovery_hint =
+        has_pending_deploys || has_new_parent_with_user_deploys || deploy_grace_active;
+    let effective_frontier_chase_cap = if deploy_recovery_hint {
+        std::cmp::max(heartbeat_frontier_chase_max_lag(), 2)
+    } else {
+        heartbeat_frontier_chase_max_lag()
+    };
     let stale_recovery_interval_elapsed =
         frontier_age_ms >= heartbeat_stale_recovery_min_interval_ms();
-    let stale_recovery_window_open =
-        stale_recovery_interval_elapsed || has_new_parent_with_user_deploys;
+    let stale_recovery_window_open = stale_recovery_interval_elapsed || deploy_recovery_hint;
 
     // Proposal logic:
     // - Prioritize pending deploys, but avoid lag-amplification loops:
@@ -427,8 +476,8 @@ async fn check_lfb_and_propose(
     let pending_deploys_due =
         has_pending_deploys && (!self_recently_proposed || can_propose_pending_deploys_while_ahead);
     let can_follow_frontier_without_pending_deploys =
-        has_new_parent_with_user_deploys || stale_recovery_interval_elapsed;
-    let can_chase_frontier_while_ahead = lfb_lag_blocks <= heartbeat_frontier_chase_max_lag()
+        deploy_recovery_hint || stale_recovery_interval_elapsed;
+    let can_chase_frontier_while_ahead = lfb_lag_blocks <= effective_frontier_chase_cap
         && has_new_parents
         && !self_proposed_too_recently;
     let frontier_follow_due = !has_pending_deploys
@@ -449,12 +498,11 @@ async fn check_lfb_and_propose(
         && stale_recovery_window_open
         && !self_proposed_too_recently
         && !stale_lfb_recovery_due;
-    let high_lag_recovery_due =
-        !has_pending_deploys
-            && lfb_lag_blocks > lag_recovery_threshold
-            && lag_recovery_leader
-            && stale_recovery_window_open
-            && !self_proposed_too_recently;
+    let high_lag_recovery_due = !has_pending_deploys
+        && lfb_lag_blocks > lag_recovery_threshold
+        && lag_recovery_leader
+        && stale_recovery_window_open
+        && !self_proposed_too_recently;
     let should_propose = pending_deploys_due
         || frontier_follow_due
         || stale_lfb_recovery_due
@@ -472,28 +520,31 @@ async fn check_lfb_and_propose(
             "pending user deploys in storage".to_string()
         } else if frontier_follow_due {
             format!(
-                "new parents observed (lag={}, self_recently_proposed={}, cooldown_ms={}, frontier_chase_cap={}, user_deploy_parent={}, stale_recovery_interval_ms={}); proposing to keep frontier moving",
+                "new parents observed (lag={}, self_recently_proposed={}, cooldown_ms={}, frontier_chase_cap={}, user_deploy_parent={}, deploy_grace_active={}, stale_recovery_interval_ms={}); proposing to keep frontier moving",
                 lfb_lag_blocks,
                 self_recently_proposed,
                 heartbeat_self_propose_cooldown_ms(),
-                heartbeat_frontier_chase_max_lag(),
+                effective_frontier_chase_cap,
                 has_new_parent_with_user_deploys,
+                deploy_grace_active,
                 heartbeat_stale_recovery_min_interval_ms()
             )
         } else if stale_lfb_leader_recovery_due {
             format!(
-                "LFB is stale ({}ms) with lag={}; regular stale recovery is throttled, selected recovery leader proposing (frontier_stale={}, moderate_lag_threshold={}, stale_recovery_interval_ms={})",
+                "LFB is stale ({}ms) with lag={}; regular stale recovery is throttled, selected recovery leader proposing (frontier_stale={}, moderate_lag_threshold={}, deploy_grace_active={}, stale_recovery_interval_ms={})",
                 time_since_lfb,
                 lfb_lag_blocks,
                 frontier_is_stale,
                 moderate_lag_recovery_threshold,
+                deploy_grace_active,
                 heartbeat_stale_recovery_min_interval_ms()
             )
         } else if high_lag_recovery_due {
             format!(
-                "Finality lag recovery: lag={} exceeds threshold={} and this validator is selected recovery leader (stale_recovery_interval_ms={})",
+                "Finality lag recovery: lag={} exceeds threshold={} and this validator is selected recovery leader (deploy_grace_active={}, stale_recovery_interval_ms={})",
                 lfb_lag_blocks,
                 lag_recovery_threshold,
+                deploy_grace_active,
                 heartbeat_stale_recovery_min_interval_ms()
             )
         } else if self_recently_proposed && has_new_parents && !can_chase_frontier_while_ahead {
@@ -501,7 +552,7 @@ async fn check_lfb_and_propose(
                 "LFB is stale but frontier-follow is throttled (lag={}, cooldown_active={}, frontier_chase_cap={})",
                 lfb_lag_blocks,
                 self_proposed_too_recently,
-                heartbeat_frontier_chase_max_lag()
+                effective_frontier_chase_cap
             )
         } else if self_recently_proposed && !has_new_parents {
             format!(
@@ -529,7 +580,11 @@ async fn check_lfb_and_propose(
         match result {
             ProposerResult::Empty => {
                 tracing::debug!("Heartbeat: Propose already in progress, will retry next check");
-                return Ok(false);
+                return Ok(HeartbeatCheckResult {
+                    bug_failure: false,
+                    refresh_deploy_grace_window: has_pending_deploys
+                        || has_new_parent_with_user_deploys,
+                });
             }
             ProposerResult::Failure(status, seq_num) => {
                 tracing::warn!(
@@ -539,18 +594,27 @@ async fn check_lfb_and_propose(
                 );
                 // Only escalate backoff for explicit bug failures.
                 // Recoverable propose races should retry on the normal heartbeat cadence.
-                return Ok(matches!(
-                    status,
-                    ProposeStatus::Failure(ProposeFailure::BugError)
-                ));
+                return Ok(HeartbeatCheckResult {
+                    bug_failure: matches!(status, ProposeStatus::Failure(ProposeFailure::BugError)),
+                    refresh_deploy_grace_window: has_pending_deploys
+                        || has_new_parent_with_user_deploys,
+                });
             }
             ProposerResult::Success(_, _) => {
                 tracing::info!("Heartbeat: Successfully created block");
-                return Ok(false);
+                return Ok(HeartbeatCheckResult {
+                    bug_failure: false,
+                    refresh_deploy_grace_window: has_pending_deploys
+                        || has_new_parent_with_user_deploys,
+                });
             }
             ProposerResult::Started(seq_num) => {
                 tracing::info!("Heartbeat: Async propose started (seqNum {})", seq_num);
-                return Ok(false);
+                return Ok(HeartbeatCheckResult {
+                    bug_failure: false,
+                    refresh_deploy_grace_window: has_pending_deploys
+                        || has_new_parent_with_user_deploys,
+                });
             }
         }
     } else {
@@ -569,14 +633,15 @@ async fn check_lfb_and_propose(
                     "frontier-follow throttled: lag {}, cooldown_active={}, cap {} while already ahead",
                     lfb_lag_blocks,
                     self_proposed_too_recently,
-                    heartbeat_frontier_chase_max_lag()
+                    effective_frontier_chase_cap
                 )
             } else if has_new_parents && !can_follow_frontier_without_pending_deploys {
                 format!(
-                    "frontier-follow throttled by stale-recovery cadence: frontier_age_ms={}, min_interval_ms={}, user_deploy_parent={}",
+                    "frontier-follow throttled by stale-recovery cadence: frontier_age_ms={}, min_interval_ms={}, user_deploy_parent={}, deploy_grace_active={}",
                     frontier_age_ms,
                     heartbeat_stale_recovery_min_interval_ms(),
-                    has_new_parent_with_user_deploys
+                    has_new_parent_with_user_deploys,
+                    deploy_grace_active
                 )
             } else {
                 format!(
@@ -607,10 +672,11 @@ async fn check_lfb_and_propose(
             )
         } else if lfb_is_stale && !stale_recovery_window_open {
             format!(
-                "LFB is stale but stale-recovery cadence gate is active: frontier_age_ms={}, min_interval_ms={}, user_deploy_parent={}",
+                "LFB is stale but stale-recovery cadence gate is active: frontier_age_ms={}, min_interval_ms={}, user_deploy_parent={}, deploy_grace_active={}",
                 frontier_age_ms,
                 heartbeat_stale_recovery_min_interval_ms(),
-                has_new_parent_with_user_deploys
+                has_new_parent_with_user_deploys,
+                deploy_grace_active
             )
         } else if !has_pending_deploys
             && lfb_lag_blocks > lag_recovery_threshold
@@ -623,9 +689,7 @@ async fn check_lfb_and_propose(
         } else if self_recently_proposed && has_new_parents && !can_chase_frontier_while_ahead {
             format!(
                 "frontier-follow throttled while ahead (lag {}, cooldown_active={}, cap {})",
-                lfb_lag_blocks,
-                self_proposed_too_recently,
-                heartbeat_frontier_chase_max_lag()
+                lfb_lag_blocks, self_proposed_too_recently, effective_frontier_chase_cap
             )
         } else if !standalone && !has_new_parents {
             "no new parents".to_string()
@@ -633,7 +697,10 @@ async fn check_lfb_and_propose(
             "unknown".to_string()
         };
         tracing::debug!("Heartbeat: No action needed - reason: {}", reason);
-        return Ok(false);
+        return Ok(HeartbeatCheckResult {
+            bug_failure: false,
+            refresh_deploy_grace_window: has_pending_deploys || has_new_parent_with_user_deploys,
+        });
     }
 }
 
@@ -958,7 +1025,7 @@ mod tests {
 
             // Call do_heartbeat_check directly (standalone=false for multi-node test)
             let result =
-                do_heartbeat_check(casper, &*propose_func, &validator, &config, false).await;
+                do_heartbeat_check(casper, &*propose_func, &validator, &config, false, false).await;
 
             assert!(result.is_ok(), "do_heartbeat_check should succeed");
             assert_eq!(
@@ -1002,7 +1069,7 @@ mod tests {
 
             // Call do_heartbeat_check directly (standalone=false for multi-node test)
             let result =
-                do_heartbeat_check(casper, &*propose_func, &validator, &config, false).await;
+                do_heartbeat_check(casper, &*propose_func, &validator, &config, false, false).await;
 
             assert!(result.is_ok(), "do_heartbeat_check should succeed");
             assert_eq!(
@@ -1040,7 +1107,7 @@ mod tests {
 
             // Call do_heartbeat_check directly (standalone=false for multi-node test)
             let result =
-                do_heartbeat_check(casper, &*propose_func, &validator, &config, false).await;
+                do_heartbeat_check(casper, &*propose_func, &validator, &config, false, false).await;
 
             assert!(result.is_ok(), "do_heartbeat_check should succeed");
             assert_eq!(
@@ -1084,7 +1151,7 @@ mod tests {
 
             // Call do_heartbeat_check directly (standalone=false for multi-node test)
             let result =
-                do_heartbeat_check(casper, &*propose_func, &validator, &config, false).await;
+                do_heartbeat_check(casper, &*propose_func, &validator, &config, false, false).await;
 
             assert!(result.is_ok(), "do_heartbeat_check should succeed");
             assert_eq!(
@@ -1131,7 +1198,7 @@ mod tests {
 
             // Call do_heartbeat_check directly (standalone=false for multi-node test)
             let result =
-                do_heartbeat_check(casper, &*propose_func, &validator, &config, false).await;
+                do_heartbeat_check(casper, &*propose_func, &validator, &config, false, false).await;
 
             assert!(result.is_ok(), "do_heartbeat_check should succeed");
             // FAILS before fix: heartbeat checks deploys_in_scope (empty) instead of storage

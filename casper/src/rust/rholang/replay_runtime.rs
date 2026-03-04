@@ -369,7 +369,7 @@ impl ReplayRuntimeOps {
         };
 
         match system_deploy {
-                SystemDeployData::Slash {
+            SystemDeployData::Slash {
                 invalid_block_hash,
                 issuer_public_key,
             } => {

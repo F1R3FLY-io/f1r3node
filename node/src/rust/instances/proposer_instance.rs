@@ -1,8 +1,8 @@
 // See node/src/main/scala/coop/rchain/node/instances/ProposerInstance.scala
 
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::OnceLock;
 use std::sync::Arc;
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, oneshot, Semaphore};
 
@@ -10,7 +10,9 @@ use models::rust::casper::pretty_printer::PrettyPrinter;
 use models::rust::casper::protocol::casper_message::BlockMessage;
 
 use casper::rust::blocks::proposer::{
-    propose_result::{CheckProposeConstraintsFailure, ProposeFailure, ProposeResult, ProposeStatus},
+    propose_result::{
+        CheckProposeConstraintsFailure, ProposeFailure, ProposeResult, ProposeStatus,
+    },
     proposer::{ProductionProposer, ProposeReturnType, ProposerResult},
 };
 use casper::rust::casper::Casper;
@@ -139,7 +141,7 @@ impl<T: TransportLayer + Send + Sync + 'static> ProposerInstance<T> {
     /// - If lock is held: returns ProposerEmpty immediately, cocks trigger for retry
     /// - If lock acquired: executes propose, then checks trigger for ONE retry
     /// - Prevents propose request pile-up during slow proposals
-pub fn create(
+    pub fn create(
         self,
     ) -> Result<mpsc::Receiver<(ProposeResult, Option<BlockMessage>)>, CasperError> {
         let (result_tx, result_rx) = mpsc::channel(PROPOSER_RESULT_QUEUE_CAPACITY);
@@ -334,77 +336,77 @@ pub fn create(
                     let trigger_cocked = trigger_clone.try_acquire().is_ok();
                     let should_retry_on_trigger = should_retry_on_result;
                     let should_retry = should_retry_on_trigger || trigger_cocked;
-                    let retry_budget_exhausted =
-                        should_retry_on_trigger && immediate_retry_count >= PROPOSER_MAX_IMMEDIATE_RETRIES;
+                    let retry_budget_exhausted = should_retry_on_trigger
+                        && immediate_retry_count >= PROPOSER_MAX_IMMEDIATE_RETRIES;
                     let should_enqueue_retry = should_retry && !retry_budget_exhausted;
 
                     if should_retry {
-                            tracing::info!(
+                        tracing::info!(
                                 "Enqueueing retry after propose (result_retry:{}, has_retry_budget:{}, had_trigger:{})",
                                 should_retry_on_trigger,
                                 should_enqueue_retry,
                                 trigger_cocked
                             );
 
-                            if should_enqueue_retry {
-                                // Enqueue retry request with bounded retry budget.
-                                let (retry_sender, _retry_receiver) = oneshot::channel();
-                                // Note: We drop _retry_receiver - retry results go through normal channels
-                                // This is acceptable because retries are fire-and-forget optimization
-                                let retry_reserved = propose_queue_pending
-                                    .fetch_update(Ordering::AcqRel, Ordering::Acquire, |curr| {
-                                        (curr < propose_queue_max_pending).then_some(curr + 1)
-                                    })
-                                    .is_ok();
-                                if retry_reserved {
+                        if should_enqueue_retry {
+                            // Enqueue retry request with bounded retry budget.
+                            let (retry_sender, _retry_receiver) = oneshot::channel();
+                            // Note: We drop _retry_receiver - retry results go through normal channels
+                            // This is acceptable because retries are fire-and-forget optimization
+                            let retry_reserved = propose_queue_pending
+                                .fetch_update(Ordering::AcqRel, Ordering::Acquire, |curr| {
+                                    (curr < propose_queue_max_pending).then_some(curr + 1)
+                                })
+                                .is_ok();
+                            if retry_reserved {
+                                metrics::gauge!(
+                                    PROPOSER_QUEUE_PENDING_METRIC,
+                                    "source" => VALIDATOR_METRICS_SOURCE
+                                )
+                                .set(propose_queue_pending.load(Ordering::Relaxed) as f64);
+
+                                if let Err(e) = propose_requests_queue_tx_clone
+                                    .send((
+                                        casper,
+                                        is_async,
+                                        retry_sender,
+                                        if should_retry_on_trigger {
+                                            immediate_retry_count.saturating_add(1)
+                                        } else {
+                                            immediate_retry_count
+                                        },
+                                    ))
+                                    .await
+                                {
+                                    let _ = propose_queue_pending.fetch_update(
+                                        Ordering::AcqRel,
+                                        Ordering::Acquire,
+                                        |curr| Some(curr.saturating_sub(1)),
+                                    );
                                     metrics::gauge!(
                                         PROPOSER_QUEUE_PENDING_METRIC,
                                         "source" => VALIDATOR_METRICS_SOURCE
                                     )
                                     .set(propose_queue_pending.load(Ordering::Relaxed) as f64);
-
-                                    if let Err(e) = propose_requests_queue_tx_clone
-                                        .send((
-                                            casper,
-                                            is_async,
-                                            retry_sender,
-                                            if should_retry_on_trigger {
-                                                immediate_retry_count.saturating_add(1)
-                                            } else {
-                                                immediate_retry_count
-                                            },
-                                        ))
-                                        .await
-                                    {
-                                        let _ = propose_queue_pending.fetch_update(
-                                            Ordering::AcqRel,
-                                            Ordering::Acquire,
-                                            |curr| Some(curr.saturating_sub(1)),
-                                        );
-                                        metrics::gauge!(
-                                            PROPOSER_QUEUE_PENDING_METRIC,
-                                            "source" => VALIDATOR_METRICS_SOURCE
-                                        )
-                                        .set(propose_queue_pending.load(Ordering::Relaxed) as f64);
-                                        tracing::error!(
-                                            "Failed to enqueue retry propose (channel closed): {}",
-                                            e
-                                        );
-                                        // Channel closed means we're shutting down - this is expected
-                                        break;
-                                    }
-                                } else {
-                                    metrics::counter!(
-                                        PROPOSER_QUEUE_REJECTED_TOTAL_METRIC,
-                                        "source" => VALIDATOR_METRICS_SOURCE
-                                    )
-                                    .increment(1);
+                                    tracing::error!(
+                                        "Failed to enqueue retry propose (channel closed): {}",
+                                        e
+                                    );
+                                    // Channel closed means we're shutting down - this is expected
+                                    break;
                                 }
                             } else {
                                 metrics::counter!(
                                     PROPOSER_QUEUE_REJECTED_TOTAL_METRIC,
                                     "source" => VALIDATOR_METRICS_SOURCE
                                 )
+                                .increment(1);
+                            }
+                        } else {
+                            metrics::counter!(
+                                PROPOSER_QUEUE_REJECTED_TOTAL_METRIC,
+                                "source" => VALIDATOR_METRICS_SOURCE
+                            )
                             .increment(1);
                         }
                     }

@@ -716,7 +716,8 @@ pub fn compute_parents_post_state(
                 .max()
                 .unwrap_or(0);
             let max_parent_depth = s.on_chain_state.shard_conf.max_parent_depth;
-            let ancestor_min_block_number = if max_parent_depth <= 0 || max_parent_depth == i32::MAX {
+            let ancestor_min_block_number = if max_parent_depth <= 0 || max_parent_depth == i32::MAX
+            {
                 i64::MIN
             } else {
                 max_parent_block_number.saturating_sub(max_parent_depth as i64)
@@ -737,17 +738,18 @@ pub fn compute_parents_post_state(
                         Err(_) => false,
                     }
                 };
-            let include_lca_ancestor = |hash: &BlockHash, dag: &KeyValueDagRepresentation| -> bool {
-                if ancestor_min_block_number == i64::MIN {
-                    return true;
-                }
+            let include_lca_ancestor =
+                |hash: &BlockHash, dag: &KeyValueDagRepresentation| -> bool {
+                    if ancestor_min_block_number == i64::MIN {
+                        return true;
+                    }
 
-                match dag.lookup(hash) {
-                    Ok(Some(meta)) => meta.block_number >= ancestor_min_block_number,
-                    Ok(None) => false,
-                    Err(_) => false,
-                }
-            };
+                    match dag.lookup(hash) {
+                        Ok(Some(meta)) => meta.block_number >= ancestor_min_block_number,
+                        Ok(None) => false,
+                        Err(_) => false,
+                    }
+                };
 
             // Get all ancestors of all parents (including the parents themselves)
             // Use bounded traversal that stops at finalized blocks to prevent O(chain_length) growth
@@ -755,9 +757,9 @@ pub fn compute_parents_post_state(
             let mut visible_ancestor_sets_with_parents: Vec<HashSet<BlockHash>> = Vec::new();
             let mut lca_ancestor_sets_with_parents: Vec<HashSet<BlockHash>> = Vec::new();
             for parent_hash in &parent_hashes {
-                let visible_ancestors = s
-                    .dag
-                    .with_ancestors(parent_hash.clone(), |bh| include_visible_ancestor(bh, &s.dag))?;
+                let visible_ancestors = s.dag.with_ancestors(parent_hash.clone(), |bh| {
+                    include_visible_ancestor(bh, &s.dag)
+                })?;
                 let mut visible_ancestors_with_parent = visible_ancestors;
                 visible_ancestors_with_parent.insert(parent_hash.clone());
                 visible_ancestor_sets_with_parents.push(visible_ancestors_with_parent);
@@ -783,16 +785,16 @@ pub fn compute_parents_post_state(
             // This is the highest block that is an ancestor of ALL parents.
             // This is deterministic because it depends only on DAG structure, not finalization state.
             let lca_started = std::time::Instant::now();
-            let mut common_ancestors: HashSet<BlockHash> = if lca_ancestor_sets_with_parents.is_empty()
-            {
-                HashSet::new()
-            } else {
-                let first = lca_ancestor_sets_with_parents[0].clone();
-                lca_ancestor_sets_with_parents
-                    .iter()
-                    .skip(1)
-                    .fold(first, |acc, set| acc.intersection(set).cloned().collect())
-            };
+            let mut common_ancestors: HashSet<BlockHash> =
+                if lca_ancestor_sets_with_parents.is_empty() {
+                    HashSet::new()
+                } else {
+                    let first = lca_ancestor_sets_with_parents[0].clone();
+                    lca_ancestor_sets_with_parents
+                        .iter()
+                        .skip(1)
+                        .fold(first, |acc, set| acc.intersection(set).cloned().collect())
+                };
 
             // Deterministic fallback: if bounded LCA search misses a common ancestor,
             // perform a full ancestry intersection that is independent of finalized state.

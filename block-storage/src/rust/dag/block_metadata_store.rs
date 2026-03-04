@@ -317,5 +317,4 @@ impl BlockMetadataStore {
 
         Self::validate_dag_state(dag_state)
     }
-
 }

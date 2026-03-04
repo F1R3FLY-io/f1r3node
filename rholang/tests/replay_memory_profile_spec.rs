@@ -121,7 +121,11 @@ async fn profile_debruijn_interpreter_replay_memory_usage() {
         }
     }
 
-    if samples.last().map(|(idx, _)| *idx != iterations).unwrap_or(true) {
+    if samples
+        .last()
+        .map(|(idx, _)| *idx != iterations)
+        .unwrap_or(true)
+    {
         if let Some(rss) = vm_rss_kb() {
             let baseline = samples.first().map(|(_, v)| *v).unwrap_or(rss);
             let delta_total_kb = rss as isize - baseline as isize;
@@ -147,9 +151,11 @@ async fn profile_debruijn_interpreter_replay_memory_usage() {
         samples
     );
 
-    if let (Some(limit), Some((_, first)), Some((_, last))) =
-        (growth_limit_kb, samples.first().copied(), samples.last().copied())
-    {
+    if let (Some(limit), Some((_, first)), Some((_, last))) = (
+        growth_limit_kb,
+        samples.first().copied(),
+        samples.last().copied(),
+    ) {
         let growth = last.saturating_sub(first);
         assert!(
             growth <= limit,

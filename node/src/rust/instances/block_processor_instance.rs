@@ -101,11 +101,9 @@ impl Drop for InFlightBlockGuard {
 
 /// Configuration for BlockProcessorInstance
 pub struct BlockProcessorInstance<T: TransportLayer + Send + Sync + 'static> {
-    pub blocks_queue_rx:
-        mpsc::Receiver<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
+    pub blocks_queue_rx: mpsc::Receiver<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
 
-    pub block_queue_tx:
-        mpsc::Sender<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
+    pub block_queue_tx: mpsc::Sender<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
 
     pub block_processor: Arc<BlockProcessor<T>>,
 
@@ -221,19 +219,17 @@ impl<T: TransportLayer + Send + Sync + 'static> BlockProcessorInstance<T> {
                                 ),
                             }
                         }
-                        Err(e) => {
-                            match &e {
-                                CasperError::Other(msg) if msg == "Missing dependencies" => {
-                                    tracing::warn!(
-                                        "Block {} delayed: missing dependencies.",
-                                        block_str
-                                    );
-                                }
-                                _ => {
-                                    tracing::error!("Error processing block {}: {}", block_str, e);
-                                }
+                        Err(e) => match &e {
+                            CasperError::Other(msg) if msg == "Missing dependencies" => {
+                                tracing::warn!(
+                                    "Block {} delayed: missing dependencies.",
+                                    block_str
+                                );
                             }
-                        }
+                            _ => {
+                                tracing::error!("Error processing block {}: {}", block_str, e);
+                            }
+                        },
                     }
 
                     // Release in-flight marker before scanning dependency-free pendants.
@@ -302,27 +298,27 @@ impl<T: TransportLayer + Send + Sync + 'static> BlockProcessorInstance<T> {
                             // default liveness path to avoid propose storms under heavy replay.
                             if trigger_propose_after_block_processing_enabled() {
                                 if let Some(trigger_propose) = trigger_propose_f {
-                                // Skip trigger if local validator is not currently bonded.
-                                // This avoids repeated ReadOnlyMode propose attempts on non-bonded nodes.
-                                let is_bonded_validator = if let Some(validator) =
-                                    casper.get_validator()
-                                {
-                                    match casper.get_snapshot().await {
-                                        Ok(snapshot) => snapshot
-                                            .on_chain_state
-                                            .active_validators
-                                            .contains(&validator.public_key.bytes),
-                                        Err(err) => {
-                                            tracing::warn!(
+                                    // Skip trigger if local validator is not currently bonded.
+                                    // This avoids repeated ReadOnlyMode propose attempts on non-bonded nodes.
+                                    let is_bonded_validator = if let Some(validator) =
+                                        casper.get_validator()
+                                    {
+                                        match casper.get_snapshot().await {
+                                            Ok(snapshot) => snapshot
+                                                .on_chain_state
+                                                .active_validators
+                                                .contains(&validator.public_key.bytes),
+                                            Err(err) => {
+                                                tracing::warn!(
                                                 "Failed to get Casper snapshot for trigger-propose bond check: {}",
                                                 err
                                             );
-                                            false
+                                                false
+                                            }
                                         }
-                                    }
-                                } else {
-                                    false
-                                };
+                                    } else {
+                                        false
+                                    };
 
                                     if is_bonded_validator {
                                         // Clone the Arc and cast to trait object
@@ -332,7 +328,10 @@ impl<T: TransportLayer + Send + Sync + 'static> BlockProcessorInstance<T> {
                                         match trigger_propose(casper_arc, true).await {
                                             Ok(_) => {}
                                             Err(err) => {
-                                                tracing::error!("Failed to trigger propose: {}", err)
+                                                tracing::error!(
+                                                    "Failed to trigger propose: {}",
+                                                    err
+                                                )
                                             }
                                         }
                                     } else {
@@ -479,7 +478,10 @@ async fn process_block_with_steps<T: TransportLayer + Send + Sync>(
 
     // Step 5: Validate block with effects
     // Equivalent to: blockProcessor.validateWithEffects(c, b, None)
-    let validation_result = match block_processor.validate_with_effects(casper.clone(), &block, None).await {
+    let validation_result = match block_processor
+        .validate_with_effects(casper.clone(), &block, None)
+        .await
+    {
         Ok(validation_result) => validation_result,
         Err(err) => {
             // ensure this block is no longer tracked in the retriever even when validation fails

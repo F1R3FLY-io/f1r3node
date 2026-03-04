@@ -181,8 +181,7 @@ async fn exploratory_deploy_should_get_data_from_read_only_node() {
                 assert!(
                     saw_expected_lfb,
                     "Last finalized block should eventually be one of {:?}. observed={}",
-                    expected_lfb_hashes,
-                    last_finalized_block.block_hash
+                    expected_lfb_hashes, last_finalized_block.block_hash
                 );
             }
 

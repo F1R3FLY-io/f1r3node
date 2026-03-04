@@ -256,7 +256,9 @@ impl Casper for NoOpsCasperEffect {
         _post_state_hash: Bytes,
     ) -> Result<Either<BlockError, ValidBlock>, CasperError> {
         if self.self_created_should_fail {
-            Ok(Either::Left(BlockError::Invalid(InvalidBlock::InvalidFormat)))
+            Ok(Either::Left(BlockError::Invalid(
+                InvalidBlock::InvalidFormat,
+            )))
         } else {
             Ok(Either::Right(ValidBlock::Valid))
         }

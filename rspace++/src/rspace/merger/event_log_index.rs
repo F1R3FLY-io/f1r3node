@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use rayon::prelude::*;
 use shared::rust::hashable_set::HashableSet;
 
-use super::merging_logic::{combine_produces_copied_by_peek, NumberChannelsDiff};
+use super::merging_logic::{NumberChannelsDiff, combine_produces_copied_by_peek};
 use crate::rspace::trace::event::{Consume, Event, IOEvent, Produce};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -27,14 +27,12 @@ pub struct EventLogIndex {
 
 // Ordering for deterministic processing in merge operations.
 // Compares by numberChannelsData entries (key and value) in sorted key order,
-// with fallback to produce/consume counts to distinguish structurally different indices.
-// This replaces a previous derived Ord that was susceptible to non-deterministic
-// HashSet iteration order, where two different EventLogIndex instances with different
-// numberChannelsData could compare inconsistently.
+// with fallback to produce/consume counts to distinguish structurally different
+// indices. This replaces a previous derived Ord that was susceptible to
+// non-deterministic HashSet iteration order, where two different EventLogIndex
+// instances with different numberChannelsData could compare inconsistently.
 impl PartialOrd for EventLogIndex {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> { Some(self.cmp(other)) }
 }
 
 impl Ord for EventLogIndex {
@@ -48,7 +46,8 @@ impl Ord for EventLogIndex {
             return len_cmp;
         }
 
-        // Compare entries lexicographically: first by key (Blake2b256Hash), then by value (i64)
+        // Compare entries lexicographically: first by key (Blake2b256Hash), then by
+        // value (i64)
         for ((ak, av), (bk, bv)) in a_entries.iter().zip(b_entries.iter()) {
             let key_cmp = ak.cmp(bk);
             if key_cmp != std::cmp::Ordering::Equal {
@@ -61,23 +60,23 @@ impl Ord for EventLogIndex {
         }
 
         // If numberChannelsData are identical, distinguish by event counts
-        let a_prod = self.produces_linear.0.len()
-            + self.produces_persistent.0.len()
-            + self.produces_consumed.0.len();
-        let b_prod = other.produces_linear.0.len()
-            + other.produces_persistent.0.len()
-            + other.produces_consumed.0.len();
+        let a_prod = self.produces_linear.0.len() +
+            self.produces_persistent.0.len() +
+            self.produces_consumed.0.len();
+        let b_prod = other.produces_linear.0.len() +
+            other.produces_persistent.0.len() +
+            other.produces_consumed.0.len();
         let prod_cmp = a_prod.cmp(&b_prod);
         if prod_cmp != std::cmp::Ordering::Equal {
             return prod_cmp;
         }
 
-        let a_cons = self.consumes_linear_and_peeks.0.len()
-            + self.consumes_persistent.0.len()
-            + self.consumes_produced.0.len();
-        let b_cons = other.consumes_linear_and_peeks.0.len()
-            + other.consumes_persistent.0.len()
-            + other.consumes_produced.0.len();
+        let a_cons = self.consumes_linear_and_peeks.0.len() +
+            self.consumes_persistent.0.len() +
+            self.consumes_produced.0.len();
+        let b_cons = other.consumes_linear_and_peeks.0.len() +
+            other.consumes_persistent.0.len() +
+            other.consumes_produced.0.len();
         a_cons.cmp(&b_cons)
     }
 }
@@ -383,16 +382,16 @@ impl EventLogIndex {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::rspace::hashing::blake2b256_hash::Blake2b256Hash;
     use std::collections::BTreeMap;
 
-    /// Create a 32-byte Blake2b256Hash filled with the given byte value.
-    fn mk_hash(byte: u8) -> Blake2b256Hash {
-        Blake2b256Hash::from_bytes(vec![byte; 32])
-    }
+    use super::*;
+    use crate::rspace::hashing::blake2b256_hash::Blake2b256Hash;
 
-    /// Helper: create an empty EventLogIndex with a specific number_channels_data map.
+    /// Create a 32-byte Blake2b256Hash filled with the given byte value.
+    fn mk_hash(byte: u8) -> Blake2b256Hash { Blake2b256Hash::from_bytes(vec![byte; 32]) }
+
+    /// Helper: create an empty EventLogIndex with a specific
+    /// number_channels_data map.
     fn empty_with_channels(data: BTreeMap<Blake2b256Hash, i64>) -> EventLogIndex {
         let mut eli = EventLogIndex::empty();
         eli.number_channels_data = data;

@@ -118,10 +118,13 @@ where
         self.event_log = Vec::new();
         self.produce_counter = BTreeMap::new();
 
-        let history_reader = self.history_repository.get_history_reader(&effective_root)?;
+        let history_reader = self
+            .history_repository
+            .get_history_reader(&effective_root)?;
         self.create_new_hot_store(history_reader);
         self.restore_installs();
-        self.replay_waiting_continuations_estimate.store(0, Ordering::Relaxed);
+        self.replay_waiting_continuations_estimate
+            .store(0, Ordering::Relaxed);
         metrics::gauge!(
             REPLAY_WAITING_CONTINUATIONS_ESTIMATE_METRIC,
             "source" => REPLAY_RSPACE_METRICS_SOURCE
@@ -483,7 +486,11 @@ where
     }
 
     fn mark_replay_waiting_continuation_match(&self) {
-        if self.replay_waiting_continuations_estimate.load(Ordering::Relaxed) > 0 {
+        if self
+            .replay_waiting_continuations_estimate
+            .load(Ordering::Relaxed) >
+            0
+        {
             self.dec_replay_waiting_continuations();
         }
         self.inc_replay_waiting_continuations_matched_total();
@@ -1027,7 +1034,11 @@ where
         wc: WaitingContinuation<P, K>,
     ) -> MaybeConsumeResult<C, P, A, K> {
         // println!("\nHit store_waiting_continuation");
-        if self.store.put_continuation(&channels, wc.clone()).unwrap_or(false) {
+        if self
+            .store
+            .put_continuation(&channels, wc.clone())
+            .unwrap_or(false)
+        {
             self.inc_replay_waiting_continuations(&channels);
         }
         for channel in channels.iter() {

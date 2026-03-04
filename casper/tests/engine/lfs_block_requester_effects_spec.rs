@@ -4,10 +4,7 @@ use async_trait::async_trait;
 use prost::bytes::Bytes;
 use std::{
     collections::{HashMap, HashSet},
-    sync::{
-        atomic::AtomicUsize,
-        Arc, Mutex,
-    },
+    sync::{atomic::AtomicUsize, Arc, Mutex},
 };
 use tokio::sync::mpsc;
 

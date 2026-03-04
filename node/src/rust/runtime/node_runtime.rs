@@ -1071,7 +1071,14 @@ async fn clear_connections_loop(
 
         // Clear connections: heartbeats, ConnectionsCell update, Kademlia removal
         // (with bootstrap pinning), and gRPC disconnect — all handled inside clear_connections.
-        match comm::rust::rp::connect::clear_connections(&connections, &rp_conf, &transport, &*node_discovery).await {
+        match comm::rust::rp::connect::clear_connections(
+            &connections,
+            &rp_conf,
+            &transport,
+            &*node_discovery,
+        )
+        .await
+        {
             Ok((cleared_count, _failed_peers)) => {
                 if cleared_count > 0 {
                     info!("Cleared {} failed connection(s)", cleared_count);

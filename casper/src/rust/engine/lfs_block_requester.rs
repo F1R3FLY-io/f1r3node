@@ -607,9 +607,12 @@ impl<'a, T: BlockRequesterOps> StreamProcessor<'a, T> {
                 existing_hashes.len()
             );
             for hash in existing_hashes.iter() {
-                self.response_hash_sender.send(hash.clone()).await.map_err(|_| {
-                    CasperError::StreamError("Failed to enqueue existing hash".to_string())
-                })?;
+                self.response_hash_sender
+                    .send(hash.clone())
+                    .await
+                    .map_err(|_| {
+                        CasperError::StreamError("Failed to enqueue existing hash".to_string())
+                    })?;
             }
         }
 

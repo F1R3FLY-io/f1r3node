@@ -61,10 +61,11 @@ impl BlockDependencyDag {
     > {
         let mut orphaned_parents = HashSet::new();
 
-        let parent_links: Vec<BlockHashSerde> = match self.child_to_parent_adjacency_list.get(&element) {
-            Some(parents) => parents.iter().map(|parent| parent.key().clone()).collect(),
-            None => Vec::new(),
-        };
+        let parent_links: Vec<BlockHashSerde> =
+            match self.child_to_parent_adjacency_list.get(&element) {
+                Some(parents) => parents.iter().map(|parent| parent.key().clone()).collect(),
+                None => Vec::new(),
+            };
 
         // Remove incoming links from all direct parents so this node does not
         // remain as a dangling child after removal.
@@ -106,20 +107,21 @@ impl BlockDependencyDag {
         // Process each child independently
         for child in children {
             // Get parents and release the lock
-            let parents: HashSet<BlockHashSerde> = match self.child_to_parent_adjacency_list.get(&child) {
-                Some(parents) => {
-                    let mut set = HashSet::new();
-                    for parent in parents.value().iter() {
-                        set.insert(parent.clone());
+            let parents: HashSet<BlockHashSerde> =
+                match self.child_to_parent_adjacency_list.get(&child) {
+                    Some(parents) => {
+                        let mut set = HashSet::new();
+                        for parent in parents.value().iter() {
+                            set.insert(parent.clone());
+                        }
+                        set
                     }
-                    set
-                }
-                None => {
-                    // A stale forward edge can exist in parent_to_child without a reverse edge.
-                    // Treat it as a removable orphan relation and continue.
-                    HashSet::new()
-                }
-            };
+                    None => {
+                        // A stale forward edge can exist in parent_to_child without a reverse edge.
+                        // Treat it as a removable orphan relation and continue.
+                        HashSet::new()
+                    }
+                };
 
             // Create new parents set without the element
             let updated_parents: HashSet<_> =
@@ -343,11 +345,10 @@ mod tests {
         dag.add(parent.clone(), child.clone());
         let (affected, removed, _orphaned_parents) = dag.remove(child.clone()).unwrap();
 
-        assert!(
-            !dag.parent_to_child_adjacency_list
-                .get(&parent)
-                .is_some_and(|children| children.contains(&child))
-        );
+        assert!(!dag
+            .parent_to_child_adjacency_list
+            .get(&parent)
+            .is_some_and(|children| children.contains(&child)));
         assert!(!dag.parent_to_child_adjacency_list.contains_key(&child));
         assert!(!dag.child_to_parent_adjacency_list.contains_key(&child));
         assert!(affected.is_empty());
@@ -387,20 +388,21 @@ mod tests {
             child_parents.insert(stale_parent.clone());
         }
 
-        assert!(
-            dag.child_to_parent_adjacency_list
-                .get(&child)
-                .is_some_and(|parents| parents.contains(&stale_parent))
-        );
+        assert!(dag
+            .child_to_parent_adjacency_list
+            .get(&child)
+            .is_some_and(|parents| parents.contains(&stale_parent)));
 
         let (_affected, _removed, _orphaned_parents) = dag.remove(child.clone()).unwrap();
 
         assert!(!dag.child_to_parent_adjacency_list.contains_key(&child));
         assert!(!dag.parent_to_child_adjacency_list.contains_key(&child));
-        assert!(!dag.parent_to_child_adjacency_list
+        assert!(!dag
+            .parent_to_child_adjacency_list
             .get(&valid_parent)
             .is_some_and(|children| children.contains(&child)));
-        assert!(!dag.parent_to_child_adjacency_list
+        assert!(!dag
+            .parent_to_child_adjacency_list
             .get(&stale_parent)
             .is_some_and(|children| children.contains(&child)));
     }
@@ -420,8 +422,7 @@ mod tests {
 
         assert!(!dag.parent_to_child_adjacency_list.contains_key(&parent));
         assert!(!dag.child_to_parent_adjacency_list.contains_key(&parent));
-        assert!(!dag.parent_to_child_adjacency_list
-            .contains_key(&child));
+        assert!(!dag.parent_to_child_adjacency_list.contains_key(&child));
         assert!(!dag.child_to_parent_adjacency_list.contains_key(&child));
         assert!(removed.contains(&child));
         assert!(affected.is_empty());

@@ -21,14 +21,14 @@ use super::{
     validator_identity::ValidatorIdentity,
 };
 
-const SYNCHRONY_RECOVERY_STALL_WINDOW_SECONDS_ENV: &str = "F1R3_SYNCHRONY_RECOVERY_STALL_WINDOW_SECONDS";
+const SYNCHRONY_RECOVERY_STALL_WINDOW_SECONDS_ENV: &str =
+    "F1R3_SYNCHRONY_RECOVERY_STALL_WINDOW_SECONDS";
 const SYNCHRONY_RECOVERY_COOLDOWN_SECONDS_ENV: &str = "F1R3_SYNCHRONY_RECOVERY_COOLDOWN_SECONDS";
 const SYNCHRONY_RECOVERY_MAX_BYPASSES_ENV: &str = "F1R3_SYNCHRONY_RECOVERY_MAX_BYPASSES";
 const SYNCHRONY_CONSTRAINT_THRESHOLD_ENV: &str = "F1R3_SYNCHRONY_CONSTRAINT_THRESHOLD";
 const SYNCHRONY_FINALIZED_BASELINE_MAX_DISTANCE_ENV: &str =
     "F1R3_SYNCHRONY_FINALIZED_BASELINE_MAX_DISTANCE";
-const SYNCHRONY_FINALIZED_BASELINE_ENABLED_ENV: &str =
-    "F1R3_SYNCHRONY_FINALIZED_BASELINE_ENABLED";
+const SYNCHRONY_FINALIZED_BASELINE_ENABLED_ENV: &str = "F1R3_SYNCHRONY_FINALIZED_BASELINE_ENABLED";
 const DEFAULT_SYNCHRONY_RECOVERY_STALL_WINDOW_SECONDS: u64 = 8;
 const DEFAULT_SYNCHRONY_RECOVERY_COOLDOWN_SECONDS: u64 = 20;
 const DEFAULT_SYNCHRONY_RECOVERY_MAX_BYPASSES: u32 = 0;
@@ -170,9 +170,9 @@ impl SynchronyRecoveryState {
         let stalled_long_enough = now.duration_since(first_failure_at)
             >= Duration::from_secs(synchrony_recovery_stall_window_seconds());
 
-        let in_cooldown = self
-            .last_bypass_at
-            .is_some_and(|last| now.duration_since(last) < Duration::from_secs(synchrony_recovery_cooldown_seconds()));
+        let in_cooldown = self.last_bypass_at.is_some_and(|last| {
+            now.duration_since(last) < Duration::from_secs(synchrony_recovery_cooldown_seconds())
+        });
         if !stalled_long_enough || in_cooldown {
             return false;
         }
@@ -520,7 +520,10 @@ pub async fn check(
                     let can_use_finalized = can_use_finalized_baseline(
                         last_proposed_block_meta.block_number,
                         last_finalized_block_meta.block_number,
-                        snapshot.on_chain_state.shard_conf.height_constraint_threshold as i64,
+                        snapshot
+                            .on_chain_state
+                            .shard_conf
+                            .height_constraint_threshold as i64,
                     );
 
                     if can_use_finalized && synchrony_finalized_baseline_enabled() {
@@ -569,7 +572,10 @@ pub async fn check(
                         );
                     }
 
-                    let bypass = should_bypass_synchrony_constraint(&validator, last_proposed_block_hash.as_ref());
+                    let bypass = should_bypass_synchrony_constraint(
+                        &validator,
+                        last_proposed_block_hash.as_ref(),
+                    );
 
                     if bypass {
                         tracing::warn!(
@@ -666,8 +672,7 @@ fn should_count_fallback_sender(
     last_proposed_block_number: i64,
 ) -> bool {
     let advanced_height = latest_block_number > last_proposed_block_number;
-    let same_or_higher_height_new_hash =
-        latest_block_number >= last_proposed_block_number
-            && latest_block_hash != last_proposed_hash;
+    let same_or_higher_height_new_hash = latest_block_number >= last_proposed_block_number
+        && latest_block_hash != last_proposed_hash;
     advanced_height || same_or_higher_height_new_hash
 }

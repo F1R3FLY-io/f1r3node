@@ -1303,8 +1303,8 @@ async fn replay_rspace_should_correctly_remove_things_from_replay_data() {
             .map
             .get(&IOEvent::Consume(cr_1.clone()))
             .map(|counter| counter.iter().map(|(_, c)| *c).sum::<usize>())
-            .unwrap_or(0)
-            + replay_space
+            .unwrap_or(0) +
+            replay_space
                 .replay_data
                 .map
                 .get(&IOEvent::Consume(cr_2.clone()))
@@ -1336,8 +1336,8 @@ async fn replay_rspace_should_correctly_remove_things_from_replay_data() {
             .map
             .get(&IOEvent::Consume(cr_1.clone()))
             .map(|counter| counter.iter().map(|(_, c)| *c).sum::<usize>())
-            .unwrap_or(0)
-            + replay_space
+            .unwrap_or(0) +
+            replay_space
                 .replay_data
                 .map
                 .get(&IOEvent::Consume(cr_2.clone()))
@@ -1354,8 +1354,8 @@ async fn replay_rspace_should_correctly_remove_things_from_replay_data() {
             .map
             .get(&IOEvent::Consume(cr_1))
             .map(|counter| counter.iter().map(|(_, c)| *c).sum::<usize>())
-            .unwrap_or(0)
-            + replay_space
+            .unwrap_or(0) +
+            replay_space
                 .replay_data
                 .map
                 .get(&IOEvent::Consume(cr_2))

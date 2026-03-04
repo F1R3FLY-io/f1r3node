@@ -9,9 +9,7 @@ use std::{
 };
 
 use crypto::rust::{
-    hash::blake2b512_random::Blake2b512Random,
-    public_key::PublicKey,
-    signatures::signed::Signed,
+    hash::blake2b512_random::Blake2b512Random, public_key::PublicKey, signatures::signed::Signed,
 };
 use models::{
     rhoapi::{
@@ -37,8 +35,8 @@ use models::{
     },
 };
 use rholang::rust::interpreter::{
-    accounting::has_cost::HasCost,
     accounting::costs::Cost,
+    accounting::has_cost::HasCost,
     compiler::compiler::Compiler,
     env::Env,
     errors::InterpreterError,
@@ -509,8 +507,8 @@ impl RuntimeOps {
                 match refund_result {
                     Either::Right(_) => {
                         // Get mergeable channels data
-                        let mergeable_channels_data =
-                            self.get_number_channels_data(&eval_collector_state.mergeable_channels)?;
+                        let mergeable_channels_data = self
+                            .get_number_channels_data(&eval_collector_state.mergeable_channels)?;
 
                         let deploy_log = mem::take(&mut eval_collector_state.event_log);
                         log_mem_step("after_collect_result");
@@ -807,11 +805,7 @@ impl RuntimeOps {
             .collect();
         log_mem_step("after_convert_event_log");
 
-        Ok((
-            log,
-            result_or_system_deploy_error,
-            eval_result.mergeable,
-        ))
+        Ok((log, result_or_system_deploy_error, eval_result.mergeable))
     }
 
     /**

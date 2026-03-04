@@ -82,8 +82,7 @@ impl StreamObservable {
                 .cache
                 .iter()
                 .filter_map(|entry| {
-                    Self::cache_key_timestamp(entry.key())
-                        .map(|ts| (ts, entry.key().clone()))
+                    Self::cache_key_timestamp(entry.key()).map(|ts| (ts, entry.key().clone()))
                 })
                 .collect();
 

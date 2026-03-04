@@ -40,7 +40,6 @@ const DRIFT: i64 = 15000; // 15 seconds
 pub struct Validate;
 
 impl Validate {
-
     //TODO: It should be simplified once we remove &self from the verify function.
     fn signature_verifiers() -> HashMap<String, Box<dyn Fn(&Data, &Signature, &PublicKey) -> bool>>
     {

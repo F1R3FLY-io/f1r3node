@@ -167,7 +167,7 @@ impl Interpreter for InterpreterImpl {
                                 InterpreterError::ParserError(e.to_string()),
                             ))
                         }
-                };
+                    };
                 match result {
                     Ok(p) => p,
                     Err(err) => return err,

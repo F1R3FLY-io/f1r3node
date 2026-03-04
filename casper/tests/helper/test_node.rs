@@ -1061,15 +1061,15 @@ impl TestNode {
         > = Arc::new(|| Box::pin(async { Ok(()) }));
 
         let running_engine = Running::new(
-            block_processor_queue.0.clone(),      // block_processing_queue_tx
-            Arc::new(DashSet::new()), // blocks_in_processing
+            block_processor_queue.0.clone(), // block_processing_queue_tx
+            Arc::new(DashSet::new()),        // blocks_in_processing
             casper.clone() as Arc<dyn MultiParentCasper + Send + Sync>, // casper
-            _approved_block.clone(),              // approved_block
-            the_init,                             // the_init
-            true,                                 // disable_state_exporter
-            tle.clone(),                          // transport
-            rp_conf.clone(),                      // conf
-            block_retriever.clone(),              // block_retriever
+            _approved_block.clone(),         // approved_block
+            the_init,                        // the_init
+            true,                            // disable_state_exporter
+            tle.clone(),                     // transport
+            rp_conf.clone(),                 // conf
+            block_retriever.clone(),         // block_retriever
         );
 
         // Create EngineCell

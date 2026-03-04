@@ -101,8 +101,7 @@ impl RuntimeManager {
     const MAX_REPLAY_CACHE_ENTRIES: usize = 256;
     const MAX_REPLAY_CACHE_ENTRIES_ENV: &str = "F1R3_REPLAY_CACHE_MAX_ENTRIES";
     const MAX_REPLAY_CACHE_EVENT_LOG_ENTRIES: usize = 2048;
-    const MAX_REPLAY_CACHE_EVENT_LOG_ENTRIES_ENV: &str =
-        "F1R3_REPLAY_CACHE_MAX_EVENT_LOG_ENTRIES";
+    const MAX_REPLAY_CACHE_EVENT_LOG_ENTRIES_ENV: &str = "F1R3_REPLAY_CACHE_MAX_EVENT_LOG_ENTRIES";
     const MAX_STATE_HASH_CACHE_ENTRIES: usize = 0;
     const MAX_STATE_HASH_CACHE_ENTRIES_ENV: &str = "F1R3_STATE_HASH_CACHE_MAX_ENTRIES";
 
@@ -246,7 +245,9 @@ impl RuntimeManager {
         }
     }
 
-    pub fn trim_allocator() { Self::maybe_trim_allocator(); }
+    pub fn trim_allocator() {
+        Self::maybe_trim_allocator();
+    }
 
     fn evict_one_dashmap_entry<K, V>(map: &DashMap<K, V>)
     where
@@ -591,10 +592,9 @@ impl RuntimeManager {
                     creator: sender.bytes.clone(),
                     seq_num,
                 };
-                let mergeable_key_encoded =
-                    bincode::serialize(&mergeable_key).map_err(|e| {
-                        CasperError::KvStoreError(KvStoreError::SerializationError(e.to_string()))
-                    })?;
+                let mergeable_key_encoded = bincode::serialize(&mergeable_key).map_err(|e| {
+                    CasperError::KvStoreError(KvStoreError::SerializationError(e.to_string()))
+                })?;
 
                 if self
                     .mergeable_store

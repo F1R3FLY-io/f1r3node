@@ -294,12 +294,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> Engine for Initializing<
                     peer
                 );
                 // Enqueue into tuple space channel for requester stream
-                let sender = self
-                    .tuple_space_tx
-                    .lock()
-                    .unwrap()
-                    .as_ref()
-                    .cloned();
+                let sender = self.tuple_space_tx.lock().unwrap().as_ref().cloned();
                 if let Some(tx) = sender {
                     match tx.send(store_items_message).await {
                         Ok(()) => {
@@ -331,12 +326,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> Engine for Initializing<
                     peer
                 );
                 // Enqueue into block message channel for requester stream
-                let sender = self
-                    .block_message_tx
-                    .lock()
-                    .unwrap()
-                    .as_ref()
-                    .cloned();
+                let sender = self.block_message_tx.lock().unwrap().as_ref().cloned();
                 if let Some(tx) = sender {
                     match tx.send(block_message).await {
                         Ok(()) => {

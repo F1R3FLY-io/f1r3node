@@ -192,10 +192,7 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
         })
     }
 
-    fn broadcast_retry_cooldown_ms_for_hash(
-        &self,
-        hash: &BlockHash,
-    ) -> Result<u64, CasperError> {
+    fn broadcast_retry_cooldown_ms_for_hash(&self, hash: &BlockHash) -> Result<u64, CasperError> {
         // Increase broadcast backoff when hash resolution is repeatedly failing.
         let attempts = self.retry_attempt_count(hash)?;
         let base = Self::broadcast_only_retry_cooldown_ms();
@@ -586,11 +583,12 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
     }
 
     fn register_peer_requery_attempt(&self, hash: &BlockHash) -> Result<(), CasperError> {
-        let mut peer_requery_attempts = self.peer_requery_attempts_by_hash.lock().map_err(|_| {
-            CasperError::RuntimeError(
-                "Failed to acquire peer_requery_attempts_by_hash lock".to_string(),
-            )
-        })?;
+        let mut peer_requery_attempts =
+            self.peer_requery_attempts_by_hash.lock().map_err(|_| {
+                CasperError::RuntimeError(
+                    "Failed to acquire peer_requery_attempts_by_hash lock".to_string(),
+                )
+            })?;
         let counter = peer_requery_attempts.entry(hash.clone()).or_insert(0);
         *counter = counter.saturating_add(1);
         Ok(())
@@ -723,10 +721,7 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
         added
     }
 
-    fn pick_next_known_peer(
-        peers: &HashSet<PeerNode>,
-        cursor: &mut u32,
-    ) -> Option<PeerNode> {
+    fn pick_next_known_peer(peers: &HashSet<PeerNode>, cursor: &mut u32) -> Option<PeerNode> {
         if peers.is_empty() {
             return None;
         }
@@ -755,8 +750,10 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
     ) -> Result<AdmitHashResult, CasperError> {
         let now = Self::current_millis();
         let missing_dependency_peers = if peer.is_none()
-            && matches!(admit_hash_reason, AdmitHashReason::MissingDependencyRequested)
-        {
+            && matches!(
+                admit_hash_reason,
+                AdmitHashReason::MissingDependencyRequested
+            ) {
             self.connected_peers_for_missing_dependency()?
         } else {
             Vec::new()
@@ -846,7 +843,10 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
                         request_block: was_empty,
                     }
                 }
-            } else if matches!(admit_hash_reason, AdmitHashReason::MissingDependencyRequested) {
+            } else if matches!(
+                admit_hash_reason,
+                AdmitHashReason::MissingDependencyRequested
+            ) {
                 let request_state = state.get_mut(&hash).unwrap();
                 if request_state.received {
                     AdmitHashResult {
@@ -990,8 +990,7 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
                     // Only apply lifetime-based eviction to entries already marked as received.
                     // Unresolved requests must remain tracked until retry-budget/bounds logic
                     // decides eviction, otherwise dependency chains can be dropped prematurely.
-                    let should_evict_stale =
-                        received && stale_lifetime > stale_request_lifetime_ms;
+                    let should_evict_stale = received && stale_lifetime > stale_request_lifetime_ms;
 
                     if !received {
                         debug!(
@@ -1154,7 +1153,11 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
         }
 
         let admit_result = self
-            .admit_hash(hash.clone(), None, AdmitHashReason::MissingDependencyRequested)
+            .admit_hash(
+                hash.clone(),
+                None,
+                AdmitHashReason::MissingDependencyRequested,
+            )
             .await?;
         if matches!(admit_result.status, AdmitHashStatus::Ignore) {
             self.transport
@@ -1200,13 +1203,16 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
                     request_state.peers.insert(next_peer.clone());
                     request_state.timestamp = now;
                     RerequestAction::RequestPeer(next_peer, request_state.waiting_list.clone())
-                } else if let Some(known_peer) =
-                    Self::pick_next_known_peer(&request_state.peers, &mut request_state.peer_requery_cursor)
-                {
+                } else if let Some(known_peer) = Self::pick_next_known_peer(
+                    &request_state.peers,
+                    &mut request_state.peer_requery_cursor,
+                ) {
                     request_state.timestamp = now;
                     let known_peer_count = request_state.peers.len() as u32;
-                    let peer_requery_budget =
-                        std::cmp::max(1, std::cmp::min(known_peer_requery_soft_limit, known_peer_count));
+                    let peer_requery_budget = std::cmp::max(
+                        1,
+                        std::cmp::min(known_peer_requery_soft_limit, known_peer_count),
+                    );
                     // Budget based on known-peer requery attempts only.
                     // Using total retries here incorrectly consumes budget with waiting-list peer requests.
                     if peer_requery_attempts < peer_requery_budget {
@@ -1648,7 +1654,10 @@ mod tests {
             .get_request_state_for_test(&hash)
             .await
             .expect("state lookup should succeed");
-        assert!(state.is_none(), "orphan dependency hash should be fully untracked");
+        assert!(
+            state.is_none(),
+            "orphan dependency hash should be fully untracked"
+        );
     }
 
     #[tokio::test]
@@ -1670,8 +1679,9 @@ mod tests {
         );
 
         let hash: BlockHash = Bytes::from_static(b"single-known-peer-requery-budget");
-        let stale =
-            BlockRetriever::<TransportLayerStub>::create_timed_out_timestamp(Duration::from_secs(2));
+        let stale = BlockRetriever::<TransportLayerStub>::create_timed_out_timestamp(
+            Duration::from_secs(2),
+        );
         let mut peers = HashSet::new();
         peers.insert(remote);
         block_retriever
@@ -1705,8 +1715,9 @@ mod tests {
             .await
             .expect("state lookup should succeed")
             .expect("request state should still exist");
-        state.timestamp =
-            BlockRetriever::<TransportLayerStub>::create_timed_out_timestamp(Duration::from_secs(2));
+        state.timestamp = BlockRetriever::<TransportLayerStub>::create_timed_out_timestamp(
+            Duration::from_secs(2),
+        );
         block_retriever
             .set_request_state_for_test(hash.clone(), state)
             .await
@@ -1742,8 +1753,9 @@ mod tests {
         );
 
         let hash: BlockHash = Bytes::from_static(b"waiting-list-exhaustion-known-peer-requery");
-        let stale =
-            BlockRetriever::<TransportLayerStub>::create_timed_out_timestamp(Duration::from_secs(2));
+        let stale = BlockRetriever::<TransportLayerStub>::create_timed_out_timestamp(
+            Duration::from_secs(2),
+        );
         block_retriever
             .set_request_state_for_test(
                 hash.clone(),
@@ -1775,8 +1787,9 @@ mod tests {
             .await
             .expect("state lookup should succeed")
             .expect("request state should still exist");
-        state.timestamp =
-            BlockRetriever::<TransportLayerStub>::create_timed_out_timestamp(Duration::from_secs(2));
+        state.timestamp = BlockRetriever::<TransportLayerStub>::create_timed_out_timestamp(
+            Duration::from_secs(2),
+        );
         block_retriever
             .set_request_state_for_test(hash.clone(), state)
             .await

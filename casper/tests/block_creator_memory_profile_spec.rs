@@ -14,10 +14,8 @@ use casper::rust::{
     genesis::genesis::Genesis,
     util::rholang::{
         costacc::close_block_deploy::CloseBlockDeploy,
-        interpreter_util::compute_parents_post_state,
-        runtime_manager::RuntimeManager,
-        system_deploy_enum::SystemDeployEnum,
-        system_deploy_util,
+        interpreter_util::compute_parents_post_state, runtime_manager::RuntimeManager,
+        system_deploy_enum::SystemDeployEnum, system_deploy_util,
     },
     validator_identity::ValidatorIdentity,
 };
@@ -262,7 +260,11 @@ async fn run_block_creator_create_memory_profile() {
     let mut last_rss_kb = vm_rss_kb();
     if let Some(rss) = last_rss_kb {
         samples.push((0, rss));
-        println!("create #  0: baseline     rss={}KB ({:.2} MiB)", rss, kb_to_mib(rss));
+        println!(
+            "create #  0: baseline     rss={}KB ({:.2} MiB)",
+            rss,
+            kb_to_mib(rss)
+        );
     }
 
     for i in 1..=iterations {
@@ -343,7 +345,11 @@ async fn run_block_creator_create_memory_profile() {
         }
     }
 
-    if samples.last().map(|(idx, _)| *idx != iterations).unwrap_or(true) {
+    if samples
+        .last()
+        .map(|(idx, _)| *idx != iterations)
+        .unwrap_or(true)
+    {
         if let Some(rss) = vm_rss_kb() {
             samples.push((iterations, rss));
         }
@@ -363,9 +369,11 @@ async fn run_block_creator_create_memory_profile() {
         error_samples
     );
 
-    if let (Some(limit), Some((_, first)), Some((_, last))) =
-        (growth_limit_kb, samples.first().copied(), samples.last().copied())
-    {
+    if let (Some(limit), Some((_, first)), Some((_, last))) = (
+        growth_limit_kb,
+        samples.first().copied(),
+        samples.last().copied(),
+    ) {
         let growth = last.saturating_sub(first);
         assert!(
             growth <= limit,
@@ -413,10 +421,11 @@ async fn run_block_creator_phase_split_memory_profile() {
         .ok()
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
         .unwrap_or(false);
-    let skip_parents_compute = std::env::var("F1R3_BLOCK_CREATOR_PHASE_PROFILE_SKIP_PARENTS_COMPUTE")
-        .ok()
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false);
+    let skip_parents_compute =
+        std::env::var("F1R3_BLOCK_CREATOR_PHASE_PROFILE_SKIP_PARENTS_COMPUTE")
+            .ok()
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
     let skip_bonds = std::env::var("F1R3_BLOCK_CREATOR_PHASE_PROFILE_SKIP_BONDS")
         .ok()
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
@@ -643,22 +652,22 @@ async fn run_block_creator_phase_split_memory_profile() {
             )
             .await
             {
-            Ok(Ok(_)) => {
-                success_count += 1;
-                "ok"
-            }
-            Ok(Err(err)) => {
-                error_count += 1;
-                if error_samples.len() < 5 {
-                    error_samples.push(format!("state:{:?}", err));
+                Ok(Ok(_)) => {
+                    success_count += 1;
+                    "ok"
                 }
-                "error"
-            }
-            Err(_) => {
-                error_count += 1;
-                timeout_count += 1;
-                "timeout"
-            }
+                Ok(Err(err)) => {
+                    error_count += 1;
+                    if error_samples.len() < 5 {
+                        error_samples.push(format!("state:{:?}", err));
+                    }
+                    "error"
+                }
+                Err(_) => {
+                    error_count += 1;
+                    timeout_count += 1;
+                    "timeout"
+                }
             }
         };
         RuntimeManager::trim_allocator();

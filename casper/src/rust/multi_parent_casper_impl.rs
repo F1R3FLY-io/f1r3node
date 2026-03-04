@@ -148,7 +148,9 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
             valid_latest_msgs
                 .iter()
                 .filter_map(|(validator, hash)| {
-                    dag.lookup_unsafe(hash).ok().map(|meta| (validator.clone(), meta))
+                    dag.lookup_unsafe(hash)
+                        .ok()
+                        .map(|meta| (validator.clone(), meta))
                 })
                 .collect();
         // Deduplicate: multiple validators may have the same latest block (e.g., genesis)
@@ -180,8 +182,10 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
         sorted_parents_list.sort_by(|a, b| {
             let a_num = a.body.state.block_number as i64;
             let b_num = b.body.state.block_number as i64;
-            let a_is_near_tip = max_parent_block_number.saturating_sub(a_num) <= near_tip_tolerance_blocks;
-            let b_is_near_tip = max_parent_block_number.saturating_sub(b_num) <= near_tip_tolerance_blocks;
+            let a_is_near_tip =
+                max_parent_block_number.saturating_sub(a_num) <= near_tip_tolerance_blocks;
+            let b_is_near_tip =
+                max_parent_block_number.saturating_sub(b_num) <= near_tip_tolerance_blocks;
 
             if a_is_near_tip && b_is_near_tip {
                 a.block_hash.cmp(&b.block_hash)
@@ -1628,19 +1632,15 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasperImpl<T> {
             return Ok(());
         }
 
-        if new_block.body.state.block_number % self.casper_shard_conf.finalization_rate as i64 == 0 {
+        if new_block.body.state.block_number % self.casper_shard_conf.finalization_rate as i64 == 0
+        {
             if self
                 .finalizer_task_in_progress
                 .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
                 .is_err()
             {
-                if !self
-                    .finalizer_task_queued
-                    .swap(true, Ordering::SeqCst)
-                {
-                    tracing::debug!(
-                        "Finalizer already running; queued follow-up finalization run"
-                    );
+                if !self.finalizer_task_queued.swap(true, Ordering::SeqCst) {
+                    tracing::debug!("Finalizer already running; queued follow-up finalization run");
                 }
                 return Ok(());
             }
@@ -1713,7 +1713,10 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasperImpl<T> {
                     cache.remove(&first_key);
                 }
             }
-            let entry = cache.entry(cache_key).or_insert_with(|| fetched.clone()).clone();
+            let entry = cache
+                .entry(cache_key)
+                .or_insert_with(|| fetched.clone())
+                .clone();
             let cache_len = cache.len();
             metrics::gauge!(ACTIVE_VALIDATORS_CACHE_SIZE_METRIC, "source" => CASPER_METRICS_SOURCE)
                 .set(cache_len as f64);

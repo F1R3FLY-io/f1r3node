@@ -40,9 +40,8 @@ async fn history_repository_should_process_insert_one_datum() {
         data: vec![test_datum.clone()],
     };
 
-    let next_repo = repo.checkpoint(vec![HotStoreAction::Insert(InsertAction::InsertData(
-        insert_data,
-    ))]);
+    let next_repo =
+        repo.checkpoint(vec![HotStoreAction::Insert(InsertAction::InsertData(insert_data))]);
     let history_reader = next_repo.get_history_reader(&next_repo.root());
     let data = history_reader
         .unwrap()
@@ -277,7 +276,11 @@ async fn history_repository_should_not_allow_switching_to_a_not_existing_root() 
 
     match repo.reset(&zeros_blake()) {
         Err(HistoryError::RootError(RootError::UnknownRootError(err))) => {
-            assert!(err.contains("unknown root"), "Expected error containing 'unknown root', got: {}", err)
+            assert!(
+                err.contains("unknown root"),
+                "Expected error containing 'unknown root', got: {}",
+                err
+            )
         }
         Ok(_) => assert!(false, "Expected a failure"),
         _ => assert!(false, "Wrong error thrown"),
@@ -293,9 +296,8 @@ async fn history_repository_should_record_next_root_as_valid() {
         data: vec![test_datum.clone()],
     };
 
-    let next_repo = repo.checkpoint(vec![HotStoreAction::Insert(InsertAction::InsertData(
-        insert_data,
-    ))]);
+    let next_repo =
+        repo.checkpoint(vec![HotStoreAction::Insert(InsertAction::InsertData(insert_data))]);
     let _ = repo.reset(&RadixHistory::empty_root_node_hash());
     let binding = next_repo.history();
     let next_repo_history = binding.lock().expect("Failed to acquire history lock");

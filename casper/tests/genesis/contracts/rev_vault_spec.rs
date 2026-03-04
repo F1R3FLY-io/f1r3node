@@ -14,9 +14,12 @@ async fn rev_vault_spec() {
     // NormalizerEnv.withDeployerId(deployerPk)
     let normalizer_env = with_deployer_id(&DEFAULT_PUB);
 
-    let compiled =
-        CompiledRholangSource::new(test_object, normalizer_env, "SystemVaultTest.rho".to_string())
-            .expect("Failed to compile SystemVaultTest.rho");
+    let compiled = CompiledRholangSource::new(
+        test_object,
+        normalizer_env,
+        "SystemVaultTest.rho".to_string(),
+    )
+    .expect("Failed to compile SystemVaultTest.rho");
 
     let spec = RhoSpec::new(compiled, vec![], GENESIS_TEST_TIMEOUT);
 

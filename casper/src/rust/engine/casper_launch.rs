@@ -64,7 +64,8 @@ pub struct CasperLaunchImpl<T: TransportLayer + Send + Sync + Clone + 'static> {
     casper_shard_conf: CasperShardConf,
 
     // Explicit parameters from Scala (in same order as Scala signature)
-    block_processing_queue_tx: mpsc::Sender<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
+    block_processing_queue_tx:
+        mpsc::Sender<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
     blocks_in_processing: Arc<DashSet<BlockHash>>,
     propose_f_opt: Option<Arc<crate::rust::ProposeFunction>>,
     conf: CasperConf,

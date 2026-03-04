@@ -12,8 +12,10 @@ pub fn start_sigar_reporter(interval_duration: Duration) {
             let cpu_usage = sys.global_cpu_info().cpu_usage();
             let mem_usage = sys.used_memory() as f64 / sys.total_memory() as f64 * 100.0;
 
-            metrics::gauge!("system_cpu_usage_percent", "source" => SYSTEM_METRICS_SOURCE).set(cpu_usage as f64);
-            metrics::gauge!("system_memory_usage_percent", "source" => SYSTEM_METRICS_SOURCE).set(mem_usage);
+            metrics::gauge!("system_cpu_usage_percent", "source" => SYSTEM_METRICS_SOURCE)
+                .set(cpu_usage as f64);
+            metrics::gauge!("system_memory_usage_percent", "source" => SYSTEM_METRICS_SOURCE)
+                .set(mem_usage);
 
             std::thread::sleep(interval_duration);
         }

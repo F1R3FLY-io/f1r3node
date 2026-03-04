@@ -86,7 +86,8 @@ impl History for RadixHistory {
                 let delta_prev_kb = curr_kb as i64 - prev_kb as i64;
                 let delta_total_kb = curr_kb as i64 - base_kb as i64;
                 eprintln!(
-                    "radix_history.process.mem step={} rss_kb={} delta_prev_kb={} delta_total_kb={}",
+                    "radix_history.process.mem step={} rss_kb={} delta_prev_kb={} \
+                     delta_total_kb={}",
                     step, curr_kb, delta_prev_kb, delta_total_kb
                 );
                 mem_prev_kb = Some(curr_kb);

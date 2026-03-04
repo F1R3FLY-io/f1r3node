@@ -136,8 +136,14 @@ impl DebruijnInterpreter {
         par: Par,
         env: &'a Env<Par>,
         rand: Blake2b512Random,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<(), InterpreterError>> + std::marker::Send + 'a>> {
-        Box::pin(StackGrowingFuture { inner: self.eval_inner(par, env, rand) })
+    ) -> Pin<
+        Box<
+            dyn std::future::Future<Output = Result<(), InterpreterError>> + std::marker::Send + 'a,
+        >,
+    > {
+        Box::pin(StackGrowingFuture {
+            inner: self.eval_inner(par, env, rand),
+        })
     }
 
     async fn eval_inner(
@@ -257,11 +263,7 @@ impl DebruijnInterpreter {
 
         let term_split_limit = i16::MAX;
         if terms.len() > term_split_limit.try_into().unwrap() {
-            log_mem_step(
-                "term_split_limit_exceeded",
-                Some(terms.len()),
-                None,
-            );
+            log_mem_step("term_split_limit_exceeded", Some(terms.len()), None);
             Err(InterpreterError::ReduceError(format!(
                 "The number of terms in the Par is {}, which exceeds the limit of {}",
                 terms.len(),
@@ -304,13 +306,14 @@ impl DebruijnInterpreter {
             let results: Vec<Result<(), InterpreterError>> =
                 futures::future::join_all(futures).await;
             log_mem_step("after_join_all", Some(terms.len()), None);
-            let (ok_count, err_count) = results.iter().fold((0usize, 0usize), |(ok, err), result| {
-                if result.is_ok() {
-                    (ok + 1, err)
-                } else {
-                    (ok, err + 1)
-                }
-            });
+            let (ok_count, err_count) =
+                results.iter().fold((0usize, 0usize), |(ok, err), result| {
+                    if result.is_ok() {
+                        (ok + 1, err)
+                    } else {
+                        (ok, err + 1)
+                    }
+                });
             if mem_profile_enabled && env_level == 0 {
                 eprintln!(
                     "reduce_eval_inner.meta step=after_join_all results_len={} results_cap={} ok_count={} err_count={}",
@@ -373,8 +376,16 @@ impl DebruijnInterpreter {
         chan: Par,
         data: ListParWithRandom,
         persistent: bool,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<DispatchType, InterpreterError>> + std::marker::Send + 'a>> {
-        Box::pin(StackGrowingFuture { inner: self.produce_inner(chan, data, persistent) })
+    ) -> Pin<
+        Box<
+            dyn std::future::Future<Output = Result<DispatchType, InterpreterError>>
+                + std::marker::Send
+                + 'a,
+        >,
+    > {
+        Box::pin(StackGrowingFuture {
+            inner: self.produce_inner(chan, data, persistent),
+        })
     }
 
     async fn produce_inner(
@@ -488,8 +499,16 @@ impl DebruijnInterpreter {
         body: ParWithRandom,
         persistent: bool,
         peek: bool,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<DispatchType, InterpreterError>> + std::marker::Send + 'a>> {
-        Box::pin(StackGrowingFuture { inner: self.consume_inner(binds, body, persistent, peek) })
+    ) -> Pin<
+        Box<
+            dyn std::future::Future<Output = Result<DispatchType, InterpreterError>>
+                + std::marker::Send
+                + 'a,
+        >,
+    > {
+        Box::pin(StackGrowingFuture {
+            inner: self.consume_inner(binds, body, persistent, peek),
+        })
     }
 
     async fn consume_inner(
@@ -840,8 +859,16 @@ impl DebruijnInterpreter {
         data_list: Vec<(Par, ListParWithRandom, ListParWithRandom, bool)>,
         is_replay: bool,
         previous_output: Vec<Par>,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<DispatchType, InterpreterError>> + std::marker::Send + 'a>> {
-        Box::pin(StackGrowingFuture { inner: self.dispatch_inner(continuation, data_list, is_replay, previous_output) })
+    ) -> Pin<
+        Box<
+            dyn std::future::Future<Output = Result<DispatchType, InterpreterError>>
+                + std::marker::Send
+                + 'a,
+        >,
+    > {
+        Box::pin(StackGrowingFuture {
+            inner: self.dispatch_inner(continuation, data_list, is_replay, previous_output),
+        })
     }
 
     async fn dispatch_inner(
@@ -1523,7 +1550,9 @@ impl DebruijnInterpreter {
             Ok(env) => {
                 log_op_step("after_alloc");
                 // println!("\nenv in eval_new: {:?}", env);
-                let result = self.eval(unwrap_option_safe(new.p.clone())?, &env, rand).await;
+                let result = self
+                    .eval(unwrap_option_safe(new.p.clone())?, &env, rand)
+                    .await;
                 log_op_step("after_eval_new_body");
                 result
             }
@@ -1681,7 +1710,9 @@ impl DebruijnInterpreter {
                     let v1 = self.eval_to_i64(&p1.clone().unwrap(), env)?;
                     let v2 = self.eval_to_i64(&p2.clone().unwrap(), env)?;
                     if v2 == 0 {
-                      return Err(InterpreterError::ReduceError("Division by zero".to_string()));
+                        return Err(InterpreterError::ReduceError(
+                            "Division by zero".to_string(),
+                        ));
                     }
                     self.cost.charge(division_cost())?;
                     Ok(Expr {
@@ -1693,7 +1724,7 @@ impl DebruijnInterpreter {
                     let v1 = self.eval_to_i64(&p1.clone().unwrap(), env)?;
                     let v2 = self.eval_to_i64(&p2.clone().unwrap(), env)?;
                     if v2 == 0 {
-                      return Err(InterpreterError::ReduceError("Modulo by zero".to_string()));
+                        return Err(InterpreterError::ReduceError("Modulo by zero".to_string()));
                     }
                     self.cost.charge(modulo_cost())?;
                     Ok(Expr {

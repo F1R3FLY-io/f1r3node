@@ -253,7 +253,9 @@ where
                                     invalid_reason,
                                     BlockError::Invalid(InvalidBlock::InvalidParents)
                                         | BlockError::Invalid(InvalidBlock::InvalidFollows)
-                                        | BlockError::Invalid(InvalidBlock::JustificationRegression)
+                                        | BlockError::Invalid(
+                                            InvalidBlock::JustificationRegression
+                                        )
                                         | BlockError::Invalid(InvalidBlock::InvalidBondsCache)
                                         | BlockError::Invalid(InvalidBlock::InvalidRepeatDeploy)
                                         | BlockError::Invalid(InvalidBlock::NeglectedInvalidBlock)
@@ -396,7 +398,9 @@ where
             .lookup_unsafe(&casper_snapshot.last_finalized_block)
         {
             Ok(lfb_meta) => (
-                casper_snapshot.max_block_num.saturating_sub(lfb_meta.block_number),
+                casper_snapshot
+                    .max_block_num
+                    .saturating_sub(lfb_meta.block_number),
                 observed_max_seq.saturating_sub(lfb_meta.sequence_number as i64),
             ),
             Err(_) => (0, 0),
@@ -458,11 +462,7 @@ where
             // propose
             let propose_start = std::time::Instant::now();
             let (propose_result, block_opt) = self
-                .do_propose(
-                    &mut casper_snapshot,
-                    casper,
-                    allow_empty_blocks_for_request,
-                )
+                .do_propose(&mut casper_snapshot, casper, allow_empty_blocks_for_request)
                 .await?;
             let propose_core_ms = propose_start.elapsed().as_millis();
 
