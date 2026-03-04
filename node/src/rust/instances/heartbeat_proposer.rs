@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -14,7 +13,6 @@ use casper::rust::validator_identity::ValidatorIdentity;
 use models::rust::block_hash::BlockHash;
 use models::rust::casper::pretty_printer::PrettyPrinter;
 use rand::Rng;
-use shared::rust::dag::dag_ops;
 use tokio::sync::Notify;
 
 use casper::rust::ProposeFunction;
@@ -278,6 +276,7 @@ pub async fn do_heartbeat_check(
         tracing::debug!("Heartbeat: Validator is bonded, checking LFB age");
         return Ok(check_lfb_and_propose(
             casper.clone(),
+            snapshot,
             trigger_propose,
             validator_identity,
             config,
@@ -289,14 +288,12 @@ pub async fn do_heartbeat_check(
 
 async fn check_lfb_and_propose(
     casper: Arc<dyn MultiParentCasper + Send + Sync>,
+    snapshot: CasperSnapshot,
     trigger_propose: &ProposeFunction,
     validator_identity: &ValidatorIdentity,
     config: &HeartbeatConf,
     standalone: bool,
 ) -> Result<bool, casper::rust::errors::CasperError> {
-    // Get current snapshot
-    let snapshot: CasperSnapshot = casper.get_snapshot().await?;
-
     // Check if we have pending user deploys in storage (not yet included in blocks)
     let has_pending_deploys = casper
         .has_pending_deploys_in_storage_for_snapshot(&snapshot)
@@ -629,28 +626,26 @@ fn check_has_new_parents(
         return true;
     }
 
-    // Get all blocks validator knew about when creating last block (ancestor set)
-    // Stop traversal at finalized blocks to prevent unbounded traversal on long chains
-    let neighbor_fn = |hash: &BlockHash| -> Vec<BlockHash> {
-        match snapshot.dag.lookup(hash) {
-            Ok(Some(meta)) if !snapshot.dag.is_finalized(hash) => meta
-                .parents
-                .into_iter()
-                .map(|p| BlockHash::from(p))
-                .collect(),
-            _ => vec![],
-        }
-    };
+    // Fast path: compare current validator latest messages against the latest messages
+    // referenced in this validator's own latest block justifications.
+    // If any validator advanced since then (or newly appeared), we have new parents.
+    let justified_latest: std::collections::HashMap<Vec<u8>, BlockHash> = block_meta
+        .justifications
+        .iter()
+        .map(|j| (j.validator.to_vec(), j.latest_block_hash.clone()))
+        .collect();
 
-    let ancestor_hashes = dag_ops::bf_traverse(vec![last_block_hash], neighbor_fn);
-    let ancestor_set: HashSet<BlockHash> = ancestor_hashes.into_iter().collect();
+    for entry in snapshot.dag.latest_message_hashes().iter() {
+        let validator = entry.key();
+        let current_hash = entry.value();
 
-    // Get current latest blocks (frontier)
-    let all_latest_blocks = snapshot.dag.latest_message_hashes();
+        let known_hash_opt = if *validator == *validator_id {
+            Some(&last_block_hash)
+        } else {
+            justified_latest.get(validator.as_ref())
+        };
 
-    // Check if any of the latest blocks are new (not in ancestor set)
-    for entry in all_latest_blocks.iter() {
-        if !ancestor_set.contains(entry.value()) {
+        if known_hash_opt != Some(current_hash) {
             return true;
         }
     }
