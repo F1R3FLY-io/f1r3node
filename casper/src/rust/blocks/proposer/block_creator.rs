@@ -2,6 +2,7 @@
 
 use dashmap::DashSet;
 use prost::bytes::Bytes;
+use std::sync::OnceLock;
 use std::sync::{Arc, Mutex};
 use std::{collections::HashSet, time::SystemTime};
 use tracing;
@@ -170,7 +171,55 @@ async fn prepare_user_deploys(
         deploy_storage_guard.remove(expired_list)?;
     }
 
-    Ok(valid_unique)
+    let max_user_deploys = max_user_deploys_per_block();
+    if valid_unique.len() <= max_user_deploys {
+        return Ok(valid_unique);
+    }
+
+    // Prefer oldest eligible deploys first to preserve fairness while bounding
+    // checkpoint/replay latency for long-running clusters.
+    let mut ordered: Vec<Signed<DeployData>> = valid_unique.into_iter().collect();
+    ordered.sort_by(|a, b| {
+        a.data
+            .valid_after_block_number
+            .cmp(&b.data.valid_after_block_number)
+            .then_with(|| a.data.time_stamp.cmp(&b.data.time_stamp))
+            .then_with(|| {
+                // Stable deterministic tie-breaker for identical timestamps/windows.
+                a.sig.cmp(&b.sig)
+            })
+    });
+
+    let selected: HashSet<Signed<DeployData>> =
+        ordered.into_iter().take(max_user_deploys).collect();
+    let deferred = valid_count
+        .saturating_sub(already_in_scope_count)
+        .saturating_sub(selected.len());
+
+    tracing::info!(
+        "Deploy selection capped for block #{}: selected={}, deferred={}, cap={}",
+        block_number,
+        selected.len(),
+        deferred,
+        max_user_deploys
+    );
+
+    Ok(selected)
+}
+
+fn max_user_deploys_per_block() -> usize {
+    // Keep default permissive for compatibility; cap is still tunable for stress scenarios.
+    const MAX_USER_DEPLOYS_DEFAULT: usize = 32;
+    const MAX_USER_DEPLOYS_ENV: &str = "F1R3_MAX_USER_DEPLOYS_PER_BLOCK";
+    static VALUE: OnceLock<usize> = OnceLock::new();
+
+    *VALUE.get_or_init(|| {
+        std::env::var(MAX_USER_DEPLOYS_ENV)
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .filter(|v| *v > 0)
+            .unwrap_or(MAX_USER_DEPLOYS_DEFAULT)
+    })
 }
 
 fn collect_self_chain_deploy_sigs(
