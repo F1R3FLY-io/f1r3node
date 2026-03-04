@@ -172,17 +172,29 @@ object CasperLaunch {
             casperShardConf.fileChunkSize,
             casperShardConf.fileSyncTimeout
           )
-          // DA-gating callback: request missing files from all peers and await with timeout
+          // DA-gating callback: request missing files from all peers and await with timeout.
+          // Broadcasts HasFile queries to all connected peers, then polls until the files
+          // arrive (via the FilePacket handler) or the timeout expires.
           daCallback = (block: BlockMessage, missingHashes: List[String]) =>
             for {
-              // Broadcast file requests to all connected peers
-              // (we don't know which peer has the file, so broadcast to all)
+              _ <- Log[F].info(
+                    s"[CasperLaunch] daCallback fired: block=${block.blockHash.toStringUtf8.take(10)}, " +
+                      s"missingHashes=${missingHashes.size}: ${missingHashes.map(_.take(16)).mkString("[", ", ", "]")}"
+                  )
               peers <- ConnectionsCell[F].read
-              _     <- peers.toList.traverse_(peer => fileRequester.requestFiles(peer, missingHashes))
+              _ <- Log[F].info(
+                    s"[CasperLaunch] daCallback: requesting files from ${peers.size} peers"
+                  )
+              // Broadcast file requests to ALL peers (not just the first one)
+              _ <- peers.toList.traverse_(peer => fileRequester.requestFiles(peer, missingHashes))
+              // Wait for files to arrive via P2P (with bounded timeout)
               stillMissing <- fileRequester.awaitFiles(
                                missingHashes,
                                casperShardConf.fileSyncTimeout
                              )
+              _ <- Log[F].info(
+                    s"[CasperLaunch] daCallback: awaitFiles returned, stillMissing=${stillMissing.size}"
+                  )
             } yield stillMissing
           // Create heartbeat signal ref for triggering fast proposals on deploy submission
           heartbeatSignalRef <- Ref[F].of(Option.empty[HeartbeatSignal[F]])
