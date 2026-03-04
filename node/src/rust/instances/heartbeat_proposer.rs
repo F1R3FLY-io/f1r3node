@@ -9,6 +9,7 @@ use casper::rust::casper::{CasperSnapshot, MultiParentCasper};
 use casper::rust::casper_conf::HeartbeatConf;
 use casper::rust::engine::engine_cell::EngineCell;
 use casper::rust::heartbeat_signal::{HeartbeatSignal, HeartbeatSignalRef};
+use casper::rust::system_deploy::is_system_deploy_id;
 use casper::rust::validator_identity::ValidatorIdentity;
 use models::rust::block_hash::BlockHash;
 use models::rust::casper::pretty_printer::PrettyPrinter;
@@ -39,6 +40,9 @@ const HEARTBEAT_PENDING_DEPLOY_MAX_LAG_ENV: &str = "F1R3_HEARTBEAT_PENDING_DEPLO
 const DEFAULT_HEARTBEAT_PENDING_DEPLOY_MAX_LAG: i64 = 20;
 const HEARTBEAT_SELF_PROPOSE_COOLDOWN_MS_ENV: &str = "F1R3_HEARTBEAT_SELF_PROPOSE_COOLDOWN_MS";
 const DEFAULT_HEARTBEAT_SELF_PROPOSE_COOLDOWN_MS: u128 = 0;
+const HEARTBEAT_STALE_RECOVERY_MIN_INTERVAL_MS_ENV: &str =
+    "F1R3_HEARTBEAT_STALE_RECOVERY_MIN_INTERVAL_MS";
+const DEFAULT_HEARTBEAT_STALE_RECOVERY_MIN_INTERVAL_MS: u128 = 12_000;
 
 fn heartbeat_frontier_chase_max_lag() -> i64 {
     std::env::var(HEARTBEAT_FRONTIER_CHASE_MAX_LAG_ENV)
@@ -61,6 +65,13 @@ fn heartbeat_self_propose_cooldown_ms() -> u128 {
         .ok()
         .and_then(|value| value.parse::<u128>().ok())
         .unwrap_or(DEFAULT_HEARTBEAT_SELF_PROPOSE_COOLDOWN_MS)
+}
+
+fn heartbeat_stale_recovery_min_interval_ms() -> u128 {
+    std::env::var(HEARTBEAT_STALE_RECOVERY_MIN_INTERVAL_MS_ENV)
+        .ok()
+        .and_then(|value| value.parse::<u128>().ok())
+        .unwrap_or(DEFAULT_HEARTBEAT_STALE_RECOVERY_MIN_INTERVAL_MS)
 }
 
 impl HeartbeatProposer {
@@ -388,8 +399,15 @@ async fn check_lfb_and_propose(
         now.saturating_sub(timestamp_ms) < heartbeat_self_propose_cooldown_ms()
     });
 
-    // Check if we have new parents (new blocks since our last block)
-    let has_new_parents = check_has_new_parents(&snapshot, validator_identity);
+    // Check if we have new parents (new blocks since our last block) and whether
+    // they include user deploys (to keep deploy-driven finality fast).
+    let parent_update = inspect_parent_updates(&snapshot, validator_identity, &casper);
+    let has_new_parents = parent_update.has_new_parents;
+    let has_new_parent_with_user_deploys = parent_update.has_new_parent_with_user_deploys;
+    let stale_recovery_interval_elapsed =
+        frontier_age_ms >= heartbeat_stale_recovery_min_interval_ms();
+    let stale_recovery_window_open =
+        stale_recovery_interval_elapsed || has_new_parent_with_user_deploys;
 
     // Proposal logic:
     // - Prioritize pending deploys, but avoid lag-amplification loops:
@@ -408,14 +426,18 @@ async fn check_lfb_and_propose(
         lfb_lag_blocks <= heartbeat_pending_deploy_max_lag();
     let pending_deploys_due =
         has_pending_deploys && (!self_recently_proposed || can_propose_pending_deploys_while_ahead);
+    let can_follow_frontier_without_pending_deploys =
+        has_new_parent_with_user_deploys || stale_recovery_interval_elapsed;
     let can_chase_frontier_while_ahead = lfb_lag_blocks <= heartbeat_frontier_chase_max_lag()
         && has_new_parents
         && !self_proposed_too_recently;
     let frontier_follow_due = !has_pending_deploys
         && has_new_parents
+        && can_follow_frontier_without_pending_deploys
         && (!self_recently_proposed || can_chase_frontier_while_ahead);
-    let stale_lfb_recovery_due =
-        lfb_is_stale && (!self_recently_proposed || can_chase_frontier_while_ahead);
+    let stale_lfb_recovery_due = lfb_is_stale
+        && stale_recovery_window_open
+        && (!self_recently_proposed || can_chase_frontier_while_ahead);
     let lag_recovery_leader = is_lag_recovery_leader(&snapshot, validator_identity);
     let lag_recovery_threshold = heartbeat_pending_deploy_max_lag();
     let moderate_lag_recovery_threshold = std::cmp::max(1, lag_recovery_threshold / 2);
@@ -424,12 +446,14 @@ async fn check_lfb_and_propose(
         && !has_pending_deploys
         && lfb_lag_blocks > 0
         && lag_recovery_leader
+        && stale_recovery_window_open
         && !self_proposed_too_recently
         && !stale_lfb_recovery_due;
     let high_lag_recovery_due =
         !has_pending_deploys
             && lfb_lag_blocks > lag_recovery_threshold
             && lag_recovery_leader
+            && stale_recovery_window_open
             && !self_proposed_too_recently;
     let should_propose = pending_deploys_due
         || frontier_follow_due
@@ -448,21 +472,29 @@ async fn check_lfb_and_propose(
             "pending user deploys in storage".to_string()
         } else if frontier_follow_due {
             format!(
-                "new parents observed (lag={}, self_recently_proposed={}, cooldown_ms={}, frontier_chase_cap={}); proposing to keep frontier moving",
+                "new parents observed (lag={}, self_recently_proposed={}, cooldown_ms={}, frontier_chase_cap={}, user_deploy_parent={}, stale_recovery_interval_ms={}); proposing to keep frontier moving",
                 lfb_lag_blocks,
                 self_recently_proposed,
                 heartbeat_self_propose_cooldown_ms(),
-                heartbeat_frontier_chase_max_lag()
+                heartbeat_frontier_chase_max_lag(),
+                has_new_parent_with_user_deploys,
+                heartbeat_stale_recovery_min_interval_ms()
             )
         } else if stale_lfb_leader_recovery_due {
             format!(
-                "LFB is stale ({}ms) with lag={}; regular stale recovery is throttled, selected recovery leader proposing (frontier_stale={}, moderate_lag_threshold={})",
-                time_since_lfb, lfb_lag_blocks, frontier_is_stale, moderate_lag_recovery_threshold
+                "LFB is stale ({}ms) with lag={}; regular stale recovery is throttled, selected recovery leader proposing (frontier_stale={}, moderate_lag_threshold={}, stale_recovery_interval_ms={})",
+                time_since_lfb,
+                lfb_lag_blocks,
+                frontier_is_stale,
+                moderate_lag_recovery_threshold,
+                heartbeat_stale_recovery_min_interval_ms()
             )
         } else if high_lag_recovery_due {
             format!(
-                "Finality lag recovery: lag={} exceeds threshold={} and this validator is selected recovery leader",
-                lfb_lag_blocks, lag_recovery_threshold
+                "Finality lag recovery: lag={} exceeds threshold={} and this validator is selected recovery leader (stale_recovery_interval_ms={})",
+                lfb_lag_blocks,
+                lag_recovery_threshold,
+                heartbeat_stale_recovery_min_interval_ms()
             )
         } else if self_recently_proposed && has_new_parents && !can_chase_frontier_while_ahead {
             format!(
@@ -539,6 +571,13 @@ async fn check_lfb_and_propose(
                     self_proposed_too_recently,
                     heartbeat_frontier_chase_max_lag()
                 )
+            } else if has_new_parents && !can_follow_frontier_without_pending_deploys {
+                format!(
+                    "frontier-follow throttled by stale-recovery cadence: frontier_age_ms={}, min_interval_ms={}, user_deploy_parent={}",
+                    frontier_age_ms,
+                    heartbeat_stale_recovery_min_interval_ms(),
+                    has_new_parent_with_user_deploys
+                )
             } else {
                 format!(
                     "LFB age is {}ms (threshold: {}ms)",
@@ -566,6 +605,13 @@ async fn check_lfb_and_propose(
                 "LFB is stale ({}ms) but frontier is active ({}ms old) and lag={} <= moderate threshold {}; skipping leader recovery",
                 time_since_lfb, frontier_age_ms, lfb_lag_blocks, moderate_lag_recovery_threshold
             )
+        } else if lfb_is_stale && !stale_recovery_window_open {
+            format!(
+                "LFB is stale but stale-recovery cadence gate is active: frontier_age_ms={}, min_interval_ms={}, user_deploy_parent={}",
+                frontier_age_ms,
+                heartbeat_stale_recovery_min_interval_ms(),
+                has_new_parent_with_user_deploys
+            )
         } else if !has_pending_deploys
             && lfb_lag_blocks > lag_recovery_threshold
             && !lag_recovery_leader
@@ -592,14 +638,21 @@ async fn check_lfb_and_propose(
 }
 
 /// Check if new blocks exist since this validator's last block.
-/// Returns true if:
+/// Returns parent update details where:
 /// - Validator has no blocks yet (can propose)
 /// - Validator's last block is genesis (allows breaking post-genesis deadlock)
-/// - Any of the current frontier blocks are not in the ancestor set of validator's last block
-fn check_has_new_parents(
+/// - Any latest message hash diverges from what this validator observed in its last justifications
+#[derive(Default)]
+struct ParentUpdate {
+    has_new_parents: bool,
+    has_new_parent_with_user_deploys: bool,
+}
+
+fn inspect_parent_updates(
     snapshot: &CasperSnapshot,
     validator_identity: &ValidatorIdentity,
-) -> bool {
+    casper: &Arc<dyn MultiParentCasper + Send + Sync>,
+) -> ParentUpdate {
     let validator_id = &validator_identity.public_key.bytes;
 
     // Get validator's last block
@@ -607,7 +660,10 @@ fn check_has_new_parents(
         Some(hash) => hash,
         None => {
             // Validator has no blocks yet - can propose
-            return true;
+            return ParentUpdate {
+                has_new_parents: true,
+                has_new_parent_with_user_deploys: false,
+            };
         }
     };
 
@@ -616,14 +672,20 @@ fn check_has_new_parents(
         Ok(Some(meta)) => meta,
         _ => {
             // Can't find block metadata, allow proposal
-            return true;
+            return ParentUpdate {
+                has_new_parents: true,
+                has_new_parent_with_user_deploys: false,
+            };
         }
     };
 
     if block_meta.parents.is_empty() {
         // This is genesis - allow proposal to break post-genesis deadlock
         tracing::debug!("Heartbeat: Validator's last block is genesis, allowing proposal");
-        return true;
+        return ParentUpdate {
+            has_new_parents: true,
+            has_new_parent_with_user_deploys: false,
+        };
     }
 
     // Fast path: compare current validator latest messages against the latest messages
@@ -634,6 +696,8 @@ fn check_has_new_parents(
         .iter()
         .map(|j| (j.validator.to_vec(), j.latest_block_hash.clone()))
         .collect();
+
+    let mut update = ParentUpdate::default();
 
     for entry in snapshot.dag.latest_message_hashes().iter() {
         let validator = entry.key();
@@ -646,11 +710,26 @@ fn check_has_new_parents(
         };
 
         if known_hash_opt != Some(current_hash) {
-            return true;
+            update.has_new_parents = true;
+            if !update.has_new_parent_with_user_deploys {
+                if let Ok(Some(block)) = casper.block_store().get(current_hash) {
+                    let has_user_deploys = block
+                        .body
+                        .deploys
+                        .iter()
+                        .any(|processed| !is_system_deploy_id(&processed.deploy.sig));
+                    if has_user_deploys {
+                        update.has_new_parent_with_user_deploys = true;
+                    }
+                }
+            }
+            if update.has_new_parent_with_user_deploys {
+                break;
+            }
         }
     }
 
-    false
+    update
 }
 
 fn is_lag_recovery_leader(
