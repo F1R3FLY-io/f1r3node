@@ -212,6 +212,8 @@ where
         state
             .continuations
             .insert(channels.to_vec(), new_continuations);
+        metrics::gauge!("rspace_hot_store_continuations", "source" => "f1r3fly.rspace")
+            .set(state.continuations.len() as f64);
         Some(())
     }
 
@@ -323,6 +325,8 @@ where
                 state.data.insert(channel.clone(), new_data);
             }
         }
+        metrics::gauge!("rspace_hot_store_data_channels", "source" => "f1r3fly.rspace")
+            .set(state.data.len() as f64);
     }
 
     fn remove_datum(&self, channel: &C, index: i32) -> Option<()> {
@@ -407,6 +411,8 @@ where
             new_joins.push(join.to_vec());
             new_joins.extend(current_joins);
             state.joins.insert(channel.clone(), new_joins);
+            metrics::gauge!("rspace_hot_store_joins", "source" => "f1r3fly.rspace")
+                .set(state.joins.len() as f64);
             Some(())
         }
     }
@@ -646,6 +652,10 @@ where
         state.data = DashMap::new();
         state.joins = DashMap::new();
         state.installed_joins = DashMap::new();
+        // Reset gauges to 0 so dashboards reflect the cleared state immediately.
+        metrics::gauge!("rspace_hot_store_continuations", "source" => "f1r3fly.rspace").set(0.0);
+        metrics::gauge!("rspace_hot_store_data_channels", "source" => "f1r3fly.rspace").set(0.0);
+        metrics::gauge!("rspace_hot_store_joins", "source" => "f1r3fly.rspace").set(0.0);
     }
 
     // See rspace/src/test/scala/coop/rchain/rspace/test/package.scala
@@ -670,41 +680,55 @@ where
         let cache = self.history_store_cache.lock().unwrap();
         let channels_vec = channels.to_vec();
         let entry = cache.continuations.entry(channels_vec.clone());
-        match entry {
-            Entry::Occupied(o) => o.get().clone(),
+        let (result, is_new) = match entry {
+            Entry::Occupied(o) => (o.get().clone(), false),
             Entry::Vacant(v) => {
                 let ks = self.history_reader_base.get_continuations(&channels_vec);
                 v.insert(ks.clone());
-                ks
+                (ks, true)
             }
+        };
+        if is_new {
+            metrics::gauge!("rspace_history_cache_continuations", "source" => "f1r3fly.rspace")
+                .set(cache.continuations.len() as f64);
         }
+        result
     }
 
     fn get_data_from_history_store(&self, channel: &C) -> Vec<Datum<A>> {
         let cache = self.history_store_cache.lock().unwrap();
         let entry = cache.datums.entry(channel.clone());
-        match entry {
-            Entry::Occupied(o) => o.get().clone(),
+        let (result, is_new) = match entry {
+            Entry::Occupied(o) => (o.get().clone(), false),
             Entry::Vacant(v) => {
                 let datums = self.history_reader_base.get_data(channel);
-                // println!("\ndatums from history store: {:?}", datums);
                 v.insert(datums.clone());
-                datums
+                (datums, true)
             }
+        };
+        if is_new {
+            metrics::gauge!("rspace_history_cache_datums", "source" => "f1r3fly.rspace")
+                .set(cache.datums.len() as f64);
         }
+        result
     }
 
     fn get_joins_from_history_store(&self, channel: &C) -> Vec<Vec<C>> {
         let cache = self.history_store_cache.lock().unwrap();
         let entry = cache.joins.entry(channel.clone());
-        match entry {
-            Entry::Occupied(o) => o.get().clone(),
+        let (result, is_new) = match entry {
+            Entry::Occupied(o) => (o.get().clone(), false),
             Entry::Vacant(v) => {
                 let joins = self.history_reader_base.get_joins(&channel);
                 v.insert(joins.clone());
-                joins
+                (joins, true)
             }
+        };
+        if is_new {
+            metrics::gauge!("rspace_history_cache_joins", "source" => "f1r3fly.rspace")
+                .set(cache.joins.len() as f64);
         }
+        result
     }
 }
 

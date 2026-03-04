@@ -1,119 +1,172 @@
-# Prometheus Recording Rules for F1r3fly Node
+# Prometheus Recording Rules for F1r3fly Rust Node
 #
-# These rules use f1r3fly_* metrics (Rust).
-# See docker/prometheus-grafana.md for details.
+# Rust metrics use the pattern: metric_name{source="f1r3fly.category.subcategory"}
+# The source label identifies the subsystem — it is NOT embedded in the metric name.
+# Counters have _total suffix. Histograms have _bucket/_count/_sum suffixes.
+# The metrics crate converts dots and hyphens in metric names to underscores.
+#
+# See services/f1r3node-rust/docker/prometheus-grafana.md for full metric reference.
 
 groups:
   - name: block_transfer_metrics
     interval: 30s
     rules:
       # Block download end-to-end time aggregations
+      # metric: block.download.end-to-end-time (histogram), source: f1r3fly.casper.block-retriever
       - record: f1r3fly:casper:block_retriever:block_download_end_to_end_time:rate5m
-        expr: rate(f1r3fly_casper_block_retriever_block_download_end_to_end_time_count[5m])
+        expr: rate(block_download_end_to_end_time_count{source="f1r3fly.casper.block-retriever"}[5m])
 
       - record: f1r3fly:casper:block_retriever:block_download_end_to_end_time:p50
-        expr: histogram_quantile(0.50, sum by (job, instance, le) (rate(f1r3fly_casper_block_retriever_block_download_end_to_end_time_bucket[5m])))
+        expr: histogram_quantile(0.50, sum by (job, instance, le) (rate(block_download_end_to_end_time_bucket{source="f1r3fly.casper.block-retriever"}[5m])))
 
       - record: f1r3fly:casper:block_retriever:block_download_end_to_end_time:p95
-        expr: histogram_quantile(0.95, sum by (job, instance, le) (rate(f1r3fly_casper_block_retriever_block_download_end_to_end_time_bucket[5m])))
+        expr: histogram_quantile(0.95, sum by (job, instance, le) (rate(block_download_end_to_end_time_bucket{source="f1r3fly.casper.block-retriever"}[5m])))
 
       - record: f1r3fly:casper:block_retriever:block_download_end_to_end_time:p99
-        expr: histogram_quantile(0.99, sum by (job, instance, le) (rate(f1r3fly_casper_block_retriever_block_download_end_to_end_time_bucket[5m])))
+        expr: histogram_quantile(0.99, sum by (job, instance, le) (rate(block_download_end_to_end_time_bucket{source="f1r3fly.casper.block-retriever"}[5m])))
 
-      # Block validation time aggregations (Kamon adds _seconds suffix)
+      # Block validation time aggregations
+      # metric: block.validation.time (histogram), source: f1r3fly.casper.block-processor
       - record: f1r3fly:casper:block_processor:block_validation_time:rate5m
-        expr: rate(f1r3fly_casper_block_processor_block_validation_time_seconds_count[5m])
+        expr: rate(block_validation_time_count{source="f1r3fly.casper.block-processor"}[5m])
 
       - record: f1r3fly:casper:block_processor:block_validation_time:p50
-        expr: histogram_quantile(0.50, sum by (job, instance, le) (rate(f1r3fly_casper_block_processor_block_validation_time_seconds_bucket[5m])))
+        expr: histogram_quantile(0.50, sum by (job, instance, le) (rate(block_validation_time_bucket{source="f1r3fly.casper.block-processor"}[5m])))
 
       - record: f1r3fly:casper:block_processor:block_validation_time:p95
-        expr: histogram_quantile(0.95, sum by (job, instance, le) (rate(f1r3fly_casper_block_processor_block_validation_time_seconds_bucket[5m])))
+        expr: histogram_quantile(0.95, sum by (job, instance, le) (rate(block_validation_time_bucket{source="f1r3fly.casper.block-processor"}[5m])))
 
       - record: f1r3fly:casper:block_processor:block_validation_time:p99
-        expr: histogram_quantile(0.99, sum by (job, instance, le) (rate(f1r3fly_casper_block_processor_block_validation_time_seconds_bucket[5m])))
+        expr: histogram_quantile(0.99, sum by (job, instance, le) (rate(block_validation_time_bucket{source="f1r3fly.casper.block-processor"}[5m])))
 
       # Block processing stage: validation-setup (getting CasperSnapshot)
+      # metric: block.processing.stage.validation-setup.time (histogram), source: f1r3fly.casper.block-processor
       - record: f1r3fly:casper:block_processor:block_processing_stage_validation_setup_time:rate5m
-        expr: rate(f1r3fly_casper_block_processor_block_processing_stage_validation_setup_time_seconds_count[5m])
+        expr: rate(block_processing_stage_validation_setup_time_count{source="f1r3fly.casper.block-processor"}[5m])
 
       - record: f1r3fly:casper:block_processor:block_processing_stage_validation_setup_time:p50
-        expr: histogram_quantile(0.50, sum by (job, instance, le) (rate(f1r3fly_casper_block_processor_block_processing_stage_validation_setup_time_seconds_bucket[5m])))
+        expr: histogram_quantile(0.50, sum by (job, instance, le) (rate(block_processing_stage_validation_setup_time_bucket{source="f1r3fly.casper.block-processor"}[5m])))
 
       - record: f1r3fly:casper:block_processor:block_processing_stage_validation_setup_time:p95
-        expr: histogram_quantile(0.95, sum by (job, instance, le) (rate(f1r3fly_casper_block_processor_block_processing_stage_validation_setup_time_seconds_bucket[5m])))
+        expr: histogram_quantile(0.95, sum by (job, instance, le) (rate(block_processing_stage_validation_setup_time_bucket{source="f1r3fly.casper.block-processor"}[5m])))
 
       - record: f1r3fly:casper:block_processor:block_processing_stage_validation_setup_time:p99
-        expr: histogram_quantile(0.99, sum by (job, instance, le) (rate(f1r3fly_casper_block_processor_block_processing_stage_validation_setup_time_seconds_bucket[5m])))
+        expr: histogram_quantile(0.99, sum by (job, instance, le) (rate(block_processing_stage_validation_setup_time_bucket{source="f1r3fly.casper.block-processor"}[5m])))
 
       # Block processing stage: storage (BlockStore.put)
+      # metric: block.processing.stage.storage.time (histogram), source: f1r3fly.casper.block-processor
       - record: f1r3fly:casper:block_processor:block_processing_stage_storage_time:rate5m
-        expr: rate(f1r3fly_casper_block_processor_block_processing_stage_storage_time_seconds_count[5m])
+        expr: rate(block_processing_stage_storage_time_count{source="f1r3fly.casper.block-processor"}[5m])
 
       - record: f1r3fly:casper:block_processor:block_processing_stage_storage_time:p50
-        expr: histogram_quantile(0.50, sum by (job, instance, le) (rate(f1r3fly_casper_block_processor_block_processing_stage_storage_time_seconds_bucket[5m])))
+        expr: histogram_quantile(0.50, sum by (job, instance, le) (rate(block_processing_stage_storage_time_bucket{source="f1r3fly.casper.block-processor"}[5m])))
 
       - record: f1r3fly:casper:block_processor:block_processing_stage_storage_time:p95
-        expr: histogram_quantile(0.95, sum by (job, instance, le) (rate(f1r3fly_casper_block_processor_block_processing_stage_storage_time_seconds_bucket[5m])))
+        expr: histogram_quantile(0.95, sum by (job, instance, le) (rate(block_processing_stage_storage_time_bucket{source="f1r3fly.casper.block-processor"}[5m])))
 
       - record: f1r3fly:casper:block_processor:block_processing_stage_storage_time:p99
-        expr: histogram_quantile(0.99, sum by (job, instance, le) (rate(f1r3fly_casper_block_processor_block_processing_stage_storage_time_seconds_bucket[5m])))
+        expr: histogram_quantile(0.99, sum by (job, instance, le) (rate(block_processing_stage_storage_time_bucket{source="f1r3fly.casper.block-processor"}[5m])))
 
-      # Block processing stage: replay (Rholang execution) - uses record() not timer()
+      # Block processing stage: replay (Rholang execution)
+      # metric: block.processing.stage.replay.time (histogram), source: f1r3fly.casper
       - record: f1r3fly:casper:casper:block_processing_stage_replay_time:rate5m
-        expr: rate(f1r3fly_casper_casper_block_processing_stage_replay_time_count[5m])
+        expr: rate(block_processing_stage_replay_time_count{source="f1r3fly.casper"}[5m])
 
       - record: f1r3fly:casper:casper:block_processing_stage_replay_time:p50
-        expr: histogram_quantile(0.50, sum by (job, instance, le) (rate(f1r3fly_casper_casper_block_processing_stage_replay_time_bucket[5m])))
+        expr: histogram_quantile(0.50, sum by (job, instance, le) (rate(block_processing_stage_replay_time_bucket{source="f1r3fly.casper"}[5m])))
 
       - record: f1r3fly:casper:casper:block_processing_stage_replay_time:p95
-        expr: histogram_quantile(0.95, sum by (job, instance, le) (rate(f1r3fly_casper_casper_block_processing_stage_replay_time_bucket[5m])))
+        expr: histogram_quantile(0.95, sum by (job, instance, le) (rate(block_processing_stage_replay_time_bucket{source="f1r3fly.casper"}[5m])))
 
       - record: f1r3fly:casper:casper:block_processing_stage_replay_time:p99
-        expr: histogram_quantile(0.99, sum by (job, instance, le) (rate(f1r3fly_casper_casper_block_processing_stage_replay_time_bucket[5m])))
+        expr: histogram_quantile(0.99, sum by (job, instance, le) (rate(block_processing_stage_replay_time_bucket{source="f1r3fly.casper"}[5m])))
 
       # Block size aggregations
+      # metric: block.size (histogram), source: f1r3fly.casper.block-processor
       - record: f1r3fly:casper:block_processor:block_size:avg5m
-        expr: sum by (job, instance) (rate(f1r3fly_casper_block_processor_block_size_sum[5m])) / sum by (job, instance) (rate(f1r3fly_casper_block_processor_block_size_count[5m]))
+        expr: sum by (job, instance) (rate(block_size_sum{source="f1r3fly.casper.block-processor"}[5m])) / sum by (job, instance) (rate(block_size_count{source="f1r3fly.casper.block-processor"}[5m]))
 
       - record: f1r3fly:casper:block_processor:block_size:p95
-        expr: histogram_quantile(0.95, sum by (job, instance, le) (rate(f1r3fly_casper_block_processor_block_size_bucket[5m])))
+        expr: histogram_quantile(0.95, sum by (job, instance, le) (rate(block_size_bucket{source="f1r3fly.casper.block-processor"}[5m])))
 
-      # Block request rates (Kamon adds _total suffix to counters)
+      # Block request rates
+      # metric: block.requests (counter), source: f1r3fly.casper.block-retriever
       - record: f1r3fly:casper:block_retriever:block_requests_total:rate5m
-        expr: rate(f1r3fly_casper_block_retriever_block_requests_total_total[5m])
+        expr: rate(block_requests_total{source="f1r3fly.casper.block-retriever"}[5m])
 
+      # metric: block.requests.retries (counter), source: f1r3fly.casper.block-retriever
       - record: f1r3fly:casper:block_retriever:block_requests_retries:rate5m
-        expr: rate(f1r3fly_casper_block_retriever_block_requests_retries_total[5m])
+        expr: rate(block_requests_retries_total{source="f1r3fly.casper.block-retriever"}[5m])
 
-      # Block validation success rate (handle case where failed metric doesn't exist yet)
-      # Compute per-instance success rate, defaulting to 1.0 (100%) when no failures
+      # Block validation success rate
+      # metrics: block.validation.success and block.validation.failed (counters), source: f1r3fly.casper.block-processor
+      # Defaults to 1.0 (100%) when no failures have been recorded yet.
       - record: f1r3fly:casper:block_processor:block_validation:success_rate5m
-        expr: rate(f1r3fly_casper_block_processor_block_validation_success_total[5m]) / (rate(f1r3fly_casper_block_processor_block_validation_success_total[5m]) + rate(f1r3fly_casper_block_processor_block_validation_failed_total[5m])) or (rate(f1r3fly_casper_block_processor_block_validation_success_total[5m]) * 0 + 1)
+        expr: rate(block_validation_success_total{source="f1r3fly.casper.block-processor"}[5m]) / (rate(block_validation_success_total{source="f1r3fly.casper.block-processor"}[5m]) + rate(block_validation_failed_total{source="f1r3fly.casper.block-processor"}[5m])) or (rate(block_validation_success_total{source="f1r3fly.casper.block-processor"}[5m]) * 0 + 1)
 
       # Block hash and request message rates
+      # metric: block.hash.received (counter), source: f1r3fly.casper.running
       - record: f1r3fly:casper:running:block_hash_received:rate5m
-        expr: rate(f1r3fly_casper_running_block_hash_received_total[5m])
+        expr: rate(block_hash_received_total{source="f1r3fly.casper.running"}[5m])
 
+      # metric: block.request.received (counter), source: f1r3fly.casper.running
       - record: f1r3fly:casper:running:block_request_received:rate5m
-        expr: rate(f1r3fly_casper_running_block_request_received_total[5m])
+        expr: rate(block_request_received_total{source="f1r3fly.casper.running"}[5m])
 
-      # Transport layer metrics aggregations (Kamon adds _seconds suffix to timers)
+      # Transport layer metrics aggregations
+      # metric: send-time (histogram), source: f1r3fly.comm.rp.transport
       - record: f1r3fly:comm:rp:transport:send_time:p95
-        expr: histogram_quantile(0.95, sum by (job, instance, le) (rate(f1r3fly_comm_rp_transport_send_time_seconds_bucket[5m])))
+        expr: histogram_quantile(0.95, sum by (job, instance, le) (rate(send_time_bucket{source="f1r3fly.comm.rp.transport"}[5m])))
 
+      # metric: packets.received (counter), source: f1r3fly.comm.rp.transport
       - record: f1r3fly:comm:rp:transport:packets_received:rate5m
-        expr: rate(f1r3fly_comm_rp_transport_packets_received_total[5m])
+        expr: rate(packets_received_total{source="f1r3fly.comm.rp.transport"}[5m])
 
+      # metric: packets.enqueued (counter), source: f1r3fly.comm.rp.transport
       - record: f1r3fly:comm:rp:transport:packets_enqueued:rate5m
-        expr: rate(f1r3fly_comm_rp_transport_packets_enqueued_total[5m])
+        expr: rate(packets_enqueued_total{source="f1r3fly.comm.rp.transport"}[5m])
 
+      # metric: packets.dropped (counter), source: f1r3fly.comm.rp.transport
+      - record: f1r3fly:comm:rp:transport:packets_dropped:rate5m
+        expr: rate(packets_dropped_total{source="f1r3fly.comm.rp.transport"}[5m])
+
+      # metric: dispatched.packets (counter), source: f1r3fly.comm.rp.transport
       - record: f1r3fly:comm:rp:transport:dispatched_packets:rate5m
-        expr: rate(f1r3fly_comm_rp_transport_dispatched_packets_total[5m])
+        expr: rate(dispatched_packets_total{source="f1r3fly.comm.rp.transport"}[5m])
 
-      # Stream chunks metrics
+      # Stream chunk metrics
+      # metric: stream.chunks.received (counter), source: f1r3fly.comm.rp.transport
       - record: f1r3fly:comm:rp:transport:stream_chunks_received:rate5m
-        expr: rate(f1r3fly_comm_rp_transport_stream_chunks_received_total[5m])
+        expr: rate(stream_chunks_received_total{source="f1r3fly.comm.rp.transport"}[5m])
 
+      # metric: stream.chunks.enqueued (counter), source: f1r3fly.comm.rp.transport
       - record: f1r3fly:comm:rp:transport:stream_chunks_enqueued:rate5m
-        expr: rate(f1r3fly_comm_rp_transport_stream_chunks_enqueued_total[5m])
+        expr: rate(stream_chunks_enqueued_total{source="f1r3fly.comm.rp.transport"}[5m])
+
+      # metric: stream.chunks.dropped (counter), source: f1r3fly.comm.rp.transport
+      - record: f1r3fly:comm:rp:transport:stream_chunks_dropped:rate5m
+        expr: rate(stream_chunks_dropped_total{source="f1r3fly.comm.rp.transport"}[5m])
+
+  - name: memory_metrics
+    interval: 30s
+    rules:
+      # jemalloc fragmentation + retention overhead: bytes resident but not in live allocations.
+      # If this grows ~10-17 MB/block, jemalloc is the root cause of unbounded RSS growth.
+      # Metrics source: f1r3fly.system
+      - record: f1r3fly:system:jemalloc_overhead_bytes
+        expr: jemalloc_resident_bytes{source="f1r3fly.system"} - jemalloc_allocated_bytes{source="f1r3fly.system"}
+
+      # jemalloc retention ratio: fraction of resident memory that is overhead.
+      # High values (> 0.5) indicate significant fragmentation or retained-but-free arenas.
+      - record: f1r3fly:system:jemalloc_overhead_ratio
+        expr: (jemalloc_resident_bytes{source="f1r3fly.system"} - jemalloc_allocated_bytes{source="f1r3fly.system"}) / jemalloc_resident_bytes{source="f1r3fly.system"}
+
+      # Total LMDB disk usage across all environments.
+      # If this tracks RSS growth, trie path-copying in LMDB is the root cause.
+      - record: f1r3fly:system:lmdb_total_size_bytes
+        expr: >
+          lmdb_rspace_history_size_bytes{source="f1r3fly.system"}
+          + lmdb_rspace_cold_size_bytes{source="f1r3fly.system"}
+          + lmdb_blockstorage_size_bytes{source="f1r3fly.system"}
+          + lmdb_dagstorage_size_bytes{source="f1r3fly.system"}
+          + lmdb_eval_history_size_bytes{source="f1r3fly.system"}

@@ -42,8 +42,9 @@ dashmap = "6.1"
 imbl = "7"
 regex = "1.12"
 async-trait = "0.1"
-metrics = "0.24"
+metrics = "0.23"
 stacker = "0.1"
+tikv-jemallocator = { version = "0.6", features = ["profiling", "background_threads"] }
 
 [profile.dev]
 debug = true

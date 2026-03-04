@@ -1,3 +1,10 @@
+// Use jemalloc as the global allocator for better memory return behaviour and
+// heap-profiling support (activate via MALLOC_CONF=prof:true,prof_prefix:/tmp/jeprof).
+// Not applied to test builds to avoid conflicts with the default test allocator.
+#[cfg(not(test))]
+#[global_allocator]
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 use casper::rust::util::comm::deploy_runtime::DeployRuntime;
 use casper::rust::util::comm::grpc_deploy_service::GrpcDeployService;
 use casper::rust::util::comm::grpc_propose_service::GrpcProposeService;

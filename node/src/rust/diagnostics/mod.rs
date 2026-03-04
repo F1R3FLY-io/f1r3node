@@ -1,4 +1,6 @@
 pub mod batch_influx_db_reporter;
+pub mod jemalloc_reporter;
+pub mod memory_reporter;
 pub mod new_prometheus_reporter;
 pub mod prometheus_config;
 pub mod sigar_reporter;
@@ -88,6 +90,11 @@ pub fn initialize_diagnostics(conf: &NodeConf, kamon_conf: &KamonConf) -> Result
     if conf.metrics.sigar {
         sigar_reporter::start_sigar_reporter(metrics_interval);
         info!("Sigar (system metrics) reporter started with interval {:?}.", metrics_interval);
+    }
+
+    if conf.metrics.prometheus {
+        jemalloc_reporter::start_jemalloc_reporter(metrics_interval);
+        info!("jemalloc stats reporter started with interval {:?}.", metrics_interval);
     }
 
     Ok(prometheus_reporter)

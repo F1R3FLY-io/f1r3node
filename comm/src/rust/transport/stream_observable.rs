@@ -71,6 +71,12 @@ impl StreamObservable {
                     // Clean up cache
                     self.cache.remove(&key);
                 }
+
+                // Gauge the shared cache size regardless of push outcome.
+                // The cache is shared across all peer channels; its size reflects
+                // the total in-flight streaming blobs.
+                metrics::gauge!("comm_stream_cache_size", "source" => "f1r3fly.comm")
+                    .set(self.cache.len() as f64);
             }
             Err(e) => {
                 tracing::error!("Failed to store blob packet: {}", e);

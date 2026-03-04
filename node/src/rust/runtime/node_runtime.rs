@@ -85,12 +85,15 @@ impl NodeRuntime {
         let _metrics = (); // Placeholder
         let _time = (); // Placeholder
 
-        // Create transport client
-        let transport = {
+        // Create transport client.
+        // channels_map_for_metrics is returned alongside the transport so the
+        // memory reporter can poll the live peer-connection count.
+        let (transport, channels_map_for_metrics) = {
             use comm::rust::transport::grpc_transport_client::GrpcTransportClient;
             use std::collections::HashMap;
 
             let channels_map = Arc::new(tokio::sync::Mutex::new(HashMap::new()));
+            let channels_map_for_metrics = channels_map.clone();
 
             // Read certificate and key file contents
             let cert = tokio::fs::read_to_string(&self.node_conf.tls.certificate_path)
@@ -102,7 +105,7 @@ impl NodeRuntime {
 
             const CLIENT_QUEUE_SIZE: i32 = 100;
 
-            GrpcTransportClient::new(
+            let client = GrpcTransportClient::new(
                 self.node_conf.protocol_client.network_id.clone(),
                 cert,
                 key,
@@ -112,7 +115,9 @@ impl NodeRuntime {
                 channels_map,
                 self.node_conf.protocol_client.network_timeout,
             )
-            .map_err(|e| eyre::eyre!("Failed to create transport client: {}", e))?
+            .map_err(|e| eyre::eyre!("Failed to create transport client: {}", e))?;
+
+            (client, channels_map_for_metrics)
         };
 
         info!("Transport client created successfully");
@@ -150,6 +155,8 @@ impl NodeRuntime {
             models::rust::block_hash::BlockHash,
             casper::rust::engine::block_retriever::RequestState,
         >::new()));
+        // Keep a reference for the memory reporter (BlockRetriever gets its own clone below).
+        let requested_blocks_for_metrics = requested_blocks.clone();
 
         info!("RP connections and configuration initialized");
 
@@ -272,6 +279,78 @@ impl NodeRuntime {
         ) = result;
 
         info!("setup_node_program completed successfully");
+
+        // Start memory metrics reporter: process RSS + live sizes of key
+        // collections and LMDB environments.  The reporter runs on a dedicated
+        // OS thread to avoid blocking the async runtime.
+        {
+            use crate::rust::diagnostics::memory_reporter::start_memory_reporter;
+            use std::path::PathBuf;
+            use std::time::Duration;
+
+            let ch = channels_map_for_metrics;
+            let rb = requested_blocks_for_metrics;
+
+            // Capture data_dir for LMDB file-size closures.
+            let data_dir = self.node_conf.storage.data_dir.clone();
+
+            // Helper: return size of `data.mdb` under `data_dir/<subdir>/`, 0 on error.
+            fn lmdb_size(base: &PathBuf, subdir: &str) -> usize {
+                base.join(subdir)
+                    .join("data.mdb")
+                    .metadata()
+                    .map(|m| m.len() as usize)
+                    .unwrap_or(0)
+            }
+
+            let dd_rspace_history = data_dir.clone();
+            let dd_rspace_cold    = data_dir.clone();
+            let dd_blockstorage   = data_dir.clone();
+            let dd_dagstorage     = data_dir.clone();
+            let dd_eval_history   = data_dir.clone();
+
+            start_memory_reporter(
+                Duration::from_secs(10),
+                vec![
+                    (
+                        "transport_channels_count",
+                        Box::new(move || ch.try_lock().ok().map(|g| g.len()).unwrap_or(0))
+                            as Box<dyn Fn() -> usize + Send>,
+                    ),
+                    (
+                        "casper_requested_blocks_count",
+                        Box::new(move || rb.try_lock().ok().map(|g| g.len()).unwrap_or(0))
+                            as Box<dyn Fn() -> usize + Send>,
+                    ),
+                    (
+                        "lmdb_rspace_history_size_bytes",
+                        Box::new(move || lmdb_size(&dd_rspace_history, "rspace/history"))
+                            as Box<dyn Fn() -> usize + Send>,
+                    ),
+                    (
+                        "lmdb_rspace_cold_size_bytes",
+                        Box::new(move || lmdb_size(&dd_rspace_cold, "rspace/cold"))
+                            as Box<dyn Fn() -> usize + Send>,
+                    ),
+                    (
+                        "lmdb_blockstorage_size_bytes",
+                        Box::new(move || lmdb_size(&dd_blockstorage, "blockstorage"))
+                            as Box<dyn Fn() -> usize + Send>,
+                    ),
+                    (
+                        "lmdb_dagstorage_size_bytes",
+                        Box::new(move || lmdb_size(&dd_dagstorage, "dagstorage"))
+                            as Box<dyn Fn() -> usize + Send>,
+                    ),
+                    (
+                        "lmdb_eval_history_size_bytes",
+                        Box::new(move || lmdb_size(&dd_eval_history, "eval/history"))
+                            as Box<dyn Fn() -> usize + Send>,
+                    ),
+                ],
+            );
+            info!("Memory metrics reporter started");
+        }
 
         // Launch Casper
         info!("Launching Casper...");
