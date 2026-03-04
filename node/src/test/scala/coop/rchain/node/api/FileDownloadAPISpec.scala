@@ -64,11 +64,12 @@ class FileDownloadAPISpec
       isReadOnly: Boolean,
       dir: Path,
       ip: String = "127.0.0.1",
-      maxPerIp: Int = DefaultMaxConcurrentPerIp
+      maxPerIp: Int = DefaultMaxConcurrentPerIp,
+      devMode: Boolean = false
   ): List[FileDownloadChunk] =
     run(
       FileDownloadAPI
-        .streamFile(request, isReadOnly, dir, ip, DefaultChunkSize, maxPerIp)
+        .streamFile(request, isReadOnly, dir, ip, DefaultChunkSize, maxPerIp, devMode)
         .toListL
     )
 
@@ -90,7 +91,7 @@ class FileDownloadAPISpec
     dataBytes shouldBe expected
   }
 
-  it should "reject download on a non-read-only node" in {
+  it should "reject download on a non-read-only node when devMode is false" in {
     val (dir, hash, _) = seedFile()
     val request        = FileDownloadRequest(fileHash = hash)
 
@@ -98,6 +99,16 @@ class FileDownloadAPISpec
       collectChunks(request, isReadOnly = false, dir)
     }
     ex.getMessage should include("read-only f1r3node")
+  }
+
+  it should "allow download on a non-read-only node when devMode is true" in {
+    val (dir, hash, expected) = seedFile()
+    val request               = FileDownloadRequest(fileHash = hash)
+    val chunks                = collectChunks(request, isReadOnly = false, dir, devMode = true)
+
+    chunks.head.chunk.isMetadata shouldBe true
+    val dataBytes = chunks.tail.flatMap(_.getData.toByteArray).toArray
+    dataBytes shouldBe expected
   }
 
   it should "reject path traversal fileHash ../../etc/passwd" in {
