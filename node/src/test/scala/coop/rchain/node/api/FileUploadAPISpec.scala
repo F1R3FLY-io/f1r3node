@@ -227,14 +227,14 @@ class FileUploadAPISpec extends FlatSpec with Matchers with BeforeAndAfterAll {
       timestamp = 1700000000L,
       hash = "aabbccdd"
     )
-    FileMetadata.fromJson(FileMetadata.toJson(meta)) shouldBe meta
+    FileMetadata.fromJson(FileMetadata.toJson(meta)) shouldBe Right(meta)
   }
 
   it should "escape special characters in JSON output" in {
     val meta   = FileMetadata("file\"with\\quotes", 0L, "pub", 0L, "hash")
     val json   = FileMetadata.toJson(meta)
     val parsed = FileMetadata.fromJson(json)
-    parsed.fileName shouldBe meta.fileName
+    parsed.map(_.fileName) shouldBe Right(meta.fileName)
   }
 
   "FileUploadAPI" should "reject when declared fileSize > actual bytes received" in {

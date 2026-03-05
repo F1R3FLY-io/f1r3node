@@ -23,7 +23,7 @@ object FileMetadata {
   /** Serialize to JSON string. */
   def toJson(m: FileMetadata): String = m.asJson.noSpaces
 
-  /** Deserialize from JSON string. */
-  def fromJson(json: String): FileMetadata =
-    circeDecode[FileMetadata](json).fold(throw _, identity)
+  /** Deserialize from JSON string. Returns Left with error message on failure. */
+  def fromJson(json: String): Either[String, FileMetadata] =
+    circeDecode[FileMetadata](json).left.map(_.getMessage)
 }

@@ -16,6 +16,8 @@ final case class FileUploadConf(
     baseRegisterPhlo: Long,
     maxConcurrentDownloadsPerIp: Int,
     fileSyncTimeout: FiniteDuration,
+    maxFileSize: Long,
+    maxDownloadCacheEntries: Int,
     maxFileDataSizePerBlock: Long,
     maxFileDeploysPerBlock: Int
 )

@@ -7,15 +7,23 @@ import monix.reactive.Observable
 import java.nio.ByteBuffer
 import java.nio.channels.FileChannel
 import java.nio.file.{Files, Path, StandardOpenOption}
-import java.util.concurrent.{ConcurrentHashMap, Semaphore}
+import java.util.concurrent.Semaphore
+import java.util.{Collections, LinkedHashMap}
 import org.slf4j.LoggerFactory
 
 object FileDownloadAPI {
 
   private val logger = LoggerFactory.getLogger("FileDownloadAPI")
 
-  /** Per-IP semaphore map for rate limiting. */
-  private val ipSemaphores = new ConcurrentHashMap[String, Semaphore]()
+  private var _maxIpEntries: Int = 10000
+  private lazy val ipSemaphores: java.util.Map[String, Semaphore] =
+    Collections.synchronizedMap(
+      new LinkedHashMap[String, Semaphore](128, 0.75f, true /* accessOrder */ ) {
+        override def removeEldestEntry(
+            eldest: java.util.Map.Entry[String, Semaphore]
+        ): Boolean = size() > _maxIpEntries
+      }
+    )
 
   /** Regex for a valid Blake2b-256 hex hash (64 lowercase hex chars). */
   private val HashPattern = "^[a-f0-9]{64}$".r
@@ -29,6 +37,7 @@ object FileDownloadAPI {
     * @param ipAddress          Client IP address for rate limiting.
     * @param chunkSize          Chunk size for streaming (from config).
     * @param maxConcurrentPerIp Maximum concurrent downloads from one IP (from config).
+    * @param maxCacheEntries    Maximum entries in the per-IP rate-limiter LRU cache (from config).
     * @return An `Observable` starting with a metadata chunk, followed by data chunks.
     */
   def streamFile(
@@ -38,8 +47,10 @@ object FileDownloadAPI {
       ipAddress: String = "unknown",
       chunkSize: Int = 4 * 1024 * 1024,
       maxConcurrentPerIp: Int = 4,
-      devMode: Boolean = false
+      devMode: Boolean = false,
+      maxCacheEntries: Int = 10000
   ): Observable[FileDownloadChunk] = {
+    _maxIpEntries = maxCacheEntries
     val hash = request.fileHash
     logger.info(
       "[FileDownloadAPI] Download request: hash={}..., offset={}, readOnly={}, devMode={}",
@@ -103,7 +114,14 @@ object FileDownloadAPI {
       chunkSize: Int,
       maxConcurrentPerIp: Int
   ): Observable[FileDownloadChunk] = {
-    val sem = ipSemaphores.computeIfAbsent(ipAddress, _ => new Semaphore(maxConcurrentPerIp))
+    val sem = ipSemaphores.synchronized {
+      var s = ipSemaphores.get(ipAddress)
+      if (s == null) {
+        s = new Semaphore(maxConcurrentPerIp)
+        ipSemaphores.put(ipAddress, s)
+      }
+      s
+    }
     if (!sem.tryAcquire()) {
       logger.warn(
         s"[FileDownloadAPI] Rate limited: hash=${request.fileHash.take(16)}..., ip=$ipAddress"
