@@ -9,7 +9,7 @@ import coop.rchain.blockstorage.casperbuffer.CasperBufferStorage
 import coop.rchain.blockstorage.dag.BlockDagStorage
 import coop.rchain.blockstorage.deploy.DeployStorage
 import coop.rchain.casper.LastApprovedBlock.LastApprovedBlock
-import coop.rchain.casper._
+import coop.rchain.casper.{FileConf, _}
 import coop.rchain.casper.engine.EngineCell._
 import coop.rchain.casper.protocol._
 import coop.rchain.casper.syntax._
@@ -47,7 +47,8 @@ object CasperLaunch {
       trimState: Boolean,
       disableStateExporter: Boolean,
       onBlockFinalized: String => F[Unit],
-      standalone: Boolean
+      standalone: Boolean,
+      fileConf: FileConf = FileConf()
   ): CasperLaunch[F] =
     new CasperLaunch[F] {
       val casperShardConf = CasperShardConf(
@@ -70,7 +71,8 @@ object CasperLaunch {
         conf.enableMergeableChannelGC,
         conf.mergeableChannelsGCDepthBuffer,
         conf.disableLateBlockFiltering,
-        standalone // Use standalone directly to disable validator progress check
+        standalone, // Use standalone directly to disable validator progress check
+        fileConf
       )
       def launch(): F[Unit] =
         BlockStore[F].getApprovedBlock map {
@@ -144,8 +146,10 @@ object CasperLaunch {
         }
 
         for {
-          validatorId <- ValidatorIdentity.fromPrivateKeyWithLogging[F](conf.validatorPrivateKey)
-          ab          = approvedBlock.candidate.block
+          validatorId                 <- ValidatorIdentity.fromPrivateKeyWithLogging[F](conf.validatorPrivateKey)
+          ab                          = approvedBlock.candidate.block
+          setup                       <- FileReplicationSetup.create[F](casperShardConf)
+          (fileRequester, daCallback) = setup
           // Create heartbeat signal ref for triggering fast proposals on deploy submission
           heartbeatSignalRef <- Ref[F].of(Option.empty[HeartbeatSignal[F]])
           casper <- MultiParentCasper
@@ -154,7 +158,8 @@ object CasperLaunch {
                        casperShardConf,
                        ab,
                        heartbeatSignalRef,
-                       onBlockFinalized
+                       onBlockFinalized,
+                       daCallback
                      )
           init = for {
             _ <- askPeersForForkChoiceTips
@@ -170,7 +175,8 @@ object CasperLaunch {
                   approvedBlock,
                   validatorId,
                   init,
-                  disableStateExporter
+                  disableStateExporter,
+                  fileRequester
                 )
         } yield ()
       }

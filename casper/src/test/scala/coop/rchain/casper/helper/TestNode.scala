@@ -96,7 +96,8 @@ case class TestNode[F[_]: Timer](
     rpConfAskEffect: RPConfAsk[F],
     eventPublisherEffect: EventPublisher[F],
     finalizationInProgressRef: Ref[F, Boolean],
-    heartbeatSignalRefEffect: Ref[F, Option[HeartbeatSignal[F]]]
+    heartbeatSignalRefEffect: Ref[F, Option[HeartbeatSignal[F]]],
+    fileRequesterEffect: FileRequester[F]
 )(implicit concurrentF: Concurrent[F]) {
   // Scalatest `assert` macro needs some member of the Assertions trait.
   // An (inferior) alternative would be to inherit the trait...
@@ -169,7 +170,8 @@ case class TestNode[F[_]: Timer](
     genesis,
     finalizationInProgressRef,
     heartbeatSignalRefEffect,
-    _ => Sync[F].unit // No-op for tests
+    _ => Sync[F].unit,                   // No-op onBlockFinalized for tests
+    (_, _) => List.empty[String].pure[F] // No-op daFetchFiles for tests
   )
 
   implicit val rspaceMan = RSpaceStateManagerTestImpl()
@@ -181,7 +183,8 @@ case class TestNode[F[_]: Timer](
       approvedBlock,
       validatorId,
       ().pure[F],
-      true
+      true,
+      fileRequesterEffect
     )
   implicit val engineCell: EngineCell[F] = Cell.unsafe[F, Engine[F]](engine)
   implicit val packetHandlerEff          = CasperPacketHandler[F]
@@ -543,6 +546,16 @@ object TestNode {
                  Ref.unsafe[F, Map[BlockHash, RequestState]](Map.empty[BlockHash, RequestState])
                implicit val blockRetriever: BlockRetriever[F] = BlockRetriever.of[F]
 
+               // File Replication setup
+               import java.nio.file.Files
+               val fileDataDir = newStorageDir.resolve("file-replication")
+               if (!Files.exists(fileDataDir)) Files.createDirectories(fileDataDir)
+
+               // FileRequester needs correct imports and implicits
+               import coop.rchain.comm.syntax._
+               // transportLayerEff is available (tle)
+               val fileRequester = new FileRequester[F](fileDataDir)
+
                for {
                  _ <- TestNetwork.addPeer(currentPeerNode)
 
@@ -635,7 +648,8 @@ object TestNode {
                    blockRetrieverEffect = blockRetriever,
                    metricEffect = metricEff,
                    finalizationInProgressRef = finalizationInProgress,
-                   heartbeatSignalRefEffect = heartbeatSignalRef
+                   heartbeatSignalRefEffect = heartbeatSignalRef,
+                   fileRequesterEffect = fileRequester
                  )
                } yield node
              })

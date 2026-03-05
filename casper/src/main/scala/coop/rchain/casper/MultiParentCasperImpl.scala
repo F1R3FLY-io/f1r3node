@@ -14,6 +14,7 @@ import coop.rchain.casper.finality.Finalizer
 import coop.rchain.casper.merging.BlockIndex
 import coop.rchain.casper.protocol._
 import coop.rchain.casper.syntax._
+import coop.rchain.casper.util.FileAvailability
 import coop.rchain.casper.util.ProtoUtil._
 import coop.rchain.casper.util._
 import coop.rchain.casper.util.comm.CommUtil
@@ -49,7 +50,10 @@ class MultiParentCasperImpl[F[_]
     finalizationInProgress: Ref[F, Boolean],
     heartbeatSignalRef: Ref[F, Option[HeartbeatSignal[F]]],
     // Callback invoked for each finalized block (e.g., to extract/cache transfer data)
-    onBlockFinalized: String => F[Unit]
+    onBlockFinalized: String => F[Unit],
+    // DA-gating: fetch missing files via P2P and await them.
+    // Returns the list of file hashes that are still missing after the timeout.
+    daFetchFiles: (BlockMessage, List[String]) => F[List[String]]
 ) extends MultiParentCasper[F] {
   import MultiParentCasperImpl._
 
@@ -448,6 +452,43 @@ class MultiParentCasperImpl[F[_]
         t1 = result1._2
         _  <- EitherT.liftF(Span[F].mark("post-validation-block-summary"))
 
+        // DA-gated file availability: instead of failing immediately on missing files,
+        // trigger P2P fetch and wait for them with a bounded timeout.
+        resultFA <- timedStep(
+                     "file-availability",
+                     casperShardConf.fileConf.fileReplicationDir match {
+                       case Some(dir) =>
+                         val missing = FileAvailability.findMissingFiles(b, dir)
+                         if (missing.isEmpty)
+                           BlockStatus.valid.asRight[BlockError].pure[F]
+                         else
+                           for {
+                             _ <- Log[F].info(
+                                   s"DA-gate: ${missing.size} file(s) missing for block " +
+                                     s"${PrettyPrinter.buildString(b.blockHash)}, " +
+                                     s"triggering P2P fetch: ${missing.mkString(", ")}"
+                                 )
+                             stillMissing <- daFetchFiles(b, missing)
+                             _ <- if (stillMissing.nonEmpty)
+                                   Log[F].warn(
+                                     s"DA-gate: ${stillMissing.size} file(s) still missing after timeout " +
+                                       s"for block ${PrettyPrinter.buildString(b.blockHash)}: " +
+                                       s"${stillMissing.mkString(", ")}"
+                                   )
+                                 else ().pure[F]
+                           } yield
+                             if (stillMissing.isEmpty)
+                               BlockStatus.valid.asRight[BlockError]
+                             else
+                               BlockStatus.missingFileData.asLeft[ValidBlock]
+                       case None =>
+                         // No fileReplicationDir configured — skip file availability check
+                         BlockStatus.valid.asRight[BlockError].pure[F]
+                     }
+                   )
+        tFA = resultFA._2
+        _   <- EitherT.liftF(Span[F].mark("file-availability-validated"))
+
         result2 <- timedStep(
                     "checkpoint",
                     InterpreterUtil
@@ -505,7 +546,7 @@ class MultiParentCasperImpl[F[_]
         _ <- EitherT.liftF(
               Log[F].debug(
                 s"Validation timing breakdown: " +
-                  s"summary=$t1, checkpoint=$t2, bonds=$t3, neglected-invalid=$t4, " +
+                  s"summary=$t1, file-avail=$tFA, checkpoint=$t2, bonds=$t3, neglected-invalid=$t4, " +
                   s"neglected-equiv=$t5, phlo=$t6, simple-equiv=$t7"
               )
             )
