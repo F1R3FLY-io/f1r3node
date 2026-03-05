@@ -25,6 +25,46 @@ final case class FileUploadOutput(
 
 object FileUploadAPI {
 
+  // ---------------------------------------------------------------------------
+  // Upload state machine — O(chunk-size) memory
+  // ---------------------------------------------------------------------------
+
+  /** ADT for the single-pass fold over the gRPC chunk stream. */
+  private sealed trait UploadState
+
+  /** No chunks received yet — expecting the metadata chunk first. */
+  private case object WaitingForMetadata extends UploadState
+
+  /**
+    * Metadata validated, actively writing data chunks to [[channel]].
+    *
+    * @param metadata     validated upload metadata
+    * @param channel      open `FileChannel` for the `.tmp` file
+    * @param digest       streaming Blake2b-256 state
+    * @param bytesWritten total bytes written so far
+    * @param tempFile     path to the `.tmp` file
+    * @param aborted      set `true` when `bytesWritten > maxBytes`, causing
+    *                     remaining chunks to be skipped
+    */
+  private final case class WritingData(
+      metadata: FileUploadMetadata,
+      channel: FileChannel,
+      digest: Blake2bDigest,
+      bytesWritten: Long,
+      tempFile: Path,
+      aborted: Boolean
+  ) extends UploadState
+
+  /** A non-recoverable error was detected; remaining chunks are drained. */
+  private final case class Failed(error: Throwable) extends UploadState
+
+  /** File already on disk (dedup) — remaining data chunks are drained. */
+  private final case class Dedup(metadata: FileUploadMetadata) extends UploadState
+
+  // ---------------------------------------------------------------------------
+  // Public entry point
+  // ---------------------------------------------------------------------------
+
   def processFileUpload(
       chunks: Observable[FileUploadChunk],
       shardId: String,
@@ -34,44 +74,156 @@ object FileUploadAPI {
       phloPerStorageByte: Long = FileUploadCosts.DEFAULT_PHLO_PER_STORAGE_BYTE,
       baseRegisterPhlo: Long = FileUploadCosts.BASE_REGISTER_PHLO
   ): Task[FileUploadOutput] =
-    // Collect all chunks into a list first. gRPC streams are hot Observables —
-    // calling headOptionL + drop(1) would create two separate subscriptions,
-    // causing the second one to see zero data bytes. By materializing into a
-    // list we get a single subscription and can safely split head/tail.
-    chunks.toListL.flatMap { allChunks =>
-      allChunks match {
-        case Nil =>
-          Task.raiseError(new IllegalArgumentException("Stream is empty"))
+    Task.delay(Files.createDirectories(uploadDir)).flatMap { _ =>
+      // Track last state so we can clean up on mid-stream Observable errors
+      // (e.g. gRPC cancel) where foldLeftL never produces a final state.
+      val lastState = new java.util.concurrent.atomic.AtomicReference[UploadState](WaitingForMetadata)
 
-        case firstChunk :: dataChunks =>
-          firstChunk.chunk match {
-            case FileUploadChunk.Chunk.Metadata(metadata) =>
-              validateMetadata(
-                metadata,
-                shardId,
-                minPhloPrice,
-                isNodeReadOnly,
-                phloPerStorageByte,
-                baseRegisterPhlo
-              ) match {
-                case Left(err) => Task.raiseError(new IllegalArgumentException(err))
-                case Right(_) =>
-                  processUpload(
+      // Single-pass fold: metadata is extracted from the first chunk,
+      // all subsequent data chunks are written directly to a FileChannel.
+      // Memory usage is O(chunk-size) regardless of total file size.
+      chunks
+        .foldLeftL(WaitingForMetadata: UploadState) { (state, chunk) =>
+          val nextState = state match {
+            // --- skip remaining chunks after an error or dedup -------------
+            case _: Failed => state
+            case _: Dedup  => state
+
+            // --- first chunk: must be metadata -----------------------------
+            case WaitingForMetadata =>
+              chunk.chunk match {
+                case FileUploadChunk.Chunk.Metadata(metadata) =>
+                  validateMetadata(
                     metadata,
-                    Observable.fromIterable(dataChunks),
+                    shardId,
+                    minPhloPrice,
+                    isNodeReadOnly,
+                    phloPerStorageByte,
+                    baseRegisterPhlo
+                  ) match {
+                    case Left(err) =>
+                      Failed(new IllegalArgumentException(err))
+
+                    case Right(_) =>
+                      // Check for dedup — if file already on disk, skip writing
+                      val fileHash = metadata.fileHash
+                      if (fileHash.nonEmpty && Files.exists(uploadDir.resolve(fileHash))) {
+                        Dedup(metadata)
+                      } else {
+                        val tempFile = uploadDir.resolve(s"${UUID.randomUUID().toString}.tmp")
+                        try {
+                          val channel = FileChannel.open(
+                            tempFile,
+                            StandardOpenOption.WRITE,
+                            StandardOpenOption.CREATE_NEW
+                          )
+                          val digest = new Blake2bDigest(256)
+                          WritingData(metadata, channel, digest, 0L, tempFile, aborted = false)
+                        } catch {
+                          case ex: Throwable => Failed(ex)
+                        }
+                      }
+                  }
+
+                case _ =>
+                  Failed(new IllegalArgumentException("First chunk must be FileUploadMetadata"))
+              }
+
+            // --- data chunks: write to disk --------------------------------
+            case wd: WritingData =>
+              if (wd.aborted) wd
+              else
+                chunk.chunk match {
+                  case FileUploadChunk.Chunk.Data(bytes) =>
+                    val data     = bytes.toByteArray
+                    val newTotal = wd.bytesWritten + data.length
+                    if (newTotal > wd.metadata.fileSize)
+                      wd.copy(bytesWritten = newTotal, aborted = true)
+                    else {
+                      // N.B. digest and channel are mutable — update() and
+                      // write() mutate in place. copy() shares the same
+                      // references, which is safe because foldLeftL is
+                      // strictly sequential (old state is never reused).
+                      wd.digest.update(data, 0, data.length)
+                      val buf = ByteBuffer.wrap(data)
+                      while (buf.hasRemaining) wd.channel.write(buf)
+                      wd.copy(bytesWritten = newTotal)
+                    }
+                  case _ => wd // skip non-data chunks (e.g. stray metadata)
+                }
+          }
+          lastState.set(nextState)
+          nextState
+        }
+        .flatMap { finalState =>
+          finalState match {
+            // -- empty stream -----------------------------------------------
+            case WaitingForMetadata =>
+              Task.raiseError(new IllegalArgumentException("Stream is empty"))
+
+            // -- dedup: file already on disk --------------------------------
+            case Dedup(meta) =>
+              Task.now(
+                buildOutput(meta, meta.fileHash, phloPerStorageByte, baseRegisterPhlo)
+              )
+
+            // -- real error -------------------------------------------------
+            case Failed(err) =>
+              Task.raiseError(err)
+
+            // -- normal completion ------------------------------------------
+            case wd: WritingData =>
+              // Close the channel first
+              Task.delay(wd.channel.close()).flatMap { _ =>
+                if (wd.aborted)
+                  Task
+                    .delay(Files.deleteIfExists(wd.tempFile))
+                    .flatMap(_ =>
+                      Task.raiseError(
+                        new IllegalArgumentException(
+                          s"Upload aborted: received ${wd.bytesWritten} bytes exceeds declared fileSize ${wd.metadata.fileSize}"
+                        )
+                      )
+                    )
+                else {
+                  val hashBytes = new Array[Byte](32)
+                  wd.digest.doFinal(hashBytes, 0)
+                  val computedHash = toHex(hashBytes)
+                  finalizeUpload(
+                    wd.metadata,
+                    wd.tempFile,
                     uploadDir,
+                    wd.bytesWritten,
+                    computedHash,
                     phloPerStorageByte,
                     baseRegisterPhlo
                   )
+                }
               }
-
-            case _ =>
-              Task.raiseError(
-                new IllegalArgumentException("First chunk must be FileUploadMetadata")
-              )
           }
-      }
+        }
+        .onErrorHandleWith { err =>
+          // Mid-stream Observable error (e.g. gRPC cancel): clean up any
+          // open FileChannel and .tmp file tracked by the AtomicReference.
+          // Both close() and deleteIfExists() are wrapped in try/catch so
+          // a cleanup failure can never replace the original error.
+          val cleanup = lastState.get() match {
+            case wd: WritingData =>
+              Task.delay {
+                try wd.channel.close()
+                catch { case _: Throwable => () }
+                try { Files.deleteIfExists(wd.tempFile); () }
+                catch { case _: Throwable => () }
+              }
+            case _ => Task.unit
+          }
+          cleanup.flatMap(_ => Task.raiseError(err))
+        }
     }
+
+  // ---------------------------------------------------------------------------
+  // Validation
+  // ---------------------------------------------------------------------------
 
   private def validateMetadata(
       metadata: FileUploadMetadata,
@@ -101,103 +253,9 @@ object FileUploadAPI {
         Right(())
     }
 
-  private def processUpload(
-      metadata: FileUploadMetadata,
-      dataChunks: Observable[FileUploadChunk],
-      uploadDir: Path,
-      phloPerStorageByte: Long,
-      baseRegisterPhlo: Long
-  ): Task[FileUploadOutput] =
-    Task.delay(Files.createDirectories(uploadDir)).flatMap { _ =>
-      val fileHash = metadata.fileHash
-      Task.delay(fileHash.nonEmpty && Files.exists(uploadDir.resolve(fileHash))).flatMap {
-        case true =>
-          // File already on disk (dedup) — still build deploy for on-chain registration
-          Task.now(buildOutput(metadata, fileHash, phloPerStorageByte, baseRegisterPhlo))
-
-        case false =>
-          Task.delay(uploadDir.resolve(s"${UUID.randomUUID().toString}.tmp")).flatMap { tempFile =>
-            streamToFileAndHash(dataChunks, tempFile, metadata.fileSize)
-              .flatMap {
-                case (bytesReceived, computedHash) =>
-                  finalizeUpload(
-                    metadata,
-                    tempFile,
-                    uploadDir,
-                    bytesReceived,
-                    computedHash,
-                    phloPerStorageByte,
-                    baseRegisterPhlo
-                  )
-              }
-              .guarantee(
-                Task.delay {
-                  if (Files.exists(tempFile))
-                    Files.deleteIfExists(tempFile)
-                  ()
-                }
-              )
-          }
-      }
-    }
-
-  /**
-    * Opens `tempFile` for writing, writes every data chunk via `FileChannel`, and
-    * feeds the same bytes into a streaming `Blake2bDigest`.
-    *
-    * Aborts with an error if `bytesReceived > maxBytes`.
-    *
-    * @return (totalBytesWritten, Blake2b-256 hex hash)
-    */
-  private def streamToFileAndHash(
-      chunks: Observable[FileUploadChunk],
-      tempFile: Path,
-      maxBytes: Long
-  ): Task[(Long, String)] = {
-    val openChannel = Task.delay(
-      FileChannel.open(tempFile, StandardOpenOption.WRITE, StandardOpenOption.CREATE_NEW)
-    )
-
-    openChannel.bracket { channel =>
-      val digest = new Blake2bDigest(256)
-      chunks
-        .foldLeftL((0L, false)) {
-          case ((total, aborted), chunk) =>
-            if (aborted) (total, aborted)
-            else
-              chunk.chunk match {
-                case FileUploadChunk.Chunk.Data(bytes) =>
-                  val data     = bytes.toByteArray
-                  val newTotal = total + data.length
-                  if (newTotal > maxBytes) (newTotal, true)
-                  else {
-                    digest.update(data, 0, data.length)
-                    val buf = ByteBuffer.wrap(data)
-                    while (buf.hasRemaining) channel.write(buf)
-                    (newTotal, false)
-                  }
-                case _ => (total, aborted)
-              }
-        }
-        .flatMap {
-          case (totalBytes, aborted) =>
-            if (aborted)
-              Task.raiseError(
-                new IllegalArgumentException(
-                  s"Upload aborted: received $totalBytes bytes exceeds declared fileSize $maxBytes"
-                )
-              )
-            else {
-              val hashBytes = new Array[Byte](32)
-              digest.doFinal(hashBytes, 0)
-              val hex = toHex(hashBytes)
-              Task.now((totalBytes, hex))
-            }
-        }
-    } { channel =>
-      Task.delay(channel.close())
-    }
-  }
+  // ---------------------------------------------------------------------------
+  // Finalization
+  // ---------------------------------------------------------------------------
 
   /**
     * Validates byte-count and optional hash, then atomically renames `.tmp` to its
@@ -213,17 +271,25 @@ object FileUploadAPI {
       baseRegisterPhlo: Long
   ): Task[FileUploadOutput] =
     if (bytesReceived != metadata.fileSize)
-      Task.raiseError(
-        new IllegalArgumentException(
-          s"Size mismatch: received $bytesReceived, expected ${metadata.fileSize}"
+      Task
+        .delay(Files.deleteIfExists(tempFile))
+        .flatMap(_ =>
+          Task.raiseError(
+            new IllegalArgumentException(
+              s"Size mismatch: received $bytesReceived, expected ${metadata.fileSize}"
+            )
+          )
         )
-      )
     else if (metadata.fileHash.nonEmpty && computedHash != metadata.fileHash)
-      Task.raiseError(
-        new IllegalArgumentException(
-          s"Hash mismatch: computed $computedHash, expected ${metadata.fileHash}"
+      Task
+        .delay(Files.deleteIfExists(tempFile))
+        .flatMap(_ =>
+          Task.raiseError(
+            new IllegalArgumentException(
+              s"Hash mismatch: computed $computedHash, expected ${metadata.fileHash}"
+            )
+          )
         )
-      )
     else
       Task.delay {
         val finalFile = uploadDir.resolve(computedHash)
@@ -246,6 +312,10 @@ object FileUploadAPI {
 
         buildOutput(metadata, computedHash, phloPerStorageByte, baseRegisterPhlo)
       }
+
+  // ---------------------------------------------------------------------------
+  // Helpers
+  // ---------------------------------------------------------------------------
 
   /** Compute costs, build deploy proto, and package the [[FileUploadOutput]]. */
   private def buildOutput(
