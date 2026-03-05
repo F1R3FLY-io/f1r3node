@@ -33,7 +33,7 @@ object FileReplicationSetup {
   ): F[(FileRequester[F], DACallback[F])] =
     for {
       dataDir <- Sync[F].delay {
-                  val dir = conf.fileReplicationDir.getOrElse(
+                  val dir = conf.fileConf.fileReplicationDir.getOrElse(
                     java.nio.file.Paths.get("file-replication")
                   )
                   if (!dir.toFile.exists()) dir.toFile.mkdirs()
@@ -41,8 +41,8 @@ object FileReplicationSetup {
                 }
       fileRequester = new FileRequester[F](
         dataDir,
-        conf.fileChunkSize,
-        conf.fileSyncTimeout
+        conf.fileConf.fileChunkSize,
+        conf.fileConf.fileSyncTimeout
       )
       daCallback: DACallback[F] = (block: BlockMessage, missingHashes: List[String]) =>
         for {
@@ -55,7 +55,7 @@ object FileReplicationSetup {
                 s"[FileReplicationSetup] Requesting files from ${peers.size} peers"
               )
           _            <- peers.toList.traverse_(peer => fileRequester.requestFiles(peer, missingHashes))
-          stillMissing <- fileRequester.awaitFiles(missingHashes, conf.fileSyncTimeout)
+          stillMissing <- fileRequester.awaitFiles(missingHashes, conf.fileConf.fileSyncTimeout)
           _ <- Log[F].info(
                 s"[FileReplicationSetup] awaitFiles returned, stillMissing=${stillMissing.size}"
               )

@@ -202,6 +202,8 @@ class ConfigMapperSpec extends FunSuite with Matchers {
         baseRegisterPhlo = 300, // not overridden — default from conf
         maxConcurrentDownloadsPerIp = 8,
         fileSyncTimeout = 2.hours,              // not overridden — default from conf
+        maxFileSize = 10737418240L,             // not overridden — default from conf (10GB)
+        maxDownloadCacheEntries = 10000,        // not overridden — default from conf
         maxFileDataSizePerBlock = 53687091200L, // not overridden — default from conf
         maxFileDeploysPerBlock = 10             // not overridden — default from conf
       ),

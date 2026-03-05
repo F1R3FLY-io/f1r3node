@@ -456,7 +456,7 @@ class MultiParentCasperImpl[F[_]
         // trigger P2P fetch and wait for them with a bounded timeout.
         resultFA <- timedStep(
                      "file-availability",
-                     casperShardConf.fileReplicationDir match {
+                     casperShardConf.fileConf.fileReplicationDir match {
                        case Some(dir) =>
                          val missing = FileAvailability.findMissingFiles(b, dir)
                          if (missing.isEmpty)
