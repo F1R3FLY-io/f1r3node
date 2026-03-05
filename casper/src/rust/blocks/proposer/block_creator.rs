@@ -47,12 +47,18 @@ use crate::rust::{
  *  3. Extract all valid deploys that aren't already in all ancestors of S (the parents).
  *  4. Create a new block that contains the deploys from the previous step.
  */
+struct PreparedUserDeploys {
+    deploys: HashSet<Signed<DeployData>>,
+    effective_cap: usize,
+    cap_hit: bool,
+}
+
 async fn prepare_user_deploys(
     casper_snapshot: &CasperSnapshot,
     block_number: i64,
     current_time_millis: i64,
     deploy_storage: Arc<Mutex<KeyValueDeployStorage>>,
-) -> Result<HashSet<Signed<DeployData>>, CasperError> {
+) -> Result<PreparedUserDeploys, CasperError> {
     let mut deploy_storage_guard = deploy_storage
         .lock()
         .map_err(|e| CasperError::LockError(e.to_string()))?;
@@ -171,9 +177,13 @@ async fn prepare_user_deploys(
         deploy_storage_guard.remove(expired_list)?;
     }
 
-    let max_user_deploys = max_user_deploys_per_block();
+    let max_user_deploys = effective_user_deploys_per_block_cap();
     if valid_unique.len() <= max_user_deploys {
-        return Ok(valid_unique);
+        return Ok(PreparedUserDeploys {
+            deploys: valid_unique,
+            effective_cap: max_user_deploys,
+            cap_hit: false,
+        });
     }
 
     // Prefer oldest eligible deploys first to preserve fairness while bounding
@@ -204,7 +214,11 @@ async fn prepare_user_deploys(
         max_user_deploys
     );
 
-    Ok(selected)
+    Ok(PreparedUserDeploys {
+        deploys: selected,
+        effective_cap: max_user_deploys,
+        cap_hit: true,
+    })
 }
 
 fn max_user_deploys_per_block() -> usize {
@@ -220,6 +234,182 @@ fn max_user_deploys_per_block() -> usize {
             .filter(|v| *v > 0)
             .unwrap_or(MAX_USER_DEPLOYS_DEFAULT)
     })
+}
+
+#[derive(Debug)]
+struct AdaptiveDeployCapState {
+    current_cap: usize,
+    ema_create_block_ms: Option<f64>,
+}
+
+fn adaptive_user_deploy_cap_enabled() -> bool {
+    const ENV: &str = "F1R3_ADAPTIVE_DEPLOY_CAP_ENABLED";
+    static VALUE: OnceLock<bool> = OnceLock::new();
+
+    *VALUE.get_or_init(|| match std::env::var(ENV) {
+        Ok(raw) => {
+            let normalized = raw.trim().to_ascii_lowercase();
+            !matches!(normalized.as_str(), "0" | "false" | "no" | "off")
+        }
+        Err(_) => true,
+    })
+}
+
+fn adaptive_user_deploy_target_ms() -> u64 {
+    const ENV: &str = "F1R3_ADAPTIVE_DEPLOY_CAP_TARGET_MS";
+    const DEFAULT: u64 = 1_000;
+    static VALUE: OnceLock<u64> = OnceLock::new();
+
+    *VALUE.get_or_init(|| {
+        std::env::var(ENV)
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .filter(|v| *v > 0)
+            .unwrap_or(DEFAULT)
+    })
+}
+
+fn adaptive_user_deploy_min_cap(max_cap: usize) -> usize {
+    const ENV: &str = "F1R3_ADAPTIVE_DEPLOY_CAP_MIN";
+    const DEFAULT: usize = 1;
+    static VALUE: OnceLock<usize> = OnceLock::new();
+
+    (*VALUE.get_or_init(|| {
+        std::env::var(ENV)
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .filter(|v| *v > 0)
+            .unwrap_or(DEFAULT)
+    }))
+    .clamp(1, max_cap)
+}
+
+fn adaptive_user_deploy_cap_state(
+    max_cap: usize,
+    min_cap: usize,
+) -> &'static Mutex<AdaptiveDeployCapState> {
+    static VALUE: OnceLock<Mutex<AdaptiveDeployCapState>> = OnceLock::new();
+    VALUE.get_or_init(|| {
+        Mutex::new(AdaptiveDeployCapState {
+            current_cap: max_cap.clamp(min_cap, max_cap),
+            ema_create_block_ms: None,
+        })
+    })
+}
+
+fn effective_user_deploys_per_block_cap() -> usize {
+    let max_cap = max_user_deploys_per_block();
+    if !adaptive_user_deploy_cap_enabled() {
+        return max_cap;
+    }
+
+    let min_cap = adaptive_user_deploy_min_cap(max_cap);
+    let state = adaptive_user_deploy_cap_state(max_cap, min_cap);
+    match state.lock() {
+        Ok(mut guard) => {
+            guard.current_cap = guard.current_cap.clamp(min_cap, max_cap);
+            guard.current_cap
+        }
+        Err(err) => {
+            tracing::warn!(
+                "Adaptive deploy cap lock poisoned while reading current cap: {}",
+                err
+            );
+            max_cap
+        }
+    }
+}
+
+fn next_adaptive_cap(
+    current_cap: usize,
+    min_cap: usize,
+    max_cap: usize,
+    target_ms: f64,
+    ema_ms: f64,
+    cap_hit: bool,
+) -> usize {
+    if min_cap >= max_cap {
+        return max_cap;
+    }
+
+    let current_cap = current_cap.clamp(min_cap, max_cap);
+    if !(target_ms.is_finite() && target_ms > 0.0 && ema_ms.is_finite() && ema_ms > 0.0) {
+        return current_cap;
+    }
+
+    if ema_ms > target_ms {
+        // Reduce cap proportionally when observed block creation time exceeds the target.
+        let ratio = (target_ms / ema_ms).clamp(0.1, 0.99);
+        let scaled = ((current_cap as f64) * ratio).floor() as usize;
+        let max_step_down = current_cap.saturating_sub(1).max(min_cap);
+        return scaled.clamp(min_cap, max_step_down);
+    }
+
+    const INCREASE_THRESHOLD_RATIO: f64 = 0.75;
+    if cap_hit && ema_ms < target_ms * INCREASE_THRESHOLD_RATIO {
+        // Increase only when we saturated the cap and have enough latency headroom.
+        let ratio = (target_ms / ema_ms).clamp(1.0, 1.5);
+        let scaled = ((current_cap as f64) * ratio).ceil() as usize;
+        let min_step_up = current_cap.saturating_add(1).min(max_cap);
+        return scaled.max(min_step_up).min(max_cap);
+    }
+
+    current_cap
+}
+
+fn update_adaptive_user_deploy_cap(
+    observed_create_block_ms: u128,
+    selected_user_deploys: usize,
+    cap_hit: bool,
+) {
+    if !adaptive_user_deploy_cap_enabled() || selected_user_deploys == 0 {
+        return;
+    }
+
+    let max_cap = max_user_deploys_per_block();
+    let min_cap = adaptive_user_deploy_min_cap(max_cap);
+    if min_cap >= max_cap {
+        return;
+    }
+
+    let target_ms = adaptive_user_deploy_target_ms() as f64;
+    let sample_ms = observed_create_block_ms as f64;
+    let state = adaptive_user_deploy_cap_state(max_cap, min_cap);
+
+    let mut guard = match state.lock() {
+        Ok(guard) => guard,
+        Err(err) => {
+            tracing::warn!(
+                "Adaptive deploy cap lock poisoned while updating cap: {}",
+                err
+            );
+            return;
+        }
+    };
+
+    guard.current_cap = guard.current_cap.clamp(min_cap, max_cap);
+
+    const EMA_ALPHA: f64 = 0.35;
+    let prev_ema = guard.ema_create_block_ms.unwrap_or(sample_ms);
+    let ema_ms = prev_ema + EMA_ALPHA * (sample_ms - prev_ema);
+    guard.ema_create_block_ms = Some(ema_ms);
+
+    let prev_cap = guard.current_cap;
+    let next_cap = next_adaptive_cap(prev_cap, min_cap, max_cap, target_ms, ema_ms, cap_hit);
+
+    if next_cap != prev_cap {
+        guard.current_cap = next_cap;
+        tracing::info!(
+            "Adaptive deploy cap update: prev_cap={}, next_cap={}, sample_create_block_ms={}, ema_create_block_ms={:.2}, target_ms={}, selected_user_deploys={}, cap_hit={}",
+            prev_cap,
+            next_cap,
+            observed_create_block_ms,
+            ema_ms,
+            target_ms as u64,
+            selected_user_deploys,
+            cap_hit
+        );
+    }
 }
 
 fn collect_self_chain_deploy_sigs(
@@ -393,11 +583,12 @@ pub async fn create(
     let shard_id = casper_snapshot.on_chain_state.shard_conf.shard_name.clone();
 
     // Prepare deploys
-    let user_deploys = {
+    let (user_deploys, selected_user_deploy_cap, selected_user_deploy_cap_hit) = {
         let t = std::time::Instant::now();
-        let mut v =
+        let prepared =
             prepare_user_deploys(casper_snapshot, next_block_num, now, deploy_storage.clone())
                 .await?;
+        let mut v = prepared.deploys;
         let self_chain_deploy_sigs =
             collect_self_chain_deploy_sigs(casper_snapshot, validator_identity, block_store)?;
         if !self_chain_deploy_sigs.is_empty() {
@@ -413,11 +604,13 @@ pub async fn create(
         }
         tracing::info!(
             target: "f1r3fly.block_creator.timing",
-            "prepare_user_deploys_ms={}, user_deploys_count={}",
+            "prepare_user_deploys_ms={}, user_deploys_count={}, user_deploy_cap={}, user_deploy_cap_hit={}",
             t.elapsed().as_millis(),
-            v.len()
+            v.len(),
+            prepared.effective_cap,
+            prepared.cap_hit
         );
-        v
+        (v, prepared.effective_cap, prepared.cap_hit)
     };
     let dummy_deploys = {
         let t = std::time::Instant::now();
@@ -441,6 +634,8 @@ pub async fn create(
         );
         v
     };
+
+    let selected_user_deploy_count = user_deploys.len();
 
     // Combine all deploys, removing those already in scope
     let mut all_deploys: HashSet<Signed<DeployData>> = user_deploys
@@ -571,12 +766,20 @@ pub async fn create(
     let block_info = pretty_printer::PrettyPrinter::build_string_block_message(&signed_block, true);
     let deploy_count = signed_block.body.deploys.len();
     tracing::info!("Block created: {} ({}d)", block_info, deploy_count);
+    let total_create_block_ms = create_started.elapsed().as_millis();
+
     tracing::info!(
         target: "f1r3fly.block_creator.timing",
         "Block creator timing: package_ms={}, sign_ms={}, total_create_block_ms={}",
         package_ms,
         sign_ms,
-        create_started.elapsed().as_millis()
+        total_create_block_ms
+    );
+
+    update_adaptive_user_deploy_cap(
+        total_create_block_ms,
+        selected_user_deploy_count,
+        selected_user_deploy_cap_hit && selected_user_deploy_count >= selected_user_deploy_cap,
     );
 
     RuntimeManager::trim_allocator();
@@ -643,4 +846,35 @@ fn not_expired_deploy(earliest_block_number: i64, deploy_data: &DeployData) -> b
 
 fn not_future_deploy(current_block_number: i64, deploy_data: &DeployData) -> bool {
     deploy_data.valid_after_block_number < current_block_number
+}
+
+#[cfg(test)]
+mod tests {
+    use super::next_adaptive_cap;
+
+    #[test]
+    fn adaptive_cap_reduces_when_latency_exceeds_target() {
+        let next = next_adaptive_cap(32, 1, 32, 1000.0, 2500.0, true);
+        assert_eq!(next, 12);
+    }
+
+    #[test]
+    fn adaptive_cap_increases_when_capped_and_headroom_exists() {
+        let next = next_adaptive_cap(4, 1, 32, 1000.0, 400.0, true);
+        assert_eq!(next, 6);
+    }
+
+    #[test]
+    fn adaptive_cap_does_not_increase_when_not_capped() {
+        let next = next_adaptive_cap(8, 1, 32, 1000.0, 300.0, false);
+        assert_eq!(next, 8);
+    }
+
+    #[test]
+    fn adaptive_cap_respects_min_and_max_bounds() {
+        let down = next_adaptive_cap(3, 2, 4, 1000.0, 5000.0, true);
+        let up = next_adaptive_cap(3, 2, 4, 1000.0, 250.0, true);
+        assert_eq!(down, 2);
+        assert_eq!(up, 4);
+    }
 }
