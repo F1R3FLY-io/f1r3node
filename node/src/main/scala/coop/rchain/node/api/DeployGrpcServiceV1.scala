@@ -12,6 +12,7 @@ import coop.rchain.casper.protocol._
 import java.nio.file.Path
 import coop.rchain.casper.protocol.deploy.v1._
 import coop.rchain.casper.{ProposeFunction, SafetyOracle}
+import coop.rchain.node.configuration.FileUploadConf
 import coop.rchain.catscontrib.TaskContrib._
 import coop.rchain.comm.discovery.NodeDiscovery
 import coop.rchain.comm.rp.Connect.{ConnectionsCell, RPConfAsk}
@@ -47,12 +48,7 @@ object DeployGrpcServiceV1 {
       minPhloPrice: Long,
       isNodeReadOnly: Boolean,
       uploadDir: Path,
-      fileChunkSize: Int = 4 * 1024 * 1024,
-      maxConcurrentDownloadsPerIp: Int = 4,
-      phloPerStorageByte: Long = FileUploadCosts.DEFAULT_PHLO_PER_STORAGE_BYTE,
-      baseRegisterPhlo: Long = FileUploadCosts.BASE_REGISTER_PHLO,
-      maxFileSize: Long = 10L * 1024 * 1024 * 1024,
-      maxDownloadCacheEntries: Int = 10000
+      fileUploadConf: FileUploadConf
   )(
       implicit worker: Scheduler
   ): DeployServiceV1GrpcMonix.DeployService =
@@ -415,9 +411,9 @@ object DeployGrpcServiceV1 {
             minPhloPrice,
             isNodeReadOnly,
             uploadDir,
-            phloPerStorageByte,
-            baseRegisterPhlo,
-            maxFileSize
+            fileUploadConf.phloPerStorageByte,
+            fileUploadConf.baseRegisterPhlo,
+            fileUploadConf.maxFileSize
           )
           .flatMap { output =>
             output.deployProto match {
@@ -497,10 +493,10 @@ object DeployGrpcServiceV1 {
           request,
           isNodeReadOnly,
           uploadDir,
-          chunkSize = fileChunkSize,
-          maxConcurrentPerIp = maxConcurrentDownloadsPerIp,
+          chunkSize = fileUploadConf.chunkSize.toInt,
+          maxConcurrentPerIp = fileUploadConf.maxConcurrentDownloadsPerIp,
           devMode = devMode,
-          maxCacheEntries = maxDownloadCacheEntries
+          maxCacheEntries = fileUploadConf.maxDownloadCacheEntries
         )
     }
 }

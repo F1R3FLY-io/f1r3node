@@ -9,7 +9,7 @@ import coop.rchain.blockstorage.casperbuffer.CasperBufferStorage
 import coop.rchain.blockstorage.dag.BlockDagStorage
 import coop.rchain.blockstorage.deploy.DeployStorage
 import coop.rchain.casper.LastApprovedBlock.LastApprovedBlock
-import coop.rchain.casper._
+import coop.rchain.casper.{FileConf, _}
 import coop.rchain.casper.engine.EngineCell._
 import coop.rchain.casper.protocol._
 import coop.rchain.casper.syntax._
@@ -23,9 +23,6 @@ import coop.rchain.models.BlockHash.BlockHash
 import coop.rchain.rspace.state.RSpaceStateManager
 import coop.rchain.shared._
 import fs2.concurrent.Queue
-
-import java.nio.file.Path
-import scala.concurrent.duration._
 
 trait CasperLaunch[F[_]] {
   def launch(): F[Unit]
@@ -51,11 +48,7 @@ object CasperLaunch {
       disableStateExporter: Boolean,
       onBlockFinalized: String => F[Unit],
       standalone: Boolean,
-      fileReplicationDir: Option[Path] = None,
-      fileChunkSize: Int = 4 * 1024 * 1024,
-      fileSyncTimeout: FiniteDuration = 2.hours,
-      maxFileDataSizePerBlock: Long = 50L * 1024 * 1024 * 1024,
-      maxFileDeploysPerBlock: Int = 10
+      fileConf: FileConf = FileConf()
   ): CasperLaunch[F] =
     new CasperLaunch[F] {
       val casperShardConf = CasperShardConf(
@@ -79,11 +72,7 @@ object CasperLaunch {
         conf.mergeableChannelsGCDepthBuffer,
         conf.disableLateBlockFiltering,
         standalone, // Use standalone directly to disable validator progress check
-        fileReplicationDir,
-        fileChunkSize,
-        fileSyncTimeout,
-        maxFileDataSizePerBlock,
-        maxFileDeploysPerBlock
+        fileConf
       )
       def launch(): F[Unit] =
         BlockStore[F].getApprovedBlock map {

@@ -117,7 +117,7 @@ object BlockCreator {
                 Log[F].info(s"Removing ${allExpiredDeploys.size} expired deploy(s) from storage") *>
                   DeployStorage[F].remove(allExpiredDeploys.toList) *>
                   // Clean up orphaned files for expired file-registration deploys
-                  s.onChainState.shardConf.fileReplicationDir.traverse_(
+                  s.onChainState.shardConf.fileConf.fileReplicationDir.traverse_(
                     dir =>
                       OrphanFileCleanup.cleanupOrphanedFiles[F](
                         allExpiredDeploys,
@@ -134,8 +134,8 @@ object BlockCreator {
                   )
               )
           // File-deploy backpressure: limit the number/size of file-registration deploys per block
-          maxFileDeploys  = s.onChainState.shardConf.maxFileDeploysPerBlock
-          maxFileDataSize = s.onChainState.shardConf.maxFileDataSizePerBlock
+          maxFileDeploys  = s.onChainState.shardConf.fileConf.maxFileDeploysPerBlock
+          maxFileDataSize = s.onChainState.shardConf.fileConf.maxFileDataSizePerBlock
           (fileDeploys, nonFileDeploys) = validUnique.partition(
             d => OrphanFileCleanup.isFileRegistrationDeploy(d.data)
           )

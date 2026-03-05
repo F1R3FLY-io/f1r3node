@@ -20,7 +20,20 @@ final case class FileUploadConf(
     maxDownloadCacheEntries: Int,
     maxFileDataSizePerBlock: Long,
     maxFileDeploysPerBlock: Int
-)
+) {
+
+  /** Build a [[coop.rchain.casper.FileConf]] suitable for the casper layer,
+    * resolving [[replicationDir]] as a child of the given `dataDir`.
+    */
+  def toFileConf(dataDir: Path): coop.rchain.casper.FileConf =
+    coop.rchain.casper.FileConf(
+      fileReplicationDir = Some(dataDir.resolve(replicationDir)),
+      fileChunkSize = chunkSize.toInt,
+      fileSyncTimeout = fileSyncTimeout,
+      maxFileDataSizePerBlock = maxFileDataSizePerBlock,
+      maxFileDeploysPerBlock = maxFileDeploysPerBlock
+    )
+}
 
 final case class NodeConf(
     standalone: Boolean,
