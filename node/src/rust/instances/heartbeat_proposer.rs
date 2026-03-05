@@ -477,13 +477,23 @@ async fn check_lfb_and_propose(
         has_pending_deploys && (!self_recently_proposed || can_propose_pending_deploys_while_ahead);
     let can_follow_frontier_without_pending_deploys =
         deploy_recovery_hint || stale_recovery_interval_elapsed;
+    // Cooldown protects idle clusters from empty-block churn, but during deploy-driven
+    // recovery we should not wait out the full cooldown before chasing frontier updates.
+    let allow_cooldown_override_for_deploy_recovery =
+        has_pending_deploys || has_new_parent_with_user_deploys;
+    // When a peer parent with user deploys is observed, allow one frontier-follow step
+    // while ahead (bounded by pending-deploy lag threshold) to unblock synchrony progress.
+    let allow_frontier_follow_while_ahead_for_deploy_parent = has_new_parent_with_user_deploys
+        && lfb_lag_blocks <= heartbeat_pending_deploy_max_lag();
     let can_chase_frontier_while_ahead = lfb_lag_blocks <= effective_frontier_chase_cap
         && has_new_parents
-        && !self_proposed_too_recently;
+        && (!self_proposed_too_recently || allow_cooldown_override_for_deploy_recovery);
     let frontier_follow_due = !has_pending_deploys
         && has_new_parents
         && can_follow_frontier_without_pending_deploys
-        && (!self_recently_proposed || can_chase_frontier_while_ahead);
+        && (!self_recently_proposed
+            || can_chase_frontier_while_ahead
+            || allow_frontier_follow_while_ahead_for_deploy_parent);
     let stale_lfb_recovery_due = lfb_is_stale
         && stale_recovery_window_open
         && (!self_recently_proposed || can_chase_frontier_while_ahead);
@@ -520,10 +530,12 @@ async fn check_lfb_and_propose(
             "pending user deploys in storage".to_string()
         } else if frontier_follow_due {
             format!(
-                "new parents observed (lag={}, self_recently_proposed={}, cooldown_ms={}, frontier_chase_cap={}, user_deploy_parent={}, deploy_grace_active={}, stale_recovery_interval_ms={}); proposing to keep frontier moving",
+                "new parents observed (lag={}, self_recently_proposed={}, cooldown_active={}, cooldown_ms={}, cooldown_override_for_deploy_recovery={}, frontier_chase_cap={}, user_deploy_parent={}, deploy_grace_active={}, stale_recovery_interval_ms={}); proposing to keep frontier moving",
                 lfb_lag_blocks,
                 self_recently_proposed,
+                self_proposed_too_recently,
                 heartbeat_self_propose_cooldown_ms(),
+                allow_cooldown_override_for_deploy_recovery,
                 effective_frontier_chase_cap,
                 has_new_parent_with_user_deploys,
                 deploy_grace_active,
@@ -630,9 +642,11 @@ async fn check_lfb_and_propose(
                 )
             } else if has_new_parents && self_recently_proposed && !can_chase_frontier_while_ahead {
                 format!(
-                    "frontier-follow throttled: lag {}, cooldown_active={}, cap {} while already ahead",
+                    "frontier-follow throttled: lag {}, cooldown_active={}, cooldown_override_for_deploy_recovery={}, deploy_parent_override={}, cap {} while already ahead",
                     lfb_lag_blocks,
                     self_proposed_too_recently,
+                    allow_cooldown_override_for_deploy_recovery,
+                    allow_frontier_follow_while_ahead_for_deploy_parent,
                     effective_frontier_chase_cap
                 )
             } else if has_new_parents && !can_follow_frontier_without_pending_deploys {
