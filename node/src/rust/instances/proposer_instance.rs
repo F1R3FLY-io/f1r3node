@@ -175,11 +175,18 @@ impl<T: TransportLayer + Send + Sync + 'static> ProposerInstance<T> {
                 .set(propose_queue_pending.load(Ordering::Relaxed) as f64);
 
                 let min_interval = proposer_min_interval();
-                if !min_interval.is_zero() {
+                // Allow one immediate follow-up after a trigger collision so deploy-driven
+                // proposals are not penalized by the steady-state spacing gate.
+                let effective_min_interval = if immediate_retry_count == 1 {
+                    Duration::ZERO
+                } else {
+                    min_interval
+                };
+                if !effective_min_interval.is_zero() {
                     if let Some(last_started) = last_propose_started_at {
                         let elapsed = last_started.elapsed();
-                        if elapsed < min_interval {
-                            tokio::time::sleep(min_interval - elapsed).await;
+                        if elapsed < effective_min_interval {
+                            tokio::time::sleep(effective_min_interval - elapsed).await;
                         }
                     }
                 }
@@ -346,11 +353,7 @@ impl<T: TransportLayer + Send + Sync + 'static> ProposerInstance<T> {
                                         casper,
                                         is_async,
                                         retry_sender,
-                                        if should_retry_on_trigger {
-                                            immediate_retry_count.saturating_add(1)
-                                        } else {
-                                            immediate_retry_count
-                                        },
+                                        immediate_retry_count.saturating_add(1),
                                     ))
                                     .await
                                 {
