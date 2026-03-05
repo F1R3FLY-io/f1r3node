@@ -57,10 +57,12 @@ new
   // Analogous to _systemVault in SystemVault.rho.
   // Never exposed outside this contract; makes AuthKeys unforgeable.
   _fileRegistry,
-  // Stores the SysAuthToken received at genesis init.
+  // Stores the SysAuthToken received at genesis init (exactly once).
   // Passed to rho:io:file!("delete", ...) as proof that the caller is FileRegistry.
   // Analogous to how PoS.rho stores sysAuthToken and passes it to chargeDeploy/slash.
   _sysAuthTokenCh,
+  // One-shot flag: consumed on first registerNotify to store the token.
+  _tokenInitFlag,
   // Internal dispatch channels -- never exported
   _newFileHandle,
   _deleteTemplate
@@ -73,14 +75,13 @@ in {
        @(_, Either)   <- EitherCh  &
        TreeHashMap    <- TreeHashMapCh) {
 
-    // -- SELF-INITIALIZING TOKEN STORAGE ----------------------------------
+    // -- SELF-INITIALIZING TOKEN STORAGE (one-shot) -----------------------
     //
-    // The _sysAuthTokenCh is populated lazily on the first registerNotify
-    // call (i.e., the first file upload). The system process passes a
-    // valid SysAuthToken with every register delegation, so we simply
-    // capture it on first use. This avoids the need for a separate
-    // FileRegistryInitDeploy system deploy at genesis, keeping
-    // FileRegistry as a regular blessed contract like SystemVault or PoS.
+    // _tokenInitFlag starts with an initial value. On the first registerNotify
+    // call, the flag is consumed (destructive read) and the sysAuthToken is
+    // stored on _sysAuthTokenCh. Subsequent calls find the flag empty and
+    // skip the produce, preventing unbounded channel growth.
+    _tokenInitFlag!(true) |
 
     // fileMap: TreeHashMap[fileHash:String -> fileHandle:Name]
     // Depth 3 -> 3*8 = 24-bit prefix parallelism, adequate for millions of files.
@@ -143,9 +144,12 @@ in {
         //
         contract registerNotify(@fileHash, @fileName, ownerDeployerId, @sysAuthToken) = {
           new regAckCh in {
-            // Store token for _deleteTemplate (idempotent -- all tokens are identical,
-            // and _deleteTemplate uses peek so extra values are harmless).
-            _sysAuthTokenCh!(sysAuthToken) |
+            // Store token exactly once (one-shot flag pattern):
+            // Destructive read of _tokenInitFlag only succeeds on the first call.
+            // Subsequent calls find _tokenInitFlag empty and go straight to register.
+            for (_ <- _tokenInitFlag) {
+              _sysAuthTokenCh!(sysAuthToken)
+            } |
             FileRegistry!("register", fileHash, fileName, *ownerDeployerId, sysAuthToken, *regAckCh)
           }
         } |
@@ -153,19 +157,27 @@ in {
         // ownerAuthKey(fileHash, ownerDeployerId, ret)
         //   Issues an AuthKey that proves ownership of `fileHash`.
         //   Shape = (_fileRegistry, fileHash, callerPubKey)
+        //   Looks up the fileHandle via TreeHashMap and queries its state
+        //   through the getInfo method (uses unforgeable private channel).
         contract FileRegistry(@"ownerAuthKey", @fileHash, ownerDeployerId, ret) = {
           new DeployerIdOps(`rho:system:deployerId:ops`),
-              pubKeyCh, stateCh
+              pubKeyCh, handleCh, infoCh
           in {
             DeployerIdOps!("pubKeyBytes", *ownerDeployerId, *pubKeyCh) |
-            for (@callerPubKey <- pubKeyCh) {
-              // Look up current state to verify caller is in the deployers map
-              for (@state <<- @{["fileState", fileHash]}) {
-                if (state.get("deployers").contains(callerPubKey)) {
-                  // Caller is an owner -- issue the AuthKey bound to their specific key.
-                  @AuthKey!("make", (*_fileRegistry, fileHash, callerPubKey), *ret)
-                } else {
-                   ret!(Nil)
+            TreeHashMap!("get", fileMap, fileHash, *handleCh) |
+            for (@callerPubKey <- pubKeyCh & @existing <- handleCh) {
+              if (existing == Nil) {
+                ret!(Nil)
+              } else {
+                // Query state via the fileHandle's getInfo method
+                @existing!("getInfo", *infoCh) |
+                for (@state <- infoCh) {
+                  if (state.get("deployers").contains(callerPubKey)) {
+                    // Caller is an owner -- issue the AuthKey bound to their specific key.
+                    @AuthKey!("make", (*_fileRegistry, fileHash, callerPubKey), *ret)
+                  } else {
+                    ret!(Nil)
+                  }
                 }
               }
             }
@@ -184,54 +196,58 @@ in {
           new DeployerIdOps(`rho:system:deployerId:ops`), pubKeyCh in {
             DeployerIdOps!("pubKeyBytes", *ownerDeployerId, *pubKeyCh) |
             for (@ownerPubKey <- pubKeyCh) {
-              // Initialize state with single deployer (Map for O(1) membership check)
-              @{["fileState", fileHash]}!({ "deployers": { ownerPubKey: true }, "name": fileName }) |
+              // Use an unforgeable private channel for state instead of a
+              // globally-accessible tuple-keyed channel @{["fileState", fileHash]}.
+              // This prevents arbitrary deploys from reading/writing the deployers map.
+              new fileStateCh in {
+                fileStateCh!({ "deployers": { ownerPubKey: true }, "name": fileName }) |
 
-              new fileHandle in {
+                new fileHandle in {
 
-                // addDeployer(newDeployerId, ret)
-                //   Appends deployer to the reference counted array if not present.
-                contract fileHandle(@"addDeployer", newDeployerId, ret) = {
-                   new pubKeyCh in {
-                     DeployerIdOps!("pubKeyBytes", *newDeployerId, *pubKeyCh) |
-                     for (@newPubKey <- pubKeyCh) {
-                       for (@state <- @{["fileState", fileHash]}) {
-                         if (state.get("deployers").contains(newPubKey)) {
-                           // Already an owner
-                           @{["fileState", fileHash]}!(state) |
-                           ret!((true, bundle+{*fileHandle}))
-                         } else {
-                           // Add to deployers map
-                           @{["fileState", fileHash]}!(state.set("deployers", state.get("deployers").set(newPubKey, true))) |
-                           ret!((true, bundle+{*fileHandle}))
+                  // addDeployer(newDeployerId, ret)
+                  //   Appends deployer to the reference counted array if not present.
+                  contract fileHandle(@"addDeployer", newDeployerId, ret) = {
+                     new pubKeyCh in {
+                       DeployerIdOps!("pubKeyBytes", *newDeployerId, *pubKeyCh) |
+                       for (@newPubKey <- pubKeyCh) {
+                         for (@state <- fileStateCh) {
+                           if (state.get("deployers").contains(newPubKey)) {
+                             // Already an owner
+                             fileStateCh!(state) |
+                             ret!((true, bundle+{*fileHandle}))
+                           } else {
+                             // Add to deployers map
+                             fileStateCh!(state.set("deployers", state.get("deployers").set(newPubKey, true))) |
+                             ret!((true, bundle+{*fileHandle}))
+                           }
                          }
                        }
                      }
-                   }
-                } |
+                  } |
 
-                // delete(callerPubKey, authKey, ret)
-                contract fileHandle(@"delete", @callerPubKey, authKey, ret) = {
-                  _deleteTemplate!(fileHash, callerPubKey, *authKey, *ret)
-                } |
+                  // delete(callerPubKey, authKey, ret)
+                  contract fileHandle(@"delete", @callerPubKey, authKey, ret) = {
+                    _deleteTemplate!(fileHash, callerPubKey, *authKey, *fileStateCh, *ret)
+                  } |
 
-                contract fileHandle(@"getInfo", ret) = {
-                  for (@state <<- @{["fileState", fileHash]}) {
-                    ret!(state)
-                  }
-                } |
+                  contract fileHandle(@"getInfo", ret) = {
+                    for (@state <<- fileStateCh) {
+                      ret!(state)
+                    }
+                  } |
 
-                ret!(*fileHandle)
+                  ret!(*fileHandle)
+                }
               }
             }
           }
         } |
 
-        // _deleteTemplate(fileHash, callerPubKey, authKey, ret)
+        // _deleteTemplate(fileHash, callerPubKey, authKey, fileStateCh, ret)
         //   1. Validates AuthKey matches callerPubKey.
         //   2. Removes callerPubKey from deployers array.
         //   3. If array is empty -> calls rho:io:file!("delete") & deletes from fileMap.
-        contract _deleteTemplate(@fileHash, @callerPubKey, authKey, ret) = {
+        contract _deleteTemplate(@fileHash, @callerPubKey, authKey, fileStateCh, ret) = {
           new authValidCh, authValidEitherCh,
               sysDeleteCh, sysDeleteEitherCh,
               removeAckCh,
@@ -252,7 +268,7 @@ in {
                 (false, _) => { ret!(authResult) }
                 _ => {
                   // Step 2 -- Update deployers map (remove callerPubKey)
-                  for (@state <- @{["fileState", fileHash]}) {
+                  for (@state <- fileStateCh) {
                     match state.get("deployers").delete(callerPubKey) {
                       remainingDeployers => {
                         if (remainingDeployers.size() == 0) {
@@ -265,7 +281,7 @@ in {
                                 match deleteEither {
                                   (false, errMsg) => {
                                     // Restore state on sys failure
-                                    @{["fileState", fileHash]}!(state) |
+                                    fileStateCh!(state) |
                                     ret!((false, errMsg))
                                   }
                                   _ => {
@@ -281,7 +297,7 @@ in {
                           }
                         } else {
                           // Other deployers still reference this file. Just update map.
-                          @{["fileState", fileHash]}!(state.set("deployers", remainingDeployers)) |
+                          fileStateCh!(state.set("deployers", remainingDeployers)) |
                           ret!((true, fileHash))
                         }
                       }

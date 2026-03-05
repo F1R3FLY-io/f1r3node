@@ -238,6 +238,10 @@ object FileUploadAPI {
   ): Either[String, Unit] =
     if (isNodeReadOnly)
       Left("Node is in read-only mode")
+    else if (metadata.fileSize <= 0)
+      Left(s"Invalid fileSize: ${metadata.fileSize} (must be > 0)")
+    else if (metadata.fileHash.nonEmpty && !metadata.fileHash.matches("^[a-f0-9]{64}$"))
+      Left(s"Invalid fileHash format: must be 64 lowercase hex characters")
     else if (metadata.shardId != nodeShardId)
       Left(s"Invalid shardId: ${metadata.shardId} != $nodeShardId")
     else if (metadata.phloPrice < minPhloPrice)
