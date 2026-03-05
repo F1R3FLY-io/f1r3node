@@ -25,6 +25,27 @@ use tokio::time::sleep;
 use tracing::warn;
 use utoipa::ToSchema;
 
+const FIND_DEPLOY_RETRY_INTERVAL_MS_ENV: &str = "F1R3_FIND_DEPLOY_RETRY_INTERVAL_MS";
+const FIND_DEPLOY_MAX_ATTEMPTS_ENV: &str = "F1R3_FIND_DEPLOY_MAX_ATTEMPTS";
+const DEFAULT_FIND_DEPLOY_RETRY_INTERVAL_MS: u64 = 50;
+const DEFAULT_FIND_DEPLOY_MAX_ATTEMPTS: u16 = 1;
+
+fn find_deploy_retry_interval_ms() -> u64 {
+    std::env::var(FIND_DEPLOY_RETRY_INTERVAL_MS_ENV)
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_FIND_DEPLOY_RETRY_INTERVAL_MS)
+}
+
+fn find_deploy_max_attempts() -> u16 {
+    std::env::var(FIND_DEPLOY_MAX_ATTEMPTS_ENV)
+        .ok()
+        .and_then(|value| value.parse::<u16>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_FIND_DEPLOY_MAX_ATTEMPTS)
+}
+
 /// Web API trait defining the interface for HTTP endpoints
 #[async_trait::async_trait]
 pub trait WebApi {
@@ -301,10 +322,10 @@ where
         let deploy_id_bytes =
             hex::decode(&deploy_id).map_err(|e| eyre!("Invalid deploy ID format: {}", e))?;
 
-        const FIND_DEPLOY_RETRY_INTERVAL_MS: u64 = 100;
-        const FIND_DEPLOY_MAX_ATTEMPTS: u8 = 80;
+        let retry_interval_ms = find_deploy_retry_interval_ms();
+        let max_attempts = find_deploy_max_attempts();
 
-        let mut attempt = 1;
+        let mut attempt: u16 = 1;
         loop {
             match BlockAPI::find_deploy(&self.engine_cell, &deploy_id_bytes).await {
                 Ok(block) => return Ok(LightBlockInfoSerde::from(block)),
@@ -313,16 +334,18 @@ where
                         .to_string()
                         .starts_with("Couldn't find block containing deploy with id:");
 
-                    if !not_found || attempt >= FIND_DEPLOY_MAX_ATTEMPTS {
+                    if !not_found || attempt >= max_attempts {
                         return Err(err);
                     }
 
                     tracing::debug!(
                         ?attempt,
+                        ?max_attempts,
+                        ?retry_interval_ms,
                         ?deploy_id,
                         "Waiting for deploy to become visible in block DAG"
                     );
-                    sleep(Duration::from_millis(FIND_DEPLOY_RETRY_INTERVAL_MS)).await;
+                    sleep(Duration::from_millis(retry_interval_ms)).await;
                     attempt += 1;
                 }
             }
