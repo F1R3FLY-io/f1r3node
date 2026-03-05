@@ -1723,9 +1723,9 @@ impl DebruijnInterpreter {
                         ));
                     }
                     if v1 == i64::MIN && v2 == -1 {
-                      return Err(InterpreterError::ReduceError(
-                          "Arithmetic overflow in division".to_string(),
-                      ));
+                        return Err(InterpreterError::ReduceError(
+                            "Arithmetic overflow in division".to_string(),
+                        ));
                     }
                     self.cost.charge(division_cost())?;
                     Ok(Expr {
