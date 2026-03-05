@@ -77,7 +77,8 @@ object FileUploadAPI {
     Task.delay(Files.createDirectories(uploadDir)).flatMap { _ =>
       // Track last state so we can clean up on mid-stream Observable errors
       // (e.g. gRPC cancel) where foldLeftL never produces a final state.
-      val lastState = new java.util.concurrent.atomic.AtomicReference[UploadState](WaitingForMetadata)
+      val lastState =
+        new java.util.concurrent.atomic.AtomicReference[UploadState](WaitingForMetadata)
 
       // Single-pass fold: metadata is extracted from the first chunk,
       // all subsequent data chunks are written directly to a FileChannel.
@@ -178,12 +179,13 @@ object FileUploadAPI {
                 if (wd.aborted)
                   Task
                     .delay(Files.deleteIfExists(wd.tempFile))
-                    .flatMap(_ =>
-                      Task.raiseError(
-                        new IllegalArgumentException(
-                          s"Upload aborted: received ${wd.bytesWritten} bytes exceeds declared fileSize ${wd.metadata.fileSize}"
+                    .flatMap(
+                      _ =>
+                        Task.raiseError(
+                          new IllegalArgumentException(
+                            s"Upload aborted: received ${wd.bytesWritten} bytes exceeds declared fileSize ${wd.metadata.fileSize}"
+                          )
                         )
-                      )
                     )
                 else {
                   val hashBytes = new Array[Byte](32)
@@ -212,8 +214,9 @@ object FileUploadAPI {
               Task.delay {
                 try wd.channel.close()
                 catch { case _: Throwable => () }
-                try { Files.deleteIfExists(wd.tempFile); () }
-                catch { case _: Throwable => () }
+                try {
+                  Files.deleteIfExists(wd.tempFile); ()
+                } catch { case _: Throwable => () }
               }
             case _ => Task.unit
           }
@@ -273,22 +276,24 @@ object FileUploadAPI {
     if (bytesReceived != metadata.fileSize)
       Task
         .delay(Files.deleteIfExists(tempFile))
-        .flatMap(_ =>
-          Task.raiseError(
-            new IllegalArgumentException(
-              s"Size mismatch: received $bytesReceived, expected ${metadata.fileSize}"
+        .flatMap(
+          _ =>
+            Task.raiseError(
+              new IllegalArgumentException(
+                s"Size mismatch: received $bytesReceived, expected ${metadata.fileSize}"
+              )
             )
-          )
         )
     else if (metadata.fileHash.nonEmpty && computedHash != metadata.fileHash)
       Task
         .delay(Files.deleteIfExists(tempFile))
-        .flatMap(_ =>
-          Task.raiseError(
-            new IllegalArgumentException(
-              s"Hash mismatch: computed $computedHash, expected ${metadata.fileHash}"
+        .flatMap(
+          _ =>
+            Task.raiseError(
+              new IllegalArgumentException(
+                s"Hash mismatch: computed $computedHash, expected ${metadata.fileHash}"
+              )
             )
-          )
         )
     else
       Task.delay {
