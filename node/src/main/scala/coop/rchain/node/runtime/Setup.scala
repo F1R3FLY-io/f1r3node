@@ -303,11 +303,7 @@ object Setup {
           conf.protocolServer.disableStateExporter,
           onBlockFinalized,
           conf.standalone,
-          fileReplicationDir = Some(conf.storage.dataDir.resolve(conf.fileUpload.replicationDir)),
-          fileChunkSize = conf.fileUpload.chunkSize.toInt,
-          fileSyncTimeout = conf.fileUpload.fileSyncTimeout,
-          maxFileDataSizePerBlock = conf.fileUpload.maxFileDataSizePerBlock,
-          maxFileDeploysPerBlock = conf.fileUpload.maxFileDeploysPerBlock
+          fileConf = conf.fileUpload.toFileConf(conf.storage.dataDir)
         )
       }
       packetHandler = {
@@ -352,12 +348,7 @@ object Setup {
           conf.casper.minPhloPrice,
           isNodeReadOnly,
           uploadDir,
-          conf.fileUpload.chunkSize.toInt,
-          conf.fileUpload.maxConcurrentDownloadsPerIp,
-          conf.fileUpload.phloPerStorageByte,
-          conf.fileUpload.baseRegisterPhlo,
-          conf.fileUpload.maxFileSize,
-          conf.fileUpload.maxDownloadCacheEntries
+          conf.fileUpload
         )
       }
       reportingRoutes = {
@@ -409,7 +400,8 @@ object Setup {
           conf.casper.enableMergeableChannelGC,
           conf.casper.mergeableChannelsGCDepthBuffer,
           conf.casper.disableLateBlockFiltering,
-          conf.standalone // Disable validator progress check in standalone mode
+          conf.standalone, // Disable validator progress check in standalone mode
+          conf.fileUpload.toFileConf(conf.storage.dataDir)
         )
         for {
           _ <- if (conf.casper.enableMergeableChannelGC) {

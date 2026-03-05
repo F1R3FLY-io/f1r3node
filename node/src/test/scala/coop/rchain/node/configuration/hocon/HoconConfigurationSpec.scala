@@ -92,6 +92,8 @@ class HoconConfigurationSpec extends FunSuite with Matchers {
         baseRegisterPhlo = 300,
         maxConcurrentDownloadsPerIp = 4,
         fileSyncTimeout = 2.hours,
+        maxFileSize = 10737418240L,      // 10GB default
+        maxDownloadCacheEntries = 10000, // default
         maxFileDataSizePerBlock = 53687091200L,
         maxFileDeploysPerBlock = 10
       ),

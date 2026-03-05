@@ -124,6 +124,25 @@ final case class OnChainCasperState(
     activeValidators: Seq[Validator]
 )
 
+/**
+  * Groups all file-upload / DA-related configuration used by the casper layer.
+  * Extracted so that callers can pass a single object instead of many individual parameters.
+  */
+final case class FileConf(
+    fileReplicationDir: Option[Path] = None,
+    fileChunkSize: Int = 4 * 1024 * 1024, // 4MB default
+    // Maximum time to wait for all file transfers to complete before rejecting a block.
+    // Tune based on expected file sizes and network bandwidth:
+    //   6 GB @ 100 Mbps ≈ 8 min  → 30.minutes is safe
+    //   6 GB @  10 Mbps ≈ 80 min → 2.hours needed
+    //  10 GB @  10 Mbps ≈ 2.2 hr → increase to 3.hours
+    fileSyncTimeout: FiniteDuration = 2.hours,
+    // DA consensus: maximum total referenced file size per block (bytes)
+    maxFileDataSizePerBlock: Long = 50L * 1024 * 1024 * 1024, // 50 GB
+    // DA consensus: maximum number of file-registration deploys per block
+    maxFileDeploysPerBlock: Int = 10
+)
+
 final case class CasperShardConf(
     faultToleranceThreshold: Float,
     shardName: String,
@@ -147,18 +166,7 @@ final case class CasperShardConf(
     mergeableChannelsGCDepthBuffer: Int,
     disableLateBlockFiltering: Boolean,
     disableValidatorProgressCheck: Boolean,
-    fileReplicationDir: Option[Path] = None,
-    fileChunkSize: Int = 4 * 1024 * 1024, // 4MB default
-    // Maximum time to wait for all file transfers to complete before rejecting a block.
-    // Tune based on expected file sizes and network bandwidth:
-    //   6 GB @ 100 Mbps ≈ 8 min  → 30.minutes is safe
-    //   6 GB @  10 Mbps ≈ 80 min → 2.hours needed
-    //  10 GB @  10 Mbps ≈ 2.2 hr → increase to 3.hours
-    fileSyncTimeout: FiniteDuration = 2.hours,
-    // DA consensus: maximum total referenced file size per block (bytes)
-    maxFileDataSizePerBlock: Long = 50L * 1024 * 1024 * 1024, // 50 GB
-    // DA consensus: maximum number of file-registration deploys per block
-    maxFileDeploysPerBlock: Int = 10
+    fileConf: FileConf = FileConf()
 )
 
 sealed abstract class MultiParentCasperInstances {

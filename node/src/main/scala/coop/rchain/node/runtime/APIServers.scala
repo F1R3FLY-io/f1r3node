@@ -14,6 +14,7 @@ import coop.rchain.comm.rp.Connect.{ConnectionsCell, RPConfAsk}
 import coop.rchain.metrics.{Metrics, Span}
 import coop.rchain.monix.Monixable
 import coop.rchain.node.api.{DeployGrpcServiceV1, LspService, ProposeGrpcServiceV1, ReplGrpcService}
+import coop.rchain.node.configuration.FileUploadConf
 import coop.rchain.node.model.lsp.LspGrpcMonix
 import coop.rchain.node.model.repl.ReplGrpcMonix
 import coop.rchain.node.web.{CacheTransactionAPI, Transaction}
@@ -45,12 +46,7 @@ object APIServers {
       minPhloPrice: Long,
       isNodeReadOnly: Boolean,
       uploadDir: Path,
-      fileChunkSize: Int,
-      maxConcurrentDownloadsPerIp: Int,
-      phloPerStorageByte: Long,
-      baseRegisterPhlo: Long,
-      maxFileSize: Long,
-      maxDownloadCacheEntries: Int
+      fileUploadConf: FileUploadConf
   )(
       implicit
       blockStore: BlockStore[F],
@@ -78,12 +74,7 @@ object APIServers {
         minPhloPrice,
         isNodeReadOnly,
         uploadDir,
-        fileChunkSize,
-        maxConcurrentDownloadsPerIp,
-        phloPerStorageByte,
-        baseRegisterPhlo,
-        maxFileSize,
-        maxDownloadCacheEntries
+        fileUploadConf
       )
     val propose = ProposeGrpcServiceV1(triggerProposeFOpt, proposerStateRefOpt)
     val lsp     = LspService(mainScheduler)
