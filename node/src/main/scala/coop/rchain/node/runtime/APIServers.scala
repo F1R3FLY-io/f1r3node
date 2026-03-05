@@ -48,7 +48,9 @@ object APIServers {
       fileChunkSize: Int,
       maxConcurrentDownloadsPerIp: Int,
       phloPerStorageByte: Long,
-      baseRegisterPhlo: Long
+      baseRegisterPhlo: Long,
+      maxFileSize: Long,
+      maxDownloadCacheEntries: Int
   )(
       implicit
       blockStore: BlockStore[F],
@@ -79,7 +81,9 @@ object APIServers {
         fileChunkSize,
         maxConcurrentDownloadsPerIp,
         phloPerStorageByte,
-        baseRegisterPhlo
+        baseRegisterPhlo,
+        maxFileSize,
+        maxDownloadCacheEntries
       )
     val propose = ProposeGrpcServiceV1(triggerProposeFOpt, proposerStateRefOpt)
     val lsp     = LspService(mainScheduler)

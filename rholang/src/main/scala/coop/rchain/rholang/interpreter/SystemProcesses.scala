@@ -72,7 +72,8 @@ trait SystemProcesses[F[_]] {
   def fileRegister(
       blockData: Ref[F, SystemProcesses.BlockData],
       deployData: Ref[F, SystemProcesses.DeployData],
-      cost: _cost[F]
+      cost: _cost[F],
+      phloPerStorageByte: Long = 1L
   ): Contract[F]
   def fileDelete(fileReplicationDir: Option[java.nio.file.Path]): Contract[F]
 }
@@ -223,7 +224,8 @@ object SystemProcesses {
       invalidBlocks: InvalidBlocks[F],
       deployData: Ref[F, DeployData],
       externalServices: ExternalServices,
-      fileReplicationDir: Option[Path] = None
+      fileReplicationDir: Option[Path] = None,
+      phloPerStorageByte: Long = 1L
   ) {
     val systemProcesses = SystemProcesses[F](dispatcher, space, externalServices)
     val cost: _cost[F]  = _cost[F]
@@ -747,7 +749,8 @@ object SystemProcesses {
       def fileRegister(
           blockData: Ref[F, BlockData],
           deployData: Ref[F, DeployData],
-          cost: _cost[F]
+          cost: _cost[F],
+          phloPerStorageByte: Long = 1L
       ): Contract[F] = {
         case isContractCall(
             produce,
@@ -763,58 +766,71 @@ object SystemProcesses {
             )
             ) =>
           for {
-            blockInfo \u003c- blockData.get
-            message = Sha256.hash(s"$fileHash:$fileSize".getBytes("UTF-8"))
-            verified = Try {
-              val sigBytes = Base16.unsafeDecode(nodeSigHex)
-              val pubKey   = blockInfo.sender.bytes
-              Secp256k1.verify(message, sigBytes, pubKey)
-            }.getOrElse(false)
-            output <- if (verified) {
-                       // Charge storage-proportional phlo (consensus-enforced)
-                       charge[F](fileStorageCost(fileSize.toLong))(
-                         Monad[F],
-                         cost,
-                         implicitly[_error[F]]
-                       ) >> {
-                         // Produce result to caller
-                         val result: Seq[Par] =
-                           Seq(RhoType.Tuple2((RhoType.Boolean(true), RhoType.String(fileHash))))
-
-                         // Produce delegation data to FILE_REGISTRY_NOTIFY channel.
-                         // FileRegistry.rho consumes from this channel and records the
-                         // on-chain registration. The GSysAuthToken is unforgeable —
-                         // FileRegistry validates it with sysAuthTokenOps!("check", ...).
-                         val deploy = deployData.get
-                         deploy.flatMap { dd =>
-                           val deployerIdPar: Par = RhoType.DeployerId(dd.deployerId.bytes)
-                           val sysAuthTokenPar: Par = RhoType.SysAuthToken(
-                             coop.rchain.models.GSysAuthToken()
-                           )
-                           val notifyData: Seq[Par] = Seq(
-                             RhoType.String(fileHash),
-                             RhoType.String(fileName),
-                             deployerIdPar,
-                             sysAuthTokenPar
-                           )
-                           // Produce to the bundled channel that FileRegistry.rho
-                           // consumes from. Must match the URN map entry exactly.
-                           val notifyCh: Par = Bundle(
-                             FixedChannels.FILE_REGISTRY_NOTIFY,
-                             readFlag = true
-                           )
-                           produce(notifyData, notifyCh) >>
-                             produce(result, ack).map(_ => result)
-                         }
-                       }
-                     } else {
+            blockInfo <- blockData.get
+            output <- if (fileSize <= 0) {
                        val result: Seq[Par] =
                          Seq(
                            RhoType.Tuple2(
-                             (RhoType.Boolean(false), RhoType.String("Invalid node signature"))
+                             (
+                               RhoType.Boolean(false),
+                               RhoType.String("fileSize must be positive")
+                             )
                            )
                          )
                        produce(result, ack).map(_ => result)
+                     } else {
+                       val message = Sha256.hash(s"$fileHash:$fileSize".getBytes("UTF-8"))
+                       val verified = Try {
+                         val sigBytes = Base16.unsafeDecode(nodeSigHex)
+                         val pubKey   = blockInfo.sender.bytes
+                         Secp256k1.verify(message, sigBytes, pubKey)
+                       }.getOrElse(false)
+                       if (verified) {
+                         // Charge storage-proportional phlo (consensus-enforced)
+                         charge[F](fileStorageCost(fileSize.toLong, phloPerStorageByte))(
+                           Monad[F],
+                           cost,
+                           implicitly[_error[F]]
+                         ) >> {
+                           // Produce result to caller
+                           val result: Seq[Par] =
+                             Seq(RhoType.Tuple2((RhoType.Boolean(true), RhoType.String(fileHash))))
+
+                           // Produce delegation data to FILE_REGISTRY_NOTIFY channel.
+                           // FileRegistry.rho consumes from this channel and records the
+                           // on-chain registration. The GSysAuthToken is unforgeable —
+                           // FileRegistry validates it with sysAuthTokenOps!("check", ...).
+                           val deploy = deployData.get
+                           deploy.flatMap { dd =>
+                             val deployerIdPar: Par = RhoType.DeployerId(dd.deployerId.bytes)
+                             val sysAuthTokenPar: Par = RhoType.SysAuthToken(
+                               coop.rchain.models.GSysAuthToken()
+                             )
+                             val notifyData: Seq[Par] = Seq(
+                               RhoType.String(fileHash),
+                               RhoType.String(fileName),
+                               deployerIdPar,
+                               sysAuthTokenPar
+                             )
+                             // Produce to the bundled channel that FileRegistry.rho
+                             // consumes from. Must match the URN map entry exactly.
+                             val notifyCh: Par = Bundle(
+                               FixedChannels.FILE_REGISTRY_NOTIFY,
+                               readFlag = true
+                             )
+                             produce(notifyData, notifyCh) >>
+                               produce(result, ack).map(_ => result)
+                           }
+                         }
+                       } else {
+                         val result: Seq[Par] =
+                           Seq(
+                             RhoType.Tuple2(
+                               (RhoType.Boolean(false), RhoType.String("Invalid node signature"))
+                             )
+                           )
+                         produce(result, ack).map(_ => result)
+                       }
                      }
           } yield output
         case isContractCall(_, _, _, Seq(RhoType.String("register"), _*)) =>

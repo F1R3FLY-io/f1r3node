@@ -23,25 +23,27 @@ import java.nio.file.{Files, Path}
   */
 object OrphanFileCleanup {
 
-  // Matches a 64-character lowercase hex string (Blake2b-256 hash)
-  private val FileHashPattern = """([a-f0-9]{64})""".r.unanchored
+  // Matches a 64-character lowercase hex string enclosed in double quotes,
+  // as it appears in the Rholang term: file!("register", "<hash>", ...)
+  // The quotes prevent false positives on unrelated hex strings (public keys, sigs).
+  private val FileHashPattern = """"([a-f0-9]{64})"""".r.unanchored
 
   /**
     * Checks whether a deploy's term matches the file-registration pattern.
     * Uses simple string matching: the term must reference the `rho:io:file`
-    * system channel and contain `"register"` with a valid file hash.
+    * system channel and contain `"register"` with a quoted 64-char hex hash.
     */
   def isFileRegistrationDeploy(d: DeployData): Boolean =
     d.term.contains("rho:io:file") &&
       d.term.contains("\"register\"") &&
-      FileHashPattern.findFirstIn(d.term).isDefined
+      FileHashPattern.findFirstMatchIn(d.term).isDefined
 
   /**
     * Extracts the 64-char hex file hash from a file-registration deploy term.
-    * Returns `None` if the term does not contain a valid hash.
+    * Returns `None` if the term does not contain a valid quoted hash.
     */
   def extractFileHash(d: DeployData): Option[String] =
-    FileHashPattern.findFirstIn(d.term)
+    FileHashPattern.findFirstMatchIn(d.term).map(_.group(1))
 
   // Matches an integer immediately following the hash and a comma, e.g.
   // file!("register", "<hash>", 1048576, ...) → 1048576

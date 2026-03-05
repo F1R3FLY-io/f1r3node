@@ -537,7 +537,8 @@ object RhoRuntime {
       FixedChannels.FILE_IO,
       6,
       BodyRefs.FILE_REGISTER, { ctx =>
-        ctx.systemProcesses.fileRegister(ctx.blockData, ctx.deployData, ctx.cost)
+        ctx.systemProcesses
+          .fileRegister(ctx.blockData, ctx.deployData, ctx.cost, ctx.phloPerStorageByte)
       }
     ),
     Definition[F](

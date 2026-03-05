@@ -72,7 +72,8 @@ object FileUploadAPI {
       isNodeReadOnly: Boolean,
       uploadDir: Path,
       phloPerStorageByte: Long = FileUploadCosts.DEFAULT_PHLO_PER_STORAGE_BYTE,
-      baseRegisterPhlo: Long = FileUploadCosts.BASE_REGISTER_PHLO
+      baseRegisterPhlo: Long = FileUploadCosts.BASE_REGISTER_PHLO,
+      maxFileSize: Long = 10L * 1024 * 1024 * 1024
   ): Task[FileUploadOutput] =
     Task.delay(Files.createDirectories(uploadDir)).flatMap { _ =>
       // Track last state so we can clean up on mid-stream Observable errors
@@ -100,7 +101,8 @@ object FileUploadAPI {
                     minPhloPrice,
                     isNodeReadOnly,
                     phloPerStorageByte,
-                    baseRegisterPhlo
+                    baseRegisterPhlo,
+                    maxFileSize
                   ) match {
                     case Left(err) =>
                       Failed(new IllegalArgumentException(err))
@@ -234,12 +236,18 @@ object FileUploadAPI {
       minPhloPrice: Long,
       isNodeReadOnly: Boolean,
       phloPerStorageByte: Long,
-      baseRegisterPhlo: Long
+      baseRegisterPhlo: Long,
+      maxFileSize: Long
   ): Either[String, Unit] =
     if (isNodeReadOnly)
       Left("Node is in read-only mode")
     else if (metadata.fileSize <= 0)
       Left(s"Invalid fileSize: ${metadata.fileSize} (must be > 0)")
+    else if (metadata.fileSize > maxFileSize)
+      Left(
+        s"File too large: ${metadata.fileSize} bytes exceeds maximum ${maxFileSize} bytes " +
+          s"(${maxFileSize / (1024 * 1024)} MB)"
+      )
     else if (metadata.fileHash.nonEmpty && !metadata.fileHash.matches("^[a-f0-9]{64}$"))
       Left(s"Invalid fileHash format: must be 64 lowercase hex characters")
     else if (metadata.shardId != nodeShardId)

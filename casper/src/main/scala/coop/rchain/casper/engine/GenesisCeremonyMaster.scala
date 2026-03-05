@@ -79,46 +79,9 @@ object GenesisCeremonyMaster {
                case Some(approvedBlock) =>
                  val ab = approvedBlock.candidate.block
                  for {
-                   _ <- insertIntoBlockAndDagStore[F](ab, approvedBlock)
-                   // Create FileRequester for P2P file transfers
-                   dataDir <- cats.effect.Sync[F].delay {
-                               val dir = casperShardConf.fileReplicationDir.getOrElse(
-                                 java.nio.file.Paths.get("file-replication")
-                               )
-                               if (!dir.toFile.exists()) dir.toFile.mkdirs()
-                               dir
-                             }
-                   fileRequester = new FileRequester[F](
-                     dataDir,
-                     casperShardConf.fileChunkSize,
-                     casperShardConf.fileSyncTimeout
-                   )
-                   // DA-gating callback: request missing files from all peers and await.
-                   // Broadcasts HasFile queries to all connected peers, then polls until
-                   // the files arrive (via the FilePacket handler) or the timeout expires.
-                   daCallback = (block: BlockMessage, missingHashes: List[String]) =>
-                     for {
-                       _ <- Log[F].info(
-                             s"[GenesisCeremonyMaster] daCallback fired: " +
-                               s"missingHashes=${missingHashes.size}: ${missingHashes.map(_.take(16)).mkString("[", ", ", "]")}"
-                           )
-                       peers <- ConnectionsCell[F].read
-                       _ <- Log[F].info(
-                             s"[GenesisCeremonyMaster] daCallback: requesting files from ${peers.size} peers"
-                           )
-                       // Broadcast file requests to ALL peers
-                       _ <- peers.toList.traverse_(
-                             peer => fileRequester.requestFiles(peer, missingHashes)
-                           )
-                       // Wait for files to arrive via P2P (with bounded timeout)
-                       stillMissing <- fileRequester.awaitFiles(
-                                        missingHashes,
-                                        casperShardConf.fileSyncTimeout
-                                      )
-                       _ <- Log[F].info(
-                             s"[GenesisCeremonyMaster] daCallback: awaitFiles returned, stillMissing=${stillMissing.size}"
-                           )
-                     } yield stillMissing
+                   _                           <- insertIntoBlockAndDagStore[F](ab, approvedBlock)
+                   setup                       <- FileReplicationSetup.create[F](casperShardConf)
+                   (fileRequester, daCallback) = setup
                    // Create heartbeat signal ref for triggering fast proposals on deploy submission
                    heartbeatSignalRef <- Ref[F].of(Option.empty[HeartbeatSignal[F]])
                    casper <- MultiParentCasper

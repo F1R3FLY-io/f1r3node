@@ -75,13 +75,13 @@ in {
        @(_, Either)   <- EitherCh  &
        TreeHashMap    <- TreeHashMapCh) {
 
-    // -- SELF-INITIALIZING TOKEN STORAGE (one-shot) -----------------------
+    // -- IDEMPOTENT TOKEN STORAGE -------------------------------------------
     //
-    // _tokenInitFlag starts with an initial value. On the first registerNotify
-    // call, the flag is consumed (destructive read) and the sysAuthToken is
-    // stored on _sysAuthTokenCh. Subsequent calls find the flag empty and
-    // skip the produce, preventing unbounded channel growth.
-    _tokenInitFlag!(true) |
+    // _sysAuthTokenCh stores the SysAuthToken for use by _deleteTemplate.
+    // The token is produced unconditionally on every registerNotify call
+    // (it's always the same unforgeable value), eliminating the race
+    // condition inherent in the old one-shot _tokenInitFlag pattern.
+    // The peek (`<<-`) in _deleteTemplate ensures non-destructive reads.
 
     // fileMap: TreeHashMap[fileHash:String -> fileHandle:Name]
     // Depth 3 -> 3*8 = 24-bit prefix parallelism, adequate for millions of files.
@@ -139,17 +139,15 @@ in {
         // deployerId, sysAuthToken) here after successful sig verification
         // and phlo charging.
         //
-        // On the first call, we also store the sysAuthToken in _sysAuthTokenCh
-        // for later use by _deleteTemplate. This replaces the old genesis init.
+        // M7 FIX: Unconditionally store the sysAuthToken. The token is always
+        // the same unforgeable value, so repeated produces are idempotent.
+        // _deleteTemplate reads with peek (`<<-`), so it only reads the first
+        // value and does not consume it.
         //
         contract registerNotify(@fileHash, @fileName, ownerDeployerId, @sysAuthToken) = {
           new regAckCh in {
-            // Store token exactly once (one-shot flag pattern):
-            // Destructive read of _tokenInitFlag only succeeds on the first call.
-            // Subsequent calls find _tokenInitFlag empty and go straight to register.
-            for (_ <- _tokenInitFlag) {
-              _sysAuthTokenCh!(sysAuthToken)
-            } |
+            // Idempotent: always produce the token. _deleteTemplate reads with peek.
+            _sysAuthTokenCh!(sysAuthToken) |
             FileRegistry!("register", fileHash, fileName, *ownerDeployerId, sysAuthToken, *regAckCh)
           }
         } |

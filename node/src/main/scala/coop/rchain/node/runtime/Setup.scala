@@ -355,7 +355,9 @@ object Setup {
           conf.fileUpload.chunkSize.toInt,
           conf.fileUpload.maxConcurrentDownloadsPerIp,
           conf.fileUpload.phloPerStorageByte,
-          conf.fileUpload.baseRegisterPhlo
+          conf.fileUpload.baseRegisterPhlo,
+          conf.fileUpload.maxFileSize,
+          conf.fileUpload.maxDownloadCacheEntries
         )
       }
       reportingRoutes = {
