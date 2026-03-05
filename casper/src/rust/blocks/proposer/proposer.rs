@@ -515,7 +515,7 @@ pub type ProductionProposer<T> = Proposer<
     ProductionProposeEffectHandler<T>,
 >;
 
-pub fn new_proposer<T: TransportLayer + Send + Sync>(
+pub fn new_proposer<T: TransportLayer + Send + Sync + 'static>(
     validator: ValidatorIdentity,
     dummy_deploy_opt: Option<(PrivateKey, String)>,
     runtime_manager: RuntimeManager,
@@ -720,7 +720,9 @@ impl<T: TransportLayer + Send + Sync> ProductionProposeEffectHandler<T> {
     }
 }
 
-impl<T: TransportLayer + Send + Sync> ProposeEffectHandler for ProductionProposeEffectHandler<T> {
+impl<T: TransportLayer + Send + Sync + 'static> ProposeEffectHandler
+    for ProductionProposeEffectHandler<T>
+{
     async fn handle_propose_effect(
         &mut self,
         casper: Arc<dyn Casper + Send + Sync + 'static>,
@@ -737,24 +739,25 @@ impl<T: TransportLayer + Send + Sync> ProposeEffectHandler for ProductionPropose
             .ack_in_casper(block.block_hash.clone())
             .await?;
 
-        // Broadcast hash to peers on a best-effort basis.
-        // A single slow or faulty peer must not fail local propose completion.
-        if let Err(err) = self
-            .transport
-            .send_block_hash(
-                &self.connections_cell,
-                &self.conf,
-                &block.block_hash,
-                &block.sender,
-            )
-            .await
-        {
-            tracing::warn!(
-                "Failed to broadcast block hash {} to some peers: {}",
-                PrettyPrinter::build_string_bytes(&block.block_hash),
-                err
-            );
-        }
+        // Broadcast hash to peers on a best-effort basis, but do not let network fan-out tail
+        // block local propose completion latency.
+        let transport = Arc::clone(&self.transport);
+        let connections_cell = self.connections_cell.clone();
+        let conf = self.conf.clone();
+        let block_hash = block.block_hash.clone();
+        let sender = block.sender.clone();
+        tokio::spawn(async move {
+            if let Err(err) = transport
+                .send_block_hash(&connections_cell, &conf, &block_hash, &sender)
+                .await
+            {
+                tracing::warn!(
+                    "Failed to broadcast block hash {} to some peers: {}",
+                    PrettyPrinter::build_string_bytes(&block_hash),
+                    err
+                );
+            }
+        });
 
         Ok(())
     }

@@ -1,23 +1,74 @@
 use bincode;
 use serde::Serialize;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::OnceLock;
 
 use super::blake2b256_hash::Blake2b256Hash;
 
+const RSS_SAMPLE_MIN_INTERVAL_MS: u64 = 200;
+
+struct RssCache {
+    last_sample_ms: AtomicU64,
+    value_kb: AtomicU64,
+}
+
+impl RssCache {
+    fn new() -> Self {
+        Self {
+            last_sample_ms: AtomicU64::new(0),
+            value_kb: AtomicU64::new(0),
+        }
+    }
+}
+
 fn mem_profile_enabled() -> bool {
-    std::env::var("F1R3_BLOCK_CREATOR_PHASE_SUBSTEP_PROFILE")
-        .map(|v| {
-            let normalized = v.trim().to_ascii_lowercase();
-            normalized == "1" || normalized == "true" || normalized == "yes"
-        })
-        .unwrap_or(false)
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var("F1R3_BLOCK_CREATOR_PHASE_SUBSTEP_PROFILE")
+            .map(|v| {
+                let normalized = v.trim().to_ascii_lowercase();
+                normalized == "1" || normalized == "true" || normalized == "yes"
+            })
+            .unwrap_or(false)
+    })
+}
+
+fn monotonic_now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+#[cold]
+fn read_rss_from_proc_statm_kb() -> Option<u64> {
+    // Linux default page size is 4 KiB on our validator targets.
+    const PAGE_SIZE_KB: u64 = 4;
+    let statm = std::fs::read_to_string("/proc/self/statm").ok()?;
+    let rss_pages = statm.split_whitespace().nth(1)?.parse::<u64>().ok()?;
+    Some(rss_pages.saturating_mul(PAGE_SIZE_KB))
 }
 
 fn read_rss_kb() -> Option<u64> {
-    let status = std::fs::read_to_string("/proc/self/status").ok()?;
-    let line = status.lines().find(|l| l.starts_with("VmRSS:"))?;
-    let mut parts = line.split_whitespace();
-    let _ = parts.next();
-    parts.next()?.parse::<u64>().ok()
+    if !mem_profile_enabled() {
+        return None;
+    }
+
+    static CACHE: OnceLock<RssCache> = OnceLock::new();
+    let cache = CACHE.get_or_init(RssCache::new);
+    let now_ms = monotonic_now_ms();
+    let last_ms = cache.last_sample_ms.load(Ordering::Relaxed);
+    if last_ms != 0 && now_ms.saturating_sub(last_ms) < RSS_SAMPLE_MIN_INTERVAL_MS {
+        let cached = cache.value_kb.load(Ordering::Relaxed);
+        if cached > 0 {
+            return Some(cached);
+        }
+    }
+
+    let measured = read_rss_from_proc_statm_kb()?;
+    cache.value_kb.store(measured, Ordering::Relaxed);
+    cache.last_sample_ms.store(now_ms, Ordering::Relaxed);
+    Some(measured)
 }
 
 fn log_step_delta(func_name: &str, step: &str, before_kb: Option<u64>) {
