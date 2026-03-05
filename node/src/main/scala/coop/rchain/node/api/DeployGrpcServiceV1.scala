@@ -50,7 +50,9 @@ object DeployGrpcServiceV1 {
       fileChunkSize: Int = 4 * 1024 * 1024,
       maxConcurrentDownloadsPerIp: Int = 4,
       phloPerStorageByte: Long = FileUploadCosts.DEFAULT_PHLO_PER_STORAGE_BYTE,
-      baseRegisterPhlo: Long = FileUploadCosts.BASE_REGISTER_PHLO
+      baseRegisterPhlo: Long = FileUploadCosts.BASE_REGISTER_PHLO,
+      maxFileSize: Long = 10L * 1024 * 1024 * 1024,
+      maxDownloadCacheEntries: Int = 10000
   )(
       implicit worker: Scheduler
   ): DeployServiceV1GrpcMonix.DeployService =
@@ -414,7 +416,8 @@ object DeployGrpcServiceV1 {
             isNodeReadOnly,
             uploadDir,
             phloPerStorageByte,
-            baseRegisterPhlo
+            baseRegisterPhlo,
+            maxFileSize
           )
           .flatMap { output =>
             output.deployProto match {
@@ -483,6 +486,12 @@ object DeployGrpcServiceV1 {
             )
           }
 
+      // The ScalaPB-generated gRPC Monix trait does not expose request metadata
+      // (no ServerCallHandler or Metadata in the method signature), so we cannot
+      // extract the client IP here. The rate limiter therefore acts as a GLOBAL
+      // concurrent download limit (all clients share the "unknown" key).
+      // To implement true per-IP limiting, add a gRPC ServerInterceptor that
+      // stores the IP in a Context.Key and read it here.
       def downloadFile(request: FileDownloadRequest): Observable[FileDownloadChunk] =
         FileDownloadAPI.streamFile(
           request,
@@ -490,7 +499,8 @@ object DeployGrpcServiceV1 {
           uploadDir,
           chunkSize = fileChunkSize,
           maxConcurrentPerIp = maxConcurrentDownloadsPerIp,
-          devMode = devMode
+          devMode = devMode,
+          maxCacheEntries = maxDownloadCacheEntries
         )
     }
 }

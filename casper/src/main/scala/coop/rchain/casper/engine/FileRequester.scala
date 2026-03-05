@@ -148,6 +148,21 @@ class FileRequester[F[_]: Concurrent: Log: Time: TransportLayer: RPConfAsk](
     Sync[F]
       .delay(System.currentTimeMillis() + timeout.toMillis)
       .flatMap(deadline => pollAll(fileHashes, deadline))
+      .flatTap { stillMissing =>
+        // Clean up stale download entries and orphaned .part files for timed-out downloads
+        if (stillMissing.nonEmpty)
+          stillMissing.traverse_ { hash =>
+            downloads.modify(state => (state - hash, state.get(hash))).flatMap {
+              case Some(ds) =>
+                Sync[F].delay(java.nio.file.Files.deleteIfExists(ds.tempPath)) *>
+                  Log[F].warn(
+                    s"[FileRequester] Timeout cleanup: deleted ${ds.tempPath} for ${hash.take(16)}..."
+                  )
+              case None =>
+                ().pure[F]
+            }
+          } else ().pure[F]
+      }
   }
 
   def handleHasFile(peer: PeerNode, msg: HasFile): F[Unit] =
@@ -236,6 +251,14 @@ class FileRequester[F[_]: Concurrent: Log: Time: TransportLayer: RPConfAsk](
                             StandardOpenOption.CREATE,
                             StandardOpenOption.APPEND
                           )
+                          // IMPORTANT: `ds.digest` is a mutable Blake2bDigest object shared
+                          // by reference with the updated map entry.
+                          // The `modify` above updated `bytesReceived` but the `digest` field
+                          // aliases the SAME JVM object in both the old `ds` and the new entry.
+                          // This is safe because we hold exclusive ownership of this offset
+                          // (only one thread wins the `modify`), but any refactor making
+                          // DownloadState truly immutable must restructure this to update
+                          // the digest inside the `modify` block.
                           ds.digest.update(data, 0, data.length)
                         }
                     _ <- if (msg.eof) {

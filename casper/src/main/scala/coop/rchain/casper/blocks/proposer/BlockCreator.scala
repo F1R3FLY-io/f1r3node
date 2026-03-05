@@ -140,20 +140,17 @@ object BlockCreator {
             d => OrphanFileCleanup.isFileRegistrationDeploy(d.data)
           )
           // Apply count limit, then cumulative size limit (FIFO by timestamp)
-          limitedFileDeploys = {
-            var remaining = maxFileDataSize
-            fileDeploys.toList
-              .sortBy(_.data.timestamp)
-              .take(maxFileDeploys)
-              .takeWhile { d =>
+          limitedFileDeploys = fileDeploys.toList
+            .sortBy(_.data.timestamp)
+            .take(maxFileDeploys)
+            .foldLeft((0L, List.empty[Signed[DeployData]])) {
+              case ((usedSize, accepted), d) =>
                 val size = OrphanFileCleanup.extractFileSize(d.data)
-                if (remaining >= size) {
-                  remaining -= size
-                  true
-                } else false
-              }
-              .toSet
-          }
+                if (usedSize + size <= maxFileDataSize) (usedSize + size, d :: accepted)
+                else (usedSize, accepted)
+            }
+            ._2
+            .toSet
           skippedCount = fileDeploys.size - limitedFileDeploys.size
           _ <- if (skippedCount > 0)
                 Log[F].info(
