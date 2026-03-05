@@ -136,7 +136,22 @@ impl BlockReportAPI {
         metrics::gauge!("block_report.lock.queue_size", "source" => "casper")
             .decrement(1.0);
 
-        let block_hash_bytes: ByteString = block_hash.to_vec().into();
+        let result = self.block_report_inner(force_replay, block, casper).await;
+
+        // Remove semaphore entry to prevent unbounded growth of the lock map
+        self.block_lock_map.remove(&block_hash);
+
+        result
+    }
+
+    /// Inner block report logic (separated to ensure lock map cleanup on all paths)
+    async fn block_report_inner(
+        &self,
+        force_replay: bool,
+        block: &BlockMessage,
+        casper: &Arc<dyn crate::rust::casper::MultiParentCasper + Send + Sync>,
+    ) -> ApiErr<BlockEventInfo> {
+        let block_hash_bytes: ByteString = block.block_hash.to_vec().into();
         let cached = self.report_store.get(&vec![block_hash_bytes.clone()])
             .map_err(|e| BlockReportError::StoreError(e.to_string()))?;
 
