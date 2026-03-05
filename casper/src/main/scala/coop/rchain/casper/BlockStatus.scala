@@ -91,7 +91,11 @@ object InvalidBlock {
   case object ContainsFutureDeploy      extends InvalidBlock
   case object NotOfInterest             extends InvalidBlock
   case object LowDeployCost             extends InvalidBlock
-  case object MissingFileData           extends InvalidBlock
+  // N.B. MissingFileData is intentionally NOT in slashableOffenses.
+  // A block may reference files that are still in transit via P2P replication.
+  // Once the files arrive, the block becomes valid. Slashing for this would
+  // punish proposers whose files are simply slow to propagate.
+  case object MissingFileData extends InvalidBlock
 
   val slashableOffenses: Set[InvalidBlock] =
     Set(

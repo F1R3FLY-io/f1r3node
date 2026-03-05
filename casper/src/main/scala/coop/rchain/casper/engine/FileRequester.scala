@@ -55,21 +55,29 @@ class FileRequester[F[_]: Concurrent: Log: Time: TransportLayer: RPConfAsk](
         isCompleted <- completed.get.map(_.contains(hash))
         onDisk      <- Sync[F].delay(java.nio.file.Files.exists(dataDir.resolve(hash)))
         _ <- if (!isCompleted && !onDisk) {
-              // Ensure download state exists (idempotent: only create if not already downloading)
-              downloads.get.flatMap { state =>
-                if (!state.contains(hash)) {
-                  val tempPath = dataDir.resolve(s"$hash.part")
-                  val digest   = new Blake2bDigest(256)
-                  downloads.update(_ + (hash -> DownloadState(tempPath, digest, 0L, None))) *>
+              // Atomically ensure download state exists (prevents TOCTOU race
+              // when daCallback broadcasts to multiple peers concurrently)
+              downloads
+                .modify { state =>
+                  if (!state.contains(hash)) {
+                    val tempPath = dataDir.resolve(s"$hash.part")
+                    val digest   = new Blake2bDigest(256)
+                    (state + (hash -> DownloadState(tempPath, digest, 0L, None)), true)
+                  } else {
+                    (state, false)
+                  }
+                }
+                .flatMap { wasNew =>
+                  if (wasNew)
                     Log[F].info(
                       s"[FileRequester] requestFiles: registered download for ${hash.take(16)}... from $peer"
                     )
-                } else {
-                  Log[F].info(
-                    s"[FileRequester] requestFiles: download already registered for ${hash.take(16)}..., sending FileRequest to $peer"
-                  )
-                }
-              } *>
+                  else
+                    Log[F].info(
+                      s"[FileRequester] requestFiles: download already registered for ${hash
+                        .take(16)}..., sending FileRequest to $peer"
+                    )
+                } *>
                 // Always send FileRequest to this peer — peer will respond only if it has the file
                 requestChunk(peer, hash, 0L)
             } else {
@@ -221,13 +229,13 @@ class FileRequester[F[_]: Concurrent: Log: Time: TransportLayer: RPConfAsk](
                   for {
                     _ <- Sync[F].delay {
                           // Append data to file and update digest
+                          val data = msg.data.toByteArray
                           java.nio.file.Files.write(
                             ds.tempPath,
-                            msg.data.toByteArray,
+                            data,
                             StandardOpenOption.CREATE,
                             StandardOpenOption.APPEND
                           )
-                          val data = msg.data.toByteArray
                           ds.digest.update(data, 0, data.length)
                         }
                     _ <- if (msg.eof) {
@@ -288,42 +296,46 @@ class FileRequester[F[_]: Concurrent: Log: Time: TransportLayer: RPConfAsk](
 
   def handleFileRequest(peer: PeerNode, msg: FileRequest): F[Unit] = {
     val filePath = dataDir.resolve(msg.fileHash)
-    val exists   = java.nio.file.Files.exists(filePath)
-    Log[F].info(
-      s"[FileRequester] handleFileRequest: hash=${msg.fileHash.take(16)}..., offset=${msg.offset}, " +
-        s"chunkSize=${msg.chunkSize}, fileExists=$exists, from=$peer"
-    ) *> (if (exists) {
-            for {
-              // Read chunk
-              bytes <- Sync[F].delay {
-                        val channel =
-                          java.nio.channels.FileChannel.open(filePath, StandardOpenOption.READ)
-                        val buf = java.nio.ByteBuffer.allocate(msg.chunkSize)
-                        channel.position(msg.offset)
-                        val read = channel.read(buf)
-                        channel.close()
-                        if (read > 0) {
-                          buf.flip()
-                          val arr = new Array[Byte](read)
-                          buf.get(arr)
-                          com.google.protobuf.ByteString.copyFrom(arr)
-                        } else {
-                          com.google.protobuf.ByteString.EMPTY
-                        }
-                      }
-              fileSize = java.nio.file.Files.size(filePath)
-              eof      = (msg.offset + bytes.size) >= fileSize
-              _ <- Log[F].info(
-                    s"[FileRequester] Serving chunk: hash=${msg.fileHash.take(16)}..., " +
-                      s"offset=${msg.offset}, bytesRead=${bytes.size}, fileSize=$fileSize, eof=$eof"
-                  )
-              packet = FilePacket(msg.fileHash, msg.offset, bytes, eof)
-              _      <- TransportLayer[F].streamToPeer(peer, packet.toProto)
-            } yield ()
-          } else {
-            Log[F].warn(
-              s"[FileRequester] Peer $peer requested file ${msg.fileHash} but NOT FOUND at $filePath"
-            )
-          })
+    // Wrap Files.exists in Sync[F].delay to avoid blocking the calling fiber's thread
+    Sync[F].delay(java.nio.file.Files.exists(filePath)).flatMap { exists =>
+      Log[F].info(
+        s"[FileRequester] handleFileRequest: hash=${msg.fileHash.take(16)}..., offset=${msg.offset}, " +
+          s"chunkSize=${msg.chunkSize}, fileExists=$exists, from=$peer"
+      ) *> (if (exists) {
+              for {
+                // Read chunk
+                result <- Sync[F].delay {
+                           val channel =
+                             java.nio.channels.FileChannel.open(filePath, StandardOpenOption.READ)
+                           val buf = java.nio.ByteBuffer.allocate(msg.chunkSize)
+                           channel.position(msg.offset)
+                           val read     = channel.read(buf)
+                           val fileSize = channel.size()
+                           channel.close()
+                           val bytes = if (read > 0) {
+                             buf.flip()
+                             val arr = new Array[Byte](read)
+                             buf.get(arr)
+                             com.google.protobuf.ByteString.copyFrom(arr)
+                           } else {
+                             com.google.protobuf.ByteString.EMPTY
+                           }
+                           (bytes, fileSize)
+                         }
+                (bytes, fileSize) = result
+                eof               = (msg.offset + bytes.size) >= fileSize
+                _ <- Log[F].info(
+                      s"[FileRequester] Serving chunk: hash=${msg.fileHash.take(16)}..., " +
+                        s"offset=${msg.offset}, bytesRead=${bytes.size}, fileSize=$fileSize, eof=$eof"
+                    )
+                packet = FilePacket(msg.fileHash, msg.offset, bytes, eof)
+                _      <- TransportLayer[F].streamToPeer(peer, packet.toProto)
+              } yield ()
+            } else {
+              Log[F].warn(
+                s"[FileRequester] Peer $peer requested file ${msg.fileHash} but NOT FOUND at $filePath"
+              )
+            })
+    }
   }
 }

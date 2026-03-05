@@ -66,7 +66,15 @@ object FileDownloadAPI {
       )
     } else {
       val filePath = uploadDir.resolve(hash)
-      if (!Files.exists(filePath)) {
+      // Defense in depth: verify resolved path is still under uploadDir
+      if (!filePath.normalize().startsWith(uploadDir.normalize())) {
+        logger.warn("[FileDownloadAPI] Rejected: path traversal attempt, hash={}", hash)
+        Observable.raiseError(
+          new IllegalArgumentException(
+            s"INVALID_ARGUMENT: fileHash resolves outside upload directory"
+          )
+        )
+      } else if (!Files.exists(filePath)) {
         logger.debug(s"[FileDownloadAPI] File NOT FOUND: hash=${hash.take(16)}..., path=$filePath")
         Observable.raiseError(
           new IllegalArgumentException(s"NOT_FOUND: file ${hash} not found")
@@ -151,36 +159,40 @@ object FileDownloadAPI {
         }
       )
       .flatMap { channel =>
-        var bytesStreamed = offset
+        // Allocate one buffer outside the loop and reuse via clear()
+        val buf = ByteBuffer.allocate(chunkSize)
         Observable
           .repeatEvalF {
             Task.delay {
-              val buf       = ByteBuffer.allocate(chunkSize)
+              buf.clear()
               val bytesRead = channel.read(buf)
               buf.flip()
-              (bytesRead, buf)
+              bytesRead
             }
           }
-          .takeWhile { case (bytesRead, _) => bytesRead > 0 }
-          .map {
-            case (bytesRead, buf) =>
+          .takeWhile(_ > 0)
+          // Use scan for immutable progress tracking instead of a mutable var
+          .scan((offset, Option.empty[FileDownloadChunk])) {
+            case ((streamed, _), bytesRead) =>
               val arr = new Array[Byte](bytesRead)
               buf.get(arr)
-              bytesStreamed += bytesRead
-              if (bytesStreamed % (100 * 1024 * 1024) < chunkSize) {
+              val newStreamed = streamed + bytesRead
+              if (newStreamed % (100 * 1024 * 1024) < chunkSize) {
                 logger.info(
                   s"[FileDownloadAPI] Progress: hash=${fileHash
-                    .take(16)}..., ${bytesStreamed / (1024 * 1024)} MB / ${fileSize / (1024 * 1024)} MB"
+                    .take(16)}..., ${newStreamed / (1024 * 1024)} MB / ${fileSize / (1024 * 1024)} MB"
                 )
               }
-              FileDownloadChunk(
+              val chunk = FileDownloadChunk(
                 FileDownloadChunk.Chunk.Data(com.google.protobuf.ByteString.copyFrom(arr))
               )
+              (newStreamed, Some(chunk))
           }
+          .collect { case (_, Some(chunk)) => chunk }
           .guarantee(Task.delay {
             channel.close()
             logger.info(
-              s"[FileDownloadAPI] Streaming completed: hash=${fileHash.take(16)}..., totalBytes=$bytesStreamed"
+              s"[FileDownloadAPI] Streaming completed: hash=${fileHash.take(16)}..."
             )
           })
       }

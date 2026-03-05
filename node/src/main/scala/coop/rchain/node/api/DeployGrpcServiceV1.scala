@@ -424,9 +424,10 @@ object DeployGrpcServiceV1 {
                   case Left(sigErr) =>
                     // Sig invalid — clean up saved file
                     val hash = output.result.fileHash
-                    java.nio.file.Files.deleteIfExists(uploadDir.resolve(hash))
-                    java.nio.file.Files.deleteIfExists(uploadDir.resolve(s"$hash.meta.json"))
-                    Task.now(
+                    Task.delay {
+                      java.nio.file.Files.deleteIfExists(uploadDir.resolve(hash))
+                      java.nio.file.Files.deleteIfExists(uploadDir.resolve(s"$hash.meta.json"))
+                    } *> Task.now(
                       FileUploadResponse(
                         FileUploadResponse.Message.Error(
                           ServiceError(List(s"Invalid deploy signature: $sigErr"))
@@ -438,22 +439,30 @@ object DeployGrpcServiceV1 {
                     BlockAPI
                       .deploy[F](signed, triggerProposeF, minPhloPrice, isNodeReadOnly, shardId)
                       .toTask
-                      .map {
+                      .flatMap {
                         case Right(_) =>
                           val updatedResult = output.result.copy(deployId = deployIdHex)
-                          FileUploadResponse(FileUploadResponse.Message.Result(updatedResult))
+                          Task.now(
+                            FileUploadResponse(FileUploadResponse.Message.Result(updatedResult))
+                          )
                         case Left(deployErr) =>
                           // Deploy rejected — clean up saved file
                           val hash = output.result.fileHash
-                          java.nio.file.Files.deleteIfExists(uploadDir.resolve(hash))
-                          java.nio.file.Files.deleteIfExists(
-                            uploadDir.resolve(s"$hash.meta.json")
-                          )
-                          FileUploadResponse(
-                            FileUploadResponse.Message.Error(
-                              ServiceError(List(s"Deploy submission failed: $deployErr"))
+                          Task
+                            .delay {
+                              java.nio.file.Files.deleteIfExists(uploadDir.resolve(hash))
+                              java.nio.file.Files.deleteIfExists(
+                                uploadDir.resolve(s"$hash.meta.json")
+                              )
+                            }
+                            .map(
+                              _ =>
+                                FileUploadResponse(
+                                  FileUploadResponse.Message.Error(
+                                    ServiceError(List(s"Deploy submission failed: $deployErr"))
+                                  )
+                                )
                             )
-                          )
                       }
                 }
 

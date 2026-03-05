@@ -188,7 +188,7 @@ class FileUploadAPISpec extends FlatSpec with Matchers with BeforeAndAfterAll {
 
   it should "reject and clean up when computedHash != fileHash" in {
     val dir    = newDir()
-    val stream = fullStream(fileHash = "cafecafe0000")
+    val stream = fullStream(fileHash = "cafecafe" * 8) // 64 hex chars, wrong hash
 
     val ex = intercept[Exception] {
       run(FileUploadAPI.processFileUpload(stream, "root", 1L, false, dir))
