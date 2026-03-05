@@ -24,6 +24,7 @@
 | 12 | [Integration Tests](./task-12-integration-tests.md) | Cross-cutting | ✅ Done |
 | 13 | [Genesis Hash Mismatch Fix](./task-13-genesis-hash-fix.md) | L3 | ✅ Done |
 | 14 | [P2P Replication Bug Fix](./task-14-p2p-replication-fix.md) | L2 | ✅ Done |
+| 15 | [Code Review Fixes](./task-15-code-review-fixes.md) | Cross-cutting | ✅ Done |
 
 ---
 
