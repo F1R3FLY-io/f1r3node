@@ -293,17 +293,24 @@ async fn try_open_ports(ports: &[u16], devices: &UPnPDevices) -> Result<Option<S
         gateway
     );
 
-    let external_ip = gateway
-        .get_external_ip()
-        .await
-        .map_err(|e| CommError::UnknownCommError(format!("Failed to get external IP: {}", e)))?
-        .to_string();
-
-    match is_private_ip_address(&external_ip) {
-        Some(true) => tracing::warn!("Gateway's external IP address {} is from a private address block. This machine is behind more than one NAT.", external_ip.to_string()),
-        Some(_) => tracing::info!("Gateway's external IP address is from a public address block."),
-        None => tracing::warn!("Can't parse gateway's external IP address. It's maybe IPv6."),
-    }
+    let external_ip = match gateway.get_external_ip().await {
+        Ok(ip) => {
+            let ip = ip.to_string();
+            match is_private_ip_address(&ip) {
+                Some(true) => tracing::warn!("Gateway's external IP address {} is from a private address block. This machine is behind more than one NAT.", ip),
+                Some(_) => tracing::info!("Gateway's external IP address is from a public address block."),
+                None => tracing::warn!("Can't parse gateway's external IP address. It's maybe IPv6."),
+            }
+            Some(ip)
+        }
+        Err(e) => {
+            tracing::warn!(
+                "Failed to get external IP from gateway ({}); continuing without UPnP external address.",
+                e
+            );
+            None
+        }
+    };
 
     let mappings = get_port_mappings(&gateway).await;
 
@@ -332,7 +339,7 @@ async fn try_open_ports(ports: &[u16], devices: &UPnPDevices) -> Result<Option<S
         tracing::info!("{}", show_port_mapping(&mapping));
     }
 
-    Ok(Some(external_ip))
+    Ok(external_ip)
 }
 
 pub async fn assure_port_forwarding(ports: &[u16]) -> Result<Option<String>, CommError> {
