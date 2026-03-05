@@ -525,8 +525,6 @@ impl RuntimeManager {
         log_mem_step("after_compute_bonds");
         drop(runtime_ops);
         log_mem_step("after_drop_runtime_ops");
-        Self::trim_allocator();
-        log_mem_step("after_malloc_trim");
 
         Ok((state_hash, usr_processed, sys_processed, bonds))
     }

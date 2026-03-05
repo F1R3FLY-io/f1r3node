@@ -278,24 +278,15 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
             .filter_map(|b| dag.lookup_unsafe(&b.block_hash).ok())
             .collect();
 
-        let lca = if parent_metas_for_lca.len() > 1 {
-            // Fold to find LCA of all parents
-            let mut current_lca = parent_metas_for_lca[0].clone();
-            for meta in parent_metas_for_lca.iter().skip(1) {
-                current_lca = crate::rust::util::dag_operations::DagOperations::lowest_universal_common_ancestor(
-                    &current_lca,
-                    meta,
-                    &dag,
-                )
-                .await?;
-            }
-            current_lca.block_hash
+        let lca = if parent_metas_for_lca.is_empty() {
+            self.approved_block.block_hash.clone()
         } else {
-            // Single parent or genesis case - use that block as LCA
-            parent_metas_for_lca
-                .first()
-                .map(|m| m.block_hash.clone())
-                .unwrap_or_else(|| self.approved_block.block_hash.clone())
+            crate::rust::util::dag_operations::DagOperations::lowest_universal_common_ancestor_many(
+                &parent_metas_for_lca,
+                &dag,
+            )
+            .await?
+            .block_hash
         };
 
         let tips: Vec<BlockHash> = parents.iter().map(|b| b.block_hash.clone()).collect();

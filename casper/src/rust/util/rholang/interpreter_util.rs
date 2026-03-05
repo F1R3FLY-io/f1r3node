@@ -641,6 +641,45 @@ pub fn compute_parents_post_state(
                 }
             }
 
+            // Broader fast path: if one parent is an ancestor-descendant cover in DAG
+            // (not only on the main-parent chain), its post-state already subsumes the
+            // remaining parents and merge can be skipped safely.
+            if parents.len() <= 8 {
+                let parent_hashes: HashSet<BlockHash> =
+                    parents.iter().map(|p| p.block_hash.clone()).collect();
+                for candidate in &parents {
+                    let Ok(mut candidate_closure) =
+                        s.dag.with_ancestors(candidate.block_hash.clone(), |_| true)
+                    else {
+                        continue;
+                    };
+                    candidate_closure.insert(candidate.block_hash.clone());
+
+                    let covers_all = parent_hashes
+                        .iter()
+                        .filter(|hash| **hash != candidate.block_hash)
+                        .all(|hash| candidate_closure.contains(hash));
+
+                    if covers_all {
+                        tracing::info!(
+                            target: "f1r3fly.compute_parents_post_state.fast_path",
+                            "compute_parents_post_state fast path: dag-descendant parent {} covers all {} parents",
+                            PrettyPrinter::build_string_bytes(&candidate.block_hash),
+                            parents.len()
+                        );
+                        let state = proto_util::post_state_hash(candidate);
+                        tracing::info!(
+                            target: "f1r3fly.compute_parents_post_state.timing",
+                            "compute_parents_post_state timing: path=dag_descendant_fast_path, parents={}, cache_lookup_ms={}, total_ms={}",
+                            parents.len(),
+                            cache_lookup_started.elapsed().as_millis(),
+                            total_started.elapsed().as_millis()
+                        );
+                        return Ok((state, Vec::new()));
+                    }
+                }
+            }
+
             let mut parent_hashes_for_key: Vec<BlockHash> =
                 parents.iter().map(|p| p.block_hash.clone()).collect();
             parent_hashes_for_key.sort();

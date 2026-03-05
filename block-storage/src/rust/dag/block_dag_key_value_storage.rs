@@ -187,7 +187,14 @@ impl KeyValueDagRepresentation {
         &self,
         hashes: Vec<BlockHash>,
     ) -> Result<Vec<BlockMetadata>, KvStoreError> {
-        hashes.par_iter().map(|h| self.lookup_unsafe(h)).collect()
+        // Small batches are common on propose/snapshot paths; avoid Rayon scheduling overhead there.
+        const PARALLEL_LOOKUP_THRESHOLD: usize = 64;
+
+        if hashes.len() < PARALLEL_LOOKUP_THRESHOLD {
+            hashes.iter().map(|h| self.lookup_unsafe(h)).collect()
+        } else {
+            hashes.par_iter().map(|h| self.lookup_unsafe(h)).collect()
+        }
     }
 
     pub fn latest_message_hash_unsafe(

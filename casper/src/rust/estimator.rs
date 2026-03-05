@@ -149,20 +149,9 @@ impl Estimator {
         let result = if filtered_lm.is_empty() {
             genesis.block_hash.clone()
         } else {
-            let (head, tail) = filtered_lm.split_first().unwrap();
-
-            let mut acc = head.clone();
-            // TODO: Scala message - Change to mainParentLCA
-            for latest_message in tail {
-                acc = DagOperations::lowest_universal_common_ancestor(
-                    &acc,
-                    latest_message,
-                    block_dag,
-                )
-                .await?;
-            }
-
-            acc.block_hash
+            DagOperations::lowest_universal_common_ancestor_many(&filtered_lm, block_dag)
+                .await?
+                .block_hash
         };
 
         Ok(result)
