@@ -1,5 +1,6 @@
 use std::marker::PhantomData;
 use std::sync::{Arc, Mutex};
+use std::sync::OnceLock;
 
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -41,6 +42,9 @@ pub struct HistoryRepositoryImpl<C, P, A, K> {
 }
 
 type ColdAction = (Blake2b256Hash, Option<PersistedData>);
+const CHECKPOINT_PARALLEL_ACTIONS_THRESHOLD_DEFAULT: usize = 256;
+const CHECKPOINT_PARALLEL_ACTIONS_THRESHOLD_ENV: &str =
+    "F1R3_HISTORY_CHECKPOINT_PARALLEL_ACTIONS_THRESHOLD";
 
 impl<C, P, A, K> HistoryRepositoryImpl<C, P, A, K>
 where
@@ -66,6 +70,20 @@ where
             rspace_importer: self.rspace_importer.clone(),
             _marker: PhantomData,
         })
+    }
+
+    fn checkpoint_parallel_actions_threshold() -> usize {
+        static VALUE: OnceLock<usize> = OnceLock::new();
+        *VALUE.get_or_init(|| {
+            std::env::var(CHECKPOINT_PARALLEL_ACTIONS_THRESHOLD_ENV)
+                .ok()
+                .and_then(|v| v.parse::<usize>().ok())
+                .unwrap_or(CHECKPOINT_PARALLEL_ACTIONS_THRESHOLD_DEFAULT)
+        })
+    }
+
+    fn should_parallelize_checkpoint_actions(actions_len: usize) -> bool {
+        actions_len >= Self::checkpoint_parallel_actions_threshold()
     }
 
     fn measure(&self, actions: &Vec<HotStoreAction<C, P, A, K>>) -> () {
@@ -576,10 +594,17 @@ where
         let _ = self.measure(&actions);
         log_mem_step("after_measure");
 
-        let trie_actions: Vec<_> = actions
-            .into_par_iter()
-            .map(|action| self.transform(action))
-            .collect();
+        let trie_actions: Vec<_> = if Self::should_parallelize_checkpoint_actions(actions.len()) {
+            actions
+                .into_par_iter()
+                .map(|action| self.transform(action))
+                .collect()
+        } else {
+            actions
+                .into_iter()
+                .map(|action| self.transform(action))
+                .collect()
+        };
         log_mem_step("after_transform_actions");
 
         log_mem_step("before_do_checkpoint");
@@ -636,10 +661,18 @@ where
             return self.checkpoint_noop_clone();
         }
 
-        let storage_actions: Vec<(ColdAction, HistoryAction)> = trie_actions
-            .par_iter()
-            .map(|a| self.calculate_storage_actions(a))
-            .collect();
+        let storage_actions: Vec<(ColdAction, HistoryAction)> =
+            if Self::should_parallelize_checkpoint_actions(trie_actions.len()) {
+                trie_actions
+                    .par_iter()
+                    .map(|a| self.calculate_storage_actions(a))
+                    .collect()
+            } else {
+                trie_actions
+                    .iter()
+                    .map(|a| self.calculate_storage_actions(a))
+                    .collect()
+            };
         log_mem_step("after_calculate_storage_actions");
 
         let mut cold_actions: Vec<(Blake2b256Hash, PersistedData)> = Vec::new();

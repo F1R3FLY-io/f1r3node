@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::hash::Hash;
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use dashmap::DashMap;
 use dashmap::mapref::entry::Entry;
@@ -29,6 +31,12 @@ const MAX_HISTORY_STORE_CACHE_ENTRIES: usize = 512;
 const MAX_HISTORY_STORE_CACHE_CONT_ITEMS: usize = 8192;
 const MAX_HISTORY_STORE_CACHE_DATA_ITEMS: usize = 8192;
 const MAX_HISTORY_STORE_CACHE_JOIN_ITEMS: usize = 8192;
+const HOT_STORE_STATE_METRICS_UPDATE_INTERVAL_MS_DEFAULT: u64 = 250;
+const HOT_STORE_STATE_METRICS_UPDATE_INTERVAL_MS_ENV: &str =
+    "F1R3_HOT_STORE_STATE_METRICS_UPDATE_INTERVAL_MS";
+const HOT_STORE_HISTORY_CACHE_METRICS_UPDATE_INTERVAL_MS_DEFAULT: u64 = 250;
+const HOT_STORE_HISTORY_CACHE_METRICS_UPDATE_INTERVAL_MS_ENV: &str =
+    "F1R3_HOT_STORE_HISTORY_CACHE_METRICS_UPDATE_INTERVAL_MS";
 
 // See rspace/src/main/scala/coop/rchain/rspace/HotStore.scala
 pub trait HotStore<C: Clone + Hash + Eq, P: Clone, A: Clone, K: Clone>: Sync + Send {
@@ -763,7 +771,62 @@ where
     A: Clone + Debug + Sync + Send,
     K: Clone + Debug + Sync + Send,
 {
+    fn now_millis() -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64
+    }
+
+    fn state_metrics_update_interval_ms() -> u64 {
+        static VALUE: OnceLock<u64> = OnceLock::new();
+        *VALUE.get_or_init(|| {
+            std::env::var(HOT_STORE_STATE_METRICS_UPDATE_INTERVAL_MS_ENV)
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok())
+                .unwrap_or(HOT_STORE_STATE_METRICS_UPDATE_INTERVAL_MS_DEFAULT)
+        })
+    }
+
+    fn history_cache_metrics_update_interval_ms() -> u64 {
+        static VALUE: OnceLock<u64> = OnceLock::new();
+        *VALUE.get_or_init(|| {
+            std::env::var(HOT_STORE_HISTORY_CACHE_METRICS_UPDATE_INTERVAL_MS_ENV)
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok())
+                .unwrap_or(HOT_STORE_HISTORY_CACHE_METRICS_UPDATE_INTERVAL_MS_DEFAULT)
+        })
+    }
+
+    fn should_emit_metrics(last_emit_at_ms: &AtomicU64, update_interval_ms: u64) -> bool {
+        if update_interval_ms == 0 {
+            return true;
+        }
+
+        let now = Self::now_millis();
+        loop {
+            let last = last_emit_at_ms.load(Ordering::Relaxed);
+            if now.saturating_sub(last) < update_interval_ms {
+                return false;
+            }
+            if last_emit_at_ms
+                .compare_exchange_weak(last, now, Ordering::Relaxed, Ordering::Relaxed)
+                .is_ok()
+            {
+                return true;
+            }
+        }
+    }
+
     fn update_hot_store_state_metrics(state: &HotStoreState<C, P, A, K>) {
+        static LAST_EMIT_AT_MS: AtomicU64 = AtomicU64::new(0);
+        if !Self::should_emit_metrics(
+            &LAST_EMIT_AT_MS,
+            Self::state_metrics_update_interval_ms(),
+        ) {
+            return;
+        }
+
         let cont_items: usize = state
             .continuations
             .iter()
@@ -801,6 +864,14 @@ where
     }
 
     fn update_history_cache_metrics(cache: &HistoryStoreCache<C, P, A, K>) {
+        static LAST_EMIT_AT_MS: AtomicU64 = AtomicU64::new(0);
+        if !Self::should_emit_metrics(
+            &LAST_EMIT_AT_MS,
+            Self::history_cache_metrics_update_interval_ms(),
+        ) {
+            return;
+        }
+
         let cont_items: usize = cache
             .continuations
             .iter()
