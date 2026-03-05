@@ -14,6 +14,7 @@ use crate::rust::api::{
     propose_grpc_service_v1::ProposeGrpcServiceV1Impl,
     repl_grpc_service::ReplGrpcServiceImpl,
 };
+use crate::rust::web::block_info_enricher::BlockEnricher;
 use block_storage::rust::key_value_block_store::KeyValueBlockStore;
 use comm::rust::discovery::node_discovery::NodeDiscovery;
 use comm::rust::rp::connect::ConnectionsCell;
@@ -83,6 +84,7 @@ impl APIServers {
         rp_conf_cell: comm::rust::rp::rp_conf::RPConfCell,
         connections_cell: ConnectionsCell,
         node_discovery: Arc<dyn NodeDiscovery + Send + Sync>,
+        block_enricher: Option<Arc<dyn BlockEnricher>>,
     ) -> Self {
         // Create REPL service
         let repl = ReplGrpcServiceImpl::new(runtime);
@@ -109,6 +111,7 @@ impl APIServers {
             rp_conf_cell.clone(),
             connections_cell,
             node_discovery,
+            block_enricher,
         );
 
         // Create LSP service (stateless)

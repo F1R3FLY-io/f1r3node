@@ -105,6 +105,31 @@ where
     TA: TransactionAPI + Send + Sync + 'static,
     TS: KeyValueTypedStore<String, TransactionResponse> + Send + Sync + 'static,
 {
+    /// Enrich a BlockInfo with transfer data from the transaction API.
+    /// On failure, logs a warning and returns the block unchanged (empty transfers).
+    async fn enrich_with_transfers(&self, block_info: models::casper::BlockInfo) -> models::casper::BlockInfo {
+        let block_hash = block_info.block_info.as_ref()
+            .map(|bi| bi.block_hash.clone())
+            .unwrap_or_default();
+
+        if block_hash.is_empty() {
+            return block_info;
+        }
+
+        match self.cache_transaction_api.get_transaction(block_hash.clone()).await {
+            Ok(response) => crate::rust::web::block_info_enricher::enrich_block_info(block_info, &response),
+            Err(e) => {
+                tracing::warn!(
+                    target: "f1r3fly.api",
+                    block_hash = %block_hash,
+                    error = %e,
+                    "Failed to extract transfers for block, returning empty transfers"
+                );
+                block_info
+            }
+        }
+    }
+
     pub fn new(
         api_max_blocks_limit: i32,
         dev_mode: bool,
@@ -249,15 +274,15 @@ where
     }
 
     async fn last_finalized_block(&self) -> Result<BlockInfoSerde> {
-        BlockAPI::last_finalized_block(&self.engine_cell)
-            .await
-            .map(BlockInfoSerde::from)
+        let block_info = BlockAPI::last_finalized_block(&self.engine_cell).await?;
+        let enriched = self.enrich_with_transfers(block_info).await;
+        Ok(BlockInfoSerde::from(enriched))
     }
 
     async fn get_block(&self, hash: String) -> Result<BlockInfoSerde> {
-        BlockAPI::get_block(&self.engine_cell, &hash)
-            .await
-            .map(BlockInfoSerde::from)
+        let block_info = BlockAPI::get_block(&self.engine_cell, &hash).await?;
+        let enriched = self.enrich_with_transfers(block_info).await;
+        Ok(BlockInfoSerde::from(enriched))
     }
 
     async fn get_blocks(&self, depth: i32) -> Result<Vec<LightBlockInfoSerde>> {

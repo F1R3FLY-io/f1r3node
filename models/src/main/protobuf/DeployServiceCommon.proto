@@ -103,6 +103,14 @@ message JustificationInfo{
   string latestBlockHash = 2;
 }
 
+message TransferInfo {
+  string fromAddr   = 1;
+  string toAddr     = 2;
+  int64 amount      = 3;
+  bool success      = 4;
+  string failReason = 5;
+}
+
 message DeployInfo{
   string deployer             = 1;
   string term                 = 2;
@@ -115,6 +123,7 @@ message DeployInfo{
   uint64 cost                 = 10;
   bool errored                = 11;
   string systemDeployError    = 12;
+  repeated TransferInfo transfers = 13;
 }
 
 message LightBlockInfo {

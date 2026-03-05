@@ -401,7 +401,7 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
             rp_conf.clone(),
             rp_connections.clone(),
             last_approved_block,
-            event_publisher,
+            event_publisher.clone(),
             block_retriever.clone(),
             Arc::new(engine_cell.clone()),
             block_store.clone(),
@@ -455,9 +455,62 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
         None
     };
 
-    // Clone block_report_api before passing to api_servers since we'll use it later for transaction API and return value
-    let block_report_api_for_transaction = block_report_api.clone();
     let block_report_api_for_return = block_report_api.clone();
+
+    // Create transaction API and cache before API servers so the block enricher
+    // can be threaded into the gRPC service
+    let transaction_api = {
+        use crate::rust::web::transaction::{transfer_unforgeable, TransactionAPIImpl};
+
+        let block_report_api_for_transaction = block_report_api.clone();
+        let transfer_unforgeable_par = transfer_unforgeable();
+        TransactionAPIImpl::new(block_report_api_for_transaction, transfer_unforgeable_par)
+    };
+
+    let cache_transaction_api = {
+        use crate::rust::web::transaction::cache_transaction_api;
+
+        cache_transaction_api(transaction_api, &mut rnode_store_manager)
+            .await
+            .map_err(|e| {
+                CasperError::Other(format!("Failed to create cache transaction API: {}", e))
+            })?
+    };
+
+    let block_enricher: Arc<dyn crate::rust::web::block_info_enricher::BlockEnricher> = {
+        use crate::rust::web::block_info_enricher::CacheTransactionEnricher;
+        Arc::new(CacheTransactionEnricher::new(cache_transaction_api.clone()))
+    };
+
+    // Proactive transfer extraction: subscribe to BlockFinalised events and trigger
+    // cache_transaction_api.get_transaction() in the background so transfer data is
+    // pre-cached before clients request it.
+    {
+        use futures::StreamExt;
+        use shared::rust::shared::f1r3fly_event::F1r3flyEvent;
+
+        let cache_tx_api = cache_transaction_api.clone();
+        let mut event_stream = event_publisher.consume();
+
+        tokio::spawn(async move {
+            while let Some(event) = event_stream.next().await {
+                if let F1r3flyEvent::BlockFinalised(finalized) = event {
+                    let api = cache_tx_api.clone();
+                    let block_hash = finalized.block_hash.clone();
+                    tokio::spawn(async move {
+                        if let Err(e) = api.get_transaction(block_hash.clone()).await {
+                            tracing::warn!(
+                                target: "f1r3fly.transaction",
+                                block_hash = %block_hash,
+                                error = %e,
+                                "Failed to extract transfers for finalized block"
+                            );
+                        }
+                    });
+                }
+            }
+        });
+    }
 
     // Clone trigger_propose_f_opt before passing to api_servers since we'll use it later for web_api, admin_web_api, and return value
     let trigger_propose_f_opt_for_web_api = trigger_propose_f_opt.clone();
@@ -485,6 +538,7 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
         rp_conf_cell.clone(),
         rp_connections.clone(),
         node_discovery.clone(),
+        Some(block_enricher),
     );
 
     // Reporting HTTP Routes - REST API for block reporting and tracing
@@ -601,23 +655,6 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
     //
     // When implementing, add shutdown call like:
     //   rnode_store_manager.shutdown().await?;
-
-    let transaction_api = {
-        use crate::rust::web::transaction::{transfer_unforgeable, TransactionAPIImpl};
-
-        let transfer_unforgeable_par = transfer_unforgeable();
-        TransactionAPIImpl::new(block_report_api_for_transaction, transfer_unforgeable_par)
-    };
-
-    let cache_transaction_api = {
-        use crate::rust::web::transaction::cache_transaction_api;
-
-        cache_transaction_api(transaction_api, &mut rnode_store_manager)
-            .await
-            .map_err(|e| {
-                CasperError::Other(format!("Failed to create cache transaction API: {}", e))
-            })?
-    };
 
     // Web API - HTTP REST API implementation
     let web_api = {
