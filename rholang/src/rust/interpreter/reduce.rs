@@ -1202,8 +1202,11 @@ impl DebruijnInterpreter {
 
                 ExprInstance::ENegBody(eneg) => {
                     let v = self.eval_to_i64(&eneg.p.as_ref().unwrap(), env)?;
+                    let result = v.checked_neg().ok_or_else(|| {
+                        InterpreterError::ReduceError("Arithmetic overflow in negation".to_string())
+                    })?;
                     Ok(Expr {
-                        expr_instance: Some(ExprInstance::GInt(-v)),
+                        expr_instance: Some(ExprInstance::GInt(result)),
                     })
                 }
 
@@ -1211,14 +1214,27 @@ impl DebruijnInterpreter {
                     let v1 = self.eval_to_i64(&p1.clone().unwrap(), env)?;
                     let v2 = self.eval_to_i64(&p2.clone().unwrap(), env)?;
                     self.cost.charge(multiplication_cost())?;
+                    let result = v1.checked_mul(v2).ok_or_else(|| {
+                        InterpreterError::ReduceError(
+                            "Arithmetic overflow in multiplication".to_string(),
+                        )
+                    })?;
                     Ok(Expr {
-                        expr_instance: Some(ExprInstance::GInt(v1 * v2)),
+                        expr_instance: Some(ExprInstance::GInt(result)),
                     })
                 }
 
                 ExprInstance::EDivBody(EDiv { p1, p2 }) => {
                     let v1 = self.eval_to_i64(&p1.clone().unwrap(), env)?;
                     let v2 = self.eval_to_i64(&p2.clone().unwrap(), env)?;
+                    if v2 == 0 {
+                      return Err(InterpreterError::ReduceError("Division by zero".to_string()));
+                    }
+                    if v1 == i64::MIN && v2 == -1 {
+                      return Err(InterpreterError::ReduceError(
+                          "Arithmetic overflow in division".to_string(),
+                      ));
+                    }
                     self.cost.charge(division_cost())?;
                     Ok(Expr {
                         expr_instance: Some(ExprInstance::GInt(v1 / v2)),
@@ -1228,6 +1244,9 @@ impl DebruijnInterpreter {
                 ExprInstance::EModBody(EMod { p1, p2 }) => {
                     let v1 = self.eval_to_i64(&p1.clone().unwrap(), env)?;
                     let v2 = self.eval_to_i64(&p2.clone().unwrap(), env)?;
+                    if v2 == 0 {
+                      return Err(InterpreterError::ReduceError("Modulo by zero".to_string()));
+                    }
                     self.cost.charge(modulo_cost())?;
                     Ok(Expr {
                         expr_instance: Some(ExprInstance::GInt(v1 % v2)),
