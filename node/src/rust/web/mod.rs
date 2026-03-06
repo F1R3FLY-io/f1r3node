@@ -1,4 +1,5 @@
 pub mod admin_web_api_routes;
+pub mod block_info_enricher;
 pub mod events_info;
 pub mod reporting_routes;
 pub mod routes;
