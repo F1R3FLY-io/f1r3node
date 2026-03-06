@@ -35,6 +35,9 @@ pub struct KeyValueDagRepresentation {
     pub latest_messages_map: Arc<DashMap<Validator, BlockHash>>,
     pub child_map: Arc<DashMap<BlockHash, Arc<DashSet<BlockHash>>>>,
     pub height_map: Arc<RwLock<BTreeMap<i64, DashSet<BlockHash>>>>,
+    pub block_number_map: Arc<DashMap<BlockHash, i64>>,
+    pub main_parent_map: Arc<DashMap<BlockHash, BlockHash>>,
+    pub self_justification_map: Arc<DashMap<BlockHash, BlockHash>>,
     pub invalid_blocks_set: Arc<DashSet<BlockMetadata>>,
     pub last_finalized_block_hash: BlockHash,
     pub finalized_blocks_set: Arc<DashSet<BlockHash>>,
@@ -96,6 +99,25 @@ impl KeyValueDagRepresentation {
 
     pub fn latest_block_number(&self) -> i64 {
         self.get_max_height()
+    }
+
+    pub fn block_number(&self, block_hash: &BlockHash) -> Option<i64> {
+        self.block_number_map.get(block_hash).map(|v| *v.value())
+    }
+
+    pub fn block_number_unsafe(&self, block_hash: &BlockHash) -> Result<i64, KvStoreError> {
+        self.block_number(block_hash).ok_or_else(|| {
+            KvStoreError::InvalidArgument(format!(
+                "DAG storage is missing hash {}",
+                PrettyPrinter::build_string_bytes(block_hash)
+            ))
+        })
+    }
+
+    pub fn main_parent(&self, block_hash: &BlockHash) -> Option<BlockHash> {
+        self.main_parent_map
+            .get(block_hash)
+            .map(|v| v.value().clone())
     }
 
     pub fn is_finalized(&self, block_hash: &BlockHash) -> bool {
@@ -278,21 +300,12 @@ impl KeyValueDagRepresentation {
         let mut current_hash = block_hash;
 
         loop {
-            let metadata = self.lookup_unsafe(&current_hash)?;
-            let next_justification = metadata
-                .justifications
-                .iter()
-                .find(|justification| justification.validator == metadata.sender);
-
-            match next_justification {
-                Some(justification) => {
-                    let next_hash = justification.latest_block_hash.clone();
+            match self.self_justification(&current_hash)? {
+                Some(next_hash) => {
                     result.push(next_hash.clone());
                     current_hash = next_hash;
                 }
-                None => {
-                    break;
-                }
+                None => break,
             }
         }
 
@@ -303,12 +316,22 @@ impl KeyValueDagRepresentation {
         &self,
         block_hash: &BlockHash,
     ) -> Result<Option<BlockHash>, KvStoreError> {
-        let metadata = self.lookup_unsafe(block_hash)?;
-        Ok(metadata
-            .justifications
-            .iter()
-            .find(|justification| justification.validator == metadata.sender)
-            .map(|justification| justification.latest_block_hash.clone()))
+        if let Some(hash) = self
+            .self_justification_map
+            .get(block_hash)
+            .map(|v| v.value().clone())
+        {
+            return Ok(Some(hash));
+        }
+
+        // Keep behavior for blocks that intentionally have no self-justification.
+        if !self.contains(block_hash) {
+            return Err(KvStoreError::InvalidArgument(format!(
+                "DAG storage is missing hash {}",
+                PrettyPrinter::build_string_bytes(block_hash)
+            )));
+        }
+        Ok(None)
     }
 
     pub fn main_parent_chain(
@@ -320,15 +343,13 @@ impl KeyValueDagRepresentation {
         let mut current_hash = block_hash;
 
         loop {
-            let metadata = self.lookup_unsafe(&current_hash)?;
-
-            if metadata.block_number <= stop_at_height {
+            let current_block_number = self.block_number_unsafe(&current_hash)?;
+            if current_block_number <= stop_at_height {
                 break;
             }
 
-            match metadata.parents.first() {
-                Some(parent) => {
-                    let parent_hash = parent.clone();
+            match self.main_parent(&current_hash) {
+                Some(parent_hash) => {
                     result.push(parent_hash.clone());
                     current_hash = parent_hash;
                 }
@@ -348,20 +369,19 @@ impl KeyValueDagRepresentation {
             return Ok(true);
         }
 
-        let metadata_ancestor = self.lookup_unsafe(ancestor)?;
-        let stop_height = metadata_ancestor.block_number;
+        let stop_height = self.block_number_unsafe(ancestor)?;
         let mut current_hash = descendant.clone();
 
         loop {
-            let metadata = self.lookup_unsafe(&current_hash)?;
-            if metadata.block_number <= stop_height {
+            let current_height = self.block_number_unsafe(&current_hash)?;
+            if current_height <= stop_height {
                 return Ok(&current_hash == ancestor);
             }
 
-            let Some(main_parent) = metadata.parents.first() else {
+            let Some(main_parent) = self.main_parent(&current_hash) else {
                 return Ok(false);
             };
-            current_hash = main_parent.clone();
+            current_hash = main_parent;
         }
     }
 
@@ -570,6 +590,9 @@ impl BlockDagKeyValueStorage {
         let dag_set = block_metadata_index_guard.dag_set();
         let child_map = block_metadata_index_guard.child_map();
         let height_map = block_metadata_index_guard.height_map();
+        let block_number_map = block_metadata_index_guard.block_number_map();
+        let main_parent_map = block_metadata_index_guard.main_parent_map();
+        let self_justification_map = block_metadata_index_guard.self_justification_map();
         let last_finalized_block = block_metadata_index_guard.last_finalized_block();
         let finalized_blocks = block_metadata_index_guard.finalized_block_set();
 
@@ -578,6 +601,9 @@ impl BlockDagKeyValueStorage {
             latest_messages_map: Arc::new(latest_messages),
             child_map,
             height_map,
+            block_number_map,
+            main_parent_map,
+            self_justification_map,
             invalid_blocks_set: Arc::new(invalid_blocks),
             last_finalized_block_hash: last_finalized_block,
             finalized_blocks_set: finalized_blocks,

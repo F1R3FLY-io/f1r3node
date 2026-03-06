@@ -22,6 +22,11 @@ struct DagState {
     dag_set: Arc<DashSet<BlockHash>>,
     child_map: Arc<DashMap<BlockHash, Arc<DashSet<BlockHash>>>>,
     height_map: Arc<RwLock<BTreeMap<i64, DashSet<BlockHash>>>>,
+    // Lightweight per-block indices used by propose/finality hot paths to avoid
+    // repeated metadata deserialization from LMDB.
+    block_number_map: Arc<DashMap<BlockHash, i64>>,
+    main_parent_map: Arc<DashMap<BlockHash, BlockHash>>,
+    self_justification_map: Arc<DashMap<BlockHash, BlockHash>>,
     // In general - at least genesis should be LFB.
     // But dagstate can be empty, as it is initialized before genesis is inserted.
     // Also lots of tests do not have genesis properly initialised, so fixing all this is pain.
@@ -40,6 +45,9 @@ impl DagState {
             dag_set: Arc::new(DashSet::new()),
             child_map: Arc::new(DashMap::new()),
             height_map: Arc::new(RwLock::new(BTreeMap::new())),
+            block_number_map: Arc::new(DashMap::new()),
+            main_parent_map: Arc::new(DashMap::new()),
+            self_justification_map: Arc::new(DashMap::new()),
             last_finalized_block: Some((BlockHash::new(), 0)),
             finalized_block_set: Arc::new(DashSet::new()),
         }
@@ -49,6 +57,8 @@ impl DagState {
 struct BlockInfo {
     hash: BlockHash,
     parents: Arc<DashSet<BlockHash>>,
+    main_parent: Option<BlockHash>,
+    self_justification: Option<BlockHash>,
     block_num: i64,
     is_invalid: bool,
     is_directly_finalized: bool,
@@ -103,10 +113,18 @@ impl BlockMetadataStore {
 
     fn block_metadata_to_info(hash: &BlockHash, block_metadata: &BlockMetadata) -> BlockInfo {
         let parents = Arc::new(block_metadata.parents.iter().cloned().collect());
+        let main_parent = block_metadata.parents.first().cloned();
+        let self_justification = block_metadata
+            .justifications
+            .iter()
+            .find(|justification| justification.validator == block_metadata.sender)
+            .map(|justification| justification.latest_block_hash.clone());
 
         BlockInfo {
             hash: hash.clone(),
             parents,
+            main_parent,
+            self_justification,
             block_num: block_metadata.block_number,
             is_invalid: block_metadata.invalid,
             is_directly_finalized: block_metadata.directly_finalized,
@@ -217,6 +235,18 @@ impl BlockMetadataStore {
         self.dag_state.read().unwrap().height_map.clone()
     }
 
+    pub fn block_number_map(&self) -> Arc<DashMap<BlockHash, i64>> {
+        self.dag_state.read().unwrap().block_number_map.clone()
+    }
+
+    pub fn main_parent_map(&self) -> Arc<DashMap<BlockHash, BlockHash>> {
+        self.dag_state.read().unwrap().main_parent_map.clone()
+    }
+
+    pub fn self_justification_map(&self) -> Arc<DashMap<BlockHash, BlockHash>> {
+        self.dag_state.read().unwrap().self_justification_map.clone()
+    }
+
     pub fn last_finalized_block(&self) -> BlockHash {
         self.dag_state
             .read()
@@ -266,6 +296,19 @@ impl BlockMetadataStore {
                 .entry(block_info.block_num)
                 .or_insert_with(|| DashSet::new())
                 .insert(hash.clone());
+        }
+        state_guard
+            .block_number_map
+            .insert(hash.clone(), block_info.block_num);
+
+        if let Some(main_parent) = block_info.main_parent {
+            state_guard.main_parent_map.insert(hash.clone(), main_parent);
+        }
+
+        if let Some(self_justification) = block_info.self_justification {
+            state_guard
+                .self_justification_map
+                .insert(hash.clone(), self_justification);
         }
 
         if block_info.is_directly_finalized

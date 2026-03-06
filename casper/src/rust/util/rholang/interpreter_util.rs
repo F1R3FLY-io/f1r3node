@@ -543,7 +543,7 @@ pub async fn compute_deploys_checkpoint(
     let compute_state_ms = compute_state_started.elapsed().as_millis();
 
     let (post_state_hash, processed_deploys, processed_system_deploys, bonds) = result;
-    tracing::info!(
+    tracing::debug!(
         target: "f1r3fly.compute_deploys_checkpoint.timing",
         "compute_deploys_checkpoint timing: parents_post_state_ms={}, compute_state_ms={}, total_ms={}, processed_deploys={}, processed_system_deploys={}, rejected_deploys={}",
         parents_ms,
@@ -586,7 +586,7 @@ pub fn compute_parents_post_state(
         // For genesis, use empty trie's root hash
         0 => {
             let state = RuntimeManager::empty_state_hash_fixed();
-            tracing::info!(
+            tracing::debug!(
                 target: "f1r3fly.compute_parents_post_state.timing",
                 "compute_parents_post_state timing: path=genesis, parents=0, total_ms={}",
                 total_started.elapsed().as_millis()
@@ -598,7 +598,7 @@ pub fn compute_parents_post_state(
         1 => {
             let parent = &parents[0];
             let state = proto_util::post_state_hash(parent);
-            tracing::info!(
+            tracing::debug!(
                 target: "f1r3fly.compute_parents_post_state.timing",
                 "compute_parents_post_state timing: path=single_parent, parents=1, total_ms={}",
                 total_started.elapsed().as_millis()
@@ -623,14 +623,14 @@ pub fn compute_parents_post_state(
                             .unwrap_or(false)
                     });
                 if covers_all {
-                    tracing::info!(
+                    tracing::debug!(
                         target: "f1r3fly.compute_parents_post_state.fast_path",
                         "compute_parents_post_state fast path: descendant parent {} covers all {} parents",
                         PrettyPrinter::build_string_bytes(&candidate.block_hash),
                         parents.len()
                     );
                     let state = proto_util::post_state_hash(candidate);
-                    tracing::info!(
+                    tracing::debug!(
                         target: "f1r3fly.compute_parents_post_state.timing",
                         "compute_parents_post_state timing: path=descendant_fast_path, parents={}, cache_lookup_ms={}, total_ms={}",
                         parents.len(),
@@ -661,14 +661,14 @@ pub fn compute_parents_post_state(
                         .all(|hash| candidate_closure.contains(hash));
 
                     if covers_all {
-                        tracing::info!(
+                        tracing::debug!(
                             target: "f1r3fly.compute_parents_post_state.fast_path",
                             "compute_parents_post_state fast path: dag-descendant parent {} covers all {} parents",
                             PrettyPrinter::build_string_bytes(&candidate.block_hash),
                             parents.len()
                         );
                         let state = proto_util::post_state_hash(candidate);
-                        tracing::info!(
+                        tracing::debug!(
                             target: "f1r3fly.compute_parents_post_state.timing",
                             "compute_parents_post_state timing: path=dag_descendant_fast_path, parents={}, cache_lookup_ms={}, total_ms={}",
                             parents.len(),
@@ -692,13 +692,13 @@ pub fn compute_parents_post_state(
             if let Some((cached_state, cached_rejected)) =
                 runtime_manager.get_cached_parents_post_state(&cache_key)
             {
-                tracing::info!(
+                tracing::debug!(
                     target: "f1r3fly.compute_parents_post_state.cache",
                     "compute_parents_post_state cache hit: parents={}, rejected_deploys={}",
                     cache_key.sorted_parent_hashes.len(),
                     cached_rejected.len()
                 );
-                tracing::info!(
+                tracing::debug!(
                     target: "f1r3fly.compute_parents_post_state.timing",
                     "compute_parents_post_state timing: path=cache_hit, parents={}, cache_lookup_ms={}, total_ms={}",
                     cache_key.sorted_parent_hashes.len(),
@@ -886,31 +886,33 @@ pub fn compute_parents_post_state(
             let lfb_block = block_store.get_unsafe(&lfb_for_descendants);
             let lfb_state = Blake2b256Hash::from_bytes_prost(&lfb_block.body.state.post_state_hash);
 
-            // Log
-            let parent_hash_str: Vec<String> = parent_hashes
-                .iter()
-                .map(|h| hex::encode(&h[..std::cmp::min(10, h.len())]))
-                .collect();
-            let lca_str =
-                hex::encode(&lfb_for_descendants[..std::cmp::min(10, lfb_for_descendants.len())]);
-            let lca_state_str = hex::encode(
-                &lfb_block.body.state.post_state_hash
-                    [..std::cmp::min(10, lfb_block.body.state.post_state_hash.len())],
-            );
-            let snapshot_lfb_str = hex::encode(
-                &s.last_finalized_block[..std::cmp::min(10, s.last_finalized_block.len())],
-            );
+            if tracing::enabled!(tracing::Level::DEBUG) {
+                let parent_hash_str: Vec<String> = parent_hashes
+                    .iter()
+                    .map(|h| hex::encode(&h[..std::cmp::min(10, h.len())]))
+                    .collect();
+                let lca_str = hex::encode(
+                    &lfb_for_descendants[..std::cmp::min(10, lfb_for_descendants.len())],
+                );
+                let lca_state_str = hex::encode(
+                    &lfb_block.body.state.post_state_hash
+                        [..std::cmp::min(10, lfb_block.body.state.post_state_hash.len())],
+                );
+                let snapshot_lfb_str = hex::encode(
+                    &s.last_finalized_block[..std::cmp::min(10, s.last_finalized_block.len())],
+                );
 
-            tracing::info!(
-                "computeParentsPostState: parents=[{}], commonAncestors={}, LCA={} (block {}), LCA state={}..., visibleBlocks={}, snapshotLFB={}",
-                parent_hash_str.join(", "),
-                common_ancestors.len(),
-                lca_str,
-                lfb_block.body.state.block_number,
-                lca_state_str,
-                visible_blocks.len(),
-                snapshot_lfb_str
-            );
+                tracing::debug!(
+                    "computeParentsPostState: parents=[{}], commonAncestors={}, LCA={} (block {}), LCA state={}..., visibleBlocks={}, snapshotLFB={}",
+                    parent_hash_str.join(", "),
+                    common_ancestors.len(),
+                    lca_str,
+                    lfb_block.body.state.block_number,
+                    lca_state_str,
+                    visible_blocks.len(),
+                    snapshot_lfb_str
+                );
+            }
 
             let max_parent_block_number = parents
                 .iter()
@@ -943,7 +945,7 @@ pub fn compute_parents_post_state(
                 let fallback_state = proto_util::post_state_hash(fallback_parent);
                 runtime_manager
                     .put_cached_parents_post_state(cache_key, (fallback_state.clone(), Vec::new()));
-                tracing::info!(
+                tracing::debug!(
                     target: "f1r3fly.compute_parents_post_state.timing",
                     "compute_parents_post_state timing: path=fallback_latest_parent, parents={}, cache_lookup_ms={}, collect_ancestors_ms={}, flatten_visible_ms={}, lca_ms={}, visible_blocks={}, lca_distance={}, total_ms={}",
                     parents.len(),
@@ -989,7 +991,7 @@ pub fn compute_parents_post_state(
                     (computed_state.clone(), rejected.clone()),
                 );
             }
-            tracing::info!(
+            tracing::debug!(
                 target: "f1r3fly.compute_parents_post_state.timing",
                 "compute_parents_post_state timing: path=merged, parents={}, cache_lookup_ms={}, collect_ancestors_ms={}, flatten_visible_ms={}, lca_ms={}, merge_ms={}, visible_blocks={}, rejected_deploys={}, total_ms={}",
                 parents.len(),

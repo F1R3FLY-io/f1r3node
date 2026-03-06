@@ -650,10 +650,10 @@ fn calculate_seen_senders_since(
             continue;
         }
 
-        if let Ok(meta) = dag.lookup_unsafe(latest_block_hash) {
+        if let Ok(latest_block_number) = dag.block_number_unsafe(latest_block_hash) {
             if should_count_fallback_sender(
                 latest_block_hash.as_ref(),
-                meta.block_number,
+                latest_block_number,
                 last_proposed.block_hash.as_ref(),
                 last_proposed.block_number,
             ) {

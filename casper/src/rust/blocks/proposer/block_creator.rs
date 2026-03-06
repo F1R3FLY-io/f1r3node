@@ -602,7 +602,7 @@ pub async fn create(
                 );
             }
         }
-        tracing::info!(
+        tracing::debug!(
             target: "f1r3fly.block_creator.timing",
             "prepare_user_deploys_ms={}, user_deploys_count={}, user_deploy_cap={}, user_deploy_cap_hit={}",
             t.elapsed().as_millis(),
@@ -615,7 +615,7 @@ pub async fn create(
     let dummy_deploys = {
         let t = std::time::Instant::now();
         let v = prepare_dummy_deploy(next_block_num, shard_id.clone(), dummy_deploy_opt)?;
-        tracing::info!(
+        tracing::debug!(
             target: "f1r3fly.block_creator.timing",
             "prepare_dummy_deploys_ms={}, dummy_deploys_count={}",
             t.elapsed().as_millis(),
@@ -626,7 +626,7 @@ pub async fn create(
     let slashing_deploys = {
         let t = std::time::Instant::now();
         let v = prepare_slashing_deploys(casper_snapshot, validator_identity, next_seq_num).await?;
-        tracing::info!(
+        tracing::debug!(
             target: "f1r3fly.block_creator.timing",
             "prepare_slashing_deploys_ms={}, slashing_deploys_count={}",
             t.elapsed().as_millis(),
@@ -713,7 +713,7 @@ pub async fn create(
         }
         Err(err) => return Err(err),
     };
-    tracing::info!(
+    tracing::debug!(
         target: "f1r3fly.block_creator.timing",
         "compute_deploys_checkpoint_ms={}",
         checkpoint_started.elapsed().as_millis()
@@ -765,10 +765,10 @@ pub async fn create(
 
     let block_info = pretty_printer::PrettyPrinter::build_string_block_message(&signed_block, true);
     let deploy_count = signed_block.body.deploys.len();
-    tracing::info!("Block created: {} ({}d)", block_info, deploy_count);
+    tracing::debug!("Block created: {} ({}d)", block_info, deploy_count);
     let total_create_block_ms = create_started.elapsed().as_millis();
 
-    tracing::info!(
+    tracing::debug!(
         target: "f1r3fly.block_creator.timing",
         "Block creator timing: package_ms={}, sign_ms={}, total_create_block_ms={}",
         package_ms,

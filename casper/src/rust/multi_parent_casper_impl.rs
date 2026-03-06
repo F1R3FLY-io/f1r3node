@@ -5,7 +5,7 @@ use rspace_plus_plus::rspace::state::rspace_exporter::RSpaceExporter;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    Arc, Mutex,
+    Arc, Mutex, OnceLock,
 };
 
 use block_storage::rust::{
@@ -74,6 +74,22 @@ use crate::rust::{
 
 const FINALIZER_BLOCKING_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 const MAX_ACTIVE_VALIDATORS_CACHE_ENTRIES: usize = 4096;
+const DEPLOY_HEARTBEAT_WAKE_ENV: &str = "F1R3_DEPLOY_HEARTBEAT_WAKE";
+
+fn deploy_heartbeat_wake_enabled() -> bool {
+    static VALUE: OnceLock<bool> = OnceLock::new();
+    *VALUE.get_or_init(|| {
+        std::env::var(DEPLOY_HEARTBEAT_WAKE_ENV)
+            .ok()
+            .map(|value| {
+                matches!(
+                    value.trim().to_ascii_lowercase().as_str(),
+                    "1" | "true" | "yes" | "on"
+                )
+            })
+            .unwrap_or(false)
+    })
+}
 
 /// RAII guard that ensures the finalization flag is reset on drop.
 /// This prevents the flag from being stuck in `true` state if the async block
@@ -1549,7 +1565,7 @@ async fn compute_last_finalized_block(
 
                         // Guard will reset finalization_in_progress flag on drop
                         tracing::debug!("Finalization completed");
-                        tracing::info!(
+                        tracing::debug!(
                             target: "f1r3fly.finalizer.effect.timing",
                             "Finalization effect timing: finalized_blocks={}, process_finalized_ms={}",
                             finalized_set.len(),
@@ -1560,7 +1576,7 @@ async fn compute_last_finalized_block(
                     })
                 })
                 .await?;
-            tracing::info!(
+            tracing::debug!(
                 target: "f1r3fly.finalizer.effect.timing",
                 "record_directly_finalized_total_ms={}",
                 effect_started.elapsed().as_millis()
@@ -1588,7 +1604,7 @@ async fn compute_last_finalized_block(
     // Return the finalized block
     let read_started = std::time::Instant::now();
     let block_message = block_store.get(&final_lfb_hash)?.unwrap();
-    tracing::info!(
+    tracing::debug!(
         target: "f1r3fly.last_finalized_block.timing",
         "last_finalized_block timing: finalizer_ms={}, read_block_ms={}, total_ms={}, new_lfb_found={}",
         finalizer_ms,
@@ -1740,13 +1756,19 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasperImpl<T> {
         let deploy_info = PrettyPrinter::build_string_signed_deploy_data(&deploy);
         tracing::info!("Received {}", deploy_info);
 
-        // Trigger heartbeat signal to propose block immediately with this deploy
-        if let Ok(signal_guard) = self.heartbeat_signal_ref.try_read() {
-            if let Some(ref signal) = *signal_guard {
-                tracing::debug!("Triggering heartbeat wake for immediate block proposal");
-                signal.trigger_wake();
-            } else {
-                tracing::debug!("No heartbeat signal available (heartbeat may be disabled)");
+        // Deploy API already triggers propose asynchronously. Keep heartbeat wake opt-in to
+        // avoid duplicate propose races that inflate inclusion latency.
+        if deploy_heartbeat_wake_enabled() {
+            if let Ok(signal_guard) = self.heartbeat_signal_ref.try_read() {
+                if let Some(ref signal) = *signal_guard {
+                    tracing::debug!(
+                        "Triggering heartbeat wake for immediate block proposal via {}",
+                        DEPLOY_HEARTBEAT_WAKE_ENV
+                    );
+                    signal.trigger_wake();
+                } else {
+                    tracing::debug!("No heartbeat signal available (heartbeat may be disabled)");
+                }
             }
         }
 

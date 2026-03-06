@@ -430,7 +430,7 @@ impl Finalizer {
             let fault_tolerance = match ft_result {
                 Ok(Ok(value)) => value,
                 Ok(Err(err)) => {
-                    tracing::info!(
+                    tracing::debug!(
                         target: "f1r3fly.finalizer.timing",
                         "Finalizer candidate skipped due to clique error: hash={:?}, err={:?}",
                         message.block_hash,
@@ -439,7 +439,7 @@ impl Finalizer {
                     continue;
                 }
                 Err(_) => {
-                    tracing::info!(
+                    tracing::debug!(
                         target: "f1r3fly.finalizer.timing",
                         "Finalizer candidate skipped due to clique timeout: hash={:?}, timeout_ms={}",
                         message.block_hash,
@@ -458,7 +458,7 @@ impl Finalizer {
                 lfb_result = Some(lfb_hash);
                 break;
             } else {
-                tracing::info!(
+                tracing::debug!(
                     target: "f1r3fly.finalizer.timing",
                     "Finalizer candidate rejected by threshold: hash={:?}, fault_tolerance={:.6}, threshold={:.6}",
                     message.block_hash,
@@ -467,7 +467,7 @@ impl Finalizer {
                 );
             }
         }
-        tracing::info!(
+        tracing::debug!(
             target: "f1r3fly.finalizer.timing",
             "Finalizer timing: latest_messages={}, layers_visited={}, agreements={}, filtered_agreements={}, deduped_filtered_agreements={}, message_weight_map_cache_hit={}, message_weight_map_cache_miss={}, main_parent_cache_hit={}, main_parent_cache_miss={}, candidate_cap={}, ranking_strategy={}, candidate_capped={}, upper_bound_pruned={}, upper_bound_passed={}, max_ft_upper_bound={:.6}, clique_evals={}, clique_ms={}, total_ms={}, budget_ms={}, step_timeout_ms={}, budget_exhausted={}, lfb_lag={}, catchup_mode={}, found_new_lfb={}, weight_map_ns={}, agreement_ns={}, parent_ns={}, next_push_ns={}",
             latest_messages_count,
