@@ -570,17 +570,20 @@ impl ReplayRuntimeOps {
     pub fn check_replay_data_with_fix(
         &self,
         // https://f1r3fly.atlassian.net/browse/RCHAIN-3505
-        _eval_successful: bool,
+        eval_successful: bool,
     ) -> Result<(), ReplayFailure> {
-        // Time check replay data operation
         let check_start = Instant::now();
-        // Only check replay data for successful evaluations
         let result = match self.runtime_ops.runtime.check_replay_data() {
             Ok(()) => Ok(()),
             Err(err) => {
                 let err_msg = err.to_string();
                 if err_msg.contains("unused") && err_msg.contains("COMM") {
-                    Err(ReplayFailure::unused_comm_event(err_msg))
+                    if !eval_successful {
+                        // Suppress UnusedCOMMEvent when eval was not successful
+                        Ok(())
+                    } else {
+                        Err(ReplayFailure::unused_comm_event(err_msg))
+                    }
                 } else {
                     Err(ReplayFailure::internal_error(format!(
                         "Replay check failed: {}",

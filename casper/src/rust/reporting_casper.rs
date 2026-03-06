@@ -1,7 +1,8 @@
 // See casper/src/main/scala/coop/rchain/casper/ReportingCasper.scala
 
 use async_trait::async_trait;
-use std::{collections::HashSet, sync::Arc};
+use std::collections::HashMap;
+use std::sync::Arc;
 
 use block_storage::rust::{
     dag::block_dag_key_value_storage::BlockDagKeyValueStorage,
@@ -9,14 +10,15 @@ use block_storage::rust::{
 };
 use models::{
     rhoapi::{BindPattern, ListParWithRandom, Par, TaggedContinuation},
-    rust::casper::protocol::casper_message::{BlockMessage, ProcessedDeploy, SystemDeployData},
+    rust::casper::protocol::casper_message::{BlockMessage, ProcessedDeploy, ProcessedSystemDeploy, SystemDeployData},
 };
 use rholang::rust::interpreter::{
-    accounting::_cost,
-    reduce::DebruijnInterpreter,
-    system_processes::{BlockData, DeployData, InvalidBlocks},
+    rho_runtime::RhoRuntime,
+    system_processes::{BlockData, Definition},
 };
 use rspace_plus_plus::rspace::{
+    errors::RSpaceError,
+    hashing::blake2b256_hash::Blake2b256Hash,
     reporting_rspace::{ReportingEvent, ReportingRspace},
     rspace::RSpaceStore,
 };
@@ -67,29 +69,167 @@ impl ReportingCasper for NoopReportingCasper {
 }
 
 /// Real implementation using RhoReporter
-/*
-At the moment, we have only one dead_code annotation in Casper, related to RhoReporterCasper.
-In practice, this is not truly dead code, since the fields are stored and used within the rho_reporter function.
-However, Rust treats fields that are stored but never read as dead code.
-This annotation will no longer be needed once the trace logic is implemented,
-which is currently marked as todo!("RhoReporter.trace implementation pending")
- */
-#[allow(dead_code)]
 pub struct RhoReporterCasper {
     rspace_store: RSpaceStore,
     block_store: KeyValueBlockStore,
     block_dag_storage: BlockDagKeyValueStorage,
+    external_services: rholang::rust::interpreter::external_services::ExternalServices,
 }
 
 #[async_trait]
 impl ReportingCasper for RhoReporterCasper {
-    async fn trace(&self, _block: &BlockMessage) -> Result<ReplayResult, String> {
-        // Real implementation will involve:
-        // 1. Creating reporting rspace from store
-        // 2. Creating reporting runtime
-        // 3. Replaying block deploys
-        // 4. Collecting reporting events
-        todo!("RhoReporter.trace implementation pending")
+    async fn trace(&self, block: &BlockMessage) -> Result<ReplayResult, String> {
+        use crate::rust::genesis::genesis::Genesis;
+        use crate::rust::util::proto_util;
+
+        let reporting_rspace = ReportingRuntime::create_reporting_rspace(self.rspace_store.clone())
+            .map_err(|e| format!("Failed to create reporting rspace: {}", e))?;
+
+        let mergeable_tag_name = Genesis::non_negative_mergeable_tag_name();
+        let mut extra_system_processes = Vec::new();
+        let mut reporting_runtime = ReportingRuntime::create_reporting_runtime(
+            reporting_rspace,
+            mergeable_tag_name,
+            &mut extra_system_processes,
+            self.external_services.clone(),
+        )
+        .await
+        .map_err(|e| format!("Failed to create reporting runtime: {}", e))?;
+
+        let mut dag = self.block_dag_storage.get_representation();
+
+        let genesis = self
+            .block_store
+            .get_approved_block()
+            .map_err(|e| format!("Failed to get approved block: {}", e))?;
+
+        let is_genesis = genesis
+            .as_ref()
+            .map(|g| block.block_hash == g.candidate.block.block_hash)
+            .unwrap_or(false);
+
+        let invalid_blocks_set = dag.invalid_blocks();
+
+        let pre_state_hash_bytes = proto_util::pre_state_hash(block);
+        let pre_state_hash = Blake2b256Hash::from_bytes_prost(&pre_state_hash_bytes);
+
+        let block_data = BlockData::from_block(block);
+
+        let unseen_blocks_set = proto_util::unseen_block_hashes(&mut dag, block)
+            .map_err(|e| format!("Failed to get unseen block hashes: {}", e))?;
+
+        let seen_invalid_blocks: HashMap<models::rust::block_hash::BlockHash, models::rust::validator::Validator> = invalid_blocks_set
+            .iter()
+            .filter(|block_metadata| !unseen_blocks_set.contains(&block_metadata.block_hash))
+            .map(|block_metadata| (block_metadata.block_hash.clone(), block_metadata.sender.clone()))
+            .collect();
+
+        Self::replay_deploys(
+            &mut reporting_runtime,
+            &pre_state_hash,
+            &block.body.deploys,
+            &block.body.system_deploys,
+            !is_genesis,
+            &block_data,
+            seen_invalid_blocks,
+        )
+        .await
+    }
+}
+
+impl RhoReporterCasper {
+    /// Replay deploys and collect reporting events
+    async fn replay_deploys(
+        runtime: &mut ReportingRuntime,
+        start_hash: &Blake2b256Hash,
+        terms: &[ProcessedDeploy],
+        system_deploys: &[ProcessedSystemDeploy],
+        with_cost_accounting: bool,
+        block_data: &BlockData,
+        invalid_blocks: HashMap<models::rust::block_hash::BlockHash, models::rust::validator::Validator>,
+    ) -> Result<ReplayResult, String> {
+        runtime.reset(start_hash);
+
+        runtime.set_block_data(block_data.clone()).await;
+        runtime.set_invalid_blocks(invalid_blocks).await;
+
+        let mut deploy_results = Vec::new();
+        for (idx, term) in terms.iter().enumerate() {
+            tracing::debug!(
+                target: "f1r3fly.casper.reporting",
+                deploy_index = idx,
+                total_deploys = terms.len(),
+                "Replaying deploy for report"
+            );
+
+            let replay_result = runtime
+                .replay_deploy_e(with_cost_accounting, term)
+                .await;
+
+            let events = match replay_result {
+                Ok(_) => runtime.get_report().unwrap_or_default(),
+                Err(e) => {
+                    tracing::warn!(
+                        target: "f1r3fly.casper.reporting",
+                        deploy_index = idx,
+                        error = %e,
+                        "Deploy replay failed, returning empty events"
+                    );
+                    Vec::new()
+                }
+            };
+
+            deploy_results.push(DeployReportResult {
+                processed_deploy: term.clone(),
+                events,
+            });
+        }
+
+        let mut system_deploy_results = Vec::new();
+        for (idx, system_deploy) in system_deploys.iter().enumerate() {
+            tracing::debug!(
+                target: "f1r3fly.casper.reporting",
+                system_deploy_index = idx,
+                total_system_deploys = system_deploys.len(),
+                "Replaying system deploy for report"
+            );
+
+            let replay_result = runtime
+                .replay_block_system_deploy(block_data, system_deploy)
+                .await;
+
+            let events = match replay_result {
+                Ok(_) => runtime.get_report().unwrap_or_default(),
+                Err(e) => {
+                    tracing::warn!(
+                        target: "f1r3fly.casper.reporting",
+                        system_deploy_index = idx,
+                        error = %e,
+                        "System deploy replay failed, returning empty events"
+                    );
+                    Vec::new()
+                }
+            };
+
+            let system_deploy_data = match system_deploy {
+                ProcessedSystemDeploy::Succeeded { system_deploy, .. } => system_deploy.clone(),
+                ProcessedSystemDeploy::Failed { .. } => SystemDeployData::Empty,
+            };
+
+            system_deploy_results.push(SystemDeployReportResult {
+                processed_system_deploy: system_deploy_data,
+                events,
+            });
+        }
+
+        let checkpoint = runtime.create_checkpoint();
+        let post_state_hash = ByteString::from(checkpoint.root.to_bytes_prost());
+
+        Ok(ReplayResult {
+            deploy_report_result: deploy_results,
+            system_deploy_report_result: system_deploy_results,
+            post_state_hash,
+        })
     }
 }
 
@@ -103,36 +243,128 @@ pub fn rho_reporter(
     rspace_store: &RSpaceStore,
     block_store: &KeyValueBlockStore,
     block_dag_storage: &BlockDagKeyValueStorage,
+    external_services: rholang::rust::interpreter::external_services::ExternalServices,
 ) -> Arc<dyn ReportingCasper> {
     Arc::new(RhoReporterCasper {
         rspace_store: rspace_store.clone(),
         block_store: block_store.clone(),
         block_dag_storage: block_dag_storage.clone(),
+        external_services,
     })
 }
 
-/// Runtime for reporting with deploy data support (PR #165 backport)
-///
-/// # PR #165 Changes in Scala:
-/// In the original Scala code, PR #165 added:
-/// 1. `deployDataRef: Ref[F, DeployData]` parameter to ReportingRuntime class
-/// 2. Updated constructor to pass deployDataRef to parent ReplayRhoRuntimeImpl
-/// 3. Updated ReportingRuntime.apply() factory method to:
-///    - Destructure deployRef from createRhoEnv (returns 4-tuple now)
-///    - Pass deployRef when constructing new ReportingRuntime instance
-///
-/// # Current Rust Implementation:
-/// We added the `deploy_data_ref` field to the struct definition.
-/// However, the actual runtime construction code is not yet implemented (see `todo!` in trace() method).
-/// When ReportingRuntime creation is eventually implemented, the deploy_data_ref field
-/// will need to be properly initialized and passed, following the same pattern as
-/// block_data and invalid_blocks_param.
+/// ReportingRuntime wraps RhoRuntimeImpl with ReportingRspace to enable event collection
 pub struct ReportingRuntime {
-    pub reducer: DebruijnInterpreter,
-    pub space: RhoReportingRspace,
-    pub cost: _cost,
-    pub block_data: Arc<tokio::sync::RwLock<BlockData>>,
-    pub invalid_blocks_param: InvalidBlocks,
-    pub deploy_data_ref: Arc<tokio::sync::RwLock<DeployData>>, // Added in PR #165
-    pub merge_chs: Arc<std::sync::RwLock<HashSet<Par>>>,
+    runtime: rholang::rust::interpreter::rho_runtime::RhoRuntimeImpl,
+    space: RhoReportingRspace,
+}
+
+impl ReportingRuntime {
+    /// Get reporting events from the space
+    pub fn get_report(&self) -> Result<Vec<Vec<ReportingEvent<Par, BindPattern, ListParWithRandom, TaggedContinuation>>>, RSpaceError> {
+        self.space.get_report()
+    }
+
+    /// Reset the runtime to a specific state hash
+    pub fn reset(&mut self, root: &Blake2b256Hash) {
+        self.runtime.reset(root);
+    }
+
+    /// Set block data for the runtime
+    pub async fn set_block_data(&self, block_data: BlockData) {
+        RhoRuntime::set_block_data(&self.runtime, block_data).await;
+    }
+
+    /// Set invalid blocks for the runtime
+    pub async fn set_invalid_blocks(&self, invalid_blocks: std::collections::HashMap<models::rust::block_hash::BlockHash, models::rust::validator::Validator>) {
+        RhoRuntime::set_invalid_blocks(&self.runtime, invalid_blocks).await;
+    }
+
+    /// Create a checkpoint and return the root hash
+    pub fn create_checkpoint(&mut self) -> rspace_plus_plus::rspace::checkpoint::Checkpoint {
+        RhoRuntime::create_checkpoint(&mut self.runtime)
+    }
+
+    /// Replay a deploy and collect reporting events
+    pub async fn replay_deploy_e(
+        &mut self,
+        with_cost_accounting: bool,
+        processed_deploy: &ProcessedDeploy,
+    ) -> Result<(), crate::rust::errors::CasperError> {
+        use crate::rust::rholang::replay_runtime::ReplayRuntimeOps;
+
+        let mut replay_ops = ReplayRuntimeOps::new_from_runtime(self.runtime.clone());
+
+        replay_ops.replay_deploy_e(with_cost_accounting, processed_deploy).await?;
+
+        self.runtime = replay_ops.runtime_ops.runtime;
+
+        Ok(())
+    }
+
+    /// Replay a system deploy and collect reporting events
+    pub async fn replay_block_system_deploy(
+        &mut self,
+        block_data: &BlockData,
+        processed_system_deploy: &models::rust::casper::protocol::casper_message::ProcessedSystemDeploy,
+    ) -> Result<(), crate::rust::errors::CasperError> {
+        use crate::rust::rholang::replay_runtime::ReplayRuntimeOps;
+
+        // Create ReplayRuntimeOps from the runtime
+        let mut replay_ops = ReplayRuntimeOps::new_from_runtime(self.runtime.clone());
+
+        // Replay the system deploy
+        replay_ops.replay_block_system_deploy(block_data, processed_system_deploy).await?;
+
+        // Update the runtime from replay_ops
+        self.runtime = replay_ops.runtime_ops.runtime;
+
+        Ok(())
+    }
+}
+
+/// Factory functions for creating ReportingRuntime
+impl ReportingRuntime {
+    /// Create a ReportingRspace from RSpaceStore
+    pub fn create_reporting_rspace(
+        store: RSpaceStore,
+    ) -> Result<RhoReportingRspace, RSpaceError> {
+        use rholang::rust::interpreter::matcher::r#match::Matcher;
+        use rspace_plus_plus::rspace::r#match::Match;
+
+        let matcher: Arc<Box<dyn Match<BindPattern, ListParWithRandom>>> =
+            Arc::new(Box::new(Matcher));
+
+        RhoReportingRspace::create(store, matcher)
+    }
+
+    /// Create a ReportingRuntime from a ReportingRspace
+    ///
+    /// Bootstraps registry without checkpoint
+    /// `createCheckpoint` is called at the end of `replayDeploys`, not here.
+    /// The reporting space is ephemeral and reset to `preStateHash` before replay.
+    pub async fn create_reporting_runtime(
+        reporting_space: RhoReportingRspace,
+        mergeable_tag_name: Par,
+        extra_system_processes: &mut Vec<Definition>,
+        external_services: rholang::rust::interpreter::external_services::ExternalServices,
+    ) -> Result<Self, String> {
+        use rholang::rust::interpreter::rho_runtime::create_replay_rho_runtime;
+
+        let runtime = create_replay_rho_runtime(
+            reporting_space.clone(),
+            mergeable_tag_name,
+            false,
+            extra_system_processes,
+            external_services,
+        )
+        .await;
+
+        rholang::rust::interpreter::rho_runtime::bootstrap_registry(&runtime).await;
+
+        Ok(ReportingRuntime {
+            runtime,
+            space: reporting_space,
+        })
+    }
 }
