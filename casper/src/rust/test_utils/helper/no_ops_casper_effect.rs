@@ -39,8 +39,6 @@ pub struct NoOpsCasperEffect {
     block_dag_storage: KeyValueDagRepresentation,
 }
 
-unsafe impl Send for NoOpsCasperEffect {}
-unsafe impl Sync for NoOpsCasperEffect {}
 
 // For testing purposes, we'll implement Clone manually by creating stub instances
 impl Clone for NoOpsCasperEffect {

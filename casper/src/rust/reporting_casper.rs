@@ -109,18 +109,11 @@ impl ReportingCasper for RhoReporterCasper {
             .unwrap_or(false);
 
         let invalid_blocks_set = dag.invalid_blocks();
-        let invalid_blocks: HashMap<models::rust::block_hash::BlockHash, models::rust::validator::Validator> = invalid_blocks_set
-            .iter()
-            .map(|block_metadata| (block_metadata.block_hash.clone(), block_metadata.sender.clone()))
-            .collect();
 
         let pre_state_hash_bytes = proto_util::pre_state_hash(block);
         let pre_state_hash = Blake2b256Hash::from_bytes_prost(&pre_state_hash_bytes);
 
         let block_data = BlockData::from_block(block);
-
-        reporting_runtime.set_block_data(block_data.clone()).await;
-        reporting_runtime.set_invalid_blocks(invalid_blocks.clone()).await;
 
         let unseen_blocks_set = proto_util::unseen_block_hashes(&mut dag, block)
             .map_err(|e| format!("Failed to get unseen block hashes: {}", e))?;
@@ -347,8 +340,9 @@ impl ReportingRuntime {
 
     /// Create a ReportingRuntime from a ReportingRspace
     ///
-    /// Bootstraps registry without checkpoint, since the reporting space is
-    /// ephemeral and only used for event collection.
+    /// Bootstraps registry without checkpoint
+    /// `createCheckpoint` is called at the end of `replayDeploys`, not here.
+    /// The reporting space is ephemeral and reset to `preStateHash` before replay.
     pub async fn create_reporting_runtime(
         reporting_space: RhoReportingRspace,
         mergeable_tag_name: Par,

@@ -51,17 +51,14 @@ metrics-util = "0.17"
 k256 = { version = "0.13.4", features = ["ecdsa"] }
 serial_test = "3.1"
 env_logger = "0.11.8"
+tempfile = "3.24.0"
 
 
 
 [features]
-# Default features - test-utils is included to ensure tests compile with test utilities enabled
-# Note: test-utils code is guarded with #[cfg(feature = "test-utils")] so it won't affect production builds
-# The test-utils module code won't be compiled unless explicitly used, even with the feature enabled
-default = ["test-utils"]
-# Feature to expose test utilities to other workspace members
-# When enabled, exposes test utilities and enables required dependencies
-# Automatically enabled for tests in this crate via default features
+default = []
+# Exposes test utilities (TestNode, mocks, genesis helpers) to other workspace members.
+# Guarded with #[cfg(feature = "test-utils")] so it is never compiled in production.
 test-utils = ["tempfile"]
 
 [build-dependencies]
