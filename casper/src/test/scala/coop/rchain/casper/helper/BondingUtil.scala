@@ -20,7 +20,7 @@ object BondingUtil {
          |new retCh, PoSCh, rl(`rho:registry:lookup`), stdout(`rho:io:stdout`), deployerId(`rho:system:deployerId`) in {
          |  rl!(`rho:system:pos`, *PoSCh) |
          |  for(@(_, PoS) <- PoSCh) {
-         |    @PoS!("bond", *deployerId, 1000, *retCh)
+         |    @PoS!("bond", *deployerId, $amount, *retCh)
          |  }
          |}
          |""".stripMargin,
