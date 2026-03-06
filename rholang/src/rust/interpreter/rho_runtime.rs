@@ -1120,7 +1120,7 @@ fn setup_maps_and_refs(
     )
 }
 
-async fn create_rho_env<T>(
+pub async fn create_rho_env<T>(
     mut rspace: T,
     merge_chs: Arc<std::sync::RwLock<HashSet<Par>>>,
     mergeable_tag_name: Par,

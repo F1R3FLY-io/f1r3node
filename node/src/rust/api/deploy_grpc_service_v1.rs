@@ -45,6 +45,14 @@ impl IntoServiceError for eyre::Report {
     }
 }
 
+impl IntoServiceError for casper::rust::api::block_report_api::BlockReportError {
+    fn into_service_error(self) -> ServiceError {
+        ServiceError {
+            messages: vec![self.to_string()],
+        }
+    }
+}
+
 /// Deploy gRPC Service V1 implementation
 #[derive(Clone)]
 pub struct DeployGrpcServiceV1Impl {

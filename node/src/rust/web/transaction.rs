@@ -124,45 +124,42 @@ impl TransactionAPIImpl {
             .map(|info| info.sig.clone())
             .unwrap_or_else(|| "unknown".to_string());
 
-        // Determine transaction types based on report length (matching Scala logic)
-        let transaction_types = match deploy.report.len() {
-            1 => vec![TransactionType::PreCharge {
-                deploy_id: deploy_sig.clone(),
-            }],
-            2 => vec![
-                TransactionType::PreCharge {
+        if deploy.report.is_empty() {
+            return Err(eyre::eyre!(
+                "It is not possible that user report {} amount is 0",
+                deploy_sig
+            ));
+        }
+
+        // Precharge is always emitted in the first report batch.
+        let first_report_transactions = self.find_transactions(&deploy.report[0]);
+        let deployer_addr = first_report_transactions.first().map(|t| t.from_addr.clone());
+        for transaction in first_report_transactions {
+            transactions.push(TransactionInfo {
+                transaction,
+                transaction_type: TransactionType::PreCharge {
                     deploy_id: deploy_sig.clone(),
                 },
-                TransactionType::Refund {
-                    deploy_id: deploy_sig.clone(),
-                },
-            ],
-            3 => vec![
-                TransactionType::PreCharge {
-                    deploy_id: deploy_sig.clone(),
-                },
-                TransactionType::UserDeploy {
-                    deploy_id: deploy_sig.clone(),
-                },
-                TransactionType::Refund {
-                    deploy_id: deploy_sig.clone(),
-                },
-            ],
-            _ => {
-                return Err(eyre::eyre!(
-                    "It is not possible that user report {} amount is not equal to 1, 2 or 3",
-                    deploy_sig
-                ));
-            }
+            });
         };
 
-        // Process each report with its corresponding transaction type
-        for (report, tx_type) in deploy.report.iter().zip(transaction_types) {
+        // Subsequent batches may contain either user-transfer events, refund events, or both.
+        // Classify by sender address: transactions sent by deployer are user deploy effects;
+        // others are refund/system side-effects.
+        for report in deploy.report.iter().skip(1) {
             let found_transactions = self.find_transactions(report);
             for transaction in found_transactions {
+                let tx_type = match deployer_addr.as_ref() {
+                    Some(addr) if transaction.from_addr == *addr => TransactionType::UserDeploy {
+                        deploy_id: deploy_sig.clone(),
+                    },
+                    _ => TransactionType::Refund {
+                        deploy_id: deploy_sig.clone(),
+                    },
+                };
                 transactions.push(TransactionInfo {
                     transaction,
-                    transaction_type: tx_type.clone(),
+                    transaction_type: tx_type,
                 });
             }
         }
@@ -299,17 +296,18 @@ where
 
     /// Get transaction response for a block hash with caching
     pub async fn get_transaction(&self, block_hash: String) -> Result<TransactionResponse> {
+        // Treat missing/empty cache entries as cache miss, not an error.
         let transaction_response = {
             let store = self.store.read().await;
             store
                 .get(&vec![block_hash.clone()])?
-                .first()
-                .ok_or(eyre::eyre!("No response found"))?
-                .clone()
+                .into_iter()
+                .next()
+                .flatten()
         };
 
         if let Some(transaction_response) = transaction_response {
-            return Ok(transaction_response.clone());
+            return Ok(transaction_response);
         }
 
         let fetch_task = if let Some(entry) = self.block_defer_map.get(&block_hash) {
