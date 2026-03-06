@@ -28,6 +28,7 @@ use std::time::Instant;
 
 use crate::rust::interpreter::external_services::ExternalServices;
 use crate::rust::interpreter::grpc_client_service::GrpcClientService;
+use crate::rust::interpreter::chromadb_service::SharedChromaDBService;
 use crate::rust::interpreter::ollama_service::SharedOllamaService;
 use crate::rust::interpreter::openai_service::SharedOpenAIService;
 use crate::rust::interpreter::metrics_constants::{
@@ -901,6 +902,98 @@ fn std_rho_ai_processes() -> Vec<Definition> {
     ]
 }
 
+fn std_rho_chroma_processes() -> Vec<Definition> {
+    vec![
+        Definition {
+            urn: "rho:chroma:collection:new".to_string(),
+            fixed_channel: FixedChannels::chroma_create_collection(),
+            // TODO (chase): How to define overloads?
+            // This function can support 4 or 3 arguments (including ack) (second to last one is optional).
+            arity: 4,
+            body_ref: BodyRefs::CHROMA_CREATE_COLLECTION,
+            handler: Box::new(|ctx| {
+                Box::new(move |args| {
+                    let ctx = ctx.clone();
+                    Box::pin(async move {
+                        ctx.system_processes
+                            .clone()
+                            .chroma_create_collection(args)
+                            .await
+                    })
+                })
+            }),
+            remainder: None,
+        },
+        Definition {
+            urn: "rho:chroma:collection:meta".to_string(),
+            fixed_channel: FixedChannels::chroma_get_collection_meta(),
+            arity: 2,
+            body_ref: BodyRefs::CHROMA_GET_COLLECTION_META,
+            handler: Box::new(|ctx| {
+                Box::new(move |args| {
+                    let ctx = ctx.clone();
+                    Box::pin(async move {
+                        ctx.system_processes
+                            .clone()
+                            .chroma_get_collection_meta(args)
+                            .await
+                    })
+                })
+            }),
+            remainder: None,
+        },
+        Definition {
+            urn: "rho:chroma:collection:entries:new".to_string(),
+            fixed_channel: FixedChannels::chroma_upsert_entries(),
+            arity: 3,
+            body_ref: BodyRefs::CHROMA_UPSERT_ENTRIES,
+            handler: Box::new(|ctx| {
+                Box::new(move |args| {
+                    let ctx = ctx.clone();
+                    Box::pin(async move {
+                        ctx.system_processes
+                            .clone()
+                            .chroma_upsert_entries(args)
+                            .await
+                    })
+                })
+            }),
+            remainder: None,
+        },
+        Definition {
+            urn: "rho:chroma:collection:entries:query".to_string(),
+            fixed_channel: FixedChannels::chroma_query(),
+            arity: 3,
+            body_ref: BodyRefs::CHROMA_QUERY,
+            handler: Box::new(|ctx| {
+                Box::new(move |args| {
+                    let ctx = ctx.clone();
+                    Box::pin(async move { ctx.system_processes.clone().chroma_query(args).await })
+                })
+            }),
+            remainder: None,
+        },
+        Definition {
+            urn: "rho:chroma:collection:entries:delete".to_string(),
+            fixed_channel: FixedChannels::chroma_delete_documents(),
+            arity: 3,
+            body_ref: BodyRefs::CHROMA_DELETE_DOCUMENTS,
+            handler: Box::new(|ctx| {
+                Box::new(move |args| {
+                    let ctx = ctx.clone();
+                    Box::pin(async move {
+                        ctx.system_processes
+                            .clone()
+                            .chroma_delete_documents(args)
+                            .await
+                    })
+                })
+            }),
+            remainder: None,
+        },
+    ]
+}
+
 fn dispatch_table_creator(
     space: RhoISpace,
     dispatcher: RhoDispatch,
@@ -911,6 +1004,7 @@ fn dispatch_table_creator(
     openai_service: SharedOpenAIService,
     ollama_service: SharedOllamaService,
     grpc_client_service: GrpcClientService,
+    chromadb_service: SharedChromaDBService,
 ) -> RhoDispatchMap {
     let mut dispatch_table = HashMap::new();
 
@@ -920,6 +1014,7 @@ fn dispatch_table_creator(
     let mut all_processes: Vec<Definition> = std_system_processes();
     all_processes.extend(std_rho_crypto_processes());
     all_processes.extend(std_rho_ai_processes());
+    all_processes.extend(std_rho_chroma_processes());
 
     all_processes.extend(extra_system_processes.drain(..));
 
@@ -933,6 +1028,7 @@ fn dispatch_table_creator(
             openai_service.clone(),
             ollama_service.clone(),
             grpc_client_service.clone(),
+            chromadb_service.clone(),
         ));
 
         dispatch_table.insert(tuple.0, tuple.1);
@@ -986,6 +1082,7 @@ async fn setup_reducer(
     openai_service: SharedOpenAIService,
     ollama_service: SharedOllamaService,
     grpc_client_service: GrpcClientService,
+    chromadb_service: SharedChromaDBService,
     cost: _cost,
 ) -> DebruijnInterpreter {
     // println!("\nsetup_reducer");
@@ -1007,6 +1104,7 @@ async fn setup_reducer(
         openai_service,
         ollama_service,
         grpc_client_service,
+        chromadb_service,
     );
 
     let dispatcher = Arc::new(RholangAndScalaDispatcher {
@@ -1046,11 +1144,13 @@ fn setup_maps_and_refs(
     // Always include AI processes for replay compatibility.
     // When OpenAI is disabled, the NoOp service handles calls gracefully.
     let rho_ai_binding = std_rho_ai_processes();
+    let rho_chroma_binding = std_rho_chroma_processes();
 
     let combined_processes = system_binding
         .iter()
         .chain(rho_crypto_binding.iter())
         .chain(rho_ai_binding.iter())
+        .chain(rho_chroma_binding.iter())
         .chain(extra_system_processes.iter())
         .collect::<Vec<&Definition>>();
 
@@ -1103,6 +1203,7 @@ where
     let openai_service = external_services.openai.clone();
     let ollama_service = external_services.ollama.clone();
     let grpc_client_service = external_services.grpc_client.clone();
+    let chromadb_service = external_services.chroma.clone();
     let reducer = setup_reducer(
         charging_rspace,
         block_data_ref.clone(),
@@ -1115,6 +1216,7 @@ where
         openai_service,
         ollama_service,
         grpc_client_service,
+        chromadb_service,
         cost,
     )
     .await;
@@ -1214,7 +1316,11 @@ where
 /// # Returns
 ///
 /// A configured `RhoRuntimeImpl` instance ready for executing Rholang code.
-#[tracing::instrument(name = "create-play-runtime", target = "f1r3fly.rholang.runtime", skip_all)]
+#[tracing::instrument(
+    name = "create-play-runtime",
+    target = "f1r3fly.rholang.runtime",
+    skip_all
+)]
 pub async fn create_rho_runtime<T>(
     rspace: T,
     mergeable_tag_name: Par,
@@ -1252,7 +1358,11 @@ where
 /// # Returns
 ///
 /// A configured `RhoRuntimeImpl` instance with replay capabilities.
-#[tracing::instrument(name = "create-replay-runtime", target = "f1r3fly.rholang.runtime", skip_all)]
+#[tracing::instrument(
+    name = "create-replay-runtime",
+    target = "f1r3fly.rholang.runtime",
+    skip_all
+)]
 pub async fn create_replay_rho_runtime<T>(
     rspace: T,
     mergeable_tag_name: Par,
@@ -1318,7 +1428,11 @@ where
     (rho_runtime, replay_rho_runtime)
 }
 
-#[tracing::instrument(name = "create-play-runtime", target = "f1r3fly.rholang.runtime.create-play", skip_all)]
+#[tracing::instrument(
+    name = "create-play-runtime",
+    target = "f1r3fly.rholang.runtime.create-play",
+    skip_all
+)]
 pub async fn create_runtime_from_kv_store(
     stores: RSpaceStore,
     mergeable_tag_name: Par,

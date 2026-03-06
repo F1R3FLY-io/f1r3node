@@ -14,13 +14,13 @@ use crate::rust::errors::CasperError;
 use super::system_deploy_user_error::{SystemDeployPlatformFailure, SystemDeployUserError};
 
 pub trait SystemDeployTrait: Send + Sync {
-    type Output: Extractor<Self::Output>;
+    type Output: Extractor;
     type Result;
 
     fn source() -> String;
 
     fn process_result(
-        value: <Self::Output as Extractor<Self::Output>>::RustType,
+        value: <Self::Output as Extractor>::RustType,
     ) -> Either<SystemDeployUserError, Self::Result>;
 
     fn as_any(&self) -> &dyn std::any::Any;
@@ -70,7 +70,7 @@ pub trait SystemDeployTrait: Send + Sync {
     }
 
     fn extract_result(&self, output: &Par) -> Either<SystemDeployUserError, Self::Result> {
-        match <Self::Output as Extractor<Self::Output>>::unapply(output) {
+        match <Self::Output as Extractor>::unapply(output) {
             Some(value) => Self::process_result(value),
             None => {
                 let error = SystemDeployPlatformFailure::UnexpectedResult(vec![output.clone()]);

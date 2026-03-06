@@ -46,7 +46,7 @@ impl SystemDeployTrait for SlashDeploy {
     }
 
     fn process_result(
-        value: <Self::Output as Extractor<Self::Output>>::RustType,
+        value: <Self::Output as Extractor>::RustType,
     ) -> Either<SystemDeployUserError, Self::Result> {
         match value {
             (true, _) => Either::Right(()),
