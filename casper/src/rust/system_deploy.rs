@@ -19,6 +19,13 @@ use prost::bytes::Bytes;
 pub fn is_system_deploy_id(id: &Bytes) -> bool {
     id.len() == SYSTEM_DEPLOY_ID_LEN && {
         let last_byte = id[32];
-        last_byte == SLASH_MARKER || last_byte == CLOSE_BLOCK_MARKER || last_byte == HEARTBEAT_MARKER
+        last_byte == SLASH_MARKER
+            || last_byte == CLOSE_BLOCK_MARKER
+            || last_byte == HEARTBEAT_MARKER
     }
+}
+
+/// Detect if a deploy ID is specifically a slash system deploy.
+pub fn is_slash_deploy_id(id: &Bytes) -> bool {
+    id.len() == SYSTEM_DEPLOY_ID_LEN && id[32] == SLASH_MARKER
 }

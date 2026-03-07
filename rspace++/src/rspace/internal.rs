@@ -1,11 +1,12 @@
 // See rspace/src/main/scala/coop/rchain/rspace/internal.scala
 
+use std::collections::BTreeSet;
+use std::hash::Hash;
+
 use counter::Counter;
 use dashmap::DashMap;
 use proptest_derive::Arbitrary;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
-use std::hash::Hash;
 
 use super::trace::event::{Consume, Produce};
 
@@ -19,8 +20,7 @@ pub struct Datum<A: Clone> {
 }
 
 impl<A> Datum<A>
-where
-    A: Clone + Serialize,
+where A: Clone + Serialize
 {
     pub fn create<C: Serialize>(channel: &C, a: A, persist: bool) -> Datum<A> {
         let source = Produce::create(channel, &a, persist);
@@ -109,9 +109,12 @@ where
 
     pub fn add_binding(&self, k: K, v: V) {
         match self.map.get_mut(&k) {
-            Some(mut current) => {
-                current.insert(v, 1);
-            }
+            Some(mut current) => match current.get_mut(&v) {
+                Some(count) => *count += 1,
+                None => {
+                    current.insert(v, 1);
+                }
+            },
             None => {
                 let mut ms = Counter::new();
                 ms.insert(v, 1);
@@ -120,13 +123,9 @@ where
         }
     }
 
-    pub fn clear(&self) {
-        self.map.clear();
-    }
+    pub fn clear(&self) { self.map.clear(); }
 
-    pub fn is_empty(&self) -> bool {
-        self.map.is_empty()
-    }
+    pub fn is_empty(&self) -> bool { self.map.is_empty() }
 }
 
 impl<K: Hash + Eq, V: Hash + Eq> MultisetMultiMap<K, V> {
@@ -135,7 +134,19 @@ impl<K: Hash + Eq, V: Hash + Eq> MultisetMultiMap<K, V> {
         let mut should_remove_key = false;
 
         if let Some(mut current) = self.map.get_mut(k) {
-            current.remove(v);
+            let mut should_remove_value = false;
+            if let Some(count) = current.get_mut(v) {
+                if *count > 1 {
+                    *count -= 1;
+                } else {
+                    should_remove_value = true;
+                }
+            }
+
+            if should_remove_value {
+                current.remove(v);
+            }
+
             if current.is_empty() {
                 should_remove_key = true;
             }
@@ -147,7 +158,8 @@ impl<K: Hash + Eq, V: Hash + Eq> MultisetMultiMap<K, V> {
     }
 }
 
-// This function remains for compatibility but delegates to in-place version and returns the same map
+// This function remains for compatibility but delegates to in-place version and
+// returns the same map
 pub fn remove_binding<K: Hash + Eq, V: Hash + Eq>(
     ms: MultisetMultiMap<K, V>,
     k: K,
@@ -155,4 +167,41 @@ pub fn remove_binding<K: Hash + Eq, V: Hash + Eq>(
 ) -> MultisetMultiMap<K, V> {
     ms.remove_binding_in_place(&k, &v);
     ms
+}
+
+#[cfg(test)]
+mod tests {
+    use super::MultisetMultiMap;
+
+    #[test]
+    fn multiset_multimap_add_binding_increments_existing_count() {
+        let ms = MultisetMultiMap::empty();
+        ms.add_binding("k", "v");
+        ms.add_binding("k", "v");
+
+        let count = ms
+            .map
+            .get(&"k")
+            .and_then(|counter| counter.get(&"v").copied())
+            .unwrap_or(0);
+        assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn multiset_multimap_remove_binding_decrements_before_removing() {
+        let ms = MultisetMultiMap::empty();
+        ms.add_binding("k", "v");
+        ms.add_binding("k", "v");
+
+        ms.remove_binding_in_place(&"k", &"v");
+        let count_after_one_remove = ms
+            .map
+            .get(&"k")
+            .and_then(|counter| counter.get(&"v").copied())
+            .unwrap_or(0);
+        assert_eq!(count_after_one_remove, 1);
+
+        ms.remove_binding_in_place(&"k", &"v");
+        assert!(ms.map.get(&"k").is_none());
+    }
 }

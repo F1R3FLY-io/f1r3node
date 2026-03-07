@@ -30,6 +30,7 @@ use models::casper::{
     PrivateNamePreviewQuery, ReportQuery, Status, VersionInfo, VisualizeDagQuery,
 };
 use models::servicemodelapi::ServiceError;
+use tokio::time::{sleep, Duration};
 use tracing::error;
 
 trait IntoServiceError {
@@ -506,19 +507,44 @@ impl DeployService for DeployGrpcServiceV1Impl {
         request: tonic::Request<FindDeployQuery>,
     ) -> Result<tonic::Response<FindDeployResponse>, tonic::Status> {
         let request = request.into_inner();
-        match BlockAPI::find_deploy(&self.engine_cell, &request.deploy_id.to_vec()).await {
-            Ok(block_info) => Ok(tonic::Response::new(FindDeployResponse {
-                message: Some(
-                    models::casper::v1::find_deploy_response::Message::BlockInfo(block_info),
-                ),
-            })),
-            Err(e) => {
-                error!("Deploy service method error find_deploy");
-                Ok(tonic::Response::new(FindDeployResponse {
-                    message: Some(models::casper::v1::find_deploy_response::Message::Error(
-                        e.into_service_error(),
-                    )),
-                }))
+        const FIND_DEPLOY_RETRY_INTERVAL_MS: u64 = 100;
+        const FIND_DEPLOY_MAX_ATTEMPTS: u8 = 80;
+
+        let mut attempt = 1;
+        loop {
+            match BlockAPI::find_deploy(&self.engine_cell, &request.deploy_id.to_vec()).await {
+                Ok(block_info) => {
+                    return Ok(tonic::Response::new(FindDeployResponse {
+                        message: Some(
+                            models::casper::v1::find_deploy_response::Message::BlockInfo(
+                                block_info,
+                            ),
+                        ),
+                    }))
+                }
+                Err(e) => {
+                    let not_found = e
+                        .downcast_ref::<casper::rust::api::block_api::DeployNotFoundError>()
+                        .is_some();
+                    if !not_found || attempt >= FIND_DEPLOY_MAX_ATTEMPTS {
+                        error!("Deploy service method error find_deploy");
+                        return Ok(tonic::Response::new(FindDeployResponse {
+                            message: Some(
+                                models::casper::v1::find_deploy_response::Message::Error(
+                                    e.into_service_error(),
+                                ),
+                            ),
+                        }));
+                    }
+
+                    tracing::debug!(
+                        ?attempt,
+                        ?request,
+                        "Waiting for deploy to become visible in block DAG"
+                    );
+                    sleep(Duration::from_millis(FIND_DEPLOY_RETRY_INTERVAL_MS)).await;
+                    attempt += 1;
+                }
             }
         }
     }

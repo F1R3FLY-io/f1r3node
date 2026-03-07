@@ -1,22 +1,19 @@
-use crate::rspace::{
-    errors::HistoryError,
-    hashing::{
-        blake2b256_hash::Blake2b256Hash,
-        stable_hash_provider::{hash, hash_from_vec},
-    },
-    history::{
-        cold_store::PersistedData,
-        history::History,
-        history_reader::{HistoryReader, HistoryReaderBase},
-        history_repository::{PREFIX_DATUM, PREFIX_JOINS, PREFIX_KONT},
-        history_repository_impl::prepend_bytes,
-    },
-    internal::{Datum, WaitingContinuation},
-    serializers::serializers::{decode_continuations, decode_datums, decode_joins},
-};
+use std::marker::PhantomData;
+use std::sync::Arc;
+
 use serde::{Deserialize, Serialize};
 use shared::rust::store::key_value_store::KeyValueStore;
-use std::{marker::PhantomData, sync::Arc};
+
+use crate::rspace::errors::HistoryError;
+use crate::rspace::hashing::blake2b256_hash::Blake2b256Hash;
+use crate::rspace::hashing::stable_hash_provider::{hash, hash_from_vec};
+use crate::rspace::history::cold_store::PersistedData;
+use crate::rspace::history::history::History;
+use crate::rspace::history::history_reader::{HistoryReader, HistoryReaderBase};
+use crate::rspace::history::history_repository::{PREFIX_DATUM, PREFIX_JOINS, PREFIX_KONT};
+use crate::rspace::history::history_repository_impl::prepend_bytes;
+use crate::rspace::internal::{Datum, WaitingContinuation};
+use crate::rspace::serializers::serializers::{decode_continuations, decode_datums, decode_joins};
 
 #[derive(Clone)]
 pub struct RSpaceHistoryReaderImpl<C, P, A, K> {
@@ -47,22 +44,34 @@ impl<C, P, A, K> RSpaceHistoryReaderImpl<C, P, A, K> {
 
         match read_bytes {
             Some(ref bytes) => {
-                let read_hash = Blake2b256Hash::from_bytes(bytes.to_vec());
-
-                let serialized_read_hash = bincode::serialize(&read_hash.bytes())
-                    .expect("RSpace History Reader Impl: Unable to serialize");
-
-                let mut get_opt = self.leaf_store.get_one(&serialized_read_hash)?;
+                // Newer/import paths store raw hash bytes directly.
+                // Keep legacy serialized-key compatibility as fallback.
+                let mut get_opt = self.leaf_store.get_one(bytes)?;
 
                 if get_opt.is_none() {
-                    // Try fetch call for imported data. Ideally this should be removed.
-                    get_opt = self.leaf_store.get_one(&bytes)?;
+                    let serialized_read_hash = bincode::serialize(bytes).map_err(|e| {
+                        HistoryError::ActionError(format!(
+                            "RSpace History Reader Impl: Unable to serialize read hash bytes: {}",
+                            e
+                        ))
+                    })?;
+                    // Try fetch call for imported/legacy data. Ideally this should be removed.
+                    get_opt = self.leaf_store.get_one(&serialized_read_hash)?;
                 }
 
-                Ok(get_opt.map(|store_value_bytes| {
-                    bincode::deserialize(&store_value_bytes)
-                        .expect("RSpace History Reader Impl: Failed to deserialize")
-                }))
+                match get_opt {
+                    Some(store_value_bytes) => {
+                        let decoded = bincode::deserialize(&store_value_bytes).map_err(|e| {
+                            HistoryError::ActionError(format!(
+                                "RSpace History Reader Impl: Failed to deserialize persisted \
+                                 leaf: {}",
+                                e
+                            ))
+                        })?;
+                        Ok(Some(decoded))
+                    }
+                    None => Ok(None),
+                }
             }
             None => Ok(None),
         }
@@ -76,9 +85,7 @@ where
     A: Clone + for<'a> Deserialize<'a> + 'static + Sync + Send,
     K: Clone + for<'a> Deserialize<'a> + 'static + Sync + Send,
 {
-    fn root(&self) -> Blake2b256Hash {
-        self.target_history.root()
-    }
+    fn root(&self) -> Blake2b256Hash { self.target_history.root() }
 
     fn get_data_proj(&self, key: &Blake2b256Hash) -> Result<Vec<Datum<A>>, HistoryError> {
         match self.fetch_data(PREFIX_DATUM, key)? {

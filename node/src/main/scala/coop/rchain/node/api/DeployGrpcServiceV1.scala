@@ -15,10 +15,16 @@ import coop.rchain.catscontrib.TaskContrib._
 import coop.rchain.comm.discovery.NodeDiscovery
 import coop.rchain.comm.rp.Connect.{ConnectionsCell, RPConfAsk}
 import coop.rchain.graphz._
-import coop.rchain.metrics.Span
+import coop.rchain.metrics.{Metrics, Span}
 import coop.rchain.models.StacksafeMessage
 import coop.rchain.models.syntax._
 import coop.rchain.monix.Monixable
+import coop.rchain.node.web.{
+  BlockInfoEnricher,
+  CacheTransactionAPI,
+  Transaction,
+  TransactionResponse
+}
 import coop.rchain.shared.Log
 import coop.rchain.shared.ThrowableOps._
 import coop.rchain.shared.syntax._
@@ -28,9 +34,11 @@ import monix.reactive.Observable
 
 object DeployGrpcServiceV1 {
 
-  def apply[F[_]: Monixable: Concurrent: Log: SafetyOracle: BlockStore: Span: EngineCell: RPConfAsk: ConnectionsCell: NodeDiscovery](
+  def apply[F[_]: Monixable: Concurrent: Log: SafetyOracle: BlockStore: Span: EngineCell: RPConfAsk: ConnectionsCell: NodeDiscovery: Metrics](
       apiMaxBlocksLimit: Int,
       blockReportAPI: BlockReportAPI[F],
+      cacheTransactionAPI: CacheTransactionAPI[F],
+      transactionStore: Transaction.TransactionStore[F],
       triggerProposeF: Option[ProposeFunction[F]],
       devMode: Boolean = false,
       networkId: String,
@@ -99,8 +107,34 @@ object DeployGrpcServiceV1 {
             }
           )
 
+      /**
+        * Enriches a BlockInfo with transfer data.
+        * If cached, uses cached data. If not cached, waits for extraction to complete.
+        */
+      private def enrichWithTransfers(
+          blockInfo: coop.rchain.casper.protocol.BlockInfo
+      ): F[coop.rchain.casper.protocol.BlockInfo] = {
+        val blockHash = blockInfo.blockInfo.blockHash
+        for {
+          cachedOpt <- transactionStore.get1(blockHash)
+          txResponse <- cachedOpt match {
+                         case Some(cached) => cached.pure[F]
+                         case None         => cacheTransactionAPI.getTransaction(blockHash)
+                       }
+        } yield BlockInfoEnricher.enrichBlockInfo(blockInfo, txResponse)
+      }
+
       def getBlock(request: BlockQuery): Task[BlockResponse] =
-        defer(BlockAPI.getBlock[F](request.hash)) { r =>
+        defer(
+          BlockAPI.getBlock[F](request.hash).flatMap {
+            case Right(bi) =>
+              enrichWithTransfers(bi).map(
+                enriched => Right(enriched): Either[String, coop.rchain.casper.protocol.BlockInfo]
+              )
+            case Left(e) =>
+              Concurrent[F].pure(Left(e): Either[String, coop.rchain.casper.protocol.BlockInfo])
+          }
+        ) { r =>
           import BlockResponse.Message
           import BlockResponse.Message._
           BlockResponse(r.fold[Message](Error, BlockInfo))
@@ -237,7 +271,16 @@ object DeployGrpcServiceV1 {
         }
 
       def lastFinalizedBlock(request: LastFinalizedBlockQuery): Task[LastFinalizedBlockResponse] =
-        defer(BlockAPI.lastFinalizedBlock[F]) { r =>
+        defer(
+          BlockAPI.lastFinalizedBlock[F].flatMap {
+            case Right(bi) =>
+              enrichWithTransfers(bi).map(
+                enriched => Right(enriched): Either[String, coop.rchain.casper.protocol.BlockInfo]
+              )
+            case Left(e) =>
+              Concurrent[F].pure(Left(e): Either[String, coop.rchain.casper.protocol.BlockInfo])
+          }
+        ) { r =>
           import LastFinalizedBlockResponse.Message
           import LastFinalizedBlockResponse.Message._
           LastFinalizedBlockResponse(r.fold[Message](Error, BlockInfo))
@@ -317,16 +360,43 @@ object DeployGrpcServiceV1 {
           address <- RPConfAsk[F].ask
           peers   <- ConnectionsCell[F].read
           nodes   <- NodeDiscovery[F].peers
-          status = Status(
+        } yield {
+          // Create a set of connected peer IDs for quick lookup
+          val connectedIds = peers.map(_.id.key).toSet
+
+          // Convert PeerNode to PeerInfo protobuf message
+          def peerNodeToProto(
+              peerNode: coop.rchain.comm.PeerNode,
+              isConnected: Boolean
+          ): coop.rchain.casper.protocol.PeerInfo =
+            coop.rchain.casper.protocol.PeerInfo(
+              address = peerNode.toAddress,
+              nodeId = peerNode.id.toString,
+              host = peerNode.endpoint.host,
+              protocolPort = peerNode.endpoint.tcpPort,
+              discoveryPort = peerNode.endpoint.udpPort,
+              isConnected = isConnected
+            )
+
+          // Combine discovered peers and active connections with deduplication
+          val combinedPeers = nodes
+            .map(node => node.id.key -> peerNodeToProto(node, connectedIds.contains(node.id.key)))
+            .toMap
+            .values
+            .toSeq
+
+          val status = Status(
             version = VersionInfo(api = 1.toString, node = coop.rchain.node.web.VersionInfo.get),
             address.local.toAddress,
             networkId,
             shardId,
             peers.length,
             nodes.length,
-            minPhloPrice
+            minPhloPrice,
+            peerList = combinedPeers
           )
-          response = StatusResponse().withStatus(status)
-        } yield response).toTask
+          val response = StatusResponse().withStatus(status)
+          response
+        }).toTask
     }
 }

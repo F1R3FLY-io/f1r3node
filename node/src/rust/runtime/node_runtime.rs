@@ -4,11 +4,21 @@ use casper::rust::errors::CasperError;
 use comm::rust::peer_node::NodeIdentifier;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 use tokio::task::JoinSet;
 use tracing::info;
 
 use crate::rust::{configuration::NodeConf, effects::node_discover, node_environment};
+
+use casper::rust::blocks::proposer::proposer::ProposerResult;
+
+type ProposerQueueEntry = (
+    Arc<dyn casper::rust::casper::Casper + Send + Sync>,
+    bool,
+    tokio::sync::oneshot::Sender<ProposerResult>,
+    u8,
+);
 
 // Type aliases for repeatable async operations
 pub type CasperLoop =
@@ -253,6 +263,8 @@ impl NodeRuntime {
             proposer_opt,
             proposer_queue_rx,
             proposer_queue_tx,
+            proposer_queue_pending,
+            proposer_queue_max_pending,
             proposer_state_ref_opt,
             block_processor,
             block_processor_state,
@@ -291,6 +303,8 @@ impl NodeRuntime {
             proposer_opt,
             proposer_queue_rx,
             proposer_queue_tx,
+            proposer_queue_pending,
+            proposer_queue_max_pending,
             trigger_propose_f,
             proposer_state_ref_opt,
             block_processor,
@@ -340,29 +354,21 @@ impl NodeRuntime {
             dyn crate::rust::api::admin_web_api::AdminWebApi + Send + Sync + 'static,
         >,
         proposer_opt: Option<casper::rust::blocks::proposer::proposer::ProductionProposer<T>>,
-        proposer_queue_rx: tokio::sync::mpsc::UnboundedReceiver<(
-            Arc<dyn casper::rust::casper::Casper + Send + Sync>,
-            bool,
-            tokio::sync::oneshot::Sender<casper::rust::blocks::proposer::proposer::ProposerResult>,
-        )>,
-        proposer_queue_tx: tokio::sync::mpsc::UnboundedSender<(
-            Arc<dyn casper::rust::casper::Casper + Send + Sync>,
-            bool,
-            tokio::sync::oneshot::Sender<casper::rust::blocks::proposer::proposer::ProposerResult>,
-        )>,
+        proposer_queue_rx: tokio::sync::mpsc::Receiver<ProposerQueueEntry>,
+        proposer_queue_tx: tokio::sync::mpsc::Sender<ProposerQueueEntry>,
+        proposer_queue_pending: Arc<AtomicUsize>,
+        proposer_queue_max_pending: usize,
         trigger_propose_f: Option<Arc<casper::rust::ProposeFunction>>,
         proposer_state_ref_opt: Option<
             Arc<tokio::sync::RwLock<casper::rust::state::instances::ProposerState>>,
         >,
         block_processor: casper::rust::blocks::block_processor::BlockProcessor<T>,
-        block_processor_state: Arc<
-            std::sync::Mutex<std::collections::HashSet<models::rust::block_hash::BlockHash>>,
-        >,
-        block_processor_queue_tx: tokio::sync::mpsc::UnboundedSender<(
+        block_processor_state: Arc<dashmap::DashSet<models::rust::block_hash::BlockHash>>,
+        block_processor_queue_tx: tokio::sync::mpsc::Sender<(
             Arc<dyn casper::rust::casper::MultiParentCasper + Send + Sync>,
             models::rust::casper::protocol::casper_message::BlockMessage,
         )>,
-        block_processor_queue_rx: tokio::sync::mpsc::UnboundedReceiver<(
+        block_processor_queue_rx: tokio::sync::mpsc::Receiver<(
             Arc<dyn casper::rust::casper::MultiParentCasper + Send + Sync>,
             models::rust::casper::protocol::casper_message::BlockMessage,
         )>,
@@ -603,11 +609,12 @@ impl NodeRuntime {
         // Block processor instance (Tier 2: Critical)
         // Clone for heartbeat before moving into block processor
         let trigger_propose_for_heartbeat = trigger_propose_f.clone();
-        let trigger_propose_opt = if self.node_conf.autopropose {
-            trigger_propose_f
-        } else {
-            None
-        };
+        let trigger_propose_opt =
+            if self.node_conf.autopropose && self.node_conf.casper.heartbeat_conf.enabled {
+                trigger_propose_f
+            } else {
+                None
+            };
 
         let bpi_block_queue_tx = block_processor_queue_tx.clone();
 
@@ -616,24 +623,13 @@ impl NodeRuntime {
             "Block Processor Instance",
             async move {
                 use crate::rust::instances::block_processor_instance::BlockProcessorInstance;
-                use dashmap::DashSet;
 
                 info!("Starting block processor instance...");
-
-                // Convert Arc<Mutex<HashSet>> to Arc<DashSet> for BlockProcessorInstance
-                let blocks_in_processing = {
-                    let hash_set = block_processor_state.lock().unwrap().clone();
-                    let dash_set = DashSet::new();
-                    for item in hash_set {
-                        dash_set.insert(item);
-                    }
-                    Arc::new(dash_set)
-                };
 
                 let instance = BlockProcessorInstance::new(
                     (block_processor_queue_rx, bpi_block_queue_tx),
                     Arc::new(block_processor),
-                    blocks_in_processing,
+                    block_processor_state,
                     trigger_propose_opt,
                     100, // max_parallel_blocks - match Scala parallelism
                 );
@@ -675,6 +671,8 @@ impl NodeRuntime {
                     (proposer_queue_rx, proposer_queue_tx),
                     proposer_arc,
                     proposer_state_ref, // State for API observability
+                    proposer_queue_pending,
+                    proposer_queue_max_pending,
                 );
 
                 // Start the proposer stream - it will process propose requests as they arrive
@@ -1073,7 +1071,14 @@ async fn clear_connections_loop(
 
         // Clear connections: heartbeats, ConnectionsCell update, Kademlia removal
         // (with bootstrap pinning), and gRPC disconnect — all handled inside clear_connections.
-        match comm::rust::rp::connect::clear_connections(&connections, &rp_conf, &transport, &*node_discovery).await {
+        match comm::rust::rp::connect::clear_connections(
+            &connections,
+            &rp_conf,
+            &transport,
+            &*node_discovery,
+        )
+        .await
+        {
             Ok((cleared_count, _failed_peers)) => {
                 if cleared_count > 0 {
                     info!("Cleared {} failed connection(s)", cleared_count);

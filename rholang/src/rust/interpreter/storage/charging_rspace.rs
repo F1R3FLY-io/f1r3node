@@ -169,6 +169,10 @@ impl ChargingRSpace {
                 self.space.clear()
             }
 
+            fn get_root(&self) -> Blake2b256Hash {
+                self.space.get_root()
+            }
+
             fn reset(&mut self, root: &Blake2b256Hash) -> Result<(), RSpaceError> {
                 self.space.reset(root)
             }
@@ -201,6 +205,10 @@ impl ChargingRSpace {
             ) -> SoftCheckpoint<Par, BindPattern, ListParWithRandom, TaggedContinuation>
             {
                 self.space.create_soft_checkpoint()
+            }
+
+            fn take_event_log(&mut self) -> Log {
+                self.space.take_event_log()
             }
 
             fn revert_to_soft_checkpoint(
@@ -256,6 +264,7 @@ fn handle_result(
         TriggeredBy::Consume { persistent, .. } => persistent,
         TriggeredBy::Produce { persistent, .. } => persistent,
     };
+    let triggered_by_id_bytes = triggered_by_id.to_bytes();
 
     match result {
         Some((cont, data_list)) => {
@@ -263,15 +272,16 @@ fn handle_result(
 
             // We refund for non-persistent continuations, and for the persistent continuation triggering the comm.
             // That persistent continuation is going to be charged for (without refund) once it has no matches in TS.
+            let consume_id_bytes = consume_id.to_bytes();
             let refund_for_consume =
-                if !cont.persistent || consume_id.to_bytes() == triggered_by_id.to_bytes() {
+                if !cont.persistent || consume_id_bytes == triggered_by_id_bytes {
                     storage_cost_consume(
                         cont.channels.clone(),
                         cont.patterns.clone(),
                         cont.continuation.clone(),
                     )
                 } else {
-                    Cost::create(0, "refund_for_consume".to_string())
+                    Cost::create(0, "refund_for_consume")
                 };
 
             let refund_for_produces =
@@ -279,11 +289,11 @@ fn handle_result(
 
             cost.charge(Cost::create(
                 -refund_for_consume.value,
-                "consume storage refund".to_string(),
+                "consume storage refund",
             ))?;
             cost.charge(Cost::create(
                 -refund_for_produces.value,
-                "produces storage refund".to_string(),
+                "produces storage refund",
             ))?;
 
             let last_iteration = !triggered_by_persistent;
@@ -307,6 +317,7 @@ fn refund_for_removing_produces(
         TriggeredBy::Consume { id, .. } => id,
         TriggeredBy::Produce { id, .. } => id,
     };
+    let triggered_id_bytes = triggered_id.to_bytes();
 
     let removed_data: Vec<(RSpaceResult<Par, ListParWithRandom>, Par)> = data_list
         .into_iter()
@@ -315,7 +326,7 @@ fn refund_for_removing_produces(
         // after each iteration it matches an existing consume. We treat it as 'removed' on each such iteration.
         // It is going to be 'not removed' and charged for on the last iteration, where it doesn't match anything.
         .filter(|(data, _)| {
-            !data.persistent || data.removed_datum.random_state == triggered_id.to_bytes()
+            !data.persistent || data.removed_datum.random_state == triggered_id_bytes
         })
         .collect();
 
@@ -323,11 +334,11 @@ fn refund_for_removing_produces(
         .into_iter()
         .map(|(data, channel)| storage_cost_produce(channel, data.removed_datum))
         .fold(
-            Cost::create(0, "refund_for_removing_produces init".to_string()),
+            Cost::create(0, "refund_for_removing_produces init"),
             |acc, cost| {
                 Cost::create(
                     acc.value + cost.value,
-                    "refund_for_removing_produces operation".to_string(),
+                    "refund_for_removing_produces operation",
                 )
             },
         )

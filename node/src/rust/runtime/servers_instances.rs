@@ -226,16 +226,23 @@ impl ServersInstances {
 
         let http_addr = SocketAddr::from((ip_http_addr, node_conf.api_server.port_http));
 
-        let http_server_handle = tokio::spawn(async move {
-            let listener = tokio::net::TcpListener::bind(&http_addr)
-                .await
-                .map_err(|e| eyre::eyre!("Failed to bind HTTP server: {}", e))?;
+        let http_server_handle = tokio::task::spawn_blocking(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(|e| eyre::eyre!("Failed to build dedicated HTTP runtime: {}", e))?;
 
-            axum::serve(listener, http_router)
-                .await
-                .map_err(|e| eyre::eyre!("HTTP server error: {}", e))?;
+            rt.block_on(async move {
+                let listener = tokio::net::TcpListener::bind(&http_addr)
+                    .await
+                    .map_err(|e| eyre::eyre!("Failed to bind HTTP server: {}", e))?;
 
-            Ok(())
+                axum::serve(listener, http_router)
+                    .await
+                    .map_err(|e| eyre::eyre!("HTTP server error: {}", e))?;
+
+                Ok(())
+            })
         });
 
         info!(
@@ -252,16 +259,23 @@ impl ServersInstances {
         let admin_http_addr =
             SocketAddr::from((ip_admin_http, node_conf.api_server.port_admin_http));
 
-        let admin_http_server_handle = tokio::spawn(async move {
-            let listener = tokio::net::TcpListener::bind(&admin_http_addr)
-                .await
-                .map_err(|e| eyre::eyre!("Failed to bind admin HTTP server: {}", e))?;
+        let admin_http_server_handle = tokio::task::spawn_blocking(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(|e| eyre::eyre!("Failed to build dedicated admin HTTP runtime: {}", e))?;
 
-            axum::serve(listener, admin_http_router)
-                .await
-                .map_err(|e| eyre::eyre!("Admin HTTP server error: {}", e))?;
+            rt.block_on(async move {
+                let listener = tokio::net::TcpListener::bind(&admin_http_addr)
+                    .await
+                    .map_err(|e| eyre::eyre!("Failed to bind admin HTTP server: {}", e))?;
 
-            Ok(())
+                axum::serve(listener, admin_http_router)
+                    .await
+                    .map_err(|e| eyre::eyre!("Admin HTTP server error: {}", e))?;
+
+                Ok(())
+            })
         });
 
         info!(

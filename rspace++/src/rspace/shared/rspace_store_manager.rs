@@ -1,17 +1,16 @@
-use crate::rspace::rspace::RSpaceStore;
-use heed::EnvOpenOptions;
-use lazy_static::lazy_static;
-use shared::rust::store::lmdb_key_value_store::LmdbKeyValueStore;
 use std::collections::{HashMap, HashSet};
 use std::fs::create_dir_all;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use crate::rspace::shared::{
-    key_value_store_manager::KeyValueStoreManager, lmdb_dir_store_manager::LmdbDirStoreManager,
-};
+use heed::EnvOpenOptions;
+use lazy_static::lazy_static;
+use shared::rust::store::lmdb_key_value_store::LmdbKeyValueStore;
 
 use super::lmdb_dir_store_manager::{Db, LmdbEnvConfig};
+use crate::rspace::rspace::RSpaceStore;
+use crate::rspace::shared::key_value_store_manager::KeyValueStoreManager;
+use crate::rspace::shared::lmdb_dir_store_manager::LmdbDirStoreManager;
 
 // See rholang/src/main/scala/coop/rchain/rholang/interpreter/RholangCLI.scala
 pub fn mk_rspace_store_manager(dir_path: PathBuf, map_size: usize) -> impl KeyValueStoreManager {
@@ -40,7 +39,8 @@ pub fn get_or_create_rspace_store(
     if Path::new(lmdb_path).exists() {
         tracing::debug!("RSpace++ storage path {} already exists (reopening)", lmdb_path);
 
-        // In Scala (and Rust rnode_db_mapping), RSpace envs are in subfolders: rspace/history and rspace/cold
+        // In Scala (and Rust rnode_db_mapping), RSpace envs are in subfolders:
+        // rspace/history and rspace/cold
         let history_env_path = format!("{}/rspace/history", lmdb_path);
         let cold_env_path = format!("{}/rspace/cold", lmdb_path);
 
@@ -79,9 +79,7 @@ pub fn get_or_create_rspace_store(
     }
 }
 
-pub fn close_rspace_store(rspace_store: RSpaceStore) {
-    drop(rspace_store);
-}
+pub fn close_rspace_store(rspace_store: RSpaceStore) { drop(rspace_store); }
 
 fn create_lmdb_store(
     lmdb_path: &str,
@@ -90,7 +88,8 @@ fn create_lmdb_store(
 ) -> Result<LmdbKeyValueStore, heed::Error> {
     let mut env_builder = EnvOpenOptions::new();
     env_builder.map_size(max_env_size);
-    // Increased max_dbs to support parallel test execution with scoped database names
+    // Increased max_dbs to support parallel test execution with scoped database
+    // names
     env_builder.max_dbs(10000);
     env_builder.max_readers(2048);
 

@@ -111,8 +111,8 @@ pub async fn events_info_handler(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use shared::rust::shared::f1r3fly_event::DeployEvent;
     use serde_json::json;
+    use shared::rust::shared::f1r3fly_event::DeployEvent;
 
     fn create_test_deploy(id: &str) -> DeployEvent {
         DeployEvent::new(id.to_string(), 100, "deployer1".to_string(), false)

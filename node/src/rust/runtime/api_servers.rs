@@ -9,10 +9,8 @@ use casper::rust::ProposeFunction;
 use tokio::sync::RwLock;
 
 use crate::rust::api::{
-    deploy_grpc_service_v1::DeployGrpcServiceV1Impl,
-    lsp_grpc_service::LspGrpcServiceImpl,
-    propose_grpc_service_v1::ProposeGrpcServiceV1Impl,
-    repl_grpc_service::ReplGrpcServiceImpl,
+    deploy_grpc_service_v1::DeployGrpcServiceV1Impl, lsp_grpc_service::LspGrpcServiceImpl,
+    propose_grpc_service_v1::ProposeGrpcServiceV1Impl, repl_grpc_service::ReplGrpcServiceImpl,
 };
 use block_storage::rust::key_value_block_store::KeyValueBlockStore;
 use comm::rust::discovery::node_discovery::NodeDiscovery;

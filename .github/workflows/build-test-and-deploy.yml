@@ -372,6 +372,7 @@ jobs:
     name: Release Rust Docker Image
     needs:
       - required_rust_unit_tests
+      - required_casper_init_smoke
       - required_rust_integration_tests
       - build_rust_docker_image
       - build_base
@@ -474,6 +475,7 @@ jobs:
       contents: write # Required for creating/updating releases
     needs:
       - required_rust_unit_tests
+      - required_casper_init_smoke
       - required_rust_integration_tests
       - build_rust_docker_image
     runs-on: ubuntu-latest

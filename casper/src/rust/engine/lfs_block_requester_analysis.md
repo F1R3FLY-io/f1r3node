@@ -57,7 +57,7 @@ Init → Requested → Received → Done (moved to finished set)
 | Scala FS2                   | Rust Equivalent                     | Purpose                     |
 | --------------------------- | ----------------------------------- | --------------------------- |
 | `Stream[F, A]`              | `impl Stream<Item = A>`             | Async stream of values      |
-| `Queue[F, A]`               | `mpsc::UnboundedReceiver<A>`        | Inter-stream communication  |
+| `Queue[F, A]`               | `mpsc::Receiver<A>`                  | Inter-stream communication  |
 | `parEvalMapProcBounded(f)`  | `Arc<Semaphore>` + `tokio::select!` | Bounded parallel processing |
 | `concurrently(other)`       | `tokio::select!` multiple arms      | Concurrent stream execution |
 | `terminateAfter(predicate)` | `if condition { break }`            | Conditional termination     |
@@ -198,9 +198,9 @@ The Rust tests use a mock framework that closely mirrors the Scala approach:
 
 ```rust
 pub struct Mock {
-    block_receiver_tx: mpsc::UnboundedSender<BlockMessage>,
-    request_observer_rx: mpsc::UnboundedReceiver<BlockHash>,
-    save_observer_rx: mpsc::UnboundedReceiver<(BlockHash, BlockMessage)>,
+    block_receiver_tx: mpsc::Sender<BlockMessage>,
+    request_observer_rx: mpsc::Receiver<BlockHash>,
+    save_observer_rx: mpsc::Receiver<(BlockHash, BlockMessage)>,
     test_state: Arc<Mutex<TestST>>,
 }
 ```

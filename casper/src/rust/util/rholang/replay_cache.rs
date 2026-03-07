@@ -3,23 +3,31 @@
 use indexmap::IndexMap;
 use models::rust::block::state_hash::StateHash;
 use models::rust::casper::protocol::casper_message::Event;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
-/// Cache key: parent state + block identity (sender, seqNum).
-/// Using (sender, seqNum) avoids ambiguity across forks.
+/// Cache key: parent state + block identity (sender, seqNum) + replay payload fingerprint.
+/// Including a payload fingerprint prevents unsafe cache hits for mutated deploy content
+/// that happens to share (parent, sender, seqNum).
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ReplayCacheKey {
     pub parent_state: StateHash,
     pub sender_pk: Vec<u8>,
     pub seq_num: i64,
+    pub payload_hash: Vec<u8>,
 }
 
 impl ReplayCacheKey {
-    pub fn new(parent_state: StateHash, sender_pk: Vec<u8>, seq_num: i64) -> Self {
+    pub fn new(
+        parent_state: StateHash,
+        sender_pk: Vec<u8>,
+        seq_num: i64,
+        payload_hash: Vec<u8>,
+    ) -> Self {
         Self {
             parent_state,
             sender_pk,
             seq_num,
+            payload_hash,
         }
     }
 }
@@ -27,13 +35,16 @@ impl ReplayCacheKey {
 /// Cached replay result containing event log and post-state hash.
 #[derive(Clone, Debug)]
 pub struct ReplayCacheEntry {
-    pub event_log: Vec<Event>,
+    pub event_log: Arc<Vec<Event>>,
     pub post_state: StateHash,
 }
 
 impl ReplayCacheEntry {
     pub fn new(event_log: Vec<Event>, post_state: StateHash) -> Self {
-        Self { event_log, post_state }
+        Self {
+            event_log: Arc::new(event_log),
+            post_state,
+        }
     }
 }
 
@@ -68,8 +79,6 @@ impl ReplayCache for InMemoryReplayCache {
     fn get(&self, key: &ReplayCacheKey) -> Option<ReplayCacheEntry> {
         let mut map = self.map.lock().expect("ReplayCache lock poisoned");
         // Move to end on access (LRU behavior)
-        // TODO(perf): entry.clone() copies entire Vec<Event> which can be large.
-        // Consider wrapping in Arc<ReplayCacheEntry> to make clones O(1).
         if let Some(entry) = map.shift_remove(key) {
             map.insert(key.clone(), entry.clone());
             Some(entry)
@@ -99,7 +108,12 @@ mod tests {
     use super::*;
 
     fn make_key(parent: &str, sender: &str, seq: i64) -> ReplayCacheKey {
-        ReplayCacheKey::new(parent.as_bytes().to_vec().into(), sender.as_bytes().to_vec(), seq)
+        ReplayCacheKey::new(
+            parent.as_bytes().to_vec().into(),
+            sender.as_bytes().to_vec(),
+            seq,
+            vec![0u8; 32],
+        )
     }
 
     fn make_entry(post: &str) -> ReplayCacheEntry {

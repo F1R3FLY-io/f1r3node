@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use futures::Stream;
 use std::collections::HashMap;
 use std::hash::Hash;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -15,6 +16,9 @@ use rspace_plus_plus::rspace::{
 };
 
 use crate::rust::errors::CasperError;
+use crate::rust::metrics_constants::{
+    CASPER_METRICS_SOURCE, INIT_TUPLE_SPACE_QUEUE_PENDING_METRIC,
+};
 
 // Last Finalized State processor for receiving Rholang state.
 
@@ -519,7 +523,8 @@ impl<T: TupleSpaceRequesterOps> TupleSpaceStreamProcessor<T> {
 /// fs2.Stream processing all tuple space state (Scala: F[Stream[F, ST[StatePartPath]]])
 pub async fn stream<T: TupleSpaceRequesterOps>(
     approved_block: &ApprovedBlock,
-    mut tuple_space_message_receiver: mpsc::UnboundedReceiver<StoreItemsMessage>,
+    mut tuple_space_message_receiver: mpsc::Receiver<StoreItemsMessage>,
+    tuple_space_queue_pending: Arc<AtomicUsize>,
     request_timeout: Duration,
     request_ops: T,
     state_importer: Arc<dyn RSpaceImporter>,
@@ -575,6 +580,17 @@ pub async fn stream<T: TupleSpaceRequesterOps>(
                 // Prioritize incoming responses over new requests for better flow
                 // Response stream processing (Scala: responseStream) - check FIRST for fairness
                 Some(message) = tuple_space_message_receiver.recv() => {
+                    let _ = tuple_space_queue_pending.fetch_update(
+                        Ordering::AcqRel,
+                        Ordering::Acquire,
+                        |curr| Some(curr.saturating_sub(1)),
+                    );
+                    metrics::gauge!(
+                        INIT_TUPLE_SPACE_QUEUE_PENDING_METRIC,
+                        "source" => CASPER_METRICS_SOURCE
+                    )
+                    .set(tuple_space_queue_pending.load(Ordering::Relaxed) as f64);
+
                     match processor.process_store_items_message(message).await {
                         Ok(()) => {
                             tracing::debug!("Store items message processed successfully");

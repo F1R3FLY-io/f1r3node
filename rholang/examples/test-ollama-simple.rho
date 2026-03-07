@@ -1,0 +1,10 @@
+new response,
+    ollamaModels(`rho:ollama:models`),
+    stdout(`rho:io:stdout`) in {
+
+  // Test just the models call first
+  ollamaModels!(*response) |
+  for(@models <- response) {
+    stdout!(["Available Models:", models])
+  }
+}

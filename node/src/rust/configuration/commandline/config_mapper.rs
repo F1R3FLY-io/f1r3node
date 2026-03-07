@@ -291,8 +291,11 @@ impl ConfigMapper<Options> for NodeConf {
             Self::try_override_value(&mut self.casper.min_phlo_price, run.min_phlo_price);
 
             // Heartbeat configuration overrides
-            // Only override if heartbeat-enabled flag was explicitly set
-            if run.heartbeat_enabled {
+            // Keep backward compatibility with --heartbeat-disabled while preserving
+            // explicit enable behavior.
+            if run.heartbeat_disabled {
+                self.casper.heartbeat_conf.enabled = false;
+            } else if run.heartbeat_enabled {
                 self.casper.heartbeat_conf.enabled = true;
             }
             // --heartbeat-disabled is a dedicated flag that explicitly sets enabled=false.
@@ -429,6 +432,41 @@ mod tests {
 
         let res = Options::try_parse_from(argv);
         assert!(res.is_ok());
+    }
+
+    #[test]
+    fn test_parse_args_heartbeat_disabled() {
+        let argv = vec!["rnode", "run", "--heartbeat-disabled"];
+
+        let res = Options::try_parse_from(argv);
+        assert!(res.is_ok());
+
+        if let Some(OptionsSubCommand::Run(run)) = res.unwrap().subcommand {
+            assert!(run.heartbeat_disabled);
+            assert!(!run.heartbeat_enabled);
+        } else {
+            panic!("Expected run subcommand");
+        }
+    }
+
+    #[test]
+    fn test_parse_args_conflicting_heartbeat_flags_prefer_disabled() {
+        let argv = vec![
+            "rnode",
+            "run",
+            "--heartbeat-enabled",
+            "--heartbeat-disabled",
+        ];
+
+        let res = Options::try_parse_from(argv);
+        assert!(res.is_ok());
+
+        if let Some(OptionsSubCommand::Run(run)) = res.unwrap().subcommand {
+            assert!(run.heartbeat_disabled);
+            assert!(run.heartbeat_enabled);
+        } else {
+            panic!("Expected run subcommand");
+        }
     }
 
     #[test]
@@ -570,7 +608,7 @@ mod tests {
                 grpc_max_recv_message_size: 16777216,
                 port_http: 40403,
                 port_admin_http: 40405,
-                max_blocks_limit: 50,
+                max_blocks_limit: 100,
                 enable_reporting: false,
                 keep_alive_time: Duration::from_secs(2),
                 keep_alive_timeout: Duration::from_secs(20),

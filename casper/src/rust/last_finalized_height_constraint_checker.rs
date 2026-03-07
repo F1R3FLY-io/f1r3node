@@ -24,10 +24,13 @@ pub fn check(
     ))?;
 
     let height_difference = latest_message.block_number - last_finalized_block.block_number;
+    let global_height_difference = snapshot.max_block_num - last_finalized_block.block_number;
 
     tracing::info!(
-        "Latest message is {} blocks ahead of the last finalized block",
-        height_difference
+        "Height constraint check: validator_height_diff={}, global_height_diff={}, threshold={}",
+        height_difference,
+        global_height_difference,
+        height_constraint_threshold
     );
 
     if height_difference <= height_constraint_threshold {

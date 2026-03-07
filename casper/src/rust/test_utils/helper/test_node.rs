@@ -3,16 +3,10 @@
 use std::{
     collections::{HashMap, HashSet},
     path::PathBuf,
-    sync::{Arc, Mutex, RwLock},
+    sync::{atomic::AtomicBool, Arc, Mutex, RwLock},
 };
 use tokio::sync::mpsc;
 
-use block_storage::rust::{
-    casperbuffer::casper_buffer_key_value_storage::CasperBufferKeyValueStorage,
-    dag::block_dag_key_value_storage::BlockDagKeyValueStorage,
-    deploy::key_value_deploy_storage::KeyValueDeployStorage,
-    key_value_block_store::KeyValueBlockStore,
-};
 use crate::rust::{
     block_status::BlockStatus,
     blocks::{
@@ -34,6 +28,12 @@ use crate::rust::{
     validator_identity::ValidatorIdentity,
     ValidBlockProcessing,
 };
+use block_storage::rust::{
+    casperbuffer::casper_buffer_key_value_storage::CasperBufferKeyValueStorage,
+    dag::block_dag_key_value_storage::BlockDagKeyValueStorage,
+    deploy::key_value_deploy_storage::KeyValueDeployStorage,
+    key_value_block_store::KeyValueBlockStore,
+};
 use comm::rust::{
     errors::CommError,
     p2p::packet_handler::{NOPPacketHandler, PacketHandler},
@@ -46,6 +46,7 @@ use comm::rust::{
     },
 };
 use crypto::rust::{private_key::PrivateKey, signatures::signed::Signed};
+use dashmap::DashSet;
 use models::{
     routing::Protocol,
     rust::{
@@ -55,6 +56,7 @@ use models::{
         },
     },
 };
+use prost::bytes::Bytes;
 use rholang::rust::interpreter::rho_runtime::RhoHistoryRepository;
 use rspace_plus_plus::rspace::history::Either;
 use rspace_plus_plus::rspace::shared::key_value_store_manager::KeyValueStoreManager;
@@ -133,7 +135,7 @@ impl TestNode {
         match &mut self.proposer_opt {
             Some(proposer) => {
                 let propose_return = proposer.propose(casper.clone(), false).await?;
-                
+
                 match propose_return.propose_result_to_send {
                     ProposerResult::Success(_, block) => Ok(block.block_hash),
                     _ => Err(CasperError::RuntimeError(
@@ -200,7 +202,7 @@ impl TestNode {
         let result = self.create_block(deploy_datums).await?;
 
         match result {
-            BlockCreatorResult::Created(block) => Ok(block),
+            BlockCreatorResult::Created(block, ..) => Ok(block),
             _ => Err(CasperError::RuntimeError(format!(
                 "Failed creating block: {:?}",
                 result
@@ -312,7 +314,7 @@ impl TestNode {
 
         // Extract block
         let block = match result {
-            BlockCreatorResult::Created(b) => b,
+            BlockCreatorResult::Created(b, ..) => b,
             other => {
                 return Err(CasperError::RuntimeError(format!(
                     "Expected Created block, got: {:?}",
@@ -422,19 +424,26 @@ impl TestNode {
         to_index: usize,
         deploy_datums: &[Signed<DeployData>],
     ) -> Result<BlockMessage, CasperError> {
-        assert_ne!(from_index, to_index, "from_index and to_index must be different");
-        
+        assert_ne!(
+            from_index, to_index,
+            "from_index and to_index must be different"
+        );
+
         // Split to get mutable references to both nodes without overlapping borrows
         if from_index < to_index {
             let (left, right) = nodes.split_at_mut(to_index);
             let from_node = &mut left[from_index];
             let to_node = &mut right[0];
-            from_node.propagate_block(deploy_datums, &mut [to_node]).await
+            from_node
+                .propagate_block(deploy_datums, &mut [to_node])
+                .await
         } else {
             let (left, right) = nodes.split_at_mut(from_index);
             let to_node = &mut left[to_index];
             let from_node = &mut right[0];
-            from_node.propagate_block(deploy_datums, &mut [to_node]).await
+            from_node
+                .propagate_block(deploy_datums, &mut [to_node])
+                .await
         }
     }
 
@@ -479,8 +488,11 @@ impl TestNode {
         to_index: usize,
         deploy_datums: &[Signed<DeployData>],
     ) -> Result<BlockMessage, CasperError> {
-        assert_ne!(from_index, to_index, "from_index and to_index must be different");
-        
+        assert_ne!(
+            from_index, to_index,
+            "from_index and to_index must be different"
+        );
+
         if from_index < to_index {
             let (left, right) = nodes.split_at_mut(to_index);
             let from_node = &mut left[from_index];
@@ -1003,7 +1015,8 @@ impl TestNode {
 
         // Use shared RSpace stores to ensure all nodes in the test can access the same RSpace history/roots
         // This is required for ReportingCasper to access the committed roots from block processing
-        let new_storage_dir = crate::rust::test_utils::util::rholang::resources::copy_storage(storage_dir);
+        let new_storage_dir =
+            crate::rust::test_utils::util::rholang::resources::copy_storage(storage_dir);
         // Create a store manager with shared RSpace scope but isolated block/DAG stores for test isolation
         let mut kvm = crate::rust::test_utils::util::rholang::resources::mk_test_rnode_store_manager_with_dual_scope(
             crate::rust::test_utils::util::rholang::resources::generate_scope_id(),
@@ -1014,13 +1027,15 @@ impl TestNode {
         let block_store = block_store_base;
 
         // Store genesis block in block_store - required for parent block lookups
-        block_store.put(genesis.block_hash.clone(), &genesis)
+        block_store
+            .put(genesis.block_hash.clone(), &genesis)
             .expect("Failed to store genesis block in TestNode");
 
         let block_dag_storage = BlockDagKeyValueStorage::new(&mut kvm).await.unwrap();
-        
+
         // Store genesis block in DAG storage - required for DAG operations
-        block_dag_storage.insert(&genesis, false, true)
+        block_dag_storage
+            .insert(&genesis, false, true)
             .expect("Failed to insert genesis block into DAG storage in TestNode");
         let deploy_storage = Arc::new(Mutex::new(
             KeyValueDeployStorage::new(&mut kvm).await.unwrap(),
@@ -1154,8 +1169,16 @@ impl TestNode {
             validator_id: validator_id_opt.clone(),
             casper_shard_conf: shard_conf,
             approved_block: genesis.clone(),
-            finalization_in_progress: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            finalization_in_progress: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(
+                false,
+            )),
+            finalizer_task_in_progress: Arc::new(AtomicBool::new(false)),
+            finalizer_task_queued: Arc::new(AtomicBool::new(false)),
             heartbeat_signal_ref: crate::rust::heartbeat_signal::new_heartbeat_signal_ref(),
+            deploys_in_scope_cache: Arc::new(std::sync::Mutex::new(
+                None::<(u64, Arc<DashSet<Bytes>>)>,
+            )),
+            active_validators_cache: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         };
 
         let casper = Arc::new(casper_impl);
@@ -1178,7 +1201,11 @@ impl TestNode {
                 casper_shard_conf: casper_guard.casper_shard_conf.clone(),
                 approved_block: casper_guard.approved_block.clone(),
                 finalization_in_progress: casper_guard.finalization_in_progress.clone(),
+                finalizer_task_in_progress: casper_guard.finalizer_task_in_progress.clone(),
+                finalizer_task_queued: casper_guard.finalizer_task_queued.clone(),
                 heartbeat_signal_ref: casper_guard.heartbeat_signal_ref.clone(),
+                deploys_in_scope_cache: casper_guard.deploys_in_scope_cache.clone(),
+                active_validators_cache: casper_guard.active_validators_cache.clone(),
             })
         };
         let engine_with_casper = EngineWithCasper::new(casper_for_engine);
@@ -1313,4 +1340,3 @@ impl TestNode {
         Self::propagate(&mut [node1, node2]).await
     }
 }
-

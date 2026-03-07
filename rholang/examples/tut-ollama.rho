@@ -1,0 +1,36 @@
+new chatResponse1, chatResponse2, generateResponse1, generateResponse2, modelsResponse,
+    ollamaChat(`rho:ollama:chat`),
+    ollamaGenerate(`rho:ollama:generate`),
+    ollamaModels(`rho:ollama:models`),
+    stdout(`rho:io:stdout`) in {
+
+  // Test chat completion with specific model
+  ollamaChat!("llama4:latest", "What is blockchain technology in one sentence?", *chatResponse1) |
+  for(@answer <- chatResponse1) {
+    stdout!(["Ollama Chat Response:", answer])
+  } |
+
+  // Test chat completion with default model (explicit model specified)
+  ollamaChat!("llama4:latest", "Explain smart contracts briefly", *chatResponse2) |
+  for(@defaultAnswer <- chatResponse2) {
+    stdout!(["Ollama Default Model Response:", defaultAnswer])
+  } |
+
+  // Test text generation
+  ollamaGenerate!("llama4:latest", "Write a haiku about decentralized computing:\n", *generateResponse1) |
+  for(@poem <- generateResponse1) {
+    stdout!(["Ollama Generated Haiku:", poem])
+  } |
+
+  // Test text generation with explicit model
+  ollamaGenerate!("llama4:latest", "Complete this: The future of blockchain is", *generateResponse2) |
+  for(@completion <- generateResponse2) {
+    stdout!(["Ollama Text Completion:", completion])
+  } |
+
+  // List available models
+  ollamaModels!(*modelsResponse) |
+  for(@models <- modelsResponse) {
+    stdout!(["Available Ollama Models:", models])
+  }
+}

@@ -1,6 +1,6 @@
 package coop.rchain.casper.api
 
-import cats.effect.Sync
+import cats.effect.{Concurrent, Sync}
 import cats.syntax.all._
 import coop.rchain.blockstorage.BlockStore
 import coop.rchain.casper.helper.{BlockDagStorageFixture, BlockGenerator, TestNode}
@@ -10,7 +10,7 @@ import coop.rchain.casper.engine.Engine
 import coop.rchain.casper.SafetyOracle
 import coop.rchain.casper.helper.BlockGenerator._
 import coop.rchain.casper.util.ConstructDeploy.{basicDeployData, sourceDeployNowF}
-import coop.rchain.metrics.Metrics
+import coop.rchain.metrics.{Metrics, Span}
 import coop.rchain.shared.{Cell, Log}
 import coop.rchain.models._
 import coop.rchain.models.Expr.ExprInstance.GString
@@ -27,6 +27,7 @@ class ExploratoryDeployAPITest
     with BlockGenerator
     with BlockDagStorageFixture {
   implicit val metricsEff = new Metrics.MetricsNOP[Task]
+  implicit val spanEff    = Span.noop[Task]
   val genesisParameters   = buildGenesisParameters(bondsFunction = _.zip(List(10L, 10L, 10L)).toMap)
   val genesisContext      = buildGenesis(genesisParameters)
 
@@ -34,34 +35,31 @@ class ExploratoryDeployAPITest
       implicit blockStore: BlockStore[Task],
       safetyOracle: SafetyOracle[Task],
       log: Log[Task]
-  ) =
-    BlockAPI
-      .exploratoryDeploy(term)(
-        Sync[Task],
-        engineCell,
-        log,
-        safetyOracle,
-        blockStore
-      )
+  ) = {
+    implicit val ec: Cell[Task, Engine[Task]] = engineCell
+    BlockAPI.exploratoryDeploy[Task](term)
+  }
 
   /*
-   * DAG Looks like this:
-   *           b3
-   *           |
-   *           b2 <- last finalized block
-   *           |
-   *           b1
-   *           |
-   *         genesis
+   * DAG structure for finalization:
+   * With 3 validators at 10 stake each (total 30), finalization requires >15 stake.
+   * Parent ordering is deterministic: highest block number first (main parent).
+   *
+   *     n1: genesis -> b1 -> b2
+   *     n2: genesis ---------> b3 (main parent: b2)
+   *     n3: genesis ---------> b4 (main parent: b3)
+   *
+   * Finalization depends on validator key ordering in the Finalizer.
+   * With deterministic parent ordering, b3 accumulates 20 stake (n2 + n3) and is finalized.
    */
   it should "exploratoryDeploy get data from the read only node" in effectTest {
     TestNode.networkEff(genesisContext, networkSize = 3, withReadOnlySize = 1).use {
-      case nodes @ n1 +: n2 +: _ +: readOnly +: Seq() =>
+      case nodes @ n1 +: n2 +: n3 +: readOnly +: Seq() =>
         import readOnly.{blockStore, cliqueOracleEffect, logEff}
         val engine     = new EngineWithCasper[Task](readOnly.casperEff)
         val storedData = "data"
         for {
-          produceDeploys <- (0 until 2).toList.traverse(
+          produceDeploys <- (0 until 3).toList.traverse(
                              i =>
                                basicDeployData[Task](
                                  i,
@@ -72,9 +70,10 @@ class ExploratoryDeployAPITest
                             s"""@"store"!("$storedData")""",
                             shardId = genesisContext.genesisBlock.shardId
                           )
-          _  <- n1.propagateBlock(putDataDeploy)(nodes: _*)
-          b2 <- n1.propagateBlock(produceDeploys(0))(nodes: _*)
-          _  <- n2.propagateBlock(produceDeploys(1))(nodes: _*)
+          _  <- n1.propagateBlock(putDataDeploy)(nodes: _*)     // b1
+          _  <- n1.propagateBlock(produceDeploys(0))(nodes: _*) // b2
+          b3 <- n2.propagateBlock(produceDeploys(1))(nodes: _*) // b3 - builds on b2
+          _  <- n3.propagateBlock(produceDeploys(2))(nodes: _*) // b4 - builds on b3, finalizes b3
 
           engineCell <- Cell.mvarCell[Task, Engine[Task]](engine)
           result <- exploratoryDeploy(
@@ -83,7 +82,7 @@ class ExploratoryDeployAPITest
                      engineCell
                    ).map(_.right.value)
           (par, lastFinalizedBlock) = result
-          _                         = lastFinalizedBlock.blockHash shouldBe PrettyPrinter.buildStringNoLimit(b2.blockHash)
+          _                         = lastFinalizedBlock.blockHash shouldBe PrettyPrinter.buildStringNoLimit(b3.blockHash)
           _ = par match {
             case Seq(Par(_, _, _, Seq(expr), _, _, _, _, _, _)) =>
               expr match {

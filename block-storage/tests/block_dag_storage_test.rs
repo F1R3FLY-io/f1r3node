@@ -189,9 +189,13 @@ fn test_lookup_elements_result(
                     .map(|metadata| metadata.clone())
             );
 
-            let children_set: Option<HashSet<BlockHash>> = children
-                .as_ref()
-                .map(|s| s.iter().cloned().collect());
+            let children_set = children.as_ref().map(|dash_set| {
+                let mut set = HashSet::new();
+                for item in dash_set.iter() {
+                    set.insert(item.clone());
+                }
+                set
+            });
 
             let expected_children: HashSet<BlockHash> = block_elements
                 .iter()
@@ -210,8 +214,8 @@ fn test_lookup_elements_result(
 
     let filtered_latest_message_hashes: HashMap<_, _> = latest_message_hashes
         .iter()
-        .filter(|(_, v)| **v != genesis.block_hash)
-        .map(|(k, v)| (k.clone(), v.clone()))
+        .filter(|(_, hash)| **hash != genesis.block_hash)
+        .map(|(validator, hash)| (validator.clone(), hash.clone()))
         .collect();
 
     let expected_latest_message_hashes: HashMap<_, _> = real_latest_messages
@@ -450,6 +454,57 @@ fn dag_storage_should_be_able_to_restore_invalid_blocks_on_startup() {
       let invalid_blocks_set: HashSet<_> = invalid_blocks.iter().map(|item| item.clone()).collect();
       assert_eq!(invalid_blocks_set, block_elements.into_iter().map(|b| BlockMetadata::from_block(&b, true, None, None)).collect::<HashSet<_>>());
     });
+}
+
+#[test]
+fn dag_storage_should_not_replace_latest_message_with_invalid_block_from_same_sender() {
+    let genesis = genesis_block();
+    let dag_storage = RUNTIME.block_on(create_dag_storage(&genesis));
+
+    let valid_block = get_random_block(
+        Some(1),
+        Some(1),
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some(vec![genesis.block_hash.clone()]),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    );
+    dag_storage.insert(&valid_block, false, false).unwrap();
+
+    let invalid_block = get_random_block(
+        Some(2),
+        Some(valid_block.seq_num + 1),
+        None,
+        None,
+        Some(valid_block.sender.clone()),
+        None,
+        None,
+        Some(vec![valid_block.block_hash.clone()]),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    );
+    dag_storage.insert(&invalid_block, true, false).unwrap();
+
+    let dag = dag_storage.get_representation();
+    assert_eq!(
+        dag.latest_message_hash(&valid_block.sender),
+        Some(valid_block.block_hash.clone())
+    );
+
+    let invalid_latest_messages = dag.invalid_latest_messages().unwrap();
+    assert!(!invalid_latest_messages.contains_key(&valid_block.sender));
 }
 
 #[test]

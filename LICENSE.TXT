@@ -1,13 +1,134 @@
-Copyright 2017 RChain Cooperative
+---
+title: "Sovereign Source License (SSL)"
+version: 0.1
+date: 2025-03-06
+---
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+# Sovereign Source License (SSL) v0.1
 
-http://www.apache.org/licenses/LICENSE-2.0
+## Preamble
 
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+The Sovereign Source License (SSL) is designed to protect the rights and sovereignty of developers, contributors, and users in an increasingly centralized digital landscape. This license extends the principles of Free and Open Source Software (FOSS) to address modern challenges, including the emergence of AI systems, corporate exploitation, and the need for sustainable compensation models for creators.
+
+Whereas traditional FOSS licenses have enabled innovation but failed to anticipate AI-driven threats to developer livelihood and user privacy, this license aims to create a balanced ecosystem where sovereignty, cooperation, and fair compensation are paramount.
+
+
+## Definitions
+
+1. **Work**: The software, code, algorithms, or other creative content licensed under this agreement.
+2. **Sovereign Source**: The original and modified versions of the Work maintained within the ecosystem governed by this license.
+3. **Contributor**: Any person or entity that creates, modifies, or enhances the Work.
+4. **User**: Any person or entity that utilizes the Work or derivative Works.
+5. **Hermetic Development Ecosystem**: The secure, isolated environment in which development and usage of the Work occurs, utilizing [MCP (Model Context Protocol)](https://docs.anthropic.com/en/docs/agents-and-tools/mcp) to protect intellectual property while enabling collaboration.
+6. **SL Coding Assistants**: AI tools specifically trained and licensed under this agreement to assist in development while respecting contributor rights.
+7. **Fog Deployment Infrastructure**: The decentralized computing infrastructure used for deploying and running the Work.
+
+## Terms and Conditions
+
+### 1. Grant of Rights
+
+Subject to the terms and conditions of this License, each Contributor hereby grants to You a worldwide, non-exclusive, royalty-bearing license to reproduce, prepare derivative works of, publicly display, publicly perform, and distribute the Work within the Hermetic Development Ecosystem.
+
+### 2. Developer Rights and Sovereignty
+
+2.1. **Code Ownership**: Contributors retain full ownership rights to their contributions.
+
+2.2. **Fair Compensation**: Contributors shall receive fair compensation through automated smart contracts based on usage, contribution value, and impact metrics.
+
+2.3. **Attribution**: All contributions must be properly attributed to their original creators throughout the ecosystem.
+
+2.4. **Development Environment Sovereignty**: All development must occur within individual sovereign environments that connect to the broader ecosystem via MPC protocols, ensuring code privacy while enabling collaboration.
+
+### 3. Ecosystem Requirements
+
+3.1. **Mandatory Ecosystem Participation**: Users and Contributors must participate exclusively within the Hermetic Development Ecosystem when developing, modifying, or using the Work.
+
+3.2. **SL Coding Assistant Usage**: Contributors are required to train and use only SL Coding Assistants that respect this license when working with the Work.
+
+3.3. **Fog Infrastructure**: Deployment and usage must utilize the decentralized fog deployment infrastructure specified by the ecosystem governance.
+
+3.4. **Payment Reciprocality**: Usage of the Work requires fair payment distribution to Contributors based on transparent, automated metrics and smart contracts.
+
+### 4. Restrictions
+
+4.1. **AI Training Restriction**: The Work may not be used to train or develop AI systems outside the Hermetic Development Ecosystem without explicit consent from all Contributors.
+
+4.2. **No Extraction**: Code, algorithms, or other intellectual property may not be extracted from the ecosystem for use in proprietary systems.
+
+4.3. **No Circumvention**: Users and Contributors shall not attempt to circumvent the mechanisms that enforce this license, including MPC protocols, payment systems, or usage tracking.
+
+### 5. Data Sovereignty
+
+5.1. **User Data**: All user data generated through usage of the Work remains the sole property of the User.
+
+5.2. **Privacy Protection**: The ecosystem shall implement privacy-preserving measures that exceed GDPR and CCPA requirements.
+
+5.3. **Opt-In Requirement**: Any collection, analysis, or usage of data requires explicit opt-in consent from the data owner.
+
+### 6. Governance
+
+6.1. **Transparent Governance**: Decision-making regarding ecosystem rules, payment distributions, and license updates shall be transparent and accessible to all participants.
+
+6.2. **Defensive Patent Pool**: All patents related to the Work shall be pooled for defensive purposes to protect the ecosystem from external threats.
+
+6.3. **Dispute Resolution**: Disputes shall be resolved through transparent adjudication mechanisms defined by the ecosystem governance.
+
+### 7. Evolution and Extension
+
+7.1. **Accretive Works**: This license extends requirements to all derivative and accretive works built upon the original Work.
+
+7.2. **License Compatibility**: This license supersedes and extends FOSS agreements while maintaining compatibility with crypto-based "Web3" licenses.
+
+### 8. Warranty and Liability
+
+8.1. **No Warranty**: The Work is provided "as is" without warranty of any kind, either expressed or implied, including, but not limited to, the implied warranties of merchantability and fitness for a particular purpose.
+
+8.2. **No Cyber Security Warranty**: No Contributor warrants that the Work will be free from security vulnerabilities, though the ecosystem shall strive to maintain high security standards.
+
+8.3. **Limitation of Liability**: In no event shall any Contributor be liable for any direct, indirect, incidental, special, exemplary, or consequential damages.
+
+## Machine-Readable Section
+
+```json
+{
+  "license_type": "Sovereign Source License",
+  "version": "0.1",
+  "license_attributes": {
+    "type": "non-exclusive",
+    "scope": "worldwide",
+    "compensation": "royalty-bearing"
+  },
+  "permitted_actions": [
+    "reproduce",
+    "modify",
+    "distribute",
+    "create_derivative_works"
+  ],
+  "conditions": [
+    "hermetic_ecosystem_participation",
+    "sl_coding_assistant_usage",
+    "fog_infrastructure_deployment",
+    "fair_compensation",
+    "attribution",
+    "mpc_protocol_usage"
+  ],
+  "restrictions": [
+    "no_external_ai_training",
+    "no_ecosystem_extraction",
+    "no_circumvention"
+  ],
+  "data_sovereignty": {
+    "user_data_ownership": true,
+    "privacy_protection": "exceeds_gdpr_ccpa",
+    "opt_in_required": true
+  },
+  "governance": {
+    "transparent": true,
+    "defensive_patent_pool": true,
+    "dispute_resolution": "ecosystem_defined"
+  },
+  "warranty": "none"
+}
+```
+
+By using, modifying, or distributing the Work, you acknowledge that you have read and agreed to be bound by the terms of this license.

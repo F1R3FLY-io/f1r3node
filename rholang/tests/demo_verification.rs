@@ -112,4 +112,3 @@ async fn test_demo_scenario() {
     })
     .await
 }
-

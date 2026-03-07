@@ -113,4 +113,6 @@ class KeyValueTypedStoreCodec[F[_]: Sync, K, V](
 
                }
     } yield values.toMap
+
+  override def nonEmpty: F[Boolean] = store.nonEmpty
 }

@@ -98,7 +98,7 @@ async fn multi_parent_casper_should_fail_when_deploying_with_insufficient_phlos(
     let result = node.create_block(&[deploy_data]).await.unwrap();
 
     let block = match result {
-        BlockCreatorResult::Created(b) => b,
+        BlockCreatorResult::Created(b, ..) => b,
         other => panic!("Expected Created block, got: {:?}", other),
     };
 
@@ -134,7 +134,7 @@ async fn multi_parent_casper_should_succeed_if_given_enough_phlos_for_deploy() {
     let result = node.create_block(&[deploy_data]).await.unwrap();
 
     let block = match result {
-        BlockCreatorResult::Created(b) => b,
+        BlockCreatorResult::Created(b, ..) => b,
         other => panic!("Expected Created block, got: {:?}", other),
     };
 

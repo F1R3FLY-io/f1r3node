@@ -11,18 +11,21 @@ object CasperInvalidBlocksContract {
 
   def set[F[_]: Concurrent: Span](
       ctx: ProcessContext[F]
-  )(message: Seq[ListParWithRandom]): F[Unit] = {
+  )(message: Seq[ListParWithRandom], isReplay: Boolean, previousOutput: Seq[Par]): F[Seq[Par]] = {
 
     val isContractCall = new ContractCall(ctx.space, ctx.dispatcher)
-    message match {
+    (message, isReplay, previousOutput) match {
       case isContractCall(
           produce,
+          _,
+          _,
           Seq(newInvalidBlocks, ackCh)
           ) =>
         for {
-          _ <- ctx.invalidBlocks.setParams(newInvalidBlocks)
-          _ <- produce(Seq(Par()), ackCh)
-        } yield ()
+          _      <- ctx.invalidBlocks.setParams(newInvalidBlocks)
+          output = Seq(Par())
+          _      <- produce(output, ackCh)
+        } yield output
     }
   }
 

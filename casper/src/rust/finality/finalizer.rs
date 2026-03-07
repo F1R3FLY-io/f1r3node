@@ -1,9 +1,12 @@
 // See casper/src/main/scala/coop/rchain/casper/finality/Finalizer.scala
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::Duration;
 
 use block_storage::rust::dag::block_dag_key_value_storage::KeyValueDagRepresentation;
 use models::rust::{block_hash::BlockHash, block_metadata::BlockMetadata, validator::Validator};
+use shared::rust::env;
 use shared::rust::store::key_value_store::KvStoreError;
 
 use crate::rust::safety::clique_oracle::CliqueOracle;
@@ -29,18 +32,91 @@ use crate::rust::safety::clique_oracle::CliqueOracle;
 ///   2. Execute [`CliqueOracle::compute_output`] on these targets.
 ///   3. First message passing FT threshold becomes the next LFB.
 pub struct Finalizer;
+const FINALIZER_WORK_BUDGET_MS: u64 = 2_000;
+const FINALIZER_STEP_TIMEOUT_MS: u64 = 200;
+const FINALIZER_CATCHUP_LAG_THRESHOLD_BLOCKS: i64 = 1_024;
+const FINALIZER_CATCHUP_WORK_BUDGET_MS: u64 = 2_000;
+const FINALIZER_CATCHUP_STEP_TIMEOUT_MS: u64 = 200;
+const FINALIZER_WORK_BUDGET_MS_ENV: &str = "F1R3_FINALIZER_WORK_BUDGET_MS";
+const FINALIZER_STEP_TIMEOUT_MS_ENV: &str = "F1R3_FINALIZER_STEP_TIMEOUT_MS";
+const FINALIZER_CATCHUP_WORK_BUDGET_MS_ENV: &str = "F1R3_FINALIZER_CATCHUP_WORK_BUDGET_MS";
+const FINALIZER_CATCHUP_STEP_TIMEOUT_MS_ENV: &str = "F1R3_FINALIZER_CATCHUP_STEP_TIMEOUT_MS";
+const FINALIZER_MAX_CLIQUE_CANDIDATES_DEFAULT: usize = 128;
+const FINALIZER_MAX_CLIQUE_CANDIDATES_ENV: &str = "F1R3_FINALIZER_MAX_CLIQUE_CANDIDATES";
+const FINALIZER_CANDIDATE_RANKING_ENV: &str = "F1R3_FINALIZER_CANDIDATE_RANKING";
 
-type WeightMap = BTreeMap<Validator, i64>;
-
-/// Message that is agreed on + weight of this agreement.
-#[derive(Debug, Clone)]
-pub struct MessageAgreement {
-    pub message: BlockMetadata,
-    pub message_weight_map: WeightMap,
-    pub stake_agreed: WeightMap,
+#[derive(Debug, Clone, Copy)]
+enum CandidateRankingStrategy {
+    RecencySmallSetStake,
+    StakeDesc,
+    RecencyStake,
 }
 
+impl CandidateRankingStrategy {
+    fn from_env() -> Self {
+        let value = env::var_parsed::<String>(FINALIZER_CANDIDATE_RANKING_ENV)
+            .unwrap_or_default()
+            .to_lowercase();
+        match value.as_str() {
+            "stake_desc" => Self::StakeDesc,
+            "recency_smallset_stake" => Self::RecencySmallSetStake,
+            _ => Self::RecencyStake,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::RecencySmallSetStake => "recency_smallset_stake",
+            Self::StakeDesc => "stake_desc",
+            Self::RecencyStake => "recency_stake",
+        }
+    }
+}
+
+type WeightMap = HashMap<Validator, i64>;
+type SharedWeightMap = Arc<WeightMap>;
+
 impl Finalizer {
+    fn finalizer_max_clique_candidates() -> usize {
+        env::var_or_filtered(
+            FINALIZER_MAX_CLIQUE_CANDIDATES_ENV,
+            FINALIZER_MAX_CLIQUE_CANDIDATES_DEFAULT,
+            |v: &usize| *v > 0,
+        )
+    }
+
+    fn finalizer_work_budget_ms() -> u64 {
+        env::var_or_filtered(
+            FINALIZER_WORK_BUDGET_MS_ENV,
+            FINALIZER_WORK_BUDGET_MS,
+            |v: &u64| *v > 0,
+        )
+    }
+
+    fn finalizer_step_timeout_ms() -> u64 {
+        env::var_or_filtered(
+            FINALIZER_STEP_TIMEOUT_MS_ENV,
+            FINALIZER_STEP_TIMEOUT_MS,
+            |v: &u64| *v > 0,
+        )
+    }
+
+    fn finalizer_catchup_work_budget_ms() -> u64 {
+        env::var_or_filtered(
+            FINALIZER_CATCHUP_WORK_BUDGET_MS_ENV,
+            FINALIZER_CATCHUP_WORK_BUDGET_MS,
+            |v: &u64| *v > 0,
+        )
+    }
+
+    fn finalizer_catchup_step_timeout_ms() -> u64 {
+        env::var_or_filtered(
+            FINALIZER_CATCHUP_STEP_TIMEOUT_MS_ENV,
+            FINALIZER_CATCHUP_STEP_TIMEOUT_MS,
+            |v: &u64| *v > 0,
+        )
+    }
+
     /// weight map as per message, look inside [`CliqueOracle::get_corresponding_weight_map`] description for more info
     async fn message_weight_map_f(
         message: &BlockMetadata,
@@ -75,6 +151,20 @@ impl Finalizer {
         active_stake_agreeing as f64 > (active_stake_total as f64) / 2.0
     }
 
+    /// Cheap upper bound on FT without clique search.
+    /// Since max clique weight <= sum(agreeing stake), this is a safe prune bound.
+    fn fault_tolerance_upper_bound(
+        message_weight_map: &WeightMap,
+        agreeing_weight_map: &WeightMap,
+    ) -> f32 {
+        let total_stake = message_weight_map.values().sum::<i64>() as f32;
+        let agreeing_stake = agreeing_weight_map.values().sum::<i64>() as f32;
+        if total_stake <= 0.0 {
+            return f32::MIN;
+        }
+        (agreeing_stake * 2.0 - total_stake) / total_stake
+    }
+
     /// Create an agreement given validator that agrees on a message and weight map of a message.
     /// If validator is not present in message bonds map or its stake is zero, None is returned
     fn record_agreement(
@@ -105,6 +195,21 @@ impl Finalizer {
         F: FnMut(BlockHash) -> Fut,
         Fut: std::future::Future<Output = Result<(), KvStoreError>>,
     {
+        let total_started = std::time::Instant::now();
+        let lfb_lag = dag.latest_block_number().saturating_sub(curr_lfb_height);
+        let catchup_mode = lfb_lag > FINALIZER_CATCHUP_LAG_THRESHOLD_BLOCKS;
+        let work_budget = Duration::from_millis(if catchup_mode {
+            Self::finalizer_catchup_work_budget_ms()
+        } else {
+            Self::finalizer_work_budget_ms()
+        });
+        let step_timeout = Duration::from_millis(if catchup_mode {
+            Self::finalizer_catchup_step_timeout_ms()
+        } else {
+            Self::finalizer_step_timeout_ms()
+        });
+        let max_clique_candidates = Self::finalizer_max_clique_candidates();
+        let ranking_strategy = CandidateRankingStrategy::from_env();
         /*
          * Stream of agreements passed down from all latest messages to main parents.
          * Starts with agreements of latest message on themselves.
@@ -113,52 +218,115 @@ impl Finalizer {
          * validator are recorded, and only after that next level of main parents is visited.
          */
         let lms = dag.latest_messages()?;
+        let latest_messages_count = lms.len();
 
         // sort latest messages by agreeing validator to ensure random ordering does not change output
         let mut sorted_latest_messages: Vec<(Validator, BlockMetadata)> = lms.into_iter().collect();
         sorted_latest_messages.sort_by(|(v1, _), (v2, _)| v1.cmp(v2));
 
-        // Step 1: Generate stream of agreements
-        // Scala's unfoldLoopEval outputs the current layer, then checks if next is non-empty to continue.
-        // So ALL layers are output, including the last one where next would be empty.
-        let mut mk_agreements_stream = Vec::new();
+        // Step 1: Traverse agreement layers and aggregate agreements per target block.
+        // This avoids materializing a large stream of duplicate (message, weight-map, agreement)
+        // tuples that would later be deduplicated by block hash.
+        let mut aggregated_agreements: HashMap<
+            BlockHash,
+            (BlockMetadata, SharedWeightMap, WeightMap),
+        > = HashMap::new();
+        let mut message_weight_map_cache: HashMap<BlockHash, SharedWeightMap> = HashMap::new();
+        let mut main_parent_cache: HashMap<BlockHash, Option<BlockMetadata>> = HashMap::new();
+        let mut message_weight_map_cache_hit: usize = 0;
+        let mut message_weight_map_cache_miss: usize = 0;
+        let mut main_parent_cache_hit: usize = 0;
+        let mut main_parent_cache_miss: usize = 0;
         let mut current_layer = sorted_latest_messages;
+        let mut layers_visited: usize = 0;
+        let mut budget_exhausted = false;
+        let mut agreements_count: usize = 0;
+        let mut weight_map_phase_ns: u128 = 0;
+        let mut agreement_record_phase_ns: u128 = 0;
+        let mut parent_lookup_phase_ns: u128 = 0;
+        let mut next_layer_push_phase_ns: u128 = 0;
 
         loop {
-            // output current visits - process agreements for this layer
-            let out = current_layer.clone();
+            if total_started.elapsed() >= work_budget {
+                budget_exhausted = true;
+                break;
+            }
+            layers_visited += 1;
+            let mut next_layer: Vec<(Validator, BlockMetadata)> = Vec::new();
 
-            // evalMap: map visits to message agreements: validator v agrees on message m
-            // The agreement is on the MESSAGE itself (from the current layer), not on its parent.
-            for (validator, message) in out {
-                if let Ok(message_weight_map) = Self::message_weight_map_f(&message, dag).await {
-                    if let Some(agreement) = Self::record_agreement(&message_weight_map, &validator)
+            for (agreeing_validator, message) in current_layer.into_iter() {
+                if total_started.elapsed() >= work_budget {
+                    budget_exhausted = true;
+                    break;
+                }
+                let phase_t = std::time::Instant::now();
+                let message_weight_map = if let Some(cached) =
+                    message_weight_map_cache.get(&message.block_hash).cloned()
+                {
+                    message_weight_map_cache_hit += 1;
+                    cached
+                } else {
+                    message_weight_map_cache_miss += 1;
+                    let Ok(fetched) = Self::message_weight_map_f(&message, dag).await else {
+                        continue;
+                    };
+                    let fetched = Arc::new(fetched);
+                    message_weight_map_cache.insert(message.block_hash.clone(), fetched.clone());
+                    fetched
+                };
+                weight_map_phase_ns += phase_t.elapsed().as_nanos();
+
+                let phase_t = std::time::Instant::now();
+                let (_, _, agreeing_weight_map) = aggregated_agreements
+                    .entry(message.block_hash.clone())
+                    .or_insert_with(|| {
+                        (
+                            message.clone(),
+                            message_weight_map.clone(),
+                            WeightMap::new(),
+                        )
+                    });
+                if let Some((agreeing_validator, stake_agreed)) =
+                    Self::record_agreement(&message_weight_map, &agreeing_validator)
+                {
+                    assert!(
+                        !agreeing_weight_map.contains_key(&agreeing_validator),
+                        "Logical error during finalization: message {:?} got duplicate agreement.",
+                        message.block_hash
+                    );
+                    agreeing_weight_map.insert(agreeing_validator, stake_agreed);
+                    agreements_count += 1;
+                }
+                agreement_record_phase_ns += phase_t.elapsed().as_nanos();
+
+                if let Some(main_parent_hash) = message.parents.first() {
+                    let phase_t = std::time::Instant::now();
+                    let parent_meta = if let Some(cached) = main_parent_cache.get(main_parent_hash)
                     {
-                        mk_agreements_stream.push(MessageAgreement {
-                            message: message,
-                            message_weight_map,
-                            stake_agreed: [agreement].into_iter().collect(),
-                        });
+                        main_parent_cache_hit += 1;
+                        cached.clone()
+                    } else {
+                        main_parent_cache_miss += 1;
+                        let fetched = dag.lookup_unsafe(main_parent_hash).ok();
+                        main_parent_cache.insert(main_parent_hash.clone(), fetched.clone());
+                        fetched
+                    };
+                    parent_lookup_phase_ns += phase_t.elapsed().as_nanos();
+
+                    let phase_t = std::time::Instant::now();
+                    if let Some(next_message) =
+                        parent_meta.filter(|meta| meta.block_number > curr_lfb_height)
+                    {
+                        next_layer.push((agreeing_validator, next_message));
                     }
+                    next_layer_push_phase_ns += phase_t.elapsed().as_nanos();
                 }
             }
 
-            // proceed to main parents
-            let next_layer: Vec<(Validator, BlockMetadata)> = current_layer
-                .iter()
-                .filter_map(|(validator, message)| {
-                    message
-                        .parents
-                        .first()
-                        .and_then(|main_parent_hash| dag.lookup_unsafe(main_parent_hash).ok())
-                        // filter out empty results when no main parent and those out of scope
-                        .filter(|meta| meta.block_number > curr_lfb_height)
-                        .map(|meta| (validator.clone(), meta))
-                })
-                .collect();
+            if budget_exhausted {
+                break;
+            }
 
-            // Check if we should continue
-            // If next is empty, we've processed all layers and should stop
             if next_layer.is_empty() {
                 break;
             }
@@ -166,86 +334,172 @@ impl Finalizer {
             current_layer = next_layer;
         }
 
-        // Step 2: Process agreements stream
-
-        // while recording each agreement in agreements map
-        let mut full_agreements_map: HashMap<BlockMetadata, WeightMap> = HashMap::new();
-        let mapaccumulate_stream: Vec<(BlockMetadata, WeightMap)> = mk_agreements_stream
-            .into_iter()
-            .map(|agreement| {
-                let MessageAgreement {
-                    message,
-                    message_weight_map,
-                    stake_agreed,
-                } = agreement;
-
-                let cur_val = full_agreements_map
-                    .get(&message)
-                    .cloned()
-                    .unwrap_or_default();
-
-                assert!(
-                    stake_agreed.keys().all(|v| !cur_val.contains_key(v)),
-                    "Logical error during finalization: message {:?} got duplicate agreement.",
-                    message.block_hash
-                );
-
-                let new_val = cur_val.into_iter().chain(stake_agreed).collect();
-
-                full_agreements_map.insert(message.clone(), new_val);
-                (message, message_weight_map)
-            })
-            .collect();
-
-        // output only target message of current agreement
-        let agreements_with_accumulator: Vec<(BlockMetadata, WeightMap, WeightMap)> =
-            mapaccumulate_stream
+        // Step 2: Filter blocks that cannot be orphaned and precompute sort keys.
+        let filtered_agreements: Vec<(BlockMetadata, SharedWeightMap, WeightMap, i64, usize)> =
+            aggregated_agreements
+                .into_values()
+                .filter_map(|(message, message_weight_map, agreeing_weight_map)| {
+                    Self::cannot_be_orphaned(&message_weight_map, &agreeing_weight_map).then(|| {
+                        let stake_sum = agreeing_weight_map.values().sum::<i64>();
+                        let agreeing_size = agreeing_weight_map.len();
+                        (
+                            message,
+                            message_weight_map,
+                            agreeing_weight_map,
+                            stake_sum,
+                            agreeing_size,
+                        )
+                    })
+                })
+                .collect();
+        let filtered_agreements_count = filtered_agreements.len();
+        let mut deduped_filtered_agreements: Vec<(
+            BlockMetadata,
+            SharedWeightMap,
+            WeightMap,
+            i64,
+            usize,
+        )> = filtered_agreements;
+        deduped_filtered_agreements.sort_by(
+            |(msg_l, _, _, stake_l, size_l), (msg_r, _, _, stake_r, size_r)| match ranking_strategy
+            {
+                CandidateRankingStrategy::RecencySmallSetStake => msg_r
+                    .block_number
+                    .cmp(&msg_l.block_number)
+                    .then_with(|| size_l.cmp(size_r))
+                    .then_with(|| stake_r.cmp(stake_l))
+                    .then_with(|| msg_l.block_hash.cmp(&msg_r.block_hash)),
+                CandidateRankingStrategy::StakeDesc => stake_r
+                    .cmp(stake_l)
+                    .then_with(|| msg_r.block_number.cmp(&msg_l.block_number))
+                    .then_with(|| size_l.cmp(size_r))
+                    .then_with(|| msg_l.block_hash.cmp(&msg_r.block_hash)),
+                CandidateRankingStrategy::RecencyStake => msg_r
+                    .block_number
+                    .cmp(&msg_l.block_number)
+                    .then_with(|| stake_r.cmp(stake_l))
+                    .then_with(|| size_l.cmp(size_r))
+                    .then_with(|| msg_l.block_hash.cmp(&msg_r.block_hash)),
+            },
+        );
+        let deduped_filtered_agreements_count = deduped_filtered_agreements.len();
+        let candidate_capped = deduped_filtered_agreements_count > max_clique_candidates;
+        let capped_agreements: Vec<(BlockMetadata, SharedWeightMap, WeightMap)> =
+            deduped_filtered_agreements
                 .into_iter()
-                .map(|(message, message_weight_map)| {
-                    let agreeing_weight_map = full_agreements_map.get(&message).cloned().unwrap();
+                .map(|(message, message_weight_map, agreeing_weight_map, _, _)| {
                     (message, message_weight_map, agreeing_weight_map)
                 })
+                .take(max_clique_candidates)
                 .collect();
 
-        // filter only messages that cannot be orphaned
-        let filtered_agreements: Vec<(BlockMetadata, WeightMap, WeightMap)> =
-            agreements_with_accumulator
-                .into_iter()
-                .filter(|(_, message_weight_map, agreeing_weight_map)| {
-                    Self::cannot_be_orphaned(message_weight_map, agreeing_weight_map)
-                })
-                .collect();
-
-        // compute fault tolerance
-        let mut fault_tolerance_results: Vec<(BlockMetadata, f32)> = Vec::new();
-        for (message, message_weight_map, agreeing_weight_map) in filtered_agreements {
-            if let Ok(fault_tolerance) = CliqueOracle::compute_output(
-                &message.block_hash,
-                &message_weight_map,
-                &agreeing_weight_map,
-                dag,
+        // Compute fault tolerance lazily and stop at the first candidate that satisfies
+        // finalization criteria. Preserves original candidate order while avoiding
+        // expensive full-scan FT computation on long chains.
+        let clique_started = std::time::Instant::now();
+        let mut clique_run_cache = CliqueOracle::new_run_cache();
+        let mut clique_eval_count: usize = 0;
+        let mut upper_bound_pruned_count: usize = 0;
+        let mut upper_bound_passed_count: usize = 0;
+        let mut max_ft_upper_bound: f32 = f32::MIN;
+        let mut lfb_result: Option<BlockHash> = None;
+        for (message, message_weight_map, agreeing_weight_map) in capped_agreements {
+            if total_started.elapsed() >= work_budget {
+                budget_exhausted = true;
+                break;
+            }
+            let ft_upper_bound =
+                Self::fault_tolerance_upper_bound(&message_weight_map, &agreeing_weight_map);
+            max_ft_upper_bound = max_ft_upper_bound.max(ft_upper_bound);
+            if ft_upper_bound <= fault_tolerance_threshold {
+                upper_bound_pruned_count += 1;
+                continue;
+            }
+            upper_bound_passed_count += 1;
+            clique_eval_count += 1;
+            let ft_result = tokio::time::timeout(
+                step_timeout,
+                CliqueOracle::compute_output_with_cache(
+                    &message.block_hash,
+                    &message_weight_map,
+                    &agreeing_weight_map,
+                    dag,
+                    &mut clique_run_cache,
+                ),
             )
-            .await
-            {
-                fault_tolerance_results.push((message, fault_tolerance));
+            .await;
+            let fault_tolerance = match ft_result {
+                Ok(Ok(value)) => value,
+                Ok(Err(err)) => {
+                    tracing::debug!(
+                        target: "f1r3fly.finalizer.timing",
+                        "Finalizer candidate skipped due to clique error: hash={:?}, err={:?}",
+                        message.block_hash,
+                        err
+                    );
+                    continue;
+                }
+                Err(_) => {
+                    tracing::debug!(
+                        target: "f1r3fly.finalizer.timing",
+                        "Finalizer candidate skipped due to clique timeout: hash={:?}, timeout_ms={}",
+                        message.block_hash,
+                        step_timeout.as_millis()
+                    );
+                    continue;
+                }
+            };
+
+            if fault_tolerance > fault_tolerance_threshold {
+                let lfb_hash = message.block_hash.clone();
+                // Only process blocks that aren't already finalized
+                if !dag.is_finalized(&lfb_hash) {
+                    new_lfb_found_effect(lfb_hash.clone()).await?;
+                }
+                lfb_result = Some(lfb_hash);
+                break;
+            } else {
+                tracing::debug!(
+                    target: "f1r3fly.finalizer.timing",
+                    "Finalizer candidate rejected by threshold: hash={:?}, fault_tolerance={:.6}, threshold={:.6}",
+                    message.block_hash,
+                    fault_tolerance,
+                    fault_tolerance_threshold
+                );
             }
         }
-
-        // first candidate that meets finalization criteria is new LFB
-        let lfb_result = if let Some((lfb, _)) = fault_tolerance_results
-            .into_iter()
-            .filter(|(_, fault_tolerance)| *fault_tolerance > fault_tolerance_threshold)
-            .next()
-        {
-            let lfb_hash = lfb.block_hash;
-            // Only process blocks that aren't already finalized
-            if !dag.is_finalized(&lfb_hash) {
-                new_lfb_found_effect(lfb_hash.clone()).await?;
-            }
-            Some(lfb_hash)
-        } else {
-            None
-        };
+        tracing::debug!(
+            target: "f1r3fly.finalizer.timing",
+            "Finalizer timing: latest_messages={}, layers_visited={}, agreements={}, filtered_agreements={}, deduped_filtered_agreements={}, message_weight_map_cache_hit={}, message_weight_map_cache_miss={}, main_parent_cache_hit={}, main_parent_cache_miss={}, candidate_cap={}, ranking_strategy={}, candidate_capped={}, upper_bound_pruned={}, upper_bound_passed={}, max_ft_upper_bound={:.6}, clique_evals={}, clique_ms={}, total_ms={}, budget_ms={}, step_timeout_ms={}, budget_exhausted={}, lfb_lag={}, catchup_mode={}, found_new_lfb={}, weight_map_ns={}, agreement_ns={}, parent_ns={}, next_push_ns={}",
+            latest_messages_count,
+            layers_visited,
+            agreements_count,
+            filtered_agreements_count,
+            deduped_filtered_agreements_count,
+            message_weight_map_cache_hit,
+            message_weight_map_cache_miss,
+            main_parent_cache_hit,
+            main_parent_cache_miss,
+            max_clique_candidates,
+            ranking_strategy.as_str(),
+            candidate_capped,
+            upper_bound_pruned_count,
+            upper_bound_passed_count,
+            max_ft_upper_bound,
+            clique_eval_count,
+            clique_started.elapsed().as_millis(),
+            total_started.elapsed().as_millis(),
+            work_budget.as_millis(),
+            step_timeout.as_millis(),
+            budget_exhausted,
+            lfb_lag,
+            catchup_mode,
+            lfb_result.is_some(),
+            weight_map_phase_ns,
+            agreement_record_phase_ns,
+            parent_lookup_phase_ns,
+            next_layer_push_phase_ns
+        );
 
         Ok(lfb_result)
     }

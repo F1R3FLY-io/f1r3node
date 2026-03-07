@@ -1,12 +1,17 @@
-use crate::rspace::shared::key_value_store_manager::KeyValueStoreManager;
+use std::collections::HashMap;
+use std::fs;
+use std::path::PathBuf;
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use futures::channel::oneshot;
-use heed::{Database, Env, EnvOpenOptions, types::SerdeBincode};
-use shared::rust::store::{
-    key_value_store::KeyValueStore, lmdb_key_value_store::LmdbKeyValueStore,
-};
-use std::{collections::HashMap, fs, path::PathBuf, sync::Arc};
+use heed::types::SerdeBincode;
+use heed::{Database, Env, EnvOpenOptions};
+use shared::rust::store::key_value_store::KeyValueStore;
+use shared::rust::store::lmdb_key_value_store::LmdbKeyValueStore;
 use tokio::sync::Mutex;
+
+use crate::rspace::shared::key_value_store_manager::KeyValueStoreManager;
 
 // See shared/src/main/scala/coop/rchain/store/LmdbStoreManager.scala
 pub struct LmdbStoreManager {
@@ -25,7 +30,11 @@ struct DbEnv {
 }
 
 impl LmdbStoreManager {
-    pub fn new(dir_path: PathBuf, max_env_size: usize, max_dbs: u32) -> Box<dyn KeyValueStoreManager> {
+    pub fn new(
+        dir_path: PathBuf,
+        max_env_size: usize,
+        max_dbs: u32,
+    ) -> Box<dyn KeyValueStoreManager> {
         let (sender, receiver) = oneshot::channel::<Env>();
         Box::new(LmdbStoreManager {
             dir_path,
@@ -105,7 +114,8 @@ impl KeyValueStoreManager for LmdbStoreManager {
         let mut dbs = self.dbs.lock().await;
         dbs.clear();
 
-        // If there is an active receiver awaiting the environment, receive it and drop it
+        // If there is an active receiver awaiting the environment, receive it and drop
+        // it
         if let Some(receiver) = self.env_receiver.take() {
             let env = receiver.await.map_err(|_| {
                 heed::Error::Io(std::io::Error::new(

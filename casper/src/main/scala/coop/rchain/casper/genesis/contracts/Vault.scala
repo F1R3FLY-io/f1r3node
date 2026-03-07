@@ -1,4 +1,4 @@
 package coop.rchain.casper.genesis.contracts
-import coop.rchain.rholang.interpreter.util.RevAddress
+import coop.rchain.rholang.interpreter.util.VaultAddress
 
-final case class Vault(revAddress: RevAddress, initialBalance: Long)
+final case class Vault(vaultAddress: VaultAddress, initialBalance: Long)

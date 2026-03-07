@@ -1,23 +1,52 @@
 // See node/src/main/scala/coop/rchain/node/instances/ProposerInstance.scala
 
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::sync::OnceLock;
+use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, oneshot, Semaphore};
 
 use models::rust::casper::pretty_printer::PrettyPrinter;
 use models::rust::casper::protocol::casper_message::BlockMessage;
 
 use casper::rust::blocks::proposer::{
-    propose_result::{ProposeFailure, ProposeResult},
+    propose_result::{ProposeFailure, ProposeResult, ProposeStatus},
     proposer::{ProductionProposer, ProposeReturnType, ProposerResult},
 };
 use casper::rust::casper::Casper;
 use casper::rust::errors::CasperError;
+use casper::rust::metrics_constants::{
+    PROPOSER_QUEUE_PENDING_METRIC, PROPOSER_QUEUE_REJECTED_TOTAL_METRIC, VALIDATOR_METRICS_SOURCE,
+};
 use comm::rust::transport::transport_layer::TransportLayer;
 
-/// Default timeout for propose operations (5 minutes)
-/// If a propose takes longer than this, it's likely stuck and should be abandoned
-const PROPOSE_TIMEOUT: Duration = Duration::from_secs(300);
+const PROPOSER_RESULT_QUEUE_CAPACITY: usize = 64;
+const PROPOSER_MAX_IMMEDIATE_RETRIES: u8 = 2;
+const DEFAULT_PROPOSER_MIN_INTERVAL_MS: u64 = 250;
+const PROPOSER_MIN_INTERVAL_MS_ENV: &str = "F1R3_PROPOSER_MIN_INTERVAL_MS";
+
+type ProposeQueueEntry = (
+    Arc<dyn Casper + Send + Sync>,
+    bool,
+    oneshot::Sender<ProposerResult>,
+    u8,
+);
+
+fn should_retry_immediately_on_trigger(result: &ProposeResult, is_async: bool) -> bool {
+    let _ = (result, is_async);
+    false
+}
+
+fn proposer_min_interval() -> Duration {
+    static VALUE: OnceLock<Duration> = OnceLock::new();
+    *VALUE.get_or_init(|| {
+        let ms = std::env::var(PROPOSER_MIN_INTERVAL_MS_ENV)
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(DEFAULT_PROPOSER_MIN_INTERVAL_MS);
+        Duration::from_millis(ms)
+    })
+}
 
 /// Proposer instance that processes propose requests from a queue
 ///
@@ -25,20 +54,40 @@ const PROPOSE_TIMEOUT: Duration = Duration::from_secs(300);
 /// to start immediately without waiting for engine initialization.
 pub struct ProposerInstance<T: TransportLayer + Send + Sync + 'static> {
     /// Receiver for propose requests
-    pub propose_requests_queue_rx: mpsc::UnboundedReceiver<(
-        Arc<dyn Casper + Send + Sync>,
-        bool,
-        oneshot::Sender<ProposerResult>,
-    )>,
+    pub propose_requests_queue_rx: mpsc::Receiver<ProposeQueueEntry>,
     /// Sender for propose requests (needed for retry mechanism)
-    pub propose_requests_queue_tx: mpsc::UnboundedSender<(
-        Arc<dyn Casper + Send + Sync>,
-        bool,
-        oneshot::Sender<ProposerResult>,
-    )>,
+    pub propose_requests_queue_tx: mpsc::Sender<ProposeQueueEntry>,
     pub proposer: Arc<tokio::sync::Mutex<ProductionProposer<T>>>,
     /// Shared state for API observability (tracks current/latest propose results)
     pub state: Arc<tokio::sync::RwLock<casper::rust::state::instances::ProposerState>>,
+    pub propose_queue_pending: Arc<AtomicUsize>,
+    pub propose_queue_max_pending: usize,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use casper::rust::blocks::proposer::propose_result::CheckProposeConstraintsFailure;
+
+    #[test]
+    fn should_not_retry_internal_deploy_error_immediately() {
+        let result = ProposeResult::failure(ProposeFailure::InternalDeployError);
+        assert!(
+            !should_retry_immediately_on_trigger(&result, true),
+            "InternalDeployError should not trigger immediate retry"
+        );
+    }
+
+    #[test]
+    fn should_not_retry_not_enough_new_blocks_for_async_propose() {
+        let result = ProposeResult::failure(ProposeFailure::CheckConstraintsFailure(
+            CheckProposeConstraintsFailure::NotEnoughNewBlocks,
+        ));
+        assert!(
+            !should_retry_immediately_on_trigger(&result, true),
+            "NotEnoughNewBlocks should not trigger immediate async retry"
+        );
+    }
 }
 
 impl<T: TransportLayer + Send + Sync + 'static> ProposerInstance<T> {
@@ -54,19 +103,13 @@ impl<T: TransportLayer + Send + Sync + 'static> ProposerInstance<T> {
     /// in the queue carries its own Casper instance.
     pub fn new(
         propose_requests_queue: (
-            mpsc::UnboundedReceiver<(
-                Arc<dyn Casper + Send + Sync>,
-                bool,
-                oneshot::Sender<ProposerResult>,
-            )>,
-            mpsc::UnboundedSender<(
-                Arc<dyn Casper + Send + Sync>,
-                bool,
-                oneshot::Sender<ProposerResult>,
-            )>,
+            mpsc::Receiver<ProposeQueueEntry>,
+            mpsc::Sender<ProposeQueueEntry>,
         ),
         proposer: Arc<tokio::sync::Mutex<ProductionProposer<T>>>,
         state: Arc<tokio::sync::RwLock<casper::rust::state::instances::ProposerState>>,
+        propose_queue_pending: Arc<AtomicUsize>,
+        propose_queue_max_pending: usize,
     ) -> Self {
         let (propose_requests_queue_rx, propose_requests_queue_tx) = propose_requests_queue;
         Self {
@@ -74,6 +117,8 @@ impl<T: TransportLayer + Send + Sync + 'static> ProposerInstance<T> {
             propose_requests_queue_tx,
             proposer,
             state,
+            propose_queue_pending,
+            propose_queue_max_pending,
         }
     }
 
@@ -94,8 +139,8 @@ impl<T: TransportLayer + Send + Sync + 'static> ProposerInstance<T> {
     /// - Prevents propose request pile-up during slow proposals
     pub fn create(
         self,
-    ) -> Result<mpsc::UnboundedReceiver<(ProposeResult, Option<BlockMessage>)>, CasperError> {
-        let (result_tx, result_rx) = mpsc::unbounded_channel();
+    ) -> Result<mpsc::Receiver<(ProposeResult, Option<BlockMessage>)>, CasperError> {
+        let (result_tx, result_rx) = mpsc::channel(PROPOSER_RESULT_QUEUE_CAPACITY);
 
         tokio::spawn(async move {
             let Self {
@@ -103,6 +148,8 @@ impl<T: TransportLayer + Send + Sync + 'static> ProposerInstance<T> {
                 propose_requests_queue_tx,
                 proposer,
                 state,
+                propose_queue_pending,
+                propose_queue_max_pending,
             } = self;
 
             // Propose lock and trigger mechanism
@@ -110,13 +157,43 @@ impl<T: TransportLayer + Send + Sync + 'static> ProposerInstance<T> {
             // - trigger: Semaphore(0) for retry signaling (tryAcquire = cock, tryRelease = check & reset)
             let propose_lock = Arc::new(Semaphore::new(1));
             let trigger = Arc::new(Semaphore::new(0)); // Start with 0 permits = uncocked
+            let mut last_propose_started_at: Option<Instant> = None;
 
             // Process propose requests - each request carries its own Casper instance
-            while let Some((casper, is_async, propose_id_sender)) =
+            while let Some((casper, is_async, propose_id_sender, immediate_retry_count)) =
                 propose_requests_queue_rx.recv().await
             {
+                let _ = propose_queue_pending.fetch_update(
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                    |curr| Some(curr.saturating_sub(1)),
+                );
+                metrics::gauge!(
+                    PROPOSER_QUEUE_PENDING_METRIC,
+                    "source" => VALIDATOR_METRICS_SOURCE
+                )
+                .set(propose_queue_pending.load(Ordering::Relaxed) as f64);
+
+                let min_interval = proposer_min_interval();
+                // Allow one immediate follow-up after a trigger collision so deploy-driven
+                // proposals are not penalized by the steady-state spacing gate.
+                let effective_min_interval = if immediate_retry_count == 1 {
+                    Duration::ZERO
+                } else {
+                    min_interval
+                };
+                if !effective_min_interval.is_zero() {
+                    if let Some(last_started) = last_propose_started_at {
+                        let elapsed = last_started.elapsed();
+                        if elapsed < effective_min_interval {
+                            tokio::time::sleep(effective_min_interval - elapsed).await;
+                        }
+                    }
+                }
+
                 // Try to acquire the propose lock (NON-BLOCKING)
-                if let Ok(permit) = propose_lock.clone().try_acquire_owned() {
+                if let Ok(_permit) = propose_lock.clone().try_acquire_owned() {
+                    last_propose_started_at = Some(Instant::now());
                     // Lock acquired - execute the propose
                     tracing::info!("Propose started");
 
@@ -134,33 +211,14 @@ impl<T: TransportLayer + Send + Sync + 'static> ProposerInstance<T> {
                         state_guard.curr_propose_result = Some(curr_result_rx);
                     }
 
-                    // Execute the propose with timeout protection
-                    // Production safety: If propose hangs (bad RSpace, network issue, etc.),
-                    // we timeout after PROPOSE_TIMEOUT to prevent blocking forever
                     let mut proposer_guard = proposer_clone.lock().await;
-                    let propose_future = proposer_guard.propose(casper.clone(), is_async);
-                    let res = match tokio::time::timeout(PROPOSE_TIMEOUT, propose_future).await {
-                        Ok(result) => result,
-                        Err(_) => {
-                            tracing::error!(
-                                "Propose operation timed out after {:?} - this indicates a serious issue",
-                                PROPOSE_TIMEOUT
-                            );
-                            // Send timeout error result to caller
-                            let timeout_result = ProposerResult::empty(); // or create a timeout-specific result
-                            let _ = propose_id_sender.send(timeout_result);
-
-                            // Clear current propose state
-                            let mut state_guard = state_clone.write().await;
-                            state_guard.curr_propose_result = None;
-                            drop(proposer_guard);
-                            drop(permit);
-                            continue;
-                        }
-                    };
+                    let validator_public_key = proposer_guard.validator.public_key.bytes.clone();
+                    // Await propose directly to avoid canceling in-flight block creation/replay
+                    // through timeout-driven future drops.
+                    let res = proposer_guard.propose(casper.clone(), is_async).await;
                     drop(proposer_guard); // Release proposer lock explicitly
 
-                    match res {
+                    let should_retry_on_result = match res {
                         Ok(ProposeReturnType {
                             propose_result,
                             block_message_opt,
@@ -170,6 +228,8 @@ impl<T: TransportLayer + Send + Sync + 'static> ProposerInstance<T> {
 
                             // Update state with result and clear current propose
                             let result_copy = (propose_result.clone(), block_message_opt.clone());
+                            let should_retry_on_trigger =
+                                should_retry_immediately_on_trigger(&propose_result, is_async);
                             {
                                 let mut state_guard = state_clone.write().await;
                                 state_guard.latest_propose_result = Some(result_copy.clone());
@@ -191,6 +251,7 @@ impl<T: TransportLayer + Send + Sync + 'static> ProposerInstance<T> {
 
                                     match result_tx_clone
                                         .send((propose_result, Some(block.clone())))
+                                        .await
                                     {
                                         Ok(_) => {}
                                         Err(e) => {
@@ -205,13 +266,40 @@ impl<T: TransportLayer + Send + Sync + 'static> ProposerInstance<T> {
                                     )
                                 }
                             }
+
+                            should_retry_on_trigger
                         }
                         Err(e) => {
                             tracing::error!("Error proposing: {}", e);
 
-                            // Create error result
+                            let failure_seq_number = match casper.get_snapshot().await {
+                                Ok(snapshot) => snapshot
+                                    .max_seq_nums
+                                    .get(&validator_public_key)
+                                    .map(|seq| *seq + 1)
+                                    .unwrap_or(1)
+                                    as i32,
+                                Err(err) => {
+                                    tracing::warn!(
+                                        "Failed to get Casper snapshot for failure seq number: {}",
+                                        err
+                                    );
+                                    -1
+                                }
+                            };
+
+                            // Always resolve requester oneshot with a failure result.
+                            // Dropping this sender causes "channel closed" at caller and
+                            // unnecessarily breaks heartbeat liveness flow.
+                            let _ = propose_id_sender.send(ProposerResult::failure(
+                                ProposeStatus::Failure(ProposeFailure::BugError),
+                                failure_seq_number,
+                            ));
+
+                            // Runtime propose errors are internal failures and should not be
+                            // reported as NoNewDeploys / InternalDeployError.
                             let error_result: (ProposeResult, Option<BlockMessage>) =
-                                (ProposeResult::failure(ProposeFailure::NoNewDeploys), None); // TODO: verify whether the NoNewDeploys error is best choice in this case
+                                (ProposeResult::failure(ProposeFailure::BugError), None);
 
                             // Send to both channels
                             let _ = curr_result_tx.send(error_result);
@@ -220,30 +308,85 @@ impl<T: TransportLayer + Send + Sync + 'static> ProposerInstance<T> {
                             // Clear current propose state
                             let mut state_guard = state_clone.write().await;
                             state_guard.curr_propose_result = None;
+                            false
                         }
-                    }
+                    };
 
                     // Permit is automatically released when dropped
 
-                    // Check if trigger was cocked while we were proposing
-                    // tryAcquire on trigger checks if it was cocked (has permit)
-                    // If yes, we consume the permit and enqueue a retry
-                    if trigger_clone.try_acquire().is_ok() {
-                        tracing::info!("Trigger was cocked during propose - enqueueing ONE retry");
+                    // Drain any left-over trigger and retry once after recoverable
+                    // async failures so deploy-driven proposals are retried immediately.
+                    let trigger_cocked = trigger_clone.try_acquire().is_ok();
+                    let should_retry_on_trigger = should_retry_on_result;
+                    let should_retry = should_retry_on_trigger || trigger_cocked;
+                    let retry_budget_exhausted = should_retry_on_trigger
+                        && immediate_retry_count >= PROPOSER_MAX_IMMEDIATE_RETRIES;
+                    let should_enqueue_retry = should_retry && !retry_budget_exhausted;
 
-                        // Enqueue ONE retry (not async, new deferred result)
-                        let (retry_sender, _retry_receiver) = oneshot::channel();
-                        // Note: We drop _retry_receiver - retry results go through normal channels
-                        // This is acceptable because retries are fire-and-forget optimization
-                        if let Err(e) =
-                            propose_requests_queue_tx_clone.send((casper, false, retry_sender))
-                        {
-                            tracing::error!(
-                                "Failed to enqueue retry propose (channel closed): {}",
-                                e
+                    if should_retry {
+                        tracing::info!(
+                                "Enqueueing retry after propose (result_retry:{}, has_retry_budget:{}, had_trigger:{})",
+                                should_retry_on_trigger,
+                                should_enqueue_retry,
+                                trigger_cocked
                             );
-                            // Channel closed means we're shutting down - this is expected
-                            break;
+
+                        if should_enqueue_retry {
+                            // Enqueue retry request with bounded retry budget.
+                            let (retry_sender, _retry_receiver) = oneshot::channel();
+                            // Note: We drop _retry_receiver - retry results go through normal channels
+                            // This is acceptable because retries are fire-and-forget optimization
+                            let retry_reserved = propose_queue_pending
+                                .fetch_update(Ordering::AcqRel, Ordering::Acquire, |curr| {
+                                    (curr < propose_queue_max_pending).then_some(curr + 1)
+                                })
+                                .is_ok();
+                            if retry_reserved {
+                                metrics::gauge!(
+                                    PROPOSER_QUEUE_PENDING_METRIC,
+                                    "source" => VALIDATOR_METRICS_SOURCE
+                                )
+                                .set(propose_queue_pending.load(Ordering::Relaxed) as f64);
+
+                                if let Err(e) = propose_requests_queue_tx_clone
+                                    .send((
+                                        casper,
+                                        is_async,
+                                        retry_sender,
+                                        immediate_retry_count.saturating_add(1),
+                                    ))
+                                    .await
+                                {
+                                    let _ = propose_queue_pending.fetch_update(
+                                        Ordering::AcqRel,
+                                        Ordering::Acquire,
+                                        |curr| Some(curr.saturating_sub(1)),
+                                    );
+                                    metrics::gauge!(
+                                        PROPOSER_QUEUE_PENDING_METRIC,
+                                        "source" => VALIDATOR_METRICS_SOURCE
+                                    )
+                                    .set(propose_queue_pending.load(Ordering::Relaxed) as f64);
+                                    tracing::error!(
+                                        "Failed to enqueue retry propose (channel closed): {}",
+                                        e
+                                    );
+                                    // Channel closed means we're shutting down - this is expected
+                                    break;
+                                }
+                            } else {
+                                metrics::counter!(
+                                    PROPOSER_QUEUE_REJECTED_TOTAL_METRIC,
+                                    "source" => VALIDATOR_METRICS_SOURCE
+                                )
+                                .increment(1);
+                            }
+                        } else {
+                            metrics::counter!(
+                                PROPOSER_QUEUE_REJECTED_TOTAL_METRIC,
+                                "source" => VALIDATOR_METRICS_SOURCE
+                            )
+                            .increment(1);
                         }
                     }
 

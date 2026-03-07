@@ -1,9 +1,9 @@
 // See rspace/src/main/scala/coop/rchain/rspace/IReplaySpace.scala
 
-use super::{
-    errors::RSpaceError, hashing::blake2b256_hash::Blake2b256Hash, rspace_interface::ISpace,
-    trace::Log,
-};
+use super::errors::RSpaceError;
+use super::hashing::blake2b256_hash::Blake2b256Hash;
+use super::rspace_interface::ISpace;
+use super::trace::Log;
 
 pub trait IReplayRSpace<C, P, A, K>: ISpace<C, P, A, K>
 where

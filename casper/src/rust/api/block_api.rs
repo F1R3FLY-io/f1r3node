@@ -3,7 +3,7 @@
 use futures::future;
 use prost::bytes::Bytes;
 use prost::Message;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::sync::Arc;
 
@@ -25,7 +25,12 @@ use rspace_plus_plus::rspace::{
 use crate::rust::casper::MultiParentCasper;
 
 use crate::rust::{
-    blocks::proposer::{propose_result::ProposeResult, proposer::ProposerResult},
+    blocks::proposer::{
+        propose_result::{
+            CheckProposeConstraintsFailure, ProposeFailure, ProposeResult, ProposeStatus,
+        },
+        proposer::ProposerResult,
+    },
     engine::engine_cell::EngineCell,
     errors::CasperError,
     genesis::contracts::standard_deploys,
@@ -34,16 +39,25 @@ use crate::rust::{
     util::rholang::runtime_manager::RuntimeManager,
     util::{event_converter, proto_util, rholang::tools::Tools},
 };
+use block_storage::rust::dag::block_dag_key_value_storage::KeyValueDagRepresentation;
 
 use crate::rust::ProposeFunction;
 
-use crate::rust::safety_oracle::{CliqueOracleImpl, SafetyOracle};
+use crate::rust::safety_oracle::{
+    CliqueOracleImpl, SafetyOracle, MAX_FAULT_TOLERANCE, MIN_FAULT_TOLERANCE,
+};
 use block_storage::rust::dag::block_dag_key_value_storage::DeployId;
 use rspace_plus_plus::rspace::history::Either;
 use shared::rust::ByteString;
 pub struct BlockAPI;
 
 pub type ApiErr<T> = eyre::Result<T>;
+
+#[derive(Debug, thiserror::Error)]
+#[error("Couldn't find block containing deploy with id: {deploy_id}")]
+pub struct DeployNotFoundError {
+    pub deploy_id: String,
+}
 
 // Look at shared/src/main/scala/coop/rchain/shared/Base16.scala
 // Scala Base16.decode pads odd-length hex strings with leading zero
@@ -61,6 +75,67 @@ impl From<CasperError> for String {
     fn from(err: CasperError) -> String {
         err.to_string()
     }
+}
+
+fn recoverable_propose_failure_message(status: &ProposeStatus) -> Option<String> {
+    match status {
+        ProposeStatus::Failure(ProposeFailure::NoNewDeploys) => {
+            Some("No new deploys to propose.".to_string())
+        }
+        ProposeStatus::Failure(ProposeFailure::CheckConstraintsFailure(
+            CheckProposeConstraintsFailure::NotEnoughNewBlocks,
+        )) => Some("No new blocks from peers yet; synchronize with network first.".to_string()),
+        ProposeStatus::Failure(ProposeFailure::InternalDeployError) => {
+            Some("Propose skipped due to transient proposal race.".to_string())
+        }
+        _ => {
+            let normalized = format!("{}", status);
+            if normalized.contains("Must wait for more blocks from other validators") {
+                Some("No new blocks from peers yet; synchronize with network first.".to_string())
+            } else {
+                None
+            }
+        }
+    }
+}
+
+fn clamp_depth(requested_depth: i32, max_depth_limit: i32, operation: &str) -> i32 {
+    let normalized_limit = max_depth_limit.max(0);
+    let effective_depth = requested_depth.max(0).min(normalized_limit);
+
+    if effective_depth != requested_depth {
+        tracing::warn!(
+            operation,
+            requested_depth,
+            max_depth_limit,
+            effective_depth,
+            "Requested depth is out of bounds; clamping to configured maximum."
+        );
+    }
+
+    effective_depth
+}
+
+fn clamp_end_block_number(
+    start_block_number: i64,
+    requested_end_block_number: i64,
+    max_blocks_limit: i32,
+) -> i64 {
+    let normalized_limit = i64::from(max_blocks_limit.max(0));
+    let max_allowed_end = start_block_number.saturating_add(normalized_limit);
+    let effective_end_block_number = requested_end_block_number.min(max_allowed_end);
+
+    if effective_end_block_number != requested_end_block_number {
+        tracing::warn!(
+            start_block_number,
+            requested_end_block_number,
+            max_blocks_limit,
+            effective_end_block_number,
+            "Requested block range exceeds configured maximum; clamping end block."
+        );
+    }
+
+    effective_end_block_number
 }
 
 lazy_static::lazy_static! {
@@ -112,6 +187,79 @@ impl std::fmt::Display for LatestBlockMessageError {
 impl std::error::Error for LatestBlockMessageError {}
 
 impl BlockAPI {
+    fn find_deploy_scan_depth() -> usize {
+        std::env::var("F1R3_FIND_DEPLOY_SCAN_DEPTH")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .filter(|value| *value > 0)
+            .unwrap_or(128)
+    }
+
+    async fn find_deploy_by_recent_blocks(
+        casper: &dyn MultiParentCasper,
+        dag: &KeyValueDagRepresentation,
+        deploy_id: &DeployId,
+    ) -> ApiErr<Option<LightBlockInfo>> {
+        let scan_depth = Self::find_deploy_scan_depth();
+        if scan_depth == 0 {
+            return Ok(None);
+        }
+
+        let max_block_number = dag.get_max_height();
+        if max_block_number <= 0 {
+            return Ok(None);
+        }
+
+        let end_height = max_block_number;
+        let scan_depth_i64 = i64::try_from(scan_depth)
+            .map_err(|_| eyre::eyre!("find-deploy scan depth is out of range"))?;
+        let start_height = (end_height - (scan_depth_i64 - 1)).max(0);
+
+        let mut candidate_blocks = match dag.topo_sort(start_height, Some(end_height)) {
+            Ok(blocks_by_height) => blocks_by_height,
+            Err(err) => {
+                tracing::warn!(
+                    "Could not run fallback deploy scan in height range {}..={}: {}",
+                    start_height,
+                    end_height,
+                    err
+                );
+                return Ok(None);
+            }
+        };
+
+        let mut deploy_sigs = HashSet::with_capacity(1);
+        deploy_sigs.insert(deploy_id.to_vec());
+
+        while let Some(blocks_on_height) = candidate_blocks.pop() {
+            for hash in blocks_on_height {
+                match casper
+                    .block_store()
+                    .has_any_deploy_sig(&hash, &deploy_sigs)
+                    .map_err(|e| eyre::eyre!(e.to_string()))
+                {
+                    Ok(true) => {
+                        let block = casper.block_store().get_unsafe(&hash);
+                        let light_block_info =
+                            BlockAPI::get_light_block_info(casper, &block).await?;
+                        tracing::debug!(
+                            "Deploy {:?} found via fallback scan in block {}",
+                            PrettyPrinter::build_string_no_limit(deploy_id),
+                            PrettyPrinter::build_string_bytes(&hash)
+                        );
+                        return Ok(Some(light_block_info));
+                    }
+                    Ok(false) => {}
+                    Err(err) => {
+                        return Err(err);
+                    }
+                }
+            }
+        }
+
+        Ok(None)
+    }
+
     #[tracing::instrument(name = "deploy", target = "f1r3fly.block-api.deploy", skip_all)]
     pub async fn deploy(
         engine_cell: &EngineCell,
@@ -135,9 +283,42 @@ impl BlockAPI {
                 )),
             };
 
-            // call a propose if proposer defined
+            // Trigger propose asynchronously for deploy path to keep do_deploy latency bounded.
+            // Deploy success should not block on proposal completion; finalization is checked via
+            // propose/finalization APIs separately in integration flows.
             if let Some(tp) = trigger_propose {
-                let _proposer_result = tp(casper, true).await?;
+                let tp = Arc::clone(tp);
+                let casper_for_propose = casper.clone();
+                tokio::spawn(async move {
+                    match tp(casper_for_propose, true).await {
+                        Ok(proposer_result) => match proposer_result {
+                            ProposerResult::Failure(status, seq_number) => {
+                                if let Some(msg) = recoverable_propose_failure_message(&status) {
+                                    tracing::info!("{} (seqNum {})", msg, seq_number);
+                                } else {
+                                    tracing::error!("Failure: {} (seqNum {})", status, seq_number);
+                                }
+                            }
+                            ProposerResult::Empty => {
+                                tracing::debug!("Propose already in progress");
+                            }
+                            ProposerResult::Started(seq_number) => {
+                                tracing::debug!("Propose started (seqNum {})", seq_number);
+                            }
+                            ProposerResult::Success(_, block) => {
+                                let block_hash_hex =
+                                    PrettyPrinter::build_string_no_limit(&block.block_hash);
+                                tracing::info!(
+                                    "Success! Block {} created and added.",
+                                    block_hash_hex
+                                );
+                            }
+                        },
+                        Err(err) => {
+                            tracing::error!("Failed to trigger propose from deploy path: {}", err);
+                        }
+                    }
+                });
             }
 
             // yield r
@@ -252,7 +433,13 @@ impl BlockAPI {
 
         if let Some(casper) = eng.with_casper() {
             // Trigger propose
-            let proposer_result = trigger_propose_f(casper, is_async).await?;
+            let proposer_result = match trigger_propose_f(casper, is_async).await {
+                Ok(proposer_result) => proposer_result,
+                Err(err) => {
+                    let err_message = err.to_string();
+                    return log_debug(&err_message);
+                }
+            };
 
             let r: ApiErr<String> = match proposer_result {
                 ProposerResult::Empty => log_debug("Failure: another propose is in progress"),
@@ -299,7 +486,15 @@ impl BlockAPI {
                             block_hash_hex
                         ))
                     }
-                    None => Err(eyre::eyre!("{}", result.0.propose_status)),
+                    None => {
+                        if let Some(msg) =
+                            recoverable_propose_failure_message(&result.0.propose_status)
+                        {
+                            Ok(msg)
+                        } else {
+                            Err(eyre::eyre!("{}", result.0.propose_status))
+                        }
+                    }
                 };
                 msg
             }
@@ -317,7 +512,15 @@ impl BlockAPI {
                             block_hash_hex
                         ))
                     }
-                    None => Err(eyre::eyre!("{}", result.0.propose_status)),
+                    None => {
+                        if let Some(msg) =
+                            recoverable_propose_failure_message(&result.0.propose_status)
+                        {
+                            Ok(msg)
+                        } else {
+                            Err(eyre::eyre!("{}", result.0.propose_status))
+                        }
+                    }
                 };
                 msg
             }
@@ -365,11 +568,10 @@ impl BlockAPI {
             ))
         }
 
-        let depth = depth.min(max_blocks_limit);
-
+        let effective_depth = clamp_depth(depth, max_blocks_limit, "get-listening-name-data");
         let eng = engine_cell.get().await;
         if let Some(casper) = eng.with_casper() {
-            casper_response(casper.as_ref(), depth, listening_name).await
+            casper_response(casper.as_ref(), effective_depth, listening_name).await
         } else {
             tracing::warn!("{}", error_message);
             Err(eyre::eyre!("Error: {}", error_message))
@@ -421,11 +623,11 @@ impl BlockAPI {
             ))
         }
 
-        let depth = depth.min(max_blocks_limit);
-
+        let effective_depth =
+            clamp_depth(depth, max_blocks_limit, "get-listening-name-continuation");
         let eng = engine_cell.get().await;
         if let Some(casper) = eng.with_casper() {
-            casper_response(casper.as_ref(), depth, listening_names).await
+            casper_response(casper.as_ref(), effective_depth, listening_names).await
         } else {
             tracing::warn!("{}", error_message);
             Err(eyre::eyre!("Error: {}", error_message))
@@ -599,11 +801,11 @@ impl BlockAPI {
             result
         }
 
-        let depth = depth.min(max_depth_limit);
+        let effective_depth = clamp_depth(depth, max_depth_limit, "toposort-dag");
 
         let eng = engine_cell.get().await;
         if let Some(casper) = eng.with_casper() {
-            casper_response(casper.as_ref(), depth, do_it).await
+            casper_response(casper.as_ref(), effective_depth, do_it).await
         } else {
             tracing::warn!("{}", error_message);
             Err(eyre::eyre!("Error: {}", error_message))
@@ -649,12 +851,17 @@ impl BlockAPI {
             result
         }
 
-        let end_block_number =
-            end_block_number.min(start_block_number + max_blocks_limit as i64);
+        let effective_end_block_number =
+            clamp_end_block_number(start_block_number, end_block_number, max_blocks_limit);
 
         let eng = engine_cell.get().await;
         if let Some(casper) = eng.with_casper() {
-            casper_response(casper.as_ref(), start_block_number, end_block_number).await
+            casper_response(
+                casper.as_ref(),
+                start_block_number,
+                effective_end_block_number,
+            )
+            .await
         } else {
             tracing::warn!("{}", error_message);
             Err(eyre::eyre!("Error: {}", error_message))
@@ -709,7 +916,14 @@ impl BlockAPI {
 
         let eng = engine_cell.get().await;
         if let Some(casper) = eng.with_casper() {
-            casper_response(casper.as_ref(), depth, start_block_number, visualizer, serialize).await
+            casper_response(
+                casper.as_ref(),
+                depth,
+                start_block_number,
+                visualizer,
+                serialize,
+            )
+            .await
         } else {
             tracing::warn!("{}", error_message);
             Err(eyre::eyre!("Error: {}", error_message))
@@ -814,12 +1028,12 @@ impl BlockAPI {
             Ok(block_infos)
         }
 
-        let depth = depth.min(max_depth_limit);
+        let effective_depth = clamp_depth(depth, max_depth_limit, "show-main-chain");
 
         let eng = engine_cell.get().await;
 
         if let Some(casper) = eng.with_casper() {
-            casper_response(casper.as_ref(), depth)
+            casper_response(casper.as_ref(), effective_depth)
                 .await
                 .unwrap_or_else(|_| Vec::new())
         } else {
@@ -844,13 +1058,22 @@ impl BlockAPI {
             match maybe_block_hash {
                 Some(block_hash) => {
                     let block = casper.block_store().get_unsafe(&block_hash);
-                    let light_block_info = BlockAPI::get_light_block_info(casper.as_ref(), &block).await?;
+                    let light_block_info =
+                        BlockAPI::get_light_block_info(casper.as_ref(), &block).await?;
                     Ok(light_block_info)
                 }
-                None => Err(eyre::eyre!(
-                    "Couldn't find block containing deploy with id: {}",
-                    PrettyPrinter::build_string_no_limit(deploy_id)
-                )),
+                None => {
+                    if let Some(fallback_block_info) =
+                        Self::find_deploy_by_recent_blocks(casper.as_ref(), &dag, deploy_id).await?
+                    {
+                        Ok(fallback_block_info)
+                    } else {
+                        Err(DeployNotFoundError {
+                            deploy_id: PrettyPrinter::build_string_no_limit(deploy_id),
+                        }
+                        .into())
+                    }
+                }
             }
         } else {
             Err(eyre::eyre!("Error: {}", error_message))
@@ -936,12 +1159,13 @@ impl BlockAPI {
         // TODO: Scala this is temporary solution to not calculate fault tolerance all the blocks
         let old_block =
             Some(dag.latest_block_number() - block.body.state.block_number).map(|diff| diff > 100);
+        let block_in_dag = dag.contains(&block.block_hash);
 
-        let normalized_fault_tolerance = if old_block.unwrap_or(false) {
+        let normalized_fault_tolerance = if old_block.unwrap_or(false) || !block_in_dag {
             if dag.is_finalized(&block.block_hash) {
-                1.0f32
+                MAX_FAULT_TOLERANCE
             } else {
-                -1.0f32
+                MIN_FAULT_TOLERANCE
             }
         } else {
             let safety_oracle = CliqueOracleImpl;
@@ -1042,7 +1266,6 @@ impl BlockAPI {
         }
     }
 
-
     pub fn preview_private_names(
         deployer: &ByteString,
         timestamp: i64,
@@ -1061,9 +1284,29 @@ impl BlockAPI {
             "Could not get last finalized block, casper instance was not available yet.";
         let eng = engine_cell.get().await;
         if let Some(casper) = eng.with_casper() {
-            let last_finalized_block = casper.last_finalized_block().await?;
-            let block_info = Self::get_full_block_info(casper.as_ref(), &last_finalized_block).await?;
-            Ok(block_info)
+            let dag = casper.block_dag().await?;
+            let lfb_hash = dag.last_finalized_block();
+            let last_finalized_block = casper.block_store().get(&lfb_hash)?.ok_or_else(|| {
+                eyre::eyre!(
+                    "Error: Failure to find last finalized block with hash: {}",
+                    PrettyPrinter::build_string_no_limit(&lfb_hash)
+                )
+            })?;
+
+            // LFB is already finalized; avoid an additional clique-oracle pass in this
+            // read API path and derive fault tolerance directly from finalized status.
+            let weights_map = proto_util::weight_map(&last_finalized_block);
+            let weights_u64: HashMap<Bytes, u64> = weights_map
+                .into_iter()
+                .map(|(k, v)| (k, v as u64))
+                .collect();
+            let initial_fault = casper.normalized_initial_fault(weights_u64)?;
+            let fault_tolerance = MAX_FAULT_TOLERANCE - initial_fault;
+
+            Ok(Self::construct_block_info(
+                &last_finalized_block,
+                fault_tolerance,
+            ))
         } else {
             tracing::warn!("{}", error_message);
             Err(eyre::eyre!("Error: {}", error_message))
@@ -1131,21 +1374,7 @@ impl BlockAPI {
 
                 // When no block specified, compute merged state from all DAG tips
                 let (state_hash, target_block) = if block_hash.is_none() {
-                    let snapshot = match casper.get_snapshot().await {
-                        Ok(s) => s,
-                        Err(CasperError::FinalizationInProgress) => {
-                            // Finalization temporarily locks the DAG state, preventing
-                            // snapshot creation. Return a clean API error so the caller
-                            // can retry.
-                            tracing::info!(
-                                "exploratoryDeploy: finalization in progress, returning transient error"
-                            );
-                            return Err(eyre::eyre!(
-                                "Finalization in progress, please retry shortly"
-                            ));
-                        }
-                        Err(e) => return Err(e.into()),
-                    };
+                    let snapshot = casper.get_snapshot().await?;
                     let lfb = casper.last_finalized_block().await?;
                     let parents = &snapshot.parents;
 
@@ -1221,7 +1450,8 @@ impl BlockAPI {
                             .await
                             .play_exploratory_deploy(term, &state_hash)
                             .await?;
-                        let light_block_info = Self::get_light_block_info(casper.as_ref(), &b).await?;
+                        let light_block_info =
+                            Self::get_light_block_info(casper.as_ref(), &b).await?;
                         Ok((res, light_block_info))
                     }
                     None => Err(eyre::eyre!("Can not find block {:?}", block_hash)),

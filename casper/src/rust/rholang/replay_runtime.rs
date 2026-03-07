@@ -3,7 +3,6 @@
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     future::Future,
-    sync::{Arc, Mutex},
     time::Instant,
 };
 
@@ -31,15 +30,11 @@ use rspace_plus_plus::rspace::{
 use crate::rust::{
     errors::CasperError,
     metrics_constants::{
-        CASPER_METRICS_SOURCE,
-        BLOCK_REPLAY_PHASE_RESET_TIME_METRIC,
-        BLOCK_REPLAY_PHASE_USER_DEPLOYS_TIME_METRIC,
-        BLOCK_REPLAY_PHASE_SYSTEM_DEPLOYS_TIME_METRIC,
-        BLOCK_REPLAY_PHASE_CREATE_CHECKPOINT_TIME_METRIC,
-        BLOCK_REPLAY_SYSDEPLOY_EVAL_TIME_METRIC,
-        BLOCK_REPLAY_SYSDEPLOY_CHECK_TIME_METRIC,
+        BLOCK_REPLAY_PHASE_CREATE_CHECKPOINT_TIME_METRIC, BLOCK_REPLAY_PHASE_RESET_TIME_METRIC,
+        BLOCK_REPLAY_PHASE_SYSTEM_DEPLOYS_TIME_METRIC, BLOCK_REPLAY_PHASE_USER_DEPLOYS_TIME_METRIC,
         BLOCK_REPLAY_SYSDEPLOY_CHECKPOINT_MERGEABLE_TIME_METRIC,
-        BLOCK_REPLAY_SYSDEPLOY_RIG_TIME_METRIC,
+        BLOCK_REPLAY_SYSDEPLOY_CHECK_TIME_METRIC, BLOCK_REPLAY_SYSDEPLOY_EVAL_TIME_METRIC,
+        BLOCK_REPLAY_SYSDEPLOY_RIG_TIME_METRIC, CASPER_METRICS_SOURCE,
     },
     util::{
         event_converter,
@@ -78,7 +73,11 @@ impl ReplayRuntimeOps {
     /**
      * Evaluates (and validates) deploys and System deploys with checkpoint to valiate final state hash
      */
-    #[tracing::instrument(name = "replay-compute-state", target = "f1r3fly.casper.replay-rho-runtime", skip_all)]
+    #[tracing::instrument(
+        name = "replay-compute-state",
+        target = "f1r3fly.casper.replay-rho-runtime",
+        skip_all
+    )]
     pub async fn replay_compute_state(
         &mut self,
         start_hash: &StateHash,
@@ -90,8 +89,14 @@ impl ReplayRuntimeOps {
     ) -> Result<(Blake2b256Hash, Vec<NumberChannelsEndVal>), CasperError> {
         let invalid_blocks = invalid_blocks.unwrap_or_default();
 
-        self.runtime_ops.runtime.set_block_data(block_data.clone()).await;
-        self.runtime_ops.runtime.set_invalid_blocks(invalid_blocks).await;
+        self.runtime_ops
+            .runtime
+            .set_block_data(block_data.clone())
+            .await;
+        self.runtime_ops
+            .runtime
+            .set_invalid_blocks(invalid_blocks)
+            .await;
 
         self.replay_deploys(start_hash, terms, system_deploys, !is_genesis, block_data)
             .await
@@ -114,7 +119,7 @@ impl ReplayRuntimeOps {
         let reset_start = Instant::now();
         self.runtime_ops
             .runtime
-            .reset(&Blake2b256Hash::from_bytes_prost(start_hash));
+            .reset(&Blake2b256Hash::from_bytes_prost(start_hash))?;
         metrics::histogram!(BLOCK_REPLAY_PHASE_RESET_TIME_METRIC, "source" => CASPER_METRICS_SOURCE)
             .record(reset_start.elapsed().as_secs_f64());
 
@@ -172,33 +177,35 @@ impl ReplayRuntimeOps {
         }
     }
 
-    #[tracing::instrument(name = "replay-deploy", target = "f1r3fly.casper.replay-rho-runtime", skip_all)]
+    #[tracing::instrument(
+        name = "replay-deploy",
+        target = "f1r3fly.casper.replay-rho-runtime",
+        skip_all
+    )]
     pub async fn replay_deploy_e(
         &mut self,
         with_cost_accounting: bool,
         processed_deploy: &ProcessedDeploy,
     ) -> Result<NumberChannelsEndVal, CasperError> {
-        let mergeable_channels = Arc::new(Mutex::new(HashSet::new()));
+        let mut mergeable_channels = HashSet::new();
 
         self.rig(processed_deploy)?;
 
         let eval_successful = if with_cost_accounting {
-            self.process_deploy_with_cost_accounting(&processed_deploy, &mergeable_channels)
+            self.process_deploy_with_cost_accounting(&processed_deploy, &mut mergeable_channels)
                 .await?
         } else {
-            self.process_deploy_without_cost_accounting(&processed_deploy, &mergeable_channels)
+            self.process_deploy_without_cost_accounting(&processed_deploy, &mut mergeable_channels)
                 .await?
         };
 
         self.check_replay_data_with_fix(eval_successful)?;
 
-        let final_mergeable = mergeable_channels.lock().unwrap().clone();
-
         // Time checkpoint-mergeable operation (matches Scala RuntimeReplaySyntax.scala:L322)
         let checkpoint_mergeable_start = Instant::now();
         let channels_data = self
             .runtime_ops
-            .get_number_channels_data(&final_mergeable)?;
+            .get_number_channels_data(&mergeable_channels)?;
         metrics::histogram!(BLOCK_REPLAY_SYSDEPLOY_CHECKPOINT_MERGEABLE_TIME_METRIC, "source" => CASPER_METRICS_SOURCE)
             .record(checkpoint_mergeable_start.elapsed().as_secs_f64());
 
@@ -208,7 +215,7 @@ impl ReplayRuntimeOps {
     async fn process_deploy_with_cost_accounting(
         &mut self,
         processed_deploy: &ProcessedDeploy,
-        mergeable_channels: &Arc<Mutex<HashSet<Par>>>,
+        mergeable_channels: &mut HashSet<Par>,
     ) -> Result<bool, CasperError> {
         let mut pre_charge_deploy = PreChargeDeploy {
             charge_amount: processed_deploy.deploy.data.total_phlo_charge(),
@@ -228,15 +235,14 @@ impl ReplayRuntimeOps {
 
         match precharge_result {
             Ok((_, mut system_eval_result)) => {
-                self.runtime_ops.runtime.create_soft_checkpoint();
-
+                let _ = self.runtime_ops.runtime.take_event_log();
                 if system_eval_result.errors.is_empty() {
-                    let mut mc_lock = mergeable_channels.lock().unwrap();
-                    mc_lock.extend(system_eval_result.mergeable.drain());
+                    mergeable_channels.extend(system_eval_result.mergeable.drain());
                 }
                 tracing::debug!(target: "f1r3fly.casper.replay-rho-runtime", "precharge-done");
             }
             Err(err) => {
+                let _ = self.runtime_ops.runtime.take_event_log();
                 return Err(err);
             }
         };
@@ -246,10 +252,6 @@ impl ReplayRuntimeOps {
             let (_, successful) = self
                 .run_user_deploy(processed_deploy, mergeable_channels)
                 .await?;
-
-            if successful {
-                self.runtime_ops.runtime.create_soft_checkpoint();
-            }
             tracing::debug!(target: "f1r3fly.casper.replay-rho-runtime", "deploy-eval-done");
 
             tracing::debug!(target: "f1r3fly.casper.replay-rho-runtime", "refund-started");
@@ -266,15 +268,14 @@ impl ReplayRuntimeOps {
 
             match refund_result {
                 Ok((_, mut system_eval_result)) => {
-                    self.runtime_ops.runtime.create_soft_checkpoint();
-
+                    let _ = self.runtime_ops.runtime.take_event_log();
                     if system_eval_result.errors.is_empty() {
-                        let mut mc_lock = mergeable_channels.lock().unwrap();
-                        mc_lock.extend(system_eval_result.mergeable.drain());
+                        mergeable_channels.extend(system_eval_result.mergeable.drain());
                     }
                     tracing::debug!(target: "f1r3fly.casper.replay-rho-runtime", "refund-done");
                 }
                 Err(err) => {
+                    let _ = self.runtime_ops.runtime.take_event_log();
                     return Err(err);
                 }
             }
@@ -292,7 +293,7 @@ impl ReplayRuntimeOps {
     async fn process_deploy_without_cost_accounting(
         &mut self,
         processed_deploy: &ProcessedDeploy,
-        mergeable_channels: &Arc<Mutex<HashSet<Par>>>,
+        mergeable_channels: &mut HashSet<Par>,
     ) -> Result<bool, CasperError> {
         self.run_user_deploy(processed_deploy, mergeable_channels)
             .await
@@ -302,14 +303,17 @@ impl ReplayRuntimeOps {
     async fn run_user_deploy(
         &mut self,
         processed_deploy: &ProcessedDeploy,
-        mergeable_channels: &Arc<Mutex<HashSet<Par>>>,
+        mergeable_channels: &mut HashSet<Par>,
     ) -> Result<(EvaluateResult, bool), CasperError> {
+        // Mirror RuntimeOps behavior: rollback failed user deploy via soft checkpoint
+        // so pre-charge context remains available for refund replay.
         let fallback = self.runtime_ops.runtime.create_soft_checkpoint();
 
         let deploy_data = SystemProcessDeployData::from_deploy(&processed_deploy.deploy);
         self.runtime_ops.runtime.set_deploy_data(deploy_data).await;
 
         let mut user_eval_result = self.runtime_ops.evaluate(&processed_deploy.deploy).await?;
+        let _ = self.runtime_ops.runtime.take_event_log();
 
         let eval_successful = user_eval_result.errors.is_empty();
 
@@ -320,8 +324,7 @@ impl ReplayRuntimeOps {
             );
             self.runtime_ops.runtime.revert_to_soft_checkpoint(fallback);
         } else {
-            let mut mc_lock = mergeable_channels.lock().unwrap();
-            mc_lock.extend(user_eval_result.mergeable.drain());
+            mergeable_channels.extend(user_eval_result.mergeable.drain());
         }
 
         // Verify that our execution matches the expected result
@@ -348,7 +351,11 @@ impl ReplayRuntimeOps {
     /**
      * Evaluates System deploy with checkpoint to get final state hash
      */
-    #[tracing::instrument(name = "replay-sys-deploy", target = "f1r3fly.casper.replay-rho-runtime", skip_all)]
+    #[tracing::instrument(
+        name = "replay-sys-deploy",
+        target = "f1r3fly.casper.replay-rho-runtime",
+        skip_all
+    )]
     pub async fn replay_block_system_deploy(
         &mut self,
         block_data: &BlockData,
@@ -380,9 +387,7 @@ impl ReplayRuntimeOps {
                     .replay_system_deploy_internal(&mut slash_deploy, &None)
                     .await
                     .map(|(_, eval_result)| {
-                        if eval_result.errors.is_empty() {
-                            self.runtime_ops.runtime.create_soft_checkpoint();
-                        }
+                        let _ = self.runtime_ops.runtime.take_event_log();
 
                         // Time checkpoint-mergeable operation for slash deploy
                         let checkpoint_mergeable_start = Instant::now();
@@ -416,9 +421,7 @@ impl ReplayRuntimeOps {
                     .replay_system_deploy_internal(&mut close_block_deploy, &None)
                     .await
                     .map(|(_, eval_result)| {
-                        if eval_result.errors.is_empty() {
-                            self.runtime_ops.runtime.create_soft_checkpoint();
-                        }
+                        let _ = self.runtime_ops.runtime.take_event_log();
 
                         // Time checkpoint-mergeable operation for close block deploy
                         let checkpoint_mergeable_start = Instant::now();
@@ -443,7 +446,11 @@ impl ReplayRuntimeOps {
         }
     }
 
-    #[tracing::instrument(name = "replay-system-deploy", target = "f1r3fly.casper.replay-rho-runtime", skip_all)]
+    #[tracing::instrument(
+        name = "replay-system-deploy",
+        target = "f1r3fly.casper.replay-rho-runtime",
+        skip_all
+    )]
     pub async fn replay_system_deploy_internal<S: SystemDeployTrait>(
         &mut self,
         system_deploy: &mut S,

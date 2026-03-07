@@ -167,10 +167,7 @@ mod service_selection_tests {
 
     #[test]
     fn env_var_fallback_when_config_not_set() {
-        assert_eq!(
-            select_service(None, Some(true), true),
-            "OpenAIServiceImpl"
-        );
+        assert_eq!(select_service(None, Some(true), true), "OpenAIServiceImpl");
         assert_eq!(
             select_service(None, Some(false), true),
             "DisabledOpenAIService"
@@ -210,10 +207,7 @@ mod service_selection_tests {
             select_service(Some(true), None, false),
             "IllegalStateException"
         );
-        assert_eq!(
-            select_service(Some(true), None, true),
-            "OpenAIServiceImpl"
-        );
+        assert_eq!(select_service(Some(true), None, true), "OpenAIServiceImpl");
     }
 }
 
@@ -356,4 +350,3 @@ mod config_tests {
         assert_eq!(config.validation_timeout_sec, 15); // Default is 15
     }
 }
-

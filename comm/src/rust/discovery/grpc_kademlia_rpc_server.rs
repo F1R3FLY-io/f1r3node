@@ -56,7 +56,8 @@ impl KademliaRpcService for GrpcKademliaRPCServer {
             if let Some(sender_node) = ping.sender {
                 let sender: PeerNode = to_peer_node(&sender_node);
 
-                metrics::counter!(HANDLE_PING_METRIC, "source" => DISCOVERY_METRICS_SOURCE).increment(1);
+                metrics::counter!(HANDLE_PING_METRIC, "source" => DISCOVERY_METRICS_SOURCE)
+                    .increment(1);
                 // Call the ping handler
                 (self.ping_handler)(sender).await;
 
@@ -90,7 +91,8 @@ impl KademliaRpcService for GrpcKademliaRPCServer {
                 let id = lookup.id.to_vec();
                 let sender: PeerNode = to_peer_node(&sender_node);
 
-                metrics::counter!(HANDLE_LOOKUP_METRIC, "source" => DISCOVERY_METRICS_SOURCE).increment(1);
+                metrics::counter!(HANDLE_LOOKUP_METRIC, "source" => DISCOVERY_METRICS_SOURCE)
+                    .increment(1);
                 // Call the lookup handler
                 let peers = (self.lookup_handler)(sender, id).await;
 

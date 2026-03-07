@@ -9,7 +9,8 @@ import coop.rchain.casper.protocol.{
   DeployInfo,
   JustificationInfo,
   LightBlockInfo,
-  RejectedDeployInfo
+  RejectedDeployInfo,
+  TransferInfo
 }
 import coop.rchain.models.Par
 import coop.rchain.models.syntax._
@@ -24,9 +25,14 @@ trait JsonSchemaDerivations extends JsonSchemaDerivationsBase {
 
   // format: off
 
+  // Explicit schema for Option[Long] to support optional fields in DeployData
+  implicit lazy val optionLongSchema: JsonSchema[Option[Long]] =
+    longJsonSchema.xmap[Option[Long]](Some(_))(_.getOrElse(0L)).withExample(None)
+
   implicit lazy val deployDataSchema      : JsonSchema[DeployData]                   = schemaRecord
   implicit lazy val deployRequestSchema   : JsonSchema[DeployRequest]                = schemaRecord
   implicit lazy val versionInfoSchema     : JsonSchema[VersionInfo]                  = schemaRecord
+  implicit lazy val peerInfoDataSchema    : JsonSchema[PeerInfoData]                 = schemaRecord
   implicit lazy val apiStatusSchema       : JsonSchema[ApiStatus]                    = schemaRecord
   implicit lazy val exploreDeployReqSchema: JsonSchema[ExploreDeployRequest]         = schemaRecord
   implicit lazy val dataAtNameReqSchema   : JsonSchema[DataAtNameByBlockHashRequest] = schemaRecord
@@ -35,6 +41,7 @@ trait JsonSchemaDerivations extends JsonSchemaDerivationsBase {
   implicit lazy val justInfoSchema        : JsonSchema[JustificationInfo]            = schemaRecord
   implicit lazy val rejectedInfoSchema    : JsonSchema[RejectedDeployInfo]           = schemaRecord
   implicit lazy val lightBlockInfoSchema  : JsonSchema[LightBlockInfo]               = schemaRecord
+  implicit lazy val transferInfoSchema    : JsonSchema[TransferInfo]                 = schemaRecord
   implicit lazy val deployInfoSchema      : JsonSchema[DeployInfo]                   = schemaRecord
   implicit lazy val blockInfoSchema       : JsonSchema[BlockInfo]                    = schemaRecord
 //  implicit lazy val transactionInfoSchema : JsonSchema[TransactionInfo]              = schemaRecord

@@ -26,4 +26,3 @@ impl RNodeStateManager {
         Ok(rspace_empty && block_empty)
     }
 }
-

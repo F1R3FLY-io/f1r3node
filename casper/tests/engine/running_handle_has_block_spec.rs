@@ -112,6 +112,7 @@ async fn block_retriever_should_store_on_a_waiting_list_and_dont_request_if_requ
                 received: false,
                 in_casper_buffer: false,
                 waiting_list: vec![other_peer],
+                peer_requery_cursor: 0,
             },
         );
         map
@@ -172,6 +173,7 @@ async fn block_retriever_should_request_block_and_add_peer_to_waiting_list_if_pe
                 received: false,
                 in_casper_buffer: false,
                 waiting_list: vec![],
+                peer_requery_cursor: 0,
             },
         );
         map

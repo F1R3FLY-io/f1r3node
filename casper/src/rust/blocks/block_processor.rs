@@ -9,9 +9,12 @@
  * async support while maintaining the same flexibility as the original Scala version.
  */
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use block_storage::rust::dag::block_dag_key_value_storage::BlockDagKeyValueStorage;
 use block_storage::rust::{
@@ -30,17 +33,15 @@ use models::rust::{
 };
 use prost::Message;
 use rspace_plus_plus::rspace::history::Either;
+use shared::rust::env;
 
 use crate::rust::block_status::BlockError;
 use crate::rust::engine::block_retriever::{AdmitHashReason, BlockRetriever};
 use crate::rust::metrics_constants::{
-    BLOCK_PROCESSOR_METRICS_SOURCE,
-    BLOCK_SIZE_METRIC,
-    BLOCK_VALIDATION_SUCCESS_METRIC,
-    BLOCK_VALIDATION_FAILED_METRIC,
-    BLOCK_PROCESSING_VALIDATION_SETUP_TIME_METRIC,
+    ALLOCATOR_TRIM_TOTAL_METRIC, BLOCK_PROCESSING_STORAGE_TIME_METRIC,
+    BLOCK_PROCESSING_VALIDATION_SETUP_TIME_METRIC, BLOCK_PROCESSOR_METRICS_SOURCE,
+    BLOCK_SIZE_METRIC, BLOCK_VALIDATION_FAILED_METRIC, BLOCK_VALIDATION_SUCCESS_METRIC,
     BLOCK_VALIDATION_TIME_METRIC,
-    BLOCK_PROCESSING_STORAGE_TIME_METRIC,
 };
 use crate::rust::{
     block_status::InvalidBlock,
@@ -56,6 +57,120 @@ use crate::rust::{
 #[derive(Clone)]
 pub struct BlockProcessor<T: TransportLayer + Send + Sync> {
     dependencies: BlockProcessorDependencies<T>,
+}
+
+const CASPER_BUFFER_PRUNE_INTERVAL_MS: u64 = 5_000;
+const CASPER_BUFFER_STALE_TTL_MS: u64 = 180_000;
+const CASPER_BUFFER_MAX_APPROX_NODES: usize = 16_384;
+const CASPER_BUFFER_MAX_PRUNE_BATCH: usize = 512;
+const CASPER_BUFFER_MAX_APPROX_NODES_ENV: &str = "F1R3_CASPER_BUFFER_MAX_APPROX_NODES";
+const CASPER_BUFFER_STALE_TTL_MS_ENV: &str = "F1R3_CASPER_BUFFER_STALE_TTL_MS";
+const CASPER_BUFFER_MAX_PRUNE_BATCH_ENV: &str = "F1R3_CASPER_BUFFER_MAX_PRUNE_BATCH";
+const CASPER_BUFFER_PRUNE_INTERVAL_MS_ENV: &str = "F1R3_CASPER_BUFFER_PRUNE_INTERVAL_MS";
+const CASPER_BUFFER_STALE_PRUNED_METRIC: &str = "casper.buffer.stale-pruned";
+const CASPER_BUFFER_OVERFLOW_PRUNED_METRIC: &str = "casper.buffer.overflow-pruned";
+const CASPER_BUFFER_APPROX_NODES_METRIC: &str = "casper.buffer.approx-nodes";
+const CASPER_BUFFER_DEPENDENCY_LOOP_PRUNED_METRIC: &str = "casper.buffer.dependency-loop-pruned";
+const MISSING_DEPENDENCY_ATTEMPTS_MAX_DEFAULT: u32 = 32;
+const MISSING_DEPENDENCY_ATTEMPTS_MAX_ENV: &str = "F1R3_MISSING_DEPENDENCY_ATTEMPTS_MAX";
+const MISSING_DEPENDENCY_QUARANTINE_MS_DEFAULT: u64 = 120_000;
+const MISSING_DEPENDENCY_QUARANTINE_MS_ENV: &str = "F1R3_MISSING_DEPENDENCY_QUARANTINE_MS";
+const MALLOC_TRIM_INTERVAL_BLOCKS_DEFAULT: u64 = 64;
+const MALLOC_TRIM_INTERVAL_BLOCKS_ENV: &str = "F1R3_MALLOC_TRIM_EVERY_BLOCKS";
+static MALLOC_TRIM_BLOCK_COUNTER: AtomicU64 = AtomicU64::new(0);
+static MALLOC_TRIM_INTERVAL_BLOCKS: OnceLock<u64> = OnceLock::new();
+static CASPER_BUFFER_MAX_APPROX_NODES_CFG: OnceLock<usize> = OnceLock::new();
+static CASPER_BUFFER_STALE_TTL_MS_CFG: OnceLock<u64> = OnceLock::new();
+static CASPER_BUFFER_MAX_PRUNE_BATCH_CFG: OnceLock<usize> = OnceLock::new();
+static CASPER_BUFFER_PRUNE_INTERVAL_MS_CFG: OnceLock<u64> = OnceLock::new();
+static MISSING_DEPENDENCY_ATTEMPTS_MAX_CFG: OnceLock<u32> = OnceLock::new();
+static MISSING_DEPENDENCY_QUARANTINE_MS_CFG: OnceLock<u64> = OnceLock::new();
+
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+unsafe extern "C" {
+    fn malloc_trim(pad: usize) -> i32;
+}
+
+fn malloc_trim_interval_blocks() -> u64 {
+    *MALLOC_TRIM_INTERVAL_BLOCKS.get_or_init(|| {
+        env::var_or(
+            MALLOC_TRIM_INTERVAL_BLOCKS_ENV,
+            MALLOC_TRIM_INTERVAL_BLOCKS_DEFAULT,
+        )
+    })
+}
+
+fn casper_buffer_max_approx_nodes() -> usize {
+    *CASPER_BUFFER_MAX_APPROX_NODES_CFG.get_or_init(|| {
+        env::var_or(
+            CASPER_BUFFER_MAX_APPROX_NODES_ENV,
+            CASPER_BUFFER_MAX_APPROX_NODES,
+        )
+    })
+}
+
+fn casper_buffer_stale_ttl_ms() -> u64 {
+    *CASPER_BUFFER_STALE_TTL_MS_CFG
+        .get_or_init(|| env::var_or(CASPER_BUFFER_STALE_TTL_MS_ENV, CASPER_BUFFER_STALE_TTL_MS))
+}
+
+fn casper_buffer_max_prune_batch() -> usize {
+    *CASPER_BUFFER_MAX_PRUNE_BATCH_CFG.get_or_init(|| {
+        env::var_or(
+            CASPER_BUFFER_MAX_PRUNE_BATCH_ENV,
+            CASPER_BUFFER_MAX_PRUNE_BATCH,
+        )
+    })
+}
+
+fn casper_buffer_prune_interval_ms() -> u64 {
+    *CASPER_BUFFER_PRUNE_INTERVAL_MS_CFG.get_or_init(|| {
+        env::var_or(
+            CASPER_BUFFER_PRUNE_INTERVAL_MS_ENV,
+            CASPER_BUFFER_PRUNE_INTERVAL_MS,
+        )
+    })
+}
+
+fn maybe_trim_allocator_after_block() {
+    let interval = malloc_trim_interval_blocks();
+    if interval == 0 {
+        return;
+    }
+    let n = MALLOC_TRIM_BLOCK_COUNTER.fetch_add(1, Ordering::Relaxed) + 1;
+    if n % interval != 0 {
+        return;
+    }
+
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    {
+        // Best-effort return of free heap pages to OS to limit RSS ratcheting.
+        unsafe {
+            let _ = malloc_trim(0);
+        }
+        metrics::counter!(ALLOCATOR_TRIM_TOTAL_METRIC, "source" => BLOCK_PROCESSOR_METRICS_SOURCE)
+            .increment(1);
+    }
+}
+
+fn missing_dependency_attempts_max() -> u32 {
+    *MISSING_DEPENDENCY_ATTEMPTS_MAX_CFG.get_or_init(|| {
+        env::var_or_filtered(
+            MISSING_DEPENDENCY_ATTEMPTS_MAX_ENV,
+            MISSING_DEPENDENCY_ATTEMPTS_MAX_DEFAULT,
+            |v: &u32| *v > 0,
+        )
+    })
+}
+
+fn missing_dependency_quarantine_ms() -> u64 {
+    *MISSING_DEPENDENCY_QUARANTINE_MS_CFG.get_or_init(|| {
+        env::var_or_filtered(
+            MISSING_DEPENDENCY_QUARANTINE_MS_ENV,
+            MISSING_DEPENDENCY_QUARANTINE_MS_DEFAULT,
+            |v: &u64| *v > 0,
+        )
+    })
 }
 
 impl<T: TransportLayer + Send + Sync> BlockProcessor<T> {
@@ -116,15 +231,58 @@ impl<T: TransportLayer + Send + Sync> BlockProcessor<T> {
         casper: Arc<dyn Casper + Send + Sync + 'static>,
         block: &BlockMessage,
     ) -> Result<bool, CasperError> {
+        self.dependencies.prune_casper_buffer_if_needed()?;
+        self.dependencies
+            .sweep_expired_missing_dependency_quarantine()?;
+        self.dependencies
+            .sweep_orphaned_missing_dependency_attempts()?;
+        self.dependencies
+            .sweep_orphaned_missing_dependency_quarantine()?;
+
+        if self
+            .dependencies
+            .is_missing_dependency_quarantined(&block.block_hash)?
+        {
+            tracing::debug!(
+                "Skipping block {} due to missing-dependency quarantine ({}ms).",
+                PrettyPrinter::build_string(CasperMessage::BlockMessage(block.clone()), true),
+                missing_dependency_quarantine_ms()
+            );
+            metrics::counter!(CASPER_BUFFER_DEPENDENCY_LOOP_PRUNED_METRIC, "source" => BLOCK_PROCESSOR_METRICS_SOURCE, "reason" => "quarantine")
+                .increment(1);
+            // Keep buffered block graph intact while quarantined.
+            // Dropping buffered blocks here can break dependency chains and stall finality.
+            return Ok(false);
+        }
+
         let (is_ready, deps_to_fetch, deps_in_buffer) = self
             .dependencies
             .get_non_validated_dependencies(casper, block)
             .await?;
 
         if is_ready {
+            self.dependencies
+                .clear_missing_dependency_attempts(&block.block_hash)?;
             // store pendant block in buffer, it will be removed once block is validated and added to DAG
             self.dependencies.commit_to_buffer(block, None).await?;
         } else {
+            if self
+                .dependencies
+                .register_missing_dependency_attempt(&block.block_hash)?
+            {
+                tracing::warn!(
+                    "Throttling block {} after {} missing-dependency checks (keeping in buffer).",
+                    PrettyPrinter::build_string(CasperMessage::BlockMessage(block.clone()), true),
+                    missing_dependency_attempts_max()
+                );
+                metrics::counter!(CASPER_BUFFER_DEPENDENCY_LOOP_PRUNED_METRIC, "source" => BLOCK_PROCESSOR_METRICS_SOURCE, "reason" => "attempts")
+                    .increment(1);
+                self.dependencies
+                    .clear_missing_dependency_attempts(&block.block_hash)?;
+                self.dependencies
+                    .mark_missing_dependency_quarantine(&block.block_hash)?;
+            }
+
             // associate parents with new block in casper buffer
             let mut all_deps = deps_to_fetch.clone();
             all_deps.extend(deps_in_buffer.clone());
@@ -134,6 +292,13 @@ impl<T: TransportLayer + Send + Sync> BlockProcessor<T> {
             self.dependencies
                 .request_missing_dependencies(&deps_to_fetch)
                 .await?;
+            // Recovery path: if dependency graph is stuck in buffer (no fresh deps to fetch),
+            // force a network re-request for buffered dependencies.
+            if deps_to_fetch.is_empty() && !deps_in_buffer.is_empty() {
+                self.dependencies
+                    .recover_stale_buffer_dependencies(&deps_in_buffer)
+                    .await?;
+            }
             self.dependencies.ack_processed(block).await?;
         }
 
@@ -207,8 +372,25 @@ impl<T: TransportLayer + Send + Sync> BlockProcessor<T> {
         // once block is validated and effects are invoked, it should be removed from buffer
         self.dependencies.remove_from_buffer(block).await?;
         self.dependencies.ack_processed(block).await?;
+        maybe_trim_allocator_after_block();
 
         Ok(status)
+    }
+
+    /// Equivalent to Scala's: ackProcessed = (b: BlockMessage) => BlockRetriever[F].ackInCasper(b.blockHash)
+    pub async fn ack_processed(&self, block: &BlockMessage) -> Result<(), CasperError> {
+        self.dependencies.ack_processed(block).await
+    }
+
+    /// Remove block hash from CasperBuffer dependency graph.
+    pub async fn remove_from_buffer(&self, block: &BlockMessage) -> Result<(), CasperError> {
+        self.dependencies.remove_from_buffer(block).await
+    }
+
+    /// Best-effort purge for stale/uninteresting blocks to prevent infinite buffer requeue loops.
+    pub async fn purge_from_buffer_and_ack(&self, block: &BlockMessage) -> Result<(), CasperError> {
+        self.dependencies.remove_from_buffer(block).await?;
+        self.dependencies.ack_processed(block).await
     }
 }
 
@@ -223,6 +405,9 @@ pub struct BlockProcessorDependencies<T: TransportLayer + Send + Sync> {
     transport: Arc<T>,
     connections_cell: ConnectionsCell,
     conf: RPConf,
+    casper_buffer_last_prune_ms: Arc<AtomicU64>,
+    missing_dependency_attempts: Arc<Mutex<HashMap<BlockHash, u32>>>,
+    missing_dependency_quarantine_until: Arc<Mutex<HashMap<BlockHash, u64>>>,
 }
 
 impl<T: TransportLayer + Send + Sync> BlockProcessorDependencies<T> {
@@ -243,6 +428,9 @@ impl<T: TransportLayer + Send + Sync> BlockProcessorDependencies<T> {
             transport,
             connections_cell,
             conf,
+            casper_buffer_last_prune_ms: Arc::new(AtomicU64::new(0)),
+            missing_dependency_attempts: Arc::new(Mutex::new(HashMap::new())),
+            missing_dependency_quarantine_until: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -253,6 +441,52 @@ impl<T: TransportLayer + Send + Sync> BlockProcessorDependencies<T> {
 
     pub fn casper_buffer(&self) -> &CasperBufferKeyValueStorage {
         &self.casper_buffer
+    }
+
+    fn prune_casper_buffer_if_needed(&self) -> Result<(), CasperError> {
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        let last_prune = self.casper_buffer_last_prune_ms.load(Ordering::Relaxed);
+        let prune_interval_ms = casper_buffer_prune_interval_ms();
+        if now_ms.saturating_sub(last_prune) < prune_interval_ms {
+            return Ok(());
+        }
+        self.casper_buffer_last_prune_ms
+            .store(now_ms, Ordering::Relaxed);
+
+        let (stale_pruned, overflow_pruned) = self
+            .casper_buffer
+            .enforce_limits(
+                casper_buffer_max_approx_nodes(),
+                casper_buffer_stale_ttl_ms(),
+                casper_buffer_max_prune_batch(),
+                prune_interval_ms,
+            )
+            .map_err(|e| CasperError::RuntimeError(e.to_string()))?;
+        let approx_nodes = self.casper_buffer.approx_node_count();
+
+        metrics::gauge!(CASPER_BUFFER_APPROX_NODES_METRIC, "source" => BLOCK_PROCESSOR_METRICS_SOURCE)
+            .set(approx_nodes as f64);
+        if stale_pruned > 0 {
+            metrics::counter!(CASPER_BUFFER_STALE_PRUNED_METRIC, "source" => BLOCK_PROCESSOR_METRICS_SOURCE)
+                .increment(stale_pruned as u64);
+        }
+        if overflow_pruned > 0 {
+            metrics::counter!(CASPER_BUFFER_OVERFLOW_PRUNED_METRIC, "source" => BLOCK_PROCESSOR_METRICS_SOURCE)
+                .increment(overflow_pruned as u64);
+        }
+        if stale_pruned > 0 || overflow_pruned > 0 {
+            tracing::warn!(
+                "Pruned CasperBuffer entries: stale={}, overflow={}, approx_nodes={}",
+                stale_pruned,
+                overflow_pruned,
+                approx_nodes
+            );
+        }
+
+        Ok(())
     }
 
     /// Equivalent to Scala's: storeBlock = (b: BlockMessage) => BlockStore[F].put(b)
@@ -294,8 +528,18 @@ impl<T: TransportLayer + Send + Sync> BlockProcessorDependencies<T> {
                 })
                 .map_err(|e| CasperError::RuntimeError(e.to_string()))?
         };
+        // Invalid blocks are already known/built into Casper state and should not be re-fetched
+        // as unresolved dependencies.
+        let invalid_block_hashes: HashSet<BlockHash> = {
+            self.block_dag_storage
+                .get_representation()
+                .invalid_blocks_map()
+                .map_err(|e| CasperError::RuntimeError(e.to_string()))?
+                .into_keys()
+                .collect()
+        };
 
-        let deps_in_buffer: Vec<BlockHash> = {
+        let deps_in_buffer_all: Vec<BlockHash> = {
             all_deps
                 .iter()
                 .filter_map(|dep| {
@@ -327,9 +571,23 @@ impl<T: TransportLayer + Send + Sync> BlockProcessorDependencies<T> {
             .filter(|&dep| equivocation_hashes.contains(dep))
             .cloned()
             .collect();
+        let deps_in_invalid_set: Vec<BlockHash> = all_deps
+            .iter()
+            .filter(|&dep| invalid_block_hashes.contains(dep))
+            .cloned()
+            .collect();
 
         let mut deps_validated: Vec<BlockHash> = deps_in_dag.clone();
         deps_validated.extend(deps_in_eq_tracker.iter().cloned());
+        deps_validated.extend(deps_in_invalid_set.iter().cloned());
+
+        // If a dependency is already validated, it should not be treated as a blocking
+        // buffer dependency even if stale buffer relations still exist for that hash.
+        let deps_in_buffer: Vec<BlockHash> = deps_in_buffer_all
+            .iter()
+            .filter(|dep| !deps_validated.contains(dep))
+            .cloned()
+            .collect();
 
         let deps_to_fetch: Vec<BlockHash> = all_deps
             .iter()
@@ -341,8 +599,8 @@ impl<T: TransportLayer + Send + Sync> BlockProcessorDependencies<T> {
         let ready = deps_to_fetch.is_empty() && deps_in_buffer.is_empty();
 
         if !ready {
-            tracing::info!(
-                "Block {} missing dependencies. To fetch: {}. In buffer: {}. Validated: {}.",
+            tracing::debug!(
+                "Block {} waiting on missing dependencies. To fetch: {}. In buffer: {}. Validated: {}.",
                 PrettyPrinter::build_string(CasperMessage::BlockMessage(block.clone()), true),
                 PrettyPrinter::build_string_hashes(
                     &deps_to_fetch
@@ -405,7 +663,207 @@ impl<T: TransportLayer + Send + Sync> BlockProcessorDependencies<T> {
         self.casper_buffer
             .remove(block_hash_serde)
             .map_err(|e| CasperError::RuntimeError(e.to_string()))?;
+        self.clear_missing_dependency_attempts(&block.block_hash)?;
+        self.clear_missing_dependency_quarantine(&block.block_hash)?;
 
+        Ok(())
+    }
+
+    fn sweep_orphaned_missing_dependency_attempts(&self) -> Result<(), CasperError> {
+        let to_clear: Vec<BlockHash> = {
+            let attempts = self.missing_dependency_attempts.lock().map_err(|_| {
+                CasperError::RuntimeError(
+                    "Failed to acquire missing_dependency_attempts lock".to_string(),
+                )
+            })?;
+
+            attempts
+                .keys()
+                .filter_map(|block_hash| {
+                    let block_hash_serde = BlockHashSerde(block_hash.clone());
+                    let is_active = self.casper_buffer.contains(&block_hash_serde)
+                        || self.casper_buffer.is_pendant(&block_hash_serde);
+
+                    if is_active {
+                        None
+                    } else {
+                        Some(block_hash.clone())
+                    }
+                })
+                .collect()
+        };
+
+        if to_clear.is_empty() {
+            return Ok(());
+        }
+
+        let mut attempts = self.missing_dependency_attempts.lock().map_err(|_| {
+            CasperError::RuntimeError(
+                "Failed to acquire missing_dependency_attempts lock".to_string(),
+            )
+        })?;
+
+        for block_hash in to_clear {
+            attempts.remove(&block_hash);
+        }
+
+        Ok(())
+    }
+
+    fn sweep_orphaned_missing_dependency_quarantine(&self) -> Result<(), CasperError> {
+        let to_clear: Vec<BlockHash> = {
+            let quarantine: Vec<BlockHash> = self
+                .missing_dependency_quarantine_until
+                .lock()
+                .map_err(|_| {
+                    CasperError::RuntimeError(
+                        "Failed to acquire missing_dependency_quarantine_until lock".to_string(),
+                    )
+                })?
+                .keys()
+                .cloned()
+                .collect();
+
+            quarantine
+                .into_iter()
+                .filter_map(|block_hash| {
+                    let block_hash_serde = BlockHashSerde(block_hash.clone());
+                    let is_active = self.casper_buffer.contains(&block_hash_serde)
+                        || self.casper_buffer.is_pendant(&block_hash_serde);
+
+                    if is_active {
+                        None
+                    } else {
+                        Some(block_hash)
+                    }
+                })
+                .collect()
+        };
+
+        if to_clear.is_empty() {
+            return Ok(());
+        }
+
+        let mut quarantine = self
+            .missing_dependency_quarantine_until
+            .lock()
+            .map_err(|_| {
+                CasperError::RuntimeError(
+                    "Failed to acquire missing_dependency_quarantine_until lock".to_string(),
+                )
+            })?;
+
+        for block_hash in to_clear {
+            quarantine.remove(&block_hash);
+        }
+
+        Ok(())
+    }
+
+    fn register_missing_dependency_attempt(
+        &self,
+        block_hash: &BlockHash,
+    ) -> Result<bool, CasperError> {
+        let mut attempts = self.missing_dependency_attempts.lock().map_err(|_| {
+            CasperError::RuntimeError(
+                "Failed to acquire missing_dependency_attempts lock".to_string(),
+            )
+        })?;
+        let next = attempts.entry(block_hash.clone()).or_insert(0);
+        *next = next.saturating_add(1);
+        Ok(*next >= missing_dependency_attempts_max())
+    }
+
+    fn clear_missing_dependency_attempts(&self, block_hash: &BlockHash) -> Result<(), CasperError> {
+        let mut attempts = self.missing_dependency_attempts.lock().map_err(|_| {
+            CasperError::RuntimeError(
+                "Failed to acquire missing_dependency_attempts lock".to_string(),
+            )
+        })?;
+        attempts.remove(block_hash);
+        Ok(())
+    }
+
+    fn clear_missing_dependency_quarantine(
+        &self,
+        block_hash: &BlockHash,
+    ) -> Result<(), CasperError> {
+        let mut quarantine = self
+            .missing_dependency_quarantine_until
+            .lock()
+            .map_err(|_| {
+                CasperError::RuntimeError(
+                    "Failed to acquire missing_dependency_quarantine_until lock".to_string(),
+                )
+            })?;
+        quarantine.remove(block_hash);
+        Ok(())
+    }
+
+    fn mark_missing_dependency_quarantine(
+        &self,
+        block_hash: &BlockHash,
+    ) -> Result<(), CasperError> {
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        let until = now_ms.saturating_add(missing_dependency_quarantine_ms());
+        let mut quarantine = self
+            .missing_dependency_quarantine_until
+            .lock()
+            .map_err(|_| {
+                CasperError::RuntimeError(
+                    "Failed to acquire missing_dependency_quarantine_until lock".to_string(),
+                )
+            })?;
+        quarantine.insert(block_hash.clone(), until);
+        Ok(())
+    }
+
+    fn is_missing_dependency_quarantined(
+        &self,
+        block_hash: &BlockHash,
+    ) -> Result<bool, CasperError> {
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        let quarantine = self
+            .missing_dependency_quarantine_until
+            .lock()
+            .map_err(|_| {
+                CasperError::RuntimeError(
+                    "Failed to acquire missing_dependency_quarantine_until lock".to_string(),
+                )
+            })?;
+        Ok(quarantine
+            .get(block_hash)
+            .copied()
+            .is_some_and(|until| now_ms < until))
+    }
+
+    fn sweep_expired_missing_dependency_quarantine(&self) -> Result<(), CasperError> {
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        let mut quarantine = self
+            .missing_dependency_quarantine_until
+            .lock()
+            .map_err(|_| {
+                CasperError::RuntimeError(
+                    "Failed to acquire missing_dependency_quarantine_until lock".to_string(),
+                )
+            })?;
+        quarantine.retain(|_, until| *until > now_ms);
+        Ok(())
+    }
+
+    async fn drop_dependency_loop_block(&self, block: &BlockMessage) -> Result<(), CasperError> {
+        self.remove_from_buffer(block).await?;
+        self.mark_missing_dependency_quarantine(&block.block_hash)?;
+        self.ack_processed(block).await?;
         Ok(())
     }
 
@@ -421,6 +879,22 @@ impl<T: TransportLayer + Send + Sync> BlockProcessorDependencies<T> {
                     None,
                     AdmitHashReason::MissingDependencyRequested,
                 )
+                .await
+                .map_err(|e| CasperError::RuntimeError(e.to_string()))?;
+        }
+
+        Ok(())
+    }
+
+    /// Recovery helper for deadlock scenarios where dependencies remain in CasperBuffer
+    /// but there are no newly discovered hashes to fetch.
+    pub async fn recover_stale_buffer_dependencies(
+        &self,
+        deps: &HashSet<BlockHash>,
+    ) -> Result<(), CasperError> {
+        for dep in deps {
+            self.block_retriever
+                .recover_dependency(dep.clone())
                 .await
                 .map_err(|e| CasperError::RuntimeError(e.to_string()))?;
         }
@@ -459,7 +933,8 @@ impl<T: TransportLayer + Send + Sync> BlockProcessorDependencies<T> {
         let dag = casper.handle_invalid_block(block, invalid_block, &snapshot.dag)?;
 
         // Equivalent to Scala's: CommUtil[F].sendBlockHash(b.blockHash, b.sender)
-        self.transport
+        if let Err(err) = self
+            .transport
             .send_block_hash(
                 &self.connections_cell,
                 &self.conf,
@@ -467,7 +942,13 @@ impl<T: TransportLayer + Send + Sync> BlockProcessorDependencies<T> {
                 &block.sender,
             )
             .await
-            .map_err(|e| CasperError::RuntimeError(e.to_string()))?;
+        {
+            tracing::warn!(
+                "Failed to send block hash {} to sender during invalid-block effects: {}",
+                PrettyPrinter::build_string_bytes(&block.block_hash),
+                err
+            );
+        }
 
         Ok(dag)
     }
@@ -481,7 +962,8 @@ impl<T: TransportLayer + Send + Sync> BlockProcessorDependencies<T> {
         let dag = { casper.handle_valid_block(block).await? };
 
         // Equivalent to Scala's: CommUtil[F].sendBlockHash(b.blockHash, b.sender)
-        self.transport
+        if let Err(err) = self
+            .transport
             .send_block_hash(
                 &self.connections_cell,
                 &self.conf,
@@ -489,7 +971,13 @@ impl<T: TransportLayer + Send + Sync> BlockProcessorDependencies<T> {
                 &block.sender,
             )
             .await
-            .map_err(|e| CasperError::RuntimeError(e.to_string()))?;
+        {
+            tracing::warn!(
+                "Failed to send block hash {} to sender during valid-block effects: {}",
+                PrettyPrinter::build_string_bytes(&block.block_hash),
+                err
+            );
+        }
 
         Ok(dag)
     }

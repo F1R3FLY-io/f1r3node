@@ -233,4 +233,3 @@ mod tests {
         assert_eq!(store.size_bytes(), 0);
     }
 }
-
