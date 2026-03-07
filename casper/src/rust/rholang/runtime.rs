@@ -983,7 +983,8 @@ impl RuntimeOps {
         };
         log_mem_step("start");
 
-        self.runtime.reset(&Blake2b256Hash::from_bytes_prost(hash))?;
+        self.runtime
+            .reset(&Blake2b256Hash::from_bytes_prost(hash))?;
         log_mem_step("after_reset");
         self.runtime.cost().set(Cost::unsafe_max());
         log_mem_step("after_set_cost");
@@ -1013,7 +1014,8 @@ impl RuntimeOps {
 
         let _ = self.runtime.take_event_log();
         log_mem_step("after_take_event_log");
-        self.runtime.reset(&Blake2b256Hash::from_bytes_prost(hash))?;
+        self.runtime
+            .reset(&Blake2b256Hash::from_bytes_prost(hash))?;
         log_mem_step("after_post_query_reset");
 
         result
@@ -1086,7 +1088,8 @@ impl RuntimeOps {
         deploy: &Signed<DeployData>,
         name: &Par,
     ) -> Result<Vec<Par>, CasperError> {
-        self.runtime.reset(&Blake2b256Hash::from_bytes_prost(start))?;
+        self.runtime
+            .reset(&Blake2b256Hash::from_bytes_prost(start))?;
 
         let eval_res = self.evaluate(deploy).await?;
         if !eval_res.errors.is_empty() {

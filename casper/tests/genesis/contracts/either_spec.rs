@@ -21,4 +21,3 @@ async fn either_spec() {
 
     spec.run_tests().await.expect("EitherSpec tests failed");
 }
-

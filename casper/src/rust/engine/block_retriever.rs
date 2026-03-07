@@ -12,6 +12,7 @@ use comm::rust::{
     transport::transport_layer::TransportLayer,
 };
 use models::rust::{block_hash::BlockHash, casper::pretty_printer::PrettyPrinter};
+use shared::rust::env;
 use tracing::{debug, info};
 
 use crate::rust::errors::CasperError;
@@ -95,100 +96,100 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
     fn peer_requery_retry_cooldown_ms() -> u64 {
         static VALUE: OnceLock<u64> = OnceLock::new();
         *VALUE.get_or_init(|| {
-            std::env::var("F1R3_BLOCK_RETRIEVER_PEER_REQUERY_COOLDOWN_MS")
-                .ok()
-                .and_then(|v| v.parse::<u64>().ok())
-                .filter(|v| *v > 0)
-                .unwrap_or(3000)
+            env::var_or_filtered(
+                "F1R3_BLOCK_RETRIEVER_PEER_REQUERY_COOLDOWN_MS",
+                3000,
+                |v: &u64| *v > 0,
+            )
         })
     }
 
     fn broadcast_only_retry_cooldown_ms() -> u64 {
         static VALUE: OnceLock<u64> = OnceLock::new();
         *VALUE.get_or_init(|| {
-            std::env::var("F1R3_BLOCK_RETRIEVER_BROADCAST_ONLY_COOLDOWN_MS")
-                .ok()
-                .and_then(|v| v.parse::<u64>().ok())
-                .filter(|v| *v > 0)
-                .unwrap_or(2000)
+            env::var_or_filtered(
+                "F1R3_BLOCK_RETRIEVER_BROADCAST_ONLY_COOLDOWN_MS",
+                2000,
+                |v: &u64| *v > 0,
+            )
         })
     }
 
     fn min_rerequest_interval_ms() -> u64 {
         static VALUE: OnceLock<u64> = OnceLock::new();
         *VALUE.get_or_init(|| {
-            std::env::var("F1R3_BLOCK_RETRIEVER_MIN_REREQUEST_INTERVAL_MS")
-                .ok()
-                .and_then(|v| v.parse::<u64>().ok())
-                .filter(|v| *v > 0)
-                .unwrap_or(1000)
+            env::var_or_filtered(
+                "F1R3_BLOCK_RETRIEVER_MIN_REREQUEST_INTERVAL_MS",
+                1000,
+                |v: &u64| *v > 0,
+            )
         })
     }
 
     fn max_retries_per_hash() -> u32 {
         static VALUE: OnceLock<u32> = OnceLock::new();
         *VALUE.get_or_init(|| {
-            std::env::var("F1R3_BLOCK_RETRIEVER_MAX_RETRIES_PER_HASH")
-                .ok()
-                .and_then(|v| v.parse::<u32>().ok())
-                .filter(|v| *v > 0)
-                .unwrap_or(32)
+            env::var_or_filtered(
+                "F1R3_BLOCK_RETRIEVER_MAX_RETRIES_PER_HASH",
+                32,
+                |v: &u32| *v > 0,
+            )
         })
     }
 
     fn dependency_recovery_rerequest_cooldown_ms() -> u64 {
         static VALUE: OnceLock<u64> = OnceLock::new();
         *VALUE.get_or_init(|| {
-            std::env::var("F1R3_BLOCK_RETRIEVER_DEPENDENCY_RECOVERY_COOLDOWN_MS")
-                .ok()
-                .and_then(|v| v.parse::<u64>().ok())
-                .filter(|v| *v > 0)
-                .unwrap_or(1000)
+            env::var_or_filtered(
+                "F1R3_BLOCK_RETRIEVER_DEPENDENCY_RECOVERY_COOLDOWN_MS",
+                1000,
+                |v: &u64| *v > 0,
+            )
         })
     }
 
     fn stale_request_lifetime_multiplier() -> u64 {
         static VALUE: OnceLock<u64> = OnceLock::new();
         *VALUE.get_or_init(|| {
-            std::env::var("F1R3_BLOCK_RETRIEVER_STALE_REQUEST_LIFETIME_MULTIPLIER")
-                .ok()
-                .and_then(|v| v.parse::<u64>().ok())
-                .filter(|v| *v > 0)
-                .unwrap_or(6)
+            env::var_or_filtered(
+                "F1R3_BLOCK_RETRIEVER_STALE_REQUEST_LIFETIME_MULTIPLIER",
+                6,
+                |v: &u64| *v > 0,
+            )
         })
     }
 
     fn known_peer_requery_soft_limit() -> u32 {
         static VALUE: OnceLock<u32> = OnceLock::new();
         *VALUE.get_or_init(|| {
-            std::env::var("F1R3_BLOCK_RETRIEVER_KNOWN_PEER_REQUERY_SOFT_LIMIT")
-                .ok()
-                .and_then(|v| v.parse::<u32>().ok())
-                .filter(|v| *v > 0)
-                .unwrap_or(8)
+            env::var_or_filtered(
+                "F1R3_BLOCK_RETRIEVER_KNOWN_PEER_REQUERY_SOFT_LIMIT",
+                8,
+                |v: &u32| *v > 0,
+            )
         })
     }
 
     fn retry_budget_quarantine_ms() -> u64 {
         static VALUE: OnceLock<u64> = OnceLock::new();
         *VALUE.get_or_init(|| {
-            std::env::var("F1R3_BLOCK_RETRIEVER_RETRY_BUDGET_QUARANTINE_MS")
-                .ok()
-                .and_then(|v| v.parse::<u64>().ok())
-                .filter(|v| *v > 0)
-                .unwrap_or(120000)
+            env::var_or_filtered(
+                "F1R3_BLOCK_RETRIEVER_RETRY_BUDGET_QUARANTINE_MS",
+                120000,
+                |v: &u64| *v > 0,
+            )
         })
     }
 
     fn missing_dependency_seed_peers() -> usize {
         static VALUE: OnceLock<usize> = OnceLock::new();
         *VALUE.get_or_init(|| {
-            std::env::var("F1R3_BLOCK_RETRIEVER_MISSING_DEPENDENCY_SEED_PEERS")
-                .ok()
-                .and_then(|v| v.parse::<usize>().ok())
-                .filter(|v| *v > 0)
-                .map(|v| v.min(Self::MAX_WAITING_LIST_PER_HASH))
-                .unwrap_or(4)
+            env::var_or_filtered(
+                "F1R3_BLOCK_RETRIEVER_MISSING_DEPENDENCY_SEED_PEERS",
+                4,
+                |v: &usize| *v > 0,
+            )
+            .min(Self::MAX_WAITING_LIST_PER_HASH)
         })
     }
 

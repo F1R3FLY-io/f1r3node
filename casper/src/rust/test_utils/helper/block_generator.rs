@@ -7,22 +7,21 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use block_storage::rust::{
-    dag::block_dag_key_value_storage::KeyValueDagRepresentation,
-    key_value_block_store::KeyValueBlockStore,
-    test::indexed_block_dag_storage::IndexedBlockDagStorage,
-};
 use crate::rust::{
     casper::CasperSnapshot,
     errors::CasperError,
     util::{
         construct_deploy, proto_util,
         rholang::{
-            interpreter_util::compute_deploys_checkpoint,
-            runtime_manager::RuntimeManager,
+            interpreter_util::compute_deploys_checkpoint, runtime_manager::RuntimeManager,
             system_deploy_enum::SystemDeployEnum,
         },
     },
+};
+use block_storage::rust::{
+    dag::block_dag_key_value_storage::KeyValueDagRepresentation,
+    key_value_block_store::KeyValueBlockStore,
+    test::indexed_block_dag_storage::IndexedBlockDagStorage,
 };
 use models::rust::{
     block::state_hash::StateHash,
@@ -335,4 +334,3 @@ pub fn create_validator_block(
         invalid,
     )
 }
-

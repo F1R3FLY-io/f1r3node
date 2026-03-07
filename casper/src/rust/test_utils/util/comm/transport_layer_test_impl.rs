@@ -233,5 +233,3 @@ impl TransportLayerServer for TransportLayerServerTestImpl {
         Ok(handle)
     }
 }
-
-

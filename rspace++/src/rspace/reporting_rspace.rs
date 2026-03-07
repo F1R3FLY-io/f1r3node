@@ -1,5 +1,12 @@
 // See rspace/src/main/scala/coop/rchain/rspace/ReportingRspace.scala
 
+use std::collections::{BTreeSet, HashMap};
+use std::fmt::Debug;
+use std::hash::Hash;
+use std::sync::{Arc, Mutex};
+
+use serde::{Deserialize, Serialize};
+
 use super::checkpoint::{Checkpoint, SoftCheckpoint};
 use super::errors::RSpaceError;
 use super::hashing::blake2b256_hash::Blake2b256Hash;
@@ -9,24 +16,24 @@ use super::internal::{ConsumeCandidate, Datum, Row, WaitingContinuation};
 use super::r#match::Match;
 use super::replay_rspace::ReplayRSpace;
 use super::rspace::RSpace;
-use super::trace::{Log, event::{Consume, Produce, COMM}};
+use super::trace::Log;
+use super::trace::event::{COMM, Consume, Produce};
 use crate::rspace::rspace_interface::{ISpace, MaybeConsumeResult, MaybeProduceResult};
-use serde::{Deserialize, Serialize};
-use std::collections::{BTreeSet, HashMap};
-use std::fmt::Debug;
-use std::hash::Hash;
-use std::sync::{Arc, Mutex};
 
-/// ReportingRspace works exactly like how ReplayRspace works. It can replay the deploy and try to find if the
-/// deploy can be replayed well. But instead of just replaying the deploy, the ReportingRspace also save the comm
-/// event data into the `report` field.
+/// ReportingRspace works exactly like how ReplayRspace works. It can replay the
+/// deploy and try to find if the deploy can be replayed well. But instead of
+/// just replaying the deploy, the ReportingRspace also save the comm event data
+/// into the `report` field.
 ///
-/// Currently only the unmatched comm event data are left in the tuplespace which means that the comm event data
-/// happened in the processing of the deploy does not save anywhere in the software. It is believed that if we save
-/// every comm event data during processing the deploy, the execution of Rholang would be much slower. But this(not
-/// saving all comm event data) also leads to another problem that a developer can not get history data of deploy which
-/// some of the comm event data are important to them. This ReportingRspace is trying to address this issue and let
-/// people get the comm event data from replay.
+/// Currently only the unmatched comm event data are left in the tuplespace
+/// which means that the comm event data happened in the processing of the
+/// deploy does not save anywhere in the software. It is believed that if we
+/// save every comm event data during processing the deploy, the execution of
+/// Rholang would be much slower. But this(not saving all comm event data) also
+/// leads to another problem that a developer can not get history data of deploy
+/// which some of the comm event data are important to them. This
+/// ReportingRspace is trying to address this issue and let people get the comm
+/// event data from replay.
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ReportingEvent<C, P, A, K>
@@ -85,10 +92,10 @@ where
     K: Clone + Debug + Default + Serialize + 'static + Sync + Send,
 {
     replay_rspace: ReplayRSpace<C, P, A, K>,
-    /// in order to distinguish the system deploy(precharge and refund) in the a normal user deploy
-    /// It might be more easily to analyse the report with data structure
-    /// Vec<Vec[ReportingEvent]>(Precharge, userDeploy, Refund)
-    /// It would be seperated by the softcheckpoint creation.
+    /// in order to distinguish the system deploy(precharge and refund) in the a
+    /// normal user deploy It might be more easily to analyse the report
+    /// with data structure Vec<Vec[ReportingEvent]>(Precharge, userDeploy,
+    /// Refund) It would be seperated by the softcheckpoint creation.
     report: Arc<Mutex<Vec<Vec<ReportingEvent<C, P, A, K>>>>>,
     soft_report: Arc<Mutex<Vec<ReportingEvent<C, P, A, K>>>>,
 }
@@ -124,12 +131,8 @@ where
             soft_report: soft_report.clone(),
         });
 
-        let replay_rspace = ReplayRSpace::apply_with_logger(
-            history_repository,
-            store,
-            matcher,
-            logger,
-        );
+        let replay_rspace =
+            ReplayRSpace::apply_with_logger(history_repository, store, matcher, logger);
 
         ReportingRspace {
             replay_rspace,
@@ -137,7 +140,6 @@ where
             soft_report,
         }
     }
-
 
     /// Creates [[ReportingRspace]] from [[KeyValueStore]]'s
     pub fn create(
@@ -220,8 +222,9 @@ where
     }
 }
 
-/// Implement ISpace for ReportingRspace by delegating to the underlying ReplayRSpace
-/// This allows ReportingRspace to be used with create_rho_runtime and create_replay_rho_runtime
+/// Implement ISpace for ReportingRspace by delegating to the underlying
+/// ReplayRSpace This allows ReportingRspace to be used with create_rho_runtime
+/// and create_replay_rho_runtime
 impl<C, P, A, K> ISpace<C, P, A, K> for ReportingRspace<C, P, A, K>
 where
     C: Clone
@@ -244,25 +247,17 @@ where
         ReportingRspace::create_checkpoint(self)
     }
 
-    fn get_data(&self, channel: &C) -> Vec<Datum<A>> {
-        self.replay_rspace.get_data(channel)
-    }
+    fn get_data(&self, channel: &C) -> Vec<Datum<A>> { self.replay_rspace.get_data(channel) }
 
     fn get_waiting_continuations(&self, channels: Vec<C>) -> Vec<WaitingContinuation<P, K>> {
         self.replay_rspace.get_waiting_continuations(channels)
     }
 
-    fn get_joins(&self, channel: C) -> Vec<Vec<C>> {
-        self.replay_rspace.get_joins(channel)
-    }
+    fn get_joins(&self, channel: C) -> Vec<Vec<C>> { self.replay_rspace.get_joins(channel) }
 
-    fn clear(&mut self) -> Result<(), RSpaceError> {
-        self.replay_rspace.clear()
-    }
+    fn clear(&mut self) -> Result<(), RSpaceError> { self.replay_rspace.clear() }
 
-    fn get_root(&self) -> Blake2b256Hash {
-        self.replay_rspace.get_root()
-    }
+    fn get_root(&self) -> Blake2b256Hash { self.replay_rspace.get_root() }
 
     fn reset(&mut self, root: &Blake2b256Hash) -> Result<(), RSpaceError> {
         self.replay_rspace.reset(root)
@@ -276,18 +271,14 @@ where
         self.replay_rspace.consume_result(channel, pattern)
     }
 
-    fn to_map(&self) -> HashMap<Vec<C>, Row<P, A, K>> {
-        self.replay_rspace.to_map()
-    }
+    fn to_map(&self) -> HashMap<Vec<C>, Row<P, A, K>> { self.replay_rspace.to_map() }
 
     fn create_soft_checkpoint(&mut self) -> SoftCheckpoint<C, P, A, K> {
         // Use ReportingRspace's own create_soft_checkpoint which collects reports
         ReportingRspace::create_soft_checkpoint(self).unwrap()
     }
 
-    fn take_event_log(&mut self) -> Log {
-        self.replay_rspace.take_event_log()
-    }
+    fn take_event_log(&mut self) -> Log { self.replay_rspace.take_event_log() }
 
     fn revert_to_soft_checkpoint(
         &mut self,
@@ -329,17 +320,13 @@ where
         ReportingRspace::rig_and_reset(self, start_root, log)
     }
 
-    fn rig(&self, log: Log) -> Result<(), RSpaceError> {
-        self.replay_rspace.rig(log)
-    }
+    fn rig(&self, log: Log) -> Result<(), RSpaceError> { self.replay_rspace.rig(log) }
 
     fn check_replay_data(&self) -> Result<(), RSpaceError> {
         self.replay_rspace.check_replay_data()
     }
 
-    fn is_replay(&self) -> bool {
-        self.replay_rspace.is_replay()
-    }
+    fn is_replay(&self) -> bool { self.replay_rspace.is_replay() }
 
     fn update_produce(&mut self, produce: Produce) -> () {
         self.replay_rspace.update_produce(produce)

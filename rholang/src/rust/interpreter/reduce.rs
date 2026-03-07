@@ -80,6 +80,15 @@ fn env_flag(name: &str) -> bool {
         .unwrap_or(false)
 }
 
+fn read_vm_rss_kb() -> Option<usize> {
+    let status = std::fs::read_to_string("/proc/self/status").ok()?;
+    status
+        .lines()
+        .find(|line| line.starts_with("VmRSS:"))
+        .and_then(|line| line.split_whitespace().nth(1))
+        .and_then(|value| value.parse::<usize>().ok())
+}
+
 static REDUCE_INNER_PROFILE_ENABLED: LazyLock<bool> =
     LazyLock::new(|| env_flag("F1R3_REDUCE_INNER_PROFILE"));
 static REDUCE_OP_PROFILE_ENABLED: LazyLock<bool> =
@@ -169,14 +178,6 @@ impl DebruijnInterpreter {
         rand: Blake2b512Random,
     ) -> Result<(), InterpreterError> {
         let mem_profile_enabled = *REDUCE_INNER_PROFILE_ENABLED;
-        let read_vm_rss_kb = || -> Option<usize> {
-            let status = std::fs::read_to_string("/proc/self/status").ok()?;
-            status
-                .lines()
-                .find(|line| line.starts_with("VmRSS:"))
-                .and_then(|line| line.split_whitespace().nth(1))
-                .and_then(|value| value.parse::<usize>().ok())
-        };
         let env_level = env.level;
         let mut rss_baseline = if mem_profile_enabled {
             read_vm_rss_kb()
@@ -408,14 +409,6 @@ impl DebruijnInterpreter {
         persistent: bool,
     ) -> Result<DispatchType, InterpreterError> {
         let op_mem_profile_enabled = *REDUCE_OP_PROFILE_ENABLED;
-        let read_vm_rss_kb = || -> Option<usize> {
-            let status = std::fs::read_to_string("/proc/self/status").ok()?;
-            status
-                .lines()
-                .find(|line| line.starts_with("VmRSS:"))
-                .and_then(|line| line.split_whitespace().nth(1))
-                .and_then(|value| value.parse::<usize>().ok())
-        };
         let data_len = data.pars.len();
         let mut op_rss_prev = if op_mem_profile_enabled {
             read_vm_rss_kb()
@@ -529,14 +522,6 @@ impl DebruijnInterpreter {
         peek: bool,
     ) -> Result<DispatchType, InterpreterError> {
         let op_mem_profile_enabled = *REDUCE_OP_PROFILE_ENABLED;
-        let read_vm_rss_kb = || -> Option<usize> {
-            let status = std::fs::read_to_string("/proc/self/status").ok()?;
-            status
-                .lines()
-                .find(|line| line.starts_with("VmRSS:"))
-                .and_then(|line| line.split_whitespace().nth(1))
-                .and_then(|value| value.parse::<usize>().ok())
-        };
         let binds_len = binds.len();
         let mut op_rss_prev = if op_mem_profile_enabled {
             read_vm_rss_kb()
@@ -886,14 +871,6 @@ impl DebruijnInterpreter {
         previous_output: Vec<Par>,
     ) -> Result<DispatchType, InterpreterError> {
         let op_mem_profile_enabled = *REDUCE_OP_PROFILE_ENABLED;
-        let read_vm_rss_kb = || -> Option<usize> {
-            let status = std::fs::read_to_string("/proc/self/status").ok()?;
-            status
-                .lines()
-                .find(|line| line.starts_with("VmRSS:"))
-                .and_then(|line| line.split_whitespace().nth(1))
-                .and_then(|value| value.parse::<usize>().ok())
-        };
         let data_list_len = data_list.len();
         let previous_output_len = previous_output.len();
         let mut op_rss_prev = if op_mem_profile_enabled {
@@ -1096,14 +1073,6 @@ impl DebruijnInterpreter {
         rand: Blake2b512Random,
     ) -> Result<(), InterpreterError> {
         let op_mem_profile_enabled = *REDUCE_OP_PROFILE_ENABLED;
-        let read_vm_rss_kb = || -> Option<usize> {
-            let status = std::fs::read_to_string("/proc/self/status").ok()?;
-            status
-                .lines()
-                .find(|line| line.starts_with("VmRSS:"))
-                .and_then(|line| line.split_whitespace().nth(1))
-                .and_then(|value| value.parse::<usize>().ok())
-        };
         let mut op_rss_prev = if op_mem_profile_enabled {
             read_vm_rss_kb()
         } else {
@@ -1200,14 +1169,6 @@ impl DebruijnInterpreter {
                 .iter()
                 .enumerate()
                 .any(|(idx, bit)| *bit == 1 && idx >= s)
-        };
-        let read_vm_rss_kb = || -> Option<usize> {
-            let status = std::fs::read_to_string("/proc/self/status").ok()?;
-            status
-                .lines()
-                .find(|line| line.starts_with("VmRSS:"))
-                .and_then(|line| line.split_whitespace().nth(1))
-                .and_then(|value| value.parse::<usize>().ok())
         };
         let mut op_rss_prev = if op_mem_profile_enabled {
             read_vm_rss_kb()
@@ -1422,14 +1383,6 @@ impl DebruijnInterpreter {
         mut rand: Blake2b512Random,
     ) -> Result<(), InterpreterError> {
         let op_mem_profile_enabled = *REDUCE_OP_PROFILE_ENABLED;
-        let read_vm_rss_kb = || -> Option<usize> {
-            let status = std::fs::read_to_string("/proc/self/status").ok()?;
-            status
-                .lines()
-                .find(|line| line.starts_with("VmRSS:"))
-                .and_then(|line| line.split_whitespace().nth(1))
-                .and_then(|value| value.parse::<usize>().ok())
-        };
         let mut op_rss_prev = if op_mem_profile_enabled {
             read_vm_rss_kb()
         } else {

@@ -3,21 +3,21 @@
 // All imports fixed for library crate context
 
 use crate::rust::test_utils::util::test_mocks::MockKeyValueStore;
-use async_trait::async_trait;
 use crate::rust::validator_identity::ValidatorIdentity;
+use async_trait::async_trait;
 use rspace_plus_plus::rspace::state::rspace_exporter::RSpaceExporter;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use block_storage::rust::{
-    dag::block_dag_key_value_storage::{DeployId, KeyValueDagRepresentation},
-    key_value_block_store::KeyValueBlockStore,
-};
 use crate::rust::{
     block_status::{BlockError, InvalidBlock, ValidBlock},
     casper::{Casper, CasperSnapshot, DeployError, MultiParentCasper},
     errors::CasperError,
     util::rholang::runtime_manager::RuntimeManager,
+};
+use block_storage::rust::{
+    dag::block_dag_key_value_storage::{DeployId, KeyValueDagRepresentation},
+    key_value_block_store::KeyValueBlockStore,
 };
 use crypto::rust::signatures::signed::Signed;
 use models::rust::{
@@ -39,7 +39,6 @@ pub struct NoOpsCasperEffect {
     shared_approved_block_data: Arc<Mutex<HashMap<Vec<u8>, Vec<u8>>>>,
     block_dag_storage: KeyValueDagRepresentation,
 }
-
 
 // For testing purposes, we'll implement Clone manually by creating stub instances
 impl Clone for NoOpsCasperEffect {
@@ -388,4 +387,3 @@ impl NoOpsCasperEffect {
         }
     }
 }
-

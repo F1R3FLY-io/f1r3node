@@ -20,8 +20,7 @@ pub struct RadixHistory {
     store: Arc<dyn KeyValueStore>,
 }
 
-const BLOCK_CREATOR_PHASE_SUBSTEP_PROFILE_ENV: &str =
-    "F1R3_BLOCK_CREATOR_PHASE_SUBSTEP_PROFILE";
+const BLOCK_CREATOR_PHASE_SUBSTEP_PROFILE_ENV: &str = "F1R3_BLOCK_CREATOR_PHASE_SUBSTEP_PROFILE";
 
 fn block_creator_phase_substep_profile_enabled() -> bool {
     static VALUE: OnceLock<bool> = OnceLock::new();

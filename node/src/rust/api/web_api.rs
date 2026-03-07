@@ -4,7 +4,7 @@ use crate::rust::api::serde_types::block_info::BlockInfoSerde;
 use crate::rust::api::serde_types::light_block_info::LightBlockInfoSerde;
 use crate::rust::web::transaction::{CacheTransactionAPI, TransactionAPI, TransactionResponse};
 use crate::rust::web::version_info::get_version_info_str;
-use casper::rust::api::block_api::BlockAPI;
+use casper::rust::api::block_api::{BlockAPI, DeployNotFoundError};
 use casper::rust::engine::engine_cell::EngineCell;
 use casper::rust::ProposeFunction;
 use comm::rust::discovery::node_discovery::NodeDiscovery;
@@ -31,19 +31,19 @@ const DEFAULT_FIND_DEPLOY_RETRY_INTERVAL_MS: u64 = 50;
 const DEFAULT_FIND_DEPLOY_MAX_ATTEMPTS: u16 = 1;
 
 fn find_deploy_retry_interval_ms() -> u64 {
-    std::env::var(FIND_DEPLOY_RETRY_INTERVAL_MS_ENV)
-        .ok()
-        .and_then(|value| value.parse::<u64>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(DEFAULT_FIND_DEPLOY_RETRY_INTERVAL_MS)
+    shared::rust::env::var_or_filtered(
+        FIND_DEPLOY_RETRY_INTERVAL_MS_ENV,
+        DEFAULT_FIND_DEPLOY_RETRY_INTERVAL_MS,
+        |value: &u64| *value > 0,
+    )
 }
 
 fn find_deploy_max_attempts() -> u16 {
-    std::env::var(FIND_DEPLOY_MAX_ATTEMPTS_ENV)
-        .ok()
-        .and_then(|value| value.parse::<u16>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(DEFAULT_FIND_DEPLOY_MAX_ATTEMPTS)
+    shared::rust::env::var_or_filtered(
+        FIND_DEPLOY_MAX_ATTEMPTS_ENV,
+        DEFAULT_FIND_DEPLOY_MAX_ATTEMPTS,
+        |value: &u16| *value > 0,
+    )
 }
 
 /// Web API trait defining the interface for HTTP endpoints
@@ -330,9 +330,7 @@ where
             match BlockAPI::find_deploy(&self.engine_cell, &deploy_id_bytes).await {
                 Ok(block) => return Ok(LightBlockInfoSerde::from(block)),
                 Err(err) => {
-                    let not_found = err
-                        .to_string()
-                        .starts_with("Couldn't find block containing deploy with id:");
+                    let not_found = err.downcast_ref::<DeployNotFoundError>().is_some();
 
                     if !not_found || attempt >= max_attempts {
                         return Err(err);

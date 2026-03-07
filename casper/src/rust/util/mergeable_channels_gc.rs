@@ -104,7 +104,6 @@ fn is_safe_to_delete(
 
     // For each validator's latest message, check if it's a descendant of any child (via main chain)
     for (_, latest_msg_hash) in latest_message_hashes.iter() {
-
         if latest_msg_hash == block_hash {
             // Validator's latest is still this block
             return Ok(false);

@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use block_storage::rust::dag::block_dag_key_value_storage::KeyValueDagRepresentation;
 use models::rust::{block_hash::BlockHash, block_metadata::BlockMetadata, validator::Validator};
+use shared::rust::env;
 use shared::rust::store::key_value_store::KvStoreError;
 
 use crate::rust::safety::clique_oracle::CliqueOracle;
@@ -53,7 +54,7 @@ enum CandidateRankingStrategy {
 
 impl CandidateRankingStrategy {
     fn from_env() -> Self {
-        let value = std::env::var(FINALIZER_CANDIDATE_RANKING_ENV)
+        let value = env::var_parsed::<String>(FINALIZER_CANDIDATE_RANKING_ENV)
             .unwrap_or_default()
             .to_lowercase();
         match value.as_str() {
@@ -77,43 +78,43 @@ type SharedWeightMap = Arc<WeightMap>;
 
 impl Finalizer {
     fn finalizer_max_clique_candidates() -> usize {
-        std::env::var(FINALIZER_MAX_CLIQUE_CANDIDATES_ENV)
-            .ok()
-            .and_then(|v| v.parse::<usize>().ok())
-            .filter(|v| *v > 0)
-            .unwrap_or(FINALIZER_MAX_CLIQUE_CANDIDATES_DEFAULT)
+        env::var_or_filtered(
+            FINALIZER_MAX_CLIQUE_CANDIDATES_ENV,
+            FINALIZER_MAX_CLIQUE_CANDIDATES_DEFAULT,
+            |v: &usize| *v > 0,
+        )
     }
 
     fn finalizer_work_budget_ms() -> u64 {
-        std::env::var(FINALIZER_WORK_BUDGET_MS_ENV)
-            .ok()
-            .and_then(|v| v.parse::<u64>().ok())
-            .filter(|v| *v > 0)
-            .unwrap_or(FINALIZER_WORK_BUDGET_MS)
+        env::var_or_filtered(
+            FINALIZER_WORK_BUDGET_MS_ENV,
+            FINALIZER_WORK_BUDGET_MS,
+            |v: &u64| *v > 0,
+        )
     }
 
     fn finalizer_step_timeout_ms() -> u64 {
-        std::env::var(FINALIZER_STEP_TIMEOUT_MS_ENV)
-            .ok()
-            .and_then(|v| v.parse::<u64>().ok())
-            .filter(|v| *v > 0)
-            .unwrap_or(FINALIZER_STEP_TIMEOUT_MS)
+        env::var_or_filtered(
+            FINALIZER_STEP_TIMEOUT_MS_ENV,
+            FINALIZER_STEP_TIMEOUT_MS,
+            |v: &u64| *v > 0,
+        )
     }
 
     fn finalizer_catchup_work_budget_ms() -> u64 {
-        std::env::var(FINALIZER_CATCHUP_WORK_BUDGET_MS_ENV)
-            .ok()
-            .and_then(|v| v.parse::<u64>().ok())
-            .filter(|v| *v > 0)
-            .unwrap_or(FINALIZER_CATCHUP_WORK_BUDGET_MS)
+        env::var_or_filtered(
+            FINALIZER_CATCHUP_WORK_BUDGET_MS_ENV,
+            FINALIZER_CATCHUP_WORK_BUDGET_MS,
+            |v: &u64| *v > 0,
+        )
     }
 
     fn finalizer_catchup_step_timeout_ms() -> u64 {
-        std::env::var(FINALIZER_CATCHUP_STEP_TIMEOUT_MS_ENV)
-            .ok()
-            .and_then(|v| v.parse::<u64>().ok())
-            .filter(|v| *v > 0)
-            .unwrap_or(FINALIZER_CATCHUP_STEP_TIMEOUT_MS)
+        env::var_or_filtered(
+            FINALIZER_CATCHUP_STEP_TIMEOUT_MS_ENV,
+            FINALIZER_CATCHUP_STEP_TIMEOUT_MS,
+            |v: &u64| *v > 0,
+        )
     }
 
     /// weight map as per message, look inside [`CliqueOracle::get_corresponding_weight_map`] description for more info

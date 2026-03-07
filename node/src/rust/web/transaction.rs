@@ -133,7 +133,9 @@ impl TransactionAPIImpl {
 
         // Precharge is always emitted in the first report batch.
         let first_report_transactions = self.find_transactions(&deploy.report[0]);
-        let deployer_addr = first_report_transactions.first().map(|t| t.from_addr.clone());
+        let deployer_addr = first_report_transactions
+            .first()
+            .map(|t| t.from_addr.clone());
         for transaction in first_report_transactions {
             transactions.push(TransactionInfo {
                 transaction,
@@ -141,7 +143,7 @@ impl TransactionAPIImpl {
                     deploy_id: deploy_sig.clone(),
                 },
             });
-        };
+        }
 
         // Subsequent batches may contain either user-transfer events, refund events, or both.
         // Classify by sender address: transactions sent by deployer are user deploy effects;

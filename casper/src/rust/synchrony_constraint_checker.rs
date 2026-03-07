@@ -12,6 +12,7 @@ use block_storage::rust::{
     key_value_block_store::KeyValueBlockStore,
 };
 use models::rust::{block_metadata::BlockMetadata, validator::Validator};
+use shared::rust::env;
 
 use crate::rust::util::proto_util;
 
@@ -43,22 +44,11 @@ static SYNCHRONY_FINALIZED_BASELINE_MAX_DISTANCE: OnceLock<i64> = OnceLock::new(
 static SYNCHRONY_FINALIZED_BASELINE_ENABLED: OnceLock<bool> = OnceLock::new();
 
 fn read_bool_from_env(name: &str, default: bool) -> bool {
-    std::env::var(name)
-        .ok()
-        .map(|value| {
-            matches!(
-                value.trim().to_ascii_lowercase().as_str(),
-                "1" | "true" | "yes" | "on"
-            )
-        })
-        .unwrap_or(default)
+    env::var_bool(name, default)
 }
 
 fn read_i64_from_env(name: &str, default: i64) -> i64 {
-    std::env::var(name)
-        .ok()
-        .and_then(|value| value.parse::<i64>().ok())
-        .unwrap_or(default)
+    env::var_or(name, default)
 }
 
 fn read_non_negative_u64_from_env(name: &str, default: u64) -> u64 {
@@ -90,10 +80,10 @@ fn synchrony_recovery_cooldown_seconds() -> u64 {
 
 fn synchrony_recovery_max_bypasses() -> u32 {
     *SYNCHRONY_RECOVERY_MAX_BYPASSES.get_or_init(|| {
-        let value = std::env::var(SYNCHRONY_RECOVERY_MAX_BYPASSES_ENV)
-            .ok()
-            .and_then(|value| value.parse::<i32>().ok())
-            .unwrap_or(DEFAULT_SYNCHRONY_RECOVERY_MAX_BYPASSES as i32);
+        let value = env::var_or(
+            SYNCHRONY_RECOVERY_MAX_BYPASSES_ENV,
+            DEFAULT_SYNCHRONY_RECOVERY_MAX_BYPASSES as i32,
+        );
 
         if value <= 0 {
             0
@@ -105,9 +95,7 @@ fn synchrony_recovery_max_bypasses() -> u32 {
 
 fn synchrony_constraint_threshold_override() -> Option<f64> {
     *SYNCHRONY_CONSTRAINT_THRESHOLD_OVERRIDE.get_or_init(|| {
-        std::env::var(SYNCHRONY_CONSTRAINT_THRESHOLD_ENV)
-            .ok()
-            .and_then(|value| value.parse::<f64>().ok())
+        env::var_parsed::<f64>(SYNCHRONY_CONSTRAINT_THRESHOLD_ENV)
             .and_then(|value| {
                 if value.is_finite() {
                     Some(value.clamp(0.0, 1.0))

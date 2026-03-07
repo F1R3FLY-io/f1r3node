@@ -68,8 +68,7 @@ const HEAD_SIZE: usize = 2;
 // Read cache bound to prevent unbounded memory growth during long reads.
 const READ_CACHE_MAX_ITEMS: usize = 4_096;
 const READ_CACHE_TRIM_TARGET: usize = 2_048;
-const BLOCK_CREATOR_PHASE_SUBSTEP_PROFILE_ENV: &str =
-    "F1R3_BLOCK_CREATOR_PHASE_SUBSTEP_PROFILE";
+const BLOCK_CREATOR_PHASE_SUBSTEP_PROFILE_ENV: &str = "F1R3_BLOCK_CREATOR_PHASE_SUBSTEP_PROFILE";
 
 fn block_creator_phase_substep_profile_enabled() -> bool {
     static VALUE: OnceLock<bool> = OnceLock::new();

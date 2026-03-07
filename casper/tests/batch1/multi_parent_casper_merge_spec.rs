@@ -2,7 +2,9 @@
 
 use crate::helper::test_node::TestNode;
 use crate::util::genesis_builder::GenesisBuilder;
+use casper::rust::block_status::ValidBlock;
 use casper::rust::util::{construct_deploy, rspace_util};
+use rspace_plus_plus::rspace::history::Either;
 
 #[tokio::test]
 async fn hash_set_casper_should_handle_multi_parent_blocks_correctly() {
@@ -328,4 +330,210 @@ async fn hash_set_casper_should_not_merge_blocks_that_touch_the_same_channel_inv
     assert_eq!(single_parent_block.header.parents_hash_list.len(), 1);
     assert!(nodes[0].contains(&single_parent_block.block_hash));
     assert!(nodes[1].knows_about(&single_parent_block.block_hash));
+}
+
+/// This test verifies the determinism fix for LCA computation and merge ordering.
+/// Before the fix, validators could compute different post-states for the same
+/// merge block due to non-deterministic ancestor traversal (isFinalized boundary)
+/// and ordering (hashCode, Set.head). This test creates a multi-round scenario
+/// where each round forces a multi-parent merge and verifies all nodes agree.
+#[tokio::test]
+async fn hash_set_casper_should_compute_identical_post_states_across_validators_for_merge_blocks() {
+    let genesis = GenesisBuilder::new()
+        .build_genesis_with_parameters(Some(
+            GenesisBuilder::build_genesis_parameters_with_defaults(None, Some(3)),
+        ))
+        .await
+        .expect("Failed to build genesis");
+
+    let mut nodes = TestNode::create_network(genesis.clone(), 3, None, None, None, None)
+        .await
+        .unwrap();
+
+    let shard_id = genesis.genesis_block.shard_id.clone();
+
+    // Round 1: Create divergent blocks on two validators
+    let d0 = construct_deploy::source_deploy_now(
+        "@10!(1)".to_string(),
+        None,
+        None,
+        Some(shard_id.clone()),
+    )
+    .unwrap();
+
+    let d1 = construct_deploy::source_deploy_now(
+        "@20!(2)".to_string(),
+        Some(construct_deploy::DEFAULT_SEC2.clone()),
+        None,
+        Some(shard_id.clone()),
+    )
+    .unwrap();
+
+    let _b0 = nodes[0].add_block_from_deploys(&[d0]).await.unwrap();
+    let _b1 = nodes[1].add_block_from_deploys(&[d1]).await.unwrap();
+
+    let nodes_refs: Vec<&mut TestNode> = nodes.iter_mut().collect();
+    TestNode::propagate(&mut nodes_refs.into_iter().collect::<Vec<_>>())
+        .await
+        .unwrap();
+
+    // Merge block from node2 -- must have both b0 and b1 as parents
+    let d2 = construct_deploy::source_deploy_now(
+        "@30!(3)".to_string(),
+        None,
+        None,
+        Some(shard_id.clone()),
+    )
+    .unwrap();
+
+    let merge_block = TestNode::propagate_block_at_index(&mut nodes, 2, &[d2])
+        .await
+        .unwrap();
+
+    // All validators must have the same post-state for the merge block
+    assert!(nodes[0].contains(&merge_block.block_hash));
+    assert!(nodes[1].contains(&merge_block.block_hash));
+    assert!(nodes[2].contains(&merge_block.block_hash));
+
+    // Round 2: Another round of divergent blocks + merge
+    let d3 = construct_deploy::source_deploy_now(
+        "@40!(4)".to_string(),
+        None,
+        None,
+        Some(shard_id.clone()),
+    )
+    .unwrap();
+
+    let d4 = construct_deploy::source_deploy_now(
+        "@50!(5)".to_string(),
+        Some(construct_deploy::DEFAULT_SEC2.clone()),
+        None,
+        Some(shard_id.clone()),
+    )
+    .unwrap();
+
+    let _b3 = nodes[0].add_block_from_deploys(&[d3]).await.unwrap();
+    let _b4 = nodes[1].add_block_from_deploys(&[d4]).await.unwrap();
+
+    let nodes_refs: Vec<&mut TestNode> = nodes.iter_mut().collect();
+    TestNode::propagate(&mut nodes_refs.into_iter().collect::<Vec<_>>())
+        .await
+        .unwrap();
+
+    let d5 = construct_deploy::source_deploy_now(
+        "@60!(6)".to_string(),
+        None,
+        None,
+        Some(shard_id.clone()),
+    )
+    .unwrap();
+
+    let merge_block2 = TestNode::propagate_block_at_index(&mut nodes, 2, &[d5])
+        .await
+        .unwrap();
+
+    assert!(nodes[0].contains(&merge_block2.block_hash));
+    assert!(nodes[1].contains(&merge_block2.block_hash));
+    assert!(nodes[2].contains(&merge_block2.block_hash));
+
+    // Verify no deploys were rejected (non-conflicting channels)
+    assert_eq!(merge_block.body.rejected_deploys.len(), 0);
+    assert_eq!(merge_block2.body.rejected_deploys.len(), 0);
+}
+
+/// Regression test for the InvalidBondsCache bug.
+/// Scenario: Two validators have the same DAG structure but different finalization
+/// states. With the old code (isFinalized-bounded ancestor traversal), they would
+/// compute different ancestor sets, different LCAs, and different post-state hashes
+/// for the same block -- causing the receiving validator to reject the block with
+/// InvalidBondsCache. With the Phase 1 fix (allAncestors), finalization state is
+/// irrelevant to the merge computation, so both validators accept the block.
+#[tokio::test]
+async fn hash_set_casper_should_produce_identical_merge_results_regardless_of_finalization_state_divergence(
+) {
+    let genesis = GenesisBuilder::new()
+        .build_genesis_with_parameters(Some(
+            GenesisBuilder::build_genesis_parameters_with_defaults(None, Some(3)),
+        ))
+        .await
+        .expect("Failed to build genesis");
+
+    let mut nodes = TestNode::create_network(genesis.clone(), 3, None, None, None, None)
+        .await
+        .unwrap();
+
+    let shard_id = genesis.genesis_block.shard_id.clone();
+
+    // Create divergent blocks on two validators
+    let d0 = construct_deploy::source_deploy_now(
+        "@100!(1)".to_string(),
+        None,
+        None,
+        Some(shard_id.clone()),
+    )
+    .unwrap();
+
+    let d1 = construct_deploy::source_deploy_now(
+        "@200!(2)".to_string(),
+        Some(construct_deploy::DEFAULT_SEC2.clone()),
+        None,
+        Some(shard_id.clone()),
+    )
+    .unwrap();
+
+    let block0 = nodes[0].add_block_from_deploys(&[d0]).await.unwrap();
+    let block1 = nodes[1].add_block_from_deploys(&[d1]).await.unwrap();
+
+    let nodes_refs: Vec<&mut TestNode> = nodes.iter_mut().collect();
+    TestNode::propagate(&mut nodes_refs.into_iter().collect::<Vec<_>>())
+        .await
+        .unwrap();
+
+    // All nodes have the same DAG: genesis -> {block0, block1}
+    assert!(nodes[0].contains(&block0.block_hash));
+    assert!(nodes[0].contains(&block1.block_hash));
+    assert!(nodes[1].contains(&block0.block_hash));
+    assert!(nodes[1].contains(&block1.block_hash));
+
+    // Advance finalization on node0 to block0 (node1 does NOT finalize block0)
+    nodes[0]
+        .block_dag_storage
+        .record_directly_finalized(block0.block_hash.clone(), |_| async { Ok(()) })
+        .await
+        .unwrap();
+
+    // Verify divergent finalization state
+    assert!(nodes[0]
+        .block_dag_storage
+        .get_representation()
+        .is_finalized(&block0.block_hash));
+    assert!(!nodes[1]
+        .block_dag_storage
+        .get_representation()
+        .is_finalized(&block0.block_hash));
+
+    // Node2 creates a merge block (node2 has NOT finalized block0 either)
+    let d2 = construct_deploy::source_deploy_now(
+        "@300!(3)".to_string(),
+        None,
+        None,
+        Some(shard_id.clone()),
+    )
+    .unwrap();
+
+    let merge_block = nodes[2].create_block_unsafe(&[d2]).await.unwrap();
+
+    // Process merge block on node2 (self-validate, no finalization advance)
+    let status2 = nodes[2].process_block(merge_block.clone()).await.unwrap();
+    assert_eq!(status2, Either::Right(ValidBlock::Valid));
+
+    // Process the same merge block on node0 (HAS finalized block0)
+    // With the old code, this would fail with InvalidBondsCache because node0's
+    // finalization-bounded ancestor traversal would produce a different LCA.
+    let status0 = nodes[0].process_block(merge_block.clone()).await.unwrap();
+    assert_eq!(status0, Either::Right(ValidBlock::Valid));
+
+    // Process the same merge block on node1 (has NOT finalized block0)
+    let status1 = nodes[1].process_block(merge_block.clone()).await.unwrap();
+    assert_eq!(status1, Either::Right(ValidBlock::Valid));
 }

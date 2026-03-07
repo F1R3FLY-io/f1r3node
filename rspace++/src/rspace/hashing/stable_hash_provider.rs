@@ -1,7 +1,8 @@
+use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use bincode;
 use serde::Serialize;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::OnceLock;
 
 use super::blake2b256_hash::Blake2b256Hash;
 

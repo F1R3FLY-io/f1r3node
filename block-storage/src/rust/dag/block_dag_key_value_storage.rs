@@ -85,11 +85,7 @@ impl KeyValueDagRepresentation {
         if self.height_map.is_empty() {
             0
         } else {
-            self.height_map
-                .get_max()
-                .expect("height_map is empty")
-                .0
-                + 1
+            self.height_map.get_max().expect("height_map is empty").0 + 1
         }
     }
 

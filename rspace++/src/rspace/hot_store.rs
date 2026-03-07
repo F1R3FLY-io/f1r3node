@@ -824,10 +824,7 @@ where
 
     fn update_hot_store_state_metrics(state: &HotStoreState<C, P, A, K>) {
         static LAST_EMIT_AT_MS: AtomicU64 = AtomicU64::new(0);
-        if !Self::should_emit_metrics(
-            &LAST_EMIT_AT_MS,
-            Self::state_metrics_update_interval_ms(),
-        ) {
+        if !Self::should_emit_metrics(&LAST_EMIT_AT_MS, Self::state_metrics_update_interval_ms()) {
             return;
         }
 

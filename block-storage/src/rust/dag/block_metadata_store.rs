@@ -246,7 +246,11 @@ impl BlockMetadataStore {
     }
 
     pub fn self_justification_map(&self) -> imbl::HashMap<BlockHash, BlockHash> {
-        self.dag_state.read().unwrap().self_justification_map.clone()
+        self.dag_state
+            .read()
+            .unwrap()
+            .self_justification_map
+            .clone()
     }
 
     pub fn last_finalized_block(&self) -> BlockHash {
@@ -309,7 +313,9 @@ impl BlockMetadataStore {
             .insert(hash.clone(), block_info.block_num);
 
         if let Some(main_parent) = block_info.main_parent {
-            state_guard.main_parent_map.insert(hash.clone(), main_parent);
+            state_guard
+                .main_parent_map
+                .insert(hash.clone(), main_parent);
         }
 
         if let Some(self_justification) = block_info.self_justification {

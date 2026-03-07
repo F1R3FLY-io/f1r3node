@@ -1,6 +1,5 @@
 use std::marker::PhantomData;
-use std::sync::{Arc, Mutex};
-use std::sync::OnceLock;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -45,8 +44,7 @@ type ColdAction = (Blake2b256Hash, Option<PersistedData>);
 const CHECKPOINT_PARALLEL_ACTIONS_THRESHOLD_DEFAULT: usize = 256;
 const CHECKPOINT_PARALLEL_ACTIONS_THRESHOLD_ENV: &str =
     "F1R3_HISTORY_CHECKPOINT_PARALLEL_ACTIONS_THRESHOLD";
-const BLOCK_CREATOR_PHASE_SUBSTEP_PROFILE_ENV: &str =
-    "F1R3_BLOCK_CREATOR_PHASE_SUBSTEP_PROFILE";
+const BLOCK_CREATOR_PHASE_SUBSTEP_PROFILE_ENV: &str = "F1R3_BLOCK_CREATOR_PHASE_SUBSTEP_PROFILE";
 
 impl<C, P, A, K> HistoryRepositoryImpl<C, P, A, K>
 where

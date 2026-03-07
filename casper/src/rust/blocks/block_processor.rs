@@ -33,6 +33,7 @@ use models::rust::{
 };
 use prost::Message;
 use rspace_plus_plus::rspace::history::Either;
+use shared::rust::env;
 
 use crate::rust::block_status::BlockError;
 use crate::rust::engine::block_retriever::{AdmitHashReason, BlockRetriever};
@@ -92,46 +93,42 @@ unsafe extern "C" {
 
 fn malloc_trim_interval_blocks() -> u64 {
     *MALLOC_TRIM_INTERVAL_BLOCKS.get_or_init(|| {
-        std::env::var(MALLOC_TRIM_INTERVAL_BLOCKS_ENV)
-            .ok()
-            .and_then(|v| v.parse::<u64>().ok())
-            .unwrap_or(MALLOC_TRIM_INTERVAL_BLOCKS_DEFAULT)
+        env::var_or(
+            MALLOC_TRIM_INTERVAL_BLOCKS_ENV,
+            MALLOC_TRIM_INTERVAL_BLOCKS_DEFAULT,
+        )
     })
 }
 
 fn casper_buffer_max_approx_nodes() -> usize {
     *CASPER_BUFFER_MAX_APPROX_NODES_CFG.get_or_init(|| {
-        std::env::var(CASPER_BUFFER_MAX_APPROX_NODES_ENV)
-            .ok()
-            .and_then(|v| v.parse::<usize>().ok())
-            .unwrap_or(CASPER_BUFFER_MAX_APPROX_NODES)
+        env::var_or(
+            CASPER_BUFFER_MAX_APPROX_NODES_ENV,
+            CASPER_BUFFER_MAX_APPROX_NODES,
+        )
     })
 }
 
 fn casper_buffer_stale_ttl_ms() -> u64 {
-    *CASPER_BUFFER_STALE_TTL_MS_CFG.get_or_init(|| {
-        std::env::var(CASPER_BUFFER_STALE_TTL_MS_ENV)
-            .ok()
-            .and_then(|v| v.parse::<u64>().ok())
-            .unwrap_or(CASPER_BUFFER_STALE_TTL_MS)
-    })
+    *CASPER_BUFFER_STALE_TTL_MS_CFG
+        .get_or_init(|| env::var_or(CASPER_BUFFER_STALE_TTL_MS_ENV, CASPER_BUFFER_STALE_TTL_MS))
 }
 
 fn casper_buffer_max_prune_batch() -> usize {
     *CASPER_BUFFER_MAX_PRUNE_BATCH_CFG.get_or_init(|| {
-        std::env::var(CASPER_BUFFER_MAX_PRUNE_BATCH_ENV)
-            .ok()
-            .and_then(|v| v.parse::<usize>().ok())
-            .unwrap_or(CASPER_BUFFER_MAX_PRUNE_BATCH)
+        env::var_or(
+            CASPER_BUFFER_MAX_PRUNE_BATCH_ENV,
+            CASPER_BUFFER_MAX_PRUNE_BATCH,
+        )
     })
 }
 
 fn casper_buffer_prune_interval_ms() -> u64 {
     *CASPER_BUFFER_PRUNE_INTERVAL_MS_CFG.get_or_init(|| {
-        std::env::var(CASPER_BUFFER_PRUNE_INTERVAL_MS_ENV)
-            .ok()
-            .and_then(|v| v.parse::<u64>().ok())
-            .unwrap_or(CASPER_BUFFER_PRUNE_INTERVAL_MS)
+        env::var_or(
+            CASPER_BUFFER_PRUNE_INTERVAL_MS_ENV,
+            CASPER_BUFFER_PRUNE_INTERVAL_MS,
+        )
     })
 }
 
@@ -158,21 +155,21 @@ fn maybe_trim_allocator_after_block() {
 
 fn missing_dependency_attempts_max() -> u32 {
     *MISSING_DEPENDENCY_ATTEMPTS_MAX_CFG.get_or_init(|| {
-        std::env::var(MISSING_DEPENDENCY_ATTEMPTS_MAX_ENV)
-            .ok()
-            .and_then(|v| v.parse::<u32>().ok())
-            .filter(|v| *v > 0)
-            .unwrap_or(MISSING_DEPENDENCY_ATTEMPTS_MAX_DEFAULT)
+        env::var_or_filtered(
+            MISSING_DEPENDENCY_ATTEMPTS_MAX_ENV,
+            MISSING_DEPENDENCY_ATTEMPTS_MAX_DEFAULT,
+            |v: &u32| *v > 0,
+        )
     })
 }
 
 fn missing_dependency_quarantine_ms() -> u64 {
     *MISSING_DEPENDENCY_QUARANTINE_MS_CFG.get_or_init(|| {
-        std::env::var(MISSING_DEPENDENCY_QUARANTINE_MS_ENV)
-            .ok()
-            .and_then(|v| v.parse::<u64>().ok())
-            .filter(|v| *v > 0)
-            .unwrap_or(MISSING_DEPENDENCY_QUARANTINE_MS_DEFAULT)
+        env::var_or_filtered(
+            MISSING_DEPENDENCY_QUARANTINE_MS_ENV,
+            MISSING_DEPENDENCY_QUARANTINE_MS_DEFAULT,
+            |v: &u64| *v > 0,
+        )
     })
 }
 

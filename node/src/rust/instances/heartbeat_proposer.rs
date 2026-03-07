@@ -14,6 +14,7 @@ use casper::rust::validator_identity::ValidatorIdentity;
 use models::rust::block_hash::BlockHash;
 use models::rust::casper::pretty_printer::PrettyPrinter;
 use rand::Rng;
+use shared::rust::env;
 use tokio::sync::Notify;
 
 use casper::rust::ProposeFunction;
@@ -48,40 +49,40 @@ const HEARTBEAT_DEPLOY_FINALIZATION_GRACE_MS_ENV: &str =
 const DEFAULT_HEARTBEAT_DEPLOY_FINALIZATION_GRACE_MS: u128 = 25_000;
 
 fn heartbeat_frontier_chase_max_lag() -> i64 {
-    std::env::var(HEARTBEAT_FRONTIER_CHASE_MAX_LAG_ENV)
-        .ok()
-        .and_then(|value| value.parse::<i64>().ok())
-        .filter(|value| *value >= 0)
-        .unwrap_or(DEFAULT_HEARTBEAT_FRONTIER_CHASE_MAX_LAG)
+    env::var_or_filtered(
+        HEARTBEAT_FRONTIER_CHASE_MAX_LAG_ENV,
+        DEFAULT_HEARTBEAT_FRONTIER_CHASE_MAX_LAG,
+        |value: &i64| *value >= 0,
+    )
 }
 
 fn heartbeat_pending_deploy_max_lag() -> i64 {
-    std::env::var(HEARTBEAT_PENDING_DEPLOY_MAX_LAG_ENV)
-        .ok()
-        .and_then(|value| value.parse::<i64>().ok())
-        .filter(|value| *value >= 0)
-        .unwrap_or(DEFAULT_HEARTBEAT_PENDING_DEPLOY_MAX_LAG)
+    env::var_or_filtered(
+        HEARTBEAT_PENDING_DEPLOY_MAX_LAG_ENV,
+        DEFAULT_HEARTBEAT_PENDING_DEPLOY_MAX_LAG,
+        |value: &i64| *value >= 0,
+    )
 }
 
 fn heartbeat_self_propose_cooldown_ms() -> u128 {
-    std::env::var(HEARTBEAT_SELF_PROPOSE_COOLDOWN_MS_ENV)
-        .ok()
-        .and_then(|value| value.parse::<u128>().ok())
-        .unwrap_or(DEFAULT_HEARTBEAT_SELF_PROPOSE_COOLDOWN_MS)
+    env::var_or(
+        HEARTBEAT_SELF_PROPOSE_COOLDOWN_MS_ENV,
+        DEFAULT_HEARTBEAT_SELF_PROPOSE_COOLDOWN_MS,
+    )
 }
 
 fn heartbeat_stale_recovery_min_interval_ms() -> u128 {
-    std::env::var(HEARTBEAT_STALE_RECOVERY_MIN_INTERVAL_MS_ENV)
-        .ok()
-        .and_then(|value| value.parse::<u128>().ok())
-        .unwrap_or(DEFAULT_HEARTBEAT_STALE_RECOVERY_MIN_INTERVAL_MS)
+    env::var_or(
+        HEARTBEAT_STALE_RECOVERY_MIN_INTERVAL_MS_ENV,
+        DEFAULT_HEARTBEAT_STALE_RECOVERY_MIN_INTERVAL_MS,
+    )
 }
 
 fn heartbeat_deploy_finalization_grace_ms() -> u128 {
-    std::env::var(HEARTBEAT_DEPLOY_FINALIZATION_GRACE_MS_ENV)
-        .ok()
-        .and_then(|value| value.parse::<u128>().ok())
-        .unwrap_or(DEFAULT_HEARTBEAT_DEPLOY_FINALIZATION_GRACE_MS)
+    env::var_or(
+        HEARTBEAT_DEPLOY_FINALIZATION_GRACE_MS_ENV,
+        DEFAULT_HEARTBEAT_DEPLOY_FINALIZATION_GRACE_MS,
+    )
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -483,8 +484,8 @@ async fn check_lfb_and_propose(
         has_pending_deploys || has_new_parent_with_user_deploys;
     // When a peer parent with user deploys is observed, allow one frontier-follow step
     // while ahead (bounded by pending-deploy lag threshold) to unblock synchrony progress.
-    let allow_frontier_follow_while_ahead_for_deploy_parent = has_new_parent_with_user_deploys
-        && lfb_lag_blocks <= heartbeat_pending_deploy_max_lag();
+    let allow_frontier_follow_while_ahead_for_deploy_parent =
+        has_new_parent_with_user_deploys && lfb_lag_blocks <= heartbeat_pending_deploy_max_lag();
     let can_chase_frontier_while_ahead = lfb_lag_blocks <= effective_frontier_chase_cap
         && has_new_parents
         && (!self_proposed_too_recently || allow_cooldown_override_for_deploy_recovery);
@@ -781,7 +782,6 @@ fn inspect_parent_updates(
     let mut update = ParentUpdate::default();
 
     for (validator, current_hash) in snapshot.dag.latest_message_hashes().iter() {
-
         let known_hash_opt = if *validator == *validator_id {
             Some(&last_block_hash)
         } else {

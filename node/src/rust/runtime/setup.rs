@@ -37,6 +37,7 @@ use comm::rust::{
     rp::connect::ConnectionsCell, transport::transport_layer::TransportLayer,
 };
 
+use shared::rust::env;
 use shared::rust::shared::f1r3fly_events::F1r3flyEvents;
 
 use crate::rust::{
@@ -62,19 +63,19 @@ type ProposerQueueEntry = (
 );
 
 fn proposer_queue_max_pending() -> usize {
-    std::env::var(PROPOSER_QUEUE_MAX_PENDING_ENV)
-        .ok()
-        .and_then(|v| v.parse::<usize>().ok())
-        .filter(|v| *v > 0)
-        .unwrap_or(PROPOSER_QUEUE_MAX_PENDING_DEFAULT)
+    env::var_or_filtered(
+        PROPOSER_QUEUE_MAX_PENDING_ENV,
+        PROPOSER_QUEUE_MAX_PENDING_DEFAULT,
+        |v: &usize| *v > 0,
+    )
 }
 
 fn block_processor_queue_max_pending() -> usize {
-    std::env::var(BLOCK_PROCESSOR_QUEUE_MAX_PENDING_ENV)
-        .ok()
-        .and_then(|v| v.parse::<usize>().ok())
-        .filter(|v| *v > 0)
-        .unwrap_or(BLOCK_PROCESSOR_QUEUE_MAX_PENDING_DEFAULT)
+    env::var_or_filtered(
+        BLOCK_PROCESSOR_QUEUE_MAX_PENDING_ENV,
+        BLOCK_PROCESSOR_QUEUE_MAX_PENDING_DEFAULT,
+        |v: &usize| *v > 0,
+    )
 }
 
 pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'static>(

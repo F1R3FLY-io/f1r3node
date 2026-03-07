@@ -31,8 +31,8 @@ use prost::bytes;
 use rholang::rust::interpreter::util::vault_address::VaultAddress;
 
 use crate::rust::test_utils::util::rholang::resources::{
-    mk_test_rnode_store_manager_shared, generate_scope_id,
-    get_shared_lmdb_path, mergeable_store_from_dyn, block_dag_storage_from_dyn,
+    block_dag_storage_from_dyn, generate_scope_id, get_shared_lmdb_path, mergeable_store_from_dyn,
+    mk_test_rnode_store_manager_shared,
 };
 
 type GenesisParameters = (
@@ -326,7 +326,7 @@ impl GenesisBuilder {
         );
 
         let (validator_key_pairs, genesis_vaults, mut genesis_parameters) = parameters.clone();
-        
+
         // If vaults were provided via with_vaults(), use them instead of default vaults
         if let Some(ref vaults) = self.vaults {
             genesis_parameters.vaults = vaults.clone();

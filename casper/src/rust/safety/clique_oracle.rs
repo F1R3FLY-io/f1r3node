@@ -8,6 +8,7 @@ use crate::rust::util::clique::Clique;
 use block_storage::rust::dag::block_dag_key_value_storage::KeyValueDagRepresentation;
 use models::rust::{block_hash::BlockHash, validator::Validator};
 
+use shared::rust::env;
 use shared::rust::store::key_value_store::KvStoreError;
 
 pub struct CliqueOracle;
@@ -42,18 +43,18 @@ impl CliqueOracle {
     }
 
     fn cooperative_yield_check_interval() -> usize {
-        std::env::var(COOPERATIVE_YIELD_CHECK_INTERVAL_ENV)
-            .ok()
-            .and_then(|v| v.parse::<usize>().ok())
-            .filter(|v| *v > 0)
-            .unwrap_or(COOPERATIVE_YIELD_CHECK_INTERVAL)
+        env::var_or_filtered(
+            COOPERATIVE_YIELD_CHECK_INTERVAL_ENV,
+            COOPERATIVE_YIELD_CHECK_INTERVAL,
+            |v: &usize| *v > 0,
+        )
     }
 
     fn cooperative_yield_timeslice_ms() -> u64 {
-        std::env::var(COOPERATIVE_YIELD_TIMESLICE_MS_ENV)
-            .ok()
-            .and_then(|v| v.parse::<u64>().ok())
-            .unwrap_or(COOPERATIVE_YIELD_TIMESLICE_MS)
+        env::var_or(
+            COOPERATIVE_YIELD_TIMESLICE_MS_ENV,
+            COOPERATIVE_YIELD_TIMESLICE_MS,
+        )
     }
 
     /// weight map of main parent (fallbacks to message itself if no parents)
