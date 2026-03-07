@@ -133,7 +133,9 @@ async fn test_case(
         terms: Vec<DeployTestInfo>,
         pre_state: Blake2b256Hash,
     ) -> (HashableSet<DeployIndex>, Blake2b256Hash) {
-        runtime.reset(&pre_state);
+        runtime
+            .reset(&pre_state)
+            .expect("Failed to reset runtime to pre-state");
 
         let futures = terms
             .iter()

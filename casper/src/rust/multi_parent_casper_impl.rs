@@ -150,24 +150,28 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
         let latest_msgs_hashes: HashMap<Validator, BlockHash> = dag
             .latest_message_hashes()
             .iter()
-            .map(|entry| (entry.key().clone(), entry.value().clone()))
+            .map(|(validator, hash)| (validator.clone(), hash.clone()))
             .collect();
         // Filter out invalid latest messages (e.g., from slashed validators)
         let invalid_latest_msgs =
             dag.invalid_latest_messages_from_hashes(latest_msgs_hashes.clone())?;
         let valid_latest_msgs: HashMap<Validator, BlockHash> = latest_msgs_hashes
             .iter()
-            .filter(|entry| !invalid_latest_msgs.contains_key(entry.0))
-            .map(|(validator, hash)| (validator.clone(), hash.clone()))
+            .filter(|(validator, _)| !invalid_latest_msgs.contains_key(*validator))
+            .map(|(validator, hash): (&Validator, &BlockHash)| {
+                (validator.clone(), hash.clone())
+            })
             .collect();
         let valid_latest_metas: HashMap<Validator, models::rust::block_metadata::BlockMetadata> =
             valid_latest_msgs
                 .iter()
-                .filter_map(|(validator, hash)| {
-                    dag.lookup_unsafe(hash)
-                        .ok()
-                        .map(|meta| (validator.clone(), meta))
-                })
+                .filter_map(
+                    |(validator, hash): (&Validator, &BlockHash)| {
+                        dag.lookup_unsafe(hash)
+                            .ok()
+                            .map(|meta| (validator.clone(), meta))
+                    },
+                )
                 .collect();
         // Deduplicate: multiple validators may have the same latest block (e.g., genesis)
         let unique_parent_hashes: HashSet<BlockHash> =
@@ -335,10 +339,15 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
             valid_latest_metas
                 .iter()
                 .filter(|(validator, _)| bonded_validators.contains_key(*validator))
-                .map(|(validator, block_metadata)| Justification {
-                    validator: validator.clone(),
-                    latest_block_hash: block_metadata.block_hash.clone(),
-                })
+                .map(
+                    |(validator, block_metadata): (
+                        &Validator,
+                        &models::rust::block_metadata::BlockMetadata,
+                    )| Justification {
+                        validator: validator.clone(),
+                        latest_block_hash: block_metadata.block_hash.clone(),
+                    },
+                )
                 .collect::<dashmap::DashSet<_>>()
         };
 
@@ -348,9 +357,12 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
 
         let max_seq_nums = valid_latest_metas
             .iter()
-            .map(|(validator, block_metadata)| {
-                (validator.clone(), block_metadata.sequence_number as u64)
-            })
+            .map(
+                |(validator, block_metadata): (
+                    &Validator,
+                    &models::rust::block_metadata::BlockMetadata,
+                )| (validator.clone(), block_metadata.sequence_number as u64),
+            )
             .collect::<dashmap::DashMap<_, _>>();
 
         let deploys_in_scope = {
@@ -505,7 +517,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
         let latest_message_hashes: HashMap<Validator, BlockHash> = dag
             .latest_message_hashes()
             .iter()
-            .map(|entry| (entry.key().clone(), entry.value().clone()))
+            .map(|(validator, hash)| (validator.clone(), hash.clone()))
             .collect();
         let invalid_latest_messages =
             dag.invalid_latest_messages_from_hashes(latest_message_hashes.clone())?;
@@ -513,8 +525,10 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
         // Filter out invalid validators
         let valid_latest: HashMap<Validator, BlockHash> = latest_message_hashes
             .iter()
-            .filter(|entry| !invalid_latest_messages.contains_key(entry.0))
-            .map(|(validator, hash)| (validator.clone(), hash.clone()))
+            .filter(|(validator, _)| !invalid_latest_messages.contains_key(*validator))
+            .map(|(validator, hash): (&Validator, &BlockHash)| {
+                (validator.clone(), hash.clone())
+            })
             .collect();
 
         if valid_latest.is_empty() {
@@ -1621,12 +1635,8 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasperImpl<T> {
             .set(dag.dag_set.len() as f64);
         metrics::gauge!(DAG_CHILDREN_INDEX_SIZE_METRIC, "source" => CASPER_METRICS_SOURCE)
             .set(dag.child_map.len() as f64);
-        metrics::gauge!(DAG_HEIGHTS_SIZE_METRIC, "source" => CASPER_METRICS_SOURCE).set(
-            dag.height_map
-                .read()
-                .map(|hm| hm.len() as f64)
-                .unwrap_or_default(),
-        );
+        metrics::gauge!(DAG_HEIGHTS_SIZE_METRIC, "source" => CASPER_METRICS_SOURCE)
+            .set(dag.height_map.len() as f64);
         metrics::gauge!(DAG_FINALIZED_BLOCKS_SIZE_METRIC, "source" => CASPER_METRICS_SOURCE)
             .set(dag.finalized_blocks_set.len() as f64);
     }

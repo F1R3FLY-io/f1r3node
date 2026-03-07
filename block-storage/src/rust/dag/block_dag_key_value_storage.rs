@@ -1,9 +1,8 @@
 // See block-storage/src/main/scala/coop/rchain/blockstorage/dag/BlockDagKeyValueStorage.scala
 
-use dashmap::{DashMap, DashSet};
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
+    collections::{BTreeSet, HashMap, HashSet},
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc, RwLock,
@@ -31,16 +30,16 @@ pub type DeployId = shared::rust::ByteString;
 
 #[derive(Clone)]
 pub struct KeyValueDagRepresentation {
-    pub dag_set: Arc<DashSet<BlockHash>>,
-    pub latest_messages_map: Arc<DashMap<Validator, BlockHash>>,
-    pub child_map: Arc<DashMap<BlockHash, Arc<DashSet<BlockHash>>>>,
-    pub height_map: Arc<RwLock<BTreeMap<i64, DashSet<BlockHash>>>>,
-    pub block_number_map: Arc<DashMap<BlockHash, i64>>,
-    pub main_parent_map: Arc<DashMap<BlockHash, BlockHash>>,
-    pub self_justification_map: Arc<DashMap<BlockHash, BlockHash>>,
-    pub invalid_blocks_set: Arc<DashSet<BlockMetadata>>,
+    pub dag_set: imbl::HashSet<BlockHash>,
+    pub latest_messages_map: imbl::HashMap<Validator, BlockHash>,
+    pub child_map: imbl::HashMap<BlockHash, imbl::HashSet<BlockHash>>,
+    pub height_map: imbl::OrdMap<i64, imbl::HashSet<BlockHash>>,
+    pub block_number_map: imbl::HashMap<BlockHash, i64>,
+    pub main_parent_map: imbl::HashMap<BlockHash, BlockHash>,
+    pub self_justification_map: imbl::HashMap<BlockHash, BlockHash>,
+    pub invalid_blocks_set: imbl::HashSet<BlockMetadata>,
     pub last_finalized_block_hash: BlockHash,
-    pub finalized_blocks_set: Arc<DashSet<BlockHash>>,
+    pub finalized_blocks_set: imbl::HashSet<BlockHash>,
     pub block_metadata_index: Arc<RwLock<BlockMetadataStore>>,
     pub deploy_index: Arc<RwLock<KeyValueTypedStoreImpl<DeployId, BlockHashSerde>>>,
 }
@@ -59,21 +58,19 @@ impl KeyValueDagRepresentation {
         block_hash.len() == block_hash::LENGTH && self.dag_set.contains(block_hash)
     }
 
-    pub fn children(&self, block_hash: &BlockHash) -> Option<Arc<DashSet<BlockHash>>> {
-        self.child_map.get(block_hash).map(|v| v.value().clone())
+    pub fn children(&self, block_hash: &BlockHash) -> Option<imbl::HashSet<BlockHash>> {
+        self.child_map.get(block_hash).cloned()
     }
 
     pub fn latest_message_hash(&self, validator: &Validator) -> Option<BlockHash> {
-        self.latest_messages_map
-            .get(validator)
-            .map(|v| v.value().clone())
+        self.latest_messages_map.get(validator).cloned()
     }
 
-    pub fn latest_message_hashes(&self) -> Arc<DashMap<Validator, BlockHash>> {
+    pub fn latest_message_hashes(&self) -> imbl::HashMap<Validator, BlockHash> {
         self.latest_messages_map.clone()
     }
 
-    pub fn invalid_blocks(&self) -> Arc<DashSet<BlockMetadata>> {
+    pub fn invalid_blocks(&self) -> imbl::HashSet<BlockMetadata> {
         self.invalid_blocks_set.clone()
     }
 
@@ -85,12 +82,11 @@ impl KeyValueDagRepresentation {
     // Do they need to be part of the DAG current state or they can be moved to DAG storage directly?
 
     pub fn get_max_height(&self) -> i64 {
-        let height_map_guard = self.height_map.read().unwrap();
-        if height_map_guard.is_empty() {
+        if self.height_map.is_empty() {
             0
         } else {
-            height_map_guard
-                .last_key_value()
+            self.height_map
+                .get_max()
                 .expect("height_map is empty")
                 .0
                 + 1
@@ -102,7 +98,7 @@ impl KeyValueDagRepresentation {
     }
 
     pub fn block_number(&self, block_hash: &BlockHash) -> Option<i64> {
-        self.block_number_map.get(block_hash).map(|v| *v.value())
+        self.block_number_map.get(block_hash).copied()
     }
 
     pub fn block_number_unsafe(&self, block_hash: &BlockHash) -> Result<i64, KvStoreError> {
@@ -115,9 +111,7 @@ impl KeyValueDagRepresentation {
     }
 
     pub fn main_parent(&self, block_hash: &BlockHash) -> Option<BlockHash> {
-        self.main_parent_map
-            .get(block_hash)
-            .map(|v| v.value().clone())
+        self.main_parent_map.get(block_hash).cloned()
     }
 
     pub fn is_finalized(&self, block_hash: &BlockHash) -> bool {
@@ -169,10 +163,8 @@ impl KeyValueDagRepresentation {
         if start_number >= 0 && start_number <= end_number {
             Ok(self
                 .height_map
-                .read()
-                .unwrap()
                 .range(start_number..=end_number)
-                .map(|(_, hashes)| hashes.iter().map(|hash_ref| hash_ref.clone()).collect())
+                .map(|(_, hashes)| hashes.iter().cloned().collect())
                 .collect())
         } else {
             Err(KvStoreError::InvalidArgument(format!(
@@ -246,11 +238,9 @@ impl KeyValueDagRepresentation {
         let latest_messages = self.latest_message_hashes();
 
         let mut result = HashMap::new();
-        for pair in latest_messages.iter() {
-            let validator = pair.key().clone();
-            let hash = pair.value();
-            let metadata = self.lookup_unsafe(&hash)?;
-            result.insert(validator, metadata);
+        for (validator, hash) in latest_messages.iter() {
+            let metadata = self.lookup_unsafe(hash)?;
+            result.insert(validator.clone(), metadata);
         }
 
         Ok(result)
@@ -316,11 +306,7 @@ impl KeyValueDagRepresentation {
         &self,
         block_hash: &BlockHash,
     ) -> Result<Option<BlockHash>, KvStoreError> {
-        if let Some(hash) = self
-            .self_justification_map
-            .get(block_hash)
-            .map(|v| v.value().clone())
-        {
+        if let Some(hash) = self.self_justification_map.get(block_hash).cloned() {
             return Ok(Some(hash));
         }
 
@@ -570,7 +556,7 @@ impl BlockDagKeyValueStorage {
     /// Used when lock is already held by the caller.
     /// Public to allow IndexedBlockDagStorage to use it.
     pub fn get_representation_internal(&self) -> KeyValueDagRepresentation {
-        let latest_messages = self
+        let latest_messages: imbl::HashMap<Validator, BlockHash> = self
             .latest_messages_index
             .to_map()
             .expect("Failed to convert latest_messages_index to map")
@@ -578,7 +564,7 @@ impl BlockDagKeyValueStorage {
             .map(|(k, v)| (k.into(), v.into()))
             .collect();
 
-        let invalid_blocks = self
+        let invalid_blocks: imbl::HashSet<BlockMetadata> = self
             .invalid_blocks_index
             .to_map()
             .expect("Failed to convert invalid_blocks_index to map")
@@ -587,24 +573,33 @@ impl BlockDagKeyValueStorage {
             .collect();
 
         let block_metadata_index_guard = self.block_metadata_index.read().unwrap();
-        let dag_set = block_metadata_index_guard.dag_set();
-        let child_map = block_metadata_index_guard.child_map();
-        let height_map = block_metadata_index_guard.height_map();
-        let block_number_map = block_metadata_index_guard.block_number_map();
-        let main_parent_map = block_metadata_index_guard.main_parent_map();
-        let self_justification_map = block_metadata_index_guard.self_justification_map();
-        let last_finalized_block = block_metadata_index_guard.last_finalized_block();
-        let finalized_blocks = block_metadata_index_guard.finalized_block_set();
+        let dag_state_guard = block_metadata_index_guard.dag_state().read().unwrap();
+        let dag_set = dag_state_guard.dag_set.clone();
+        let child_map = dag_state_guard.child_map.clone();
+        let height_map = dag_state_guard.height_map.clone();
+        let block_number_map = dag_state_guard.block_number_map.clone();
+        let main_parent_map = dag_state_guard.main_parent_map.clone();
+        let self_justification_map = dag_state_guard.self_justification_map.clone();
+        let last_finalized_block = dag_state_guard
+            .last_finalized_block
+            .as_ref()
+            .expect("DagState does not contain lastFinalizedBlock.")
+            .0
+            .clone();
+        let finalized_blocks = dag_state_guard.finalized_block_set.clone();
+
+        drop(dag_state_guard);
+        drop(block_metadata_index_guard);
 
         KeyValueDagRepresentation {
             dag_set,
-            latest_messages_map: Arc::new(latest_messages),
+            latest_messages_map: latest_messages,
             child_map,
             height_map,
             block_number_map,
             main_parent_map,
             self_justification_map,
-            invalid_blocks_set: Arc::new(invalid_blocks),
+            invalid_blocks_set: invalid_blocks,
             last_finalized_block_hash: last_finalized_block,
             finalized_blocks_set: finalized_blocks,
             block_metadata_index: self.block_metadata_index.clone(),

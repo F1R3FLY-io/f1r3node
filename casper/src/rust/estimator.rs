@@ -47,7 +47,7 @@ impl Estimator {
         let arc_latest_message_hashes = dag.latest_message_hashes();
         let latest_message_hashes: HashMap<Validator, BlockHash> = arc_latest_message_hashes
             .iter()
-            .map(|entry| (entry.key().clone(), entry.value().clone()))
+            .map(|(validator, hash)| (validator.clone(), hash.clone()))
             .collect();
         tracing::debug!(target: "f1r3fly.casper.estimator.tips0", "latest-message-hashes");
         self.tips_with_latest_messages(dag, genesis, latest_message_hashes)

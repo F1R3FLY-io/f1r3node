@@ -423,14 +423,14 @@ where
 /// This is not needed when onChain transfer history is implemented and deployed to new network in the future.
 pub fn transfer_unforgeable() -> Par {
     use casper::rust::genesis::contracts::standard_deploys::{
-        to_public, REV_VAULT_PK, REV_VAULT_TIMESTAMP,
+        to_public, SYSTEM_VAULT_PK, SYSTEM_VAULT_TIMESTAMP,
     };
     use casper::rust::util::rholang::tools::Tools;
     use models::rhoapi::{g_unforgeable::UnfInstance, GPrivate, GUnforgeable};
 
-    let system_vault_pub_key = to_public(REV_VAULT_PK);
+    let system_vault_pub_key = to_public(SYSTEM_VAULT_PK);
     let mut seed_for_system_vault =
-        Tools::unforgeable_name_rng(&system_vault_pub_key, REV_VAULT_TIMESTAMP);
+        Tools::unforgeable_name_rng(&system_vault_pub_key, SYSTEM_VAULT_TIMESTAMP);
 
     // the 11th unforgeable name (drop 10, take the next one)
     for _ in 0..10 {

@@ -375,25 +375,23 @@ pub mod test_helpers {
         pub fn create_empty_snapshot() -> CasperSnapshot {
             use block_storage::rust::dag::block_dag_key_value_storage::KeyValueDagRepresentation;
             use block_storage::rust::dag::block_metadata_store::BlockMetadataStore;
-            use dashmap::{DashMap, DashSet};
             use rspace_plus_plus::rspace::shared::in_mem_key_value_store::InMemoryKeyValueStore;
             use shared::rust::store::key_value_typed_store_impl::KeyValueTypedStoreImpl;
-            use std::collections::BTreeMap;
             use std::sync::{Arc, RwLock};
 
             let block_metadata_store =
                 KeyValueTypedStoreImpl::new(Arc::new(InMemoryKeyValueStore::new()));
             let dag = KeyValueDagRepresentation {
-                dag_set: Arc::new(DashSet::new()),
-                latest_messages_map: Arc::new(DashMap::new()),
-                child_map: Arc::new(DashMap::new()),
-                height_map: Arc::new(RwLock::new(BTreeMap::new())),
-                block_number_map: Arc::new(DashMap::new()),
-                main_parent_map: Arc::new(DashMap::new()),
-                self_justification_map: Arc::new(DashMap::new()),
-                invalid_blocks_set: Arc::new(DashSet::new()),
+                dag_set: imbl::HashSet::new(),
+                latest_messages_map: imbl::HashMap::new(),
+                child_map: imbl::HashMap::new(),
+                height_map: imbl::OrdMap::new(),
+                block_number_map: imbl::HashMap::new(),
+                main_parent_map: imbl::HashMap::new(),
+                self_justification_map: imbl::HashMap::new(),
+                invalid_blocks_set: imbl::HashSet::new(),
                 last_finalized_block_hash: BlockHash::new(),
-                finalized_blocks_set: Arc::new(DashSet::new()),
+                finalized_blocks_set: imbl::HashSet::new(),
                 block_metadata_index: Arc::new(RwLock::new(BlockMetadataStore::new(
                     block_metadata_store,
                 ))),

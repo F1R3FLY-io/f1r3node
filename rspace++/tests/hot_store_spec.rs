@@ -708,7 +708,16 @@ proptest! {
 
   #[test]
   fn snapshot_should_create_a_copy_of_the_cache(_cache in  any::<String>()) {
-      let cache: HotStoreState<String, Pattern, String, StringsCaptor> = HotStoreState::random_state();
+      let channels = vec!["ch1".to_string(), "ch2".to_string()];
+      let channel = channels[0].clone();
+      let continuation = WaitingContinuation::<Pattern, StringsCaptor>::default();
+      let cache = HotStoreState {
+          continuations: DashMap::from_iter(vec![(channels.clone(), vec![continuation.clone()])]),
+          installed_continuations: DashMap::from_iter(vec![(channels.clone(), continuation)]),
+          data: DashMap::from_iter(vec![(channel.clone(), vec![Datum::<String>::default()])]),
+          joins: DashMap::from_iter(vec![(channel.clone(), vec![channels.clone()])]),
+          installed_joins: DashMap::from_iter(vec![(channel, vec![channels.clone()])]),
+      };
       let (_, _, hot_store) = fixture_with_cache(cache.clone());
 
       let snapshot = hot_store.snapshot();

@@ -231,7 +231,7 @@ impl GenesisBuilder {
                 // Initial validator vaults contain 0 Rev
                 VaultAddress::from_public_key(pk)
                     .map(|vault_address| Vault {
-                        rev_address: vault_address,
+                        vault_address,
                         initial_balance: 0,
                     })
                     .expect("GenesisBuilder: Failed to create rev address")
@@ -273,7 +273,7 @@ impl GenesisBuilder {
 
     fn predefined_vault(pubkey: &PublicKey) -> Vault {
         Vault {
-            rev_address: VaultAddress::from_public_key(pubkey)
+            vault_address: VaultAddress::from_public_key(pubkey)
                 .expect("GenesisBuilder: Failed to create rev address"),
             initial_balance: 9000000,
         }
@@ -444,4 +444,3 @@ impl GenesisContext {
             .collect()
     }
 }
-

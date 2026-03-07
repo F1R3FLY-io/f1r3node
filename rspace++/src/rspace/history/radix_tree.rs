@@ -1,7 +1,7 @@
 // See rspace/src/main/scala/coop/rchain/rspace/history/RadixTree.scala
 
 use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use dashmap::DashMap;
 use itertools::Itertools;
@@ -68,6 +68,20 @@ const HEAD_SIZE: usize = 2;
 // Read cache bound to prevent unbounded memory growth during long reads.
 const READ_CACHE_MAX_ITEMS: usize = 4_096;
 const READ_CACHE_TRIM_TARGET: usize = 2_048;
+const BLOCK_CREATOR_PHASE_SUBSTEP_PROFILE_ENV: &str =
+    "F1R3_BLOCK_CREATOR_PHASE_SUBSTEP_PROFILE";
+
+fn block_creator_phase_substep_profile_enabled() -> bool {
+    static VALUE: OnceLock<bool> = OnceLock::new();
+    *VALUE.get_or_init(|| {
+        std::env::var(BLOCK_CREATOR_PHASE_SUBSTEP_PROFILE_ENV)
+            .map(|value| {
+                let normalized = value.trim().to_ascii_lowercase();
+                normalized == "1" || normalized == "true" || normalized == "yes"
+            })
+            .unwrap_or(false)
+    })
+}
 
 /** Serialization [[Node]] to [[ByteVector]]
  */
@@ -1442,12 +1456,7 @@ impl RadixTreeImpl {
         curr_node: &Node,
         actions: Vec<HistoryAction>,
     ) -> Result<Option<Node>, RadixTreeError> {
-        let mem_profile_enabled = std::env::var("F1R3_BLOCK_CREATOR_PHASE_SUBSTEP_PROFILE")
-            .map(|v| {
-                let normalized = v.trim().to_ascii_lowercase();
-                normalized == "1" || normalized == "true" || normalized == "yes"
-            })
-            .unwrap_or(false);
+        let mem_profile_enabled = block_creator_phase_substep_profile_enabled();
         let read_rss_kb = || -> Option<u64> {
             let status = std::fs::read_to_string("/proc/self/status").ok()?;
             let line = status.lines().find(|l| l.starts_with("VmRSS:"))?;

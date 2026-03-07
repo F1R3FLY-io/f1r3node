@@ -89,3 +89,4 @@ async fn failing_result_collector_spec_complete_within_timeout() {
 
     assert!(result.has_finished, "Test should complete within timeout");
 }
+

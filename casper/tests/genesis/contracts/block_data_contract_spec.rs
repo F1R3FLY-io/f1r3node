@@ -19,11 +19,12 @@ async fn block_data_contract_spec() {
 
     let spec = RhoSpec::new(
         compiled,
-        vec![],                  // Seq.empty
-        Duration::from_secs(30), // 30.seconds (custom timeout)
+        vec![],                      // Seq.empty
+        Duration::from_secs(30),     // 30.seconds (custom timeout)
     );
 
     spec.run_tests()
         .await
         .expect("BlockDataContractSpec tests failed");
 }
+

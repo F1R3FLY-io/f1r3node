@@ -148,7 +148,9 @@ impl RhoReporterCasper {
         block_data: &BlockData,
         invalid_blocks: HashMap<models::rust::block_hash::BlockHash, models::rust::validator::Validator>,
     ) -> Result<ReplayResult, String> {
-        runtime.reset(start_hash);
+        runtime
+            .reset(start_hash)
+            .map_err(|error| format!("Failed to reset reporting runtime: {}", error))?;
 
         runtime.set_block_data(block_data.clone()).await;
         runtime.set_invalid_blocks(invalid_blocks).await;
@@ -266,8 +268,11 @@ impl ReportingRuntime {
     }
 
     /// Reset the runtime to a specific state hash
-    pub fn reset(&mut self, root: &Blake2b256Hash) {
-        self.runtime.reset(root);
+    pub fn reset(
+        &mut self,
+        root: &Blake2b256Hash,
+    ) -> Result<(), rholang::rust::interpreter::errors::InterpreterError> {
+        self.runtime.reset(root)
     }
 
     /// Set block data for the runtime

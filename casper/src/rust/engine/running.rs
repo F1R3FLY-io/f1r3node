@@ -102,8 +102,7 @@ pub async fn update_fork_choice_tips_if_stuck<T: TransportLayer + Send + Sync>(
 
         // Check if any latest message is recent
         let mut has_recent_latest_message = false;
-        for entry in latest_messages.iter() {
-            let block_hash = entry.value();
+        for (_, block_hash) in latest_messages.iter() {
             if let Ok(Some(block)) = casper.block_store().get(block_hash) {
                 let block_timestamp = block.header.timestamp;
                 if (now - block_timestamp) < delay_threshold.as_millis() as i64 {
@@ -494,7 +493,7 @@ impl<T: TransportLayer + Send + Sync> Running<T> {
         let latest_messages = self.casper.block_dag().await?.latest_message_hashes();
         let tips: Vec<BlockHash> = latest_messages
             .iter()
-            .map(|entry| entry.value().clone())
+            .map(|(_, hash)| hash.clone())
             .collect::<HashSet<_>>()
             .into_iter()
             .collect();

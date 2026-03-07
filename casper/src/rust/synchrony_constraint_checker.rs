@@ -635,9 +635,7 @@ fn calculate_seen_senders_since(
     // Fallback path: when a validator has no entry in justifications (common for
     // sparse/legacy justifications), still count it as seen if its latest message
     // advanced beyond the last proposed block height.
-    for entry in latest_messages.iter() {
-        let validator = entry.key();
-        let latest_block_hash = entry.value();
+    for (validator, latest_block_hash) in latest_messages.iter() {
         if validator == excluded_validator {
             continue;
         }

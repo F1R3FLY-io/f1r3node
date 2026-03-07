@@ -524,8 +524,8 @@ impl DeployService for DeployGrpcServiceV1Impl {
                 }
                 Err(e) => {
                     let not_found = e
-                        .to_string()
-                        .starts_with("Couldn't find block containing deploy with id:");
+                        .downcast_ref::<casper::rust::api::block_api::DeployNotFoundError>()
+                        .is_some();
                     if !not_found || attempt >= FIND_DEPLOY_MAX_ATTEMPTS {
                         error!("Deploy service method error find_deploy");
                         return Ok(tonic::Response::new(FindDeployResponse {

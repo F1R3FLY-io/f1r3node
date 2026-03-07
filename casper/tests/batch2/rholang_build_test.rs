@@ -89,7 +89,7 @@ async fn our_build_system_should_execute_the_genesis_block() {
             .expect("Failed to create RevAddress from public key");
 
         vaults.push(Vault {
-            rev_address,
+            vault_address: rev_address,
             initial_balance: i as u64,
         });
     }

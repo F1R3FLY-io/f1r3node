@@ -10,11 +10,15 @@ async fn registry_spec() {
     let test_object = CompiledRholangSource::load_source("RegistryTest.rho")
         .expect("Failed to load RegistryTest.rho");
 
-    let compiled =
-        CompiledRholangSource::new(test_object, HashMap::new(), "RegistryTest.rho".to_string())
-            .expect("Failed to compile RegistryTest.rho");
+    let compiled = CompiledRholangSource::new(
+        test_object,
+        HashMap::new(),
+        "RegistryTest.rho".to_string(),
+    )
+    .expect("Failed to compile RegistryTest.rho");
 
     let spec = RhoSpec::new(compiled, vec![], GENESIS_TEST_TIMEOUT);
 
     spec.run_tests().await.expect("RegistrySpec tests failed");
 }
+

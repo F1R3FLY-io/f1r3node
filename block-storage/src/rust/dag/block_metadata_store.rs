@@ -1,8 +1,7 @@
 // See block-storage/src/main/scala/coop/rchain/blockstorage/dag/BlockMetadataStore.scala
 
-use dashmap::{DashMap, DashSet};
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{HashMap, HashSet},
     sync::{Arc, RwLock},
 };
 
@@ -18,21 +17,23 @@ pub struct BlockMetadataStore {
     dag_state: Arc<RwLock<DagState>>,
 }
 
-struct DagState {
-    dag_set: Arc<DashSet<BlockHash>>,
-    child_map: Arc<DashMap<BlockHash, Arc<DashSet<BlockHash>>>>,
-    height_map: Arc<RwLock<BTreeMap<i64, DashSet<BlockHash>>>>,
+/// In-memory DAG state using persistent immutable collections (imbl).
+/// Clone is O(1) via structural sharing, enabling race-free snapshots.
+pub(crate) struct DagState {
+    pub(crate) dag_set: imbl::HashSet<BlockHash>,
+    pub(crate) child_map: imbl::HashMap<BlockHash, imbl::HashSet<BlockHash>>,
+    pub(crate) height_map: imbl::OrdMap<i64, imbl::HashSet<BlockHash>>,
     // Lightweight per-block indices used by propose/finality hot paths to avoid
     // repeated metadata deserialization from LMDB.
-    block_number_map: Arc<DashMap<BlockHash, i64>>,
-    main_parent_map: Arc<DashMap<BlockHash, BlockHash>>,
-    self_justification_map: Arc<DashMap<BlockHash, BlockHash>>,
+    pub(crate) block_number_map: imbl::HashMap<BlockHash, i64>,
+    pub(crate) main_parent_map: imbl::HashMap<BlockHash, BlockHash>,
+    pub(crate) self_justification_map: imbl::HashMap<BlockHash, BlockHash>,
     // In general - at least genesis should be LFB.
     // But dagstate can be empty, as it is initialized before genesis is inserted.
     // Also lots of tests do not have genesis properly initialised, so fixing all this is pain.
     // So this is Option.
-    last_finalized_block: Option<(BlockHash, i64)>,
-    finalized_block_set: Arc<DashSet<BlockHash>>,
+    pub(crate) last_finalized_block: Option<(BlockHash, i64)>,
+    pub(crate) finalized_block_set: imbl::HashSet<BlockHash>,
 }
 
 // Keep the in-memory finalized set bounded; finalized truth is persisted in block metadata.
@@ -42,21 +43,21 @@ const FINALIZED_BLOCK_CACHE_RETAIN: usize = 25_000;
 impl DagState {
     fn new() -> Self {
         Self {
-            dag_set: Arc::new(DashSet::new()),
-            child_map: Arc::new(DashMap::new()),
-            height_map: Arc::new(RwLock::new(BTreeMap::new())),
-            block_number_map: Arc::new(DashMap::new()),
-            main_parent_map: Arc::new(DashMap::new()),
-            self_justification_map: Arc::new(DashMap::new()),
+            dag_set: imbl::HashSet::new(),
+            child_map: imbl::HashMap::new(),
+            height_map: imbl::OrdMap::new(),
+            block_number_map: imbl::HashMap::new(),
+            main_parent_map: imbl::HashMap::new(),
+            self_justification_map: imbl::HashMap::new(),
             last_finalized_block: Some((BlockHash::new(), 0)),
-            finalized_block_set: Arc::new(DashSet::new()),
+            finalized_block_set: imbl::HashSet::new(),
         }
     }
 }
 
 struct BlockInfo {
     hash: BlockHash,
-    parents: Arc<DashSet<BlockHash>>,
+    parents: Vec<BlockHash>,
     main_parent: Option<BlockHash>,
     self_justification: Option<BlockHash>,
     block_num: i64,
@@ -77,7 +78,7 @@ impl BlockMetadataStore {
             .finalized_block_set
             .iter()
             .take(to_remove)
-            .map(|h| h.clone())
+            .cloned()
             .collect();
         for hash in evict {
             state.finalized_block_set.remove(&hash);
@@ -112,7 +113,6 @@ impl BlockMetadataStore {
     }
 
     fn block_metadata_to_info(hash: &BlockHash, block_metadata: &BlockMetadata) -> BlockInfo {
-        let parents = Arc::new(block_metadata.parents.iter().cloned().collect());
         let main_parent = block_metadata.parents.first().cloned();
         let self_justification = block_metadata
             .justifications
@@ -122,7 +122,7 @@ impl BlockMetadataStore {
 
         BlockInfo {
             hash: hash.clone(),
-            parents,
+            parents: block_metadata.parents.clone(),
             main_parent,
             self_justification,
             block_num: block_metadata.block_number,
@@ -176,24 +176,22 @@ impl BlockMetadataStore {
             .collect();
 
         // Add all blocks to finalized set
-        let mut current_dag_state = self.dag_state.write().unwrap();
+        let mut dag_state_guard = self.dag_state.write().unwrap();
         for hash in indirectly {
-            current_dag_state.finalized_block_set.insert(hash);
+            dag_state_guard.finalized_block_set.insert(hash);
         }
-        current_dag_state
-            .finalized_block_set
-            .insert(directly.clone());
+        dag_state_guard.finalized_block_set.insert(directly.clone());
 
         // update lastFinalizedBlock only when current one is lower
-        if current_dag_state.last_finalized_block.is_none()
-            || current_dag_state.last_finalized_block.as_ref().unwrap().1
+        if dag_state_guard.last_finalized_block.is_none()
+            || dag_state_guard.last_finalized_block.as_ref().unwrap().1
                 <= new_meta_for_df.block_number
         {
-            current_dag_state.last_finalized_block =
+            dag_state_guard.last_finalized_block =
                 Some((directly.clone(), new_meta_for_df.block_number));
         }
-        Self::prune_finalized_cache_if_needed(&mut current_dag_state);
-        drop(current_dag_state);
+        Self::prune_finalized_cache_if_needed(&mut dag_state_guard);
+        drop(dag_state_guard);
 
         // persist new values all at once
         let mut new_values = Vec::with_capacity(1 + new_metas_for_if.len());
@@ -217,9 +215,13 @@ impl BlockMetadataStore {
         })
     }
 
-    // DAG state operations
+    // DAG state operations — all return O(1) clones via imbl structural sharing
 
-    pub fn dag_set(&self) -> Arc<DashSet<BlockHash>> {
+    pub(crate) fn dag_state(&self) -> &Arc<RwLock<DagState>> {
+        &self.dag_state
+    }
+
+    pub fn dag_set(&self) -> imbl::HashSet<BlockHash> {
         self.dag_state.read().unwrap().dag_set.clone()
     }
 
@@ -227,23 +229,23 @@ impl BlockMetadataStore {
         self.dag_state.read().unwrap().dag_set.contains(hash)
     }
 
-    pub fn child_map(&self) -> Arc<DashMap<BlockHash, Arc<DashSet<BlockHash>>>> {
+    pub fn child_map(&self) -> imbl::HashMap<BlockHash, imbl::HashSet<BlockHash>> {
         self.dag_state.read().unwrap().child_map.clone()
     }
 
-    pub fn height_map(&self) -> Arc<RwLock<BTreeMap<i64, DashSet<BlockHash>>>> {
+    pub fn height_map(&self) -> imbl::OrdMap<i64, imbl::HashSet<BlockHash>> {
         self.dag_state.read().unwrap().height_map.clone()
     }
 
-    pub fn block_number_map(&self) -> Arc<DashMap<BlockHash, i64>> {
+    pub fn block_number_map(&self) -> imbl::HashMap<BlockHash, i64> {
         self.dag_state.read().unwrap().block_number_map.clone()
     }
 
-    pub fn main_parent_map(&self) -> Arc<DashMap<BlockHash, BlockHash>> {
+    pub fn main_parent_map(&self) -> imbl::HashMap<BlockHash, BlockHash> {
         self.dag_state.read().unwrap().main_parent_map.clone()
     }
 
-    pub fn self_justification_map(&self) -> Arc<DashMap<BlockHash, BlockHash>> {
+    pub fn self_justification_map(&self) -> imbl::HashMap<BlockHash, BlockHash> {
         self.dag_state.read().unwrap().self_justification_map.clone()
     }
 
@@ -258,7 +260,7 @@ impl BlockMetadataStore {
             .clone()
     }
 
-    pub fn finalized_block_set(&self) -> Arc<DashSet<BlockHash>> {
+    pub fn finalized_block_set(&self) -> imbl::HashSet<BlockHash> {
         self.dag_state.read().unwrap().finalized_block_set.clone()
     }
 
@@ -274,29 +276,34 @@ impl BlockMetadataStore {
 
         // Update children relation map
         // Create entry for current block (with empty children set initially)
-        state_guard
-            .child_map
-            .entry(hash.clone())
-            .or_insert_with(|| Arc::new(DashSet::new()));
+        if !state_guard.child_map.contains_key(hash) {
+            state_guard
+                .child_map
+                .insert(hash.clone(), imbl::HashSet::new());
+        }
 
         // Add current block as child to all its parents
         for parent in block_info.parents.iter() {
-            let children_set = state_guard
+            let mut children = state_guard
                 .child_map
-                .entry(parent.clone())
-                .or_insert_with(|| Arc::new(DashSet::new()))
-                .clone();
-            children_set.insert(hash.clone());
+                .get(parent)
+                .cloned()
+                .unwrap_or_else(imbl::HashSet::new);
+            children.insert(hash.clone());
+            state_guard.child_map.insert(parent.clone(), children);
         }
 
         // Update height map
         if !block_info.is_invalid {
-            let mut height_map_guard = state_guard.height_map.write().unwrap();
-            height_map_guard
-                .entry(block_info.block_num)
-                .or_insert_with(|| DashSet::new())
-                .insert(hash.clone());
+            let mut hashes = state_guard
+                .height_map
+                .get(&block_info.block_num)
+                .cloned()
+                .unwrap_or_else(imbl::HashSet::new);
+            hashes.insert(hash.clone());
+            state_guard.height_map.insert(block_info.block_num, hashes);
         }
+
         state_guard
             .block_number_map
             .insert(hash.clone(), block_info.block_num);
@@ -329,20 +336,21 @@ impl BlockMetadataStore {
 
     fn validate_dag_state(dag_state: Arc<RwLock<DagState>>) -> Arc<RwLock<DagState>> {
         let dag_state_guard = dag_state.read().unwrap();
-        let height_map_guard = dag_state_guard.height_map.read().unwrap();
+        let height_map = &dag_state_guard.height_map;
         // Validate height map index (block numbers) are in sequence without holes
-        let (min, max) = if !height_map_guard.is_empty() {
+        let (min, max) = if !height_map.is_empty() {
             (
-                *height_map_guard.first_key_value().unwrap().0,
-                *height_map_guard.last_key_value().unwrap().0 + 1,
+                height_map.get_min().unwrap().0,
+                height_map.get_max().unwrap().0 + 1,
             )
         } else {
             (0, 0)
         };
         assert!(
-            max - min == height_map_guard.len() as i64,
+            max - min == height_map.len() as i64,
             "DAG store height map has numbers not in sequence."
         );
+        drop(dag_state_guard);
         dag_state.clone()
     }
 

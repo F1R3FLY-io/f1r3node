@@ -185,7 +185,7 @@ pub trait RhoRuntime: HasCost {
      * @param root the target state hash to reset
      * @return
      */
-    fn reset(&mut self, root: &Blake2b256Hash) -> ();
+    fn reset(&mut self, root: &Blake2b256Hash) -> Result<(), InterpreterError>;
 
     /**
      * Consume the result in the rspace.
@@ -407,25 +407,12 @@ impl RhoRuntime for RhoRuntimeImpl {
         checkpoint
     }
 
-    fn reset(&mut self, root: &Blake2b256Hash) -> () {
-        // retaining graceful behavior; detailed error handling now lives in FFI reset returning codes
-        let mut space_lock = match self.reducer.space.try_lock() {
-            Ok(lock) => lock,
-            Err(e) => {
-                println!("ERROR: failed to lock reducer.space in reset: {:?}", e);
-                return ();
-            }
-        };
-
-        match space_lock.reset(root) {
-            Ok(_) => (),
-            Err(e) => {
-                println!("ERROR: reset failed with error: {:?}", e);
-                println!("Error details: {}", e);
-                println!("Failed root: {:?}", root);
-                return ();
-            }
-        }
+    fn reset(&mut self, root: &Blake2b256Hash) -> Result<(), InterpreterError> {
+        let mut space_lock = self.reducer.space.try_lock().map_err(|_| {
+            InterpreterError::ReduceError("RhoRuntime reset: failed to lock reducer.space".into())
+        })?;
+        space_lock.reset(root)?;
+        Ok(())
     }
 
     fn consume_result(

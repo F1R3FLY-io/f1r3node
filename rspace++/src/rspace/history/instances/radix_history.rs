@@ -2,7 +2,7 @@
 // scala
 
 use std::collections::HashSet;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use shared::rust::ByteVector;
 use shared::rust::store::key_value_store::KeyValueStore;
@@ -18,6 +18,21 @@ pub struct RadixHistory {
     root_node: Node,
     imple: RadixTreeImpl,
     store: Arc<dyn KeyValueStore>,
+}
+
+const BLOCK_CREATOR_PHASE_SUBSTEP_PROFILE_ENV: &str =
+    "F1R3_BLOCK_CREATOR_PHASE_SUBSTEP_PROFILE";
+
+fn block_creator_phase_substep_profile_enabled() -> bool {
+    static VALUE: OnceLock<bool> = OnceLock::new();
+    *VALUE.get_or_init(|| {
+        std::env::var(BLOCK_CREATOR_PHASE_SUBSTEP_PROFILE_ENV)
+            .map(|value| {
+                let normalized = value.trim().to_ascii_lowercase();
+                normalized == "1" || normalized == "true" || normalized == "yes"
+            })
+            .unwrap_or(false)
+    })
 }
 
 impl RadixHistory {
@@ -57,12 +72,7 @@ impl History for RadixHistory {
     }
 
     fn process(&self, actions: Vec<HistoryAction>) -> Result<Box<dyn History>, HistoryError> {
-        let mem_profile_enabled = std::env::var("F1R3_BLOCK_CREATOR_PHASE_SUBSTEP_PROFILE")
-            .map(|v| {
-                let normalized = v.trim().to_ascii_lowercase();
-                normalized == "1" || normalized == "true" || normalized == "yes"
-            })
-            .unwrap_or(false);
+        let mem_profile_enabled = block_creator_phase_substep_profile_enabled();
         let read_rss_kb = || -> Option<u64> {
             let status = std::fs::read_to_string("/proc/self/status").ok()?;
             let line = status.lines().find(|l| l.starts_with("VmRSS:"))?;

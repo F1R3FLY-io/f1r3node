@@ -7,8 +7,8 @@ use std::collections::HashMap;
 
 #[tokio::test]
 async fn stack_spec() {
-    let test_object =
-        CompiledRholangSource::load_source("StackTest.rho").expect("Failed to load StackTest.rho");
+    let test_object = CompiledRholangSource::load_source("StackTest.rho")
+        .expect("Failed to load StackTest.rho");
 
     let compiled = CompiledRholangSource::new(
         test_object,

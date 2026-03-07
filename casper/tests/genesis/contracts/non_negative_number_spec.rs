@@ -23,3 +23,4 @@ async fn non_negative_number_spec() {
         .await
         .expect("NonNegativeNumberSpec tests failed");
 }
+

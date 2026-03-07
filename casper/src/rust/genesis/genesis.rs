@@ -5,8 +5,10 @@ use models::{
     rhoapi::{g_unforgeable::UnfInstance, GPrivate, GUnforgeable, Par},
     rust::{
         block::state_hash::StateHash,
-        casper::protocol::casper_message::{
-            BlockMessage, Body, Bond, DeployData, F1r3flyState, ProcessedDeploy,
+        casper::{
+            protocol::casper_message::{
+                BlockMessage, Body, Bond, DeployData, F1r3flyState, ProcessedDeploy,
+            },
         },
     },
 };
@@ -72,7 +74,7 @@ impl Genesis {
 
                 let batch_vaults = chunk.to_vec();
 
-                let deploy = standard_deploys::rev_generator(
+                let deploy = standard_deploys::vaults_generator(
                     batch_vaults,
                     supply,
                     deploy_timestamp,
@@ -92,8 +94,8 @@ impl Genesis {
         let non_negative_number = standard_deploys::non_negative_number(shard_id);
         let make_mint = standard_deploys::make_mint(shard_id);
         let auth_key = standard_deploys::auth_key(shard_id);
-        let rev_vault = standard_deploys::rev_vault(shard_id);
-        let multi_sig_rev_vault = standard_deploys::multi_sig_rev_vault(shard_id);
+        let system_vault = standard_deploys::system_vault(shard_id);
+        let multi_sig_system_vault = standard_deploys::multi_sig_system_vault(shard_id);
         let stack = standard_deploys::stack(shard_id);
         let pos_generator = standard_deploys::pos_generator(&pos_params, shard_id);
 
@@ -104,8 +106,8 @@ impl Genesis {
         all_deploys.push(non_negative_number);
         all_deploys.push(make_mint);
         all_deploys.push(auth_key);
-        all_deploys.push(rev_vault);
-        all_deploys.push(multi_sig_rev_vault);
+        all_deploys.push(system_vault);
+        all_deploys.push(multi_sig_system_vault);
         all_deploys.push(stack);
         all_deploys.extend(vault_deploys);
         all_deploys.push(pos_generator);

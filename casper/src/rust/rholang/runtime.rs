@@ -104,7 +104,7 @@ impl RuntimeOps {
      * fixed channels in the state.
      */
     pub async fn empty_state_hash(&mut self) -> Result<StateHash, CasperError> {
-        self.runtime.reset(&RadixHistory::empty_root_node_hash());
+        self.runtime.reset(&RadixHistory::empty_root_node_hash())?;
 
         bootstrap_registry(&self.runtime).await;
         let checkpoint = self.runtime.create_checkpoint();
@@ -337,7 +337,7 @@ impl RuntimeOps {
         tracing::info!(target: "f1r3fly.casper.play-deploys", "play-deploys-started");
         log_mem_step("start");
         self.runtime
-            .reset(&Blake2b256Hash::from_bytes_prost(start_hash));
+            .reset(&Blake2b256Hash::from_bytes_prost(start_hash))?;
         log_mem_step("after_reset");
 
         let mut res = Vec::with_capacity(terms.len());
@@ -375,7 +375,7 @@ impl RuntimeOps {
         // Using tracing events for async - Span[F].withMarks("play-deploys") from Scala
         tracing::info!(target: "f1r3fly.casper.play-deploys-genesis", "play-deploys-genesis-started");
         self.runtime
-            .reset(&Blake2b256Hash::from_bytes_prost(start_hash));
+            .reset(&Blake2b256Hash::from_bytes_prost(start_hash))?;
 
         let mut res = Vec::with_capacity(terms.len());
         for deploy in terms {
@@ -688,7 +688,7 @@ impl RuntimeOps {
         system_deploy: &mut S,
     ) -> Result<SystemDeployResult<S::Result>, CasperError> {
         self.runtime
-            .reset(&Blake2b256Hash::from_bytes_prost(&state_hash));
+            .reset(&Blake2b256Hash::from_bytes_prost(&state_hash))?;
 
         let (event_log, result, mergeable_channels) =
             self.play_system_deploy_internal(system_deploy).await?;
@@ -983,7 +983,7 @@ impl RuntimeOps {
         };
         log_mem_step("start");
 
-        self.runtime.reset(&Blake2b256Hash::from_bytes_prost(hash));
+        self.runtime.reset(&Blake2b256Hash::from_bytes_prost(hash))?;
         log_mem_step("after_reset");
         self.runtime.cost().set(Cost::unsafe_max());
         log_mem_step("after_set_cost");
@@ -1013,7 +1013,7 @@ impl RuntimeOps {
 
         let _ = self.runtime.take_event_log();
         log_mem_step("after_take_event_log");
-        self.runtime.reset(&Blake2b256Hash::from_bytes_prost(hash));
+        self.runtime.reset(&Blake2b256Hash::from_bytes_prost(hash))?;
         log_mem_step("after_post_query_reset");
 
         result
@@ -1086,7 +1086,7 @@ impl RuntimeOps {
         deploy: &Signed<DeployData>,
         name: &Par,
     ) -> Result<Vec<Par>, CasperError> {
-        self.runtime.reset(&Blake2b256Hash::from_bytes_prost(start));
+        self.runtime.reset(&Blake2b256Hash::from_bytes_prost(start))?;
 
         let eval_res = self.evaluate(deploy).await?;
         if !eval_res.errors.is_empty() {

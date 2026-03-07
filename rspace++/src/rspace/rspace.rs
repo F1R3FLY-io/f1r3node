@@ -18,7 +18,7 @@ use shared::rust::store::key_value_store::KeyValueStore;
 use tracing::{Level, event};
 
 use super::checkpoint::SoftCheckpoint;
-use super::errors::{HistoryError, HistoryRepositoryError, RSpaceError, RootError};
+use super::errors::{HistoryRepositoryError, RSpaceError};
 use super::hashing::blake2b256_hash::Blake2b256Hash;
 use super::history::history_reader::HistoryReader;
 use super::history::instances::radix_history::RadixHistory;
@@ -162,22 +162,7 @@ where
 
     fn reset(&mut self, root: &Blake2b256Hash) -> Result<(), RSpaceError> {
         let _span = tracing::info_span!(target: "f1r3fly.rspace", RESET_SPAN).entered();
-        let mut effective_root = root.clone();
-        let next_history = match self.history_repository.reset(root) {
-            Ok(next_history) => next_history,
-            Err(HistoryError::RootError(RootError::UnknownRootError(_))) => {
-                let fallback_root = self.history_repository.root();
-                tracing::warn!(
-                    target: "f1r3fly.rspace",
-                    requested_root = ?root,
-                    fallback_root = ?fallback_root,
-                    "reset requested unknown root; falling back to current repository root"
-                );
-                effective_root = fallback_root;
-                self.history_repository.reset(&effective_root)?
-            }
-            Err(err) => return Err(err.into()),
-        };
+        let next_history = self.history_repository.reset(root)?;
         self.history_repository = Arc::new(next_history);
 
         self.event_log = Vec::new();
@@ -185,7 +170,7 @@ where
 
         let history_reader = self
             .history_repository
-            .get_history_reader(&effective_root)?;
+            .get_history_reader(root)?;
         self.create_new_hot_store(history_reader);
         self.restore_installs();
 

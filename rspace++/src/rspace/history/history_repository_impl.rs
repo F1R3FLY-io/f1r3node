@@ -45,6 +45,8 @@ type ColdAction = (Blake2b256Hash, Option<PersistedData>);
 const CHECKPOINT_PARALLEL_ACTIONS_THRESHOLD_DEFAULT: usize = 256;
 const CHECKPOINT_PARALLEL_ACTIONS_THRESHOLD_ENV: &str =
     "F1R3_HISTORY_CHECKPOINT_PARALLEL_ACTIONS_THRESHOLD";
+const BLOCK_CREATOR_PHASE_SUBSTEP_PROFILE_ENV: &str =
+    "F1R3_BLOCK_CREATOR_PHASE_SUBSTEP_PROFILE";
 
 impl<C, P, A, K> HistoryRepositoryImpl<C, P, A, K>
 where
@@ -79,6 +81,18 @@ where
                 .ok()
                 .and_then(|v| v.parse::<usize>().ok())
                 .unwrap_or(CHECKPOINT_PARALLEL_ACTIONS_THRESHOLD_DEFAULT)
+        })
+    }
+
+    fn block_creator_phase_substep_profile_enabled() -> bool {
+        static VALUE: OnceLock<bool> = OnceLock::new();
+        *VALUE.get_or_init(|| {
+            std::env::var(BLOCK_CREATOR_PHASE_SUBSTEP_PROFILE_ENV)
+                .map(|value| {
+                    let normalized = value.trim().to_ascii_lowercase();
+                    normalized == "1" || normalized == "true" || normalized == "yes"
+                })
+                .unwrap_or(false)
         })
     }
 
@@ -139,12 +153,7 @@ where
         &self,
         action: &HotStoreTrieAction<C, P, A, K>,
     ) -> (ColdAction, HistoryAction) {
-        let mem_profile_enabled = std::env::var("F1R3_BLOCK_CREATOR_PHASE_SUBSTEP_PROFILE")
-            .map(|v| {
-                let normalized = v.trim().to_ascii_lowercase();
-                normalized == "1" || normalized == "true" || normalized == "yes"
-            })
-            .unwrap_or(false);
+        let mem_profile_enabled = Self::block_creator_phase_substep_profile_enabled();
         let action_kind = match action {
             HotStoreTrieAction::TrieInsertAction(TrieInsertAction::TrieInsertProduce(_)) => {
                 "insert_produce"
@@ -345,12 +354,7 @@ where
         &self,
         hot_store_action: HotStoreAction<C, P, A, K>,
     ) -> HotStoreTrieAction<C, P, A, K> {
-        let mem_profile_enabled = std::env::var("F1R3_BLOCK_CREATOR_PHASE_SUBSTEP_PROFILE")
-            .map(|v| {
-                let normalized = v.trim().to_ascii_lowercase();
-                normalized == "1" || normalized == "true" || normalized == "yes"
-            })
-            .unwrap_or(false);
+        let mem_profile_enabled = Self::block_creator_phase_substep_profile_enabled();
         let action_kind = match &hot_store_action {
             HotStoreAction::Insert(InsertData(_)) => "insert_data",
             HotStoreAction::Insert(InsertContinuations(_)) => "insert_continuations",
@@ -547,12 +551,7 @@ where
         &self,
         actions: Vec<HotStoreAction<C, P, A, K>>,
     ) -> Box<dyn HistoryRepository<C, P, A, K> + Send + Sync + 'static> {
-        let mem_profile_enabled = std::env::var("F1R3_BLOCK_CREATOR_PHASE_SUBSTEP_PROFILE")
-            .map(|v| {
-                let normalized = v.trim().to_ascii_lowercase();
-                normalized == "1" || normalized == "true" || normalized == "yes"
-            })
-            .unwrap_or(false);
+        let mem_profile_enabled = Self::block_creator_phase_substep_profile_enabled();
         let read_rss_kb = || -> Option<u64> {
             let status = std::fs::read_to_string("/proc/self/status").ok()?;
             let line = status.lines().find(|l| l.starts_with("VmRSS:"))?;
@@ -618,12 +617,7 @@ where
         &self,
         trie_actions: Vec<HotStoreTrieAction<C, P, A, K>>,
     ) -> Box<dyn HistoryRepository<C, P, A, K> + Send + Sync + 'static> {
-        let mem_profile_enabled = std::env::var("F1R3_BLOCK_CREATOR_PHASE_SUBSTEP_PROFILE")
-            .map(|v| {
-                let normalized = v.trim().to_ascii_lowercase();
-                normalized == "1" || normalized == "true" || normalized == "yes"
-            })
-            .unwrap_or(false);
+        let mem_profile_enabled = Self::block_creator_phase_substep_profile_enabled();
         let read_rss_kb = || -> Option<u64> {
             let status = std::fs::read_to_string("/proc/self/status").ok()?;
             let line = status.lines().find(|l| l.starts_with("VmRSS:"))?;

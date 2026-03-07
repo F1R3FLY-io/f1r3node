@@ -7,8 +7,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use dashmap::DashMap;
 use dashmap::mapref::entry::Entry;
+#[cfg(test)]
 use proptest::prelude::*;
+#[cfg(test)]
 use rand::{Rng, thread_rng};
+use tracing::warn;
 
 use crate::rspace::history::history_reader::HistoryReaderBase;
 use crate::rspace::hot_store_action::{
@@ -83,6 +86,7 @@ where
 }
 
 // This impl is needed for hot_store_spec.rs
+#[cfg(test)]
 impl<C, P, A, K> HotStoreState<C, P, A, K>
 where
     C: Eq + Hash + Debug + Arbitrary + Default + Clone,
@@ -279,7 +283,7 @@ where
         let removed_index = if is_installed { index - 1 } else { index };
 
         let result = if removing_installed {
-            println!("WARNING: Attempted to remove an installed continuation");
+            warn!("Attempted to remove an installed continuation");
             None
         } else {
             match state.continuations.entry(channels.to_vec()) {
@@ -287,7 +291,7 @@ where
                     let len = occupied.get().len();
                     let out_of_bounds = removed_index < 0 || removed_index as usize >= len;
                     if out_of_bounds {
-                        println!("WARNING: Index {index} out of bounds when removing continuation");
+                        warn!(index, "Index out of bounds when removing continuation");
                         None
                     } else {
                         occupied.get_mut().remove(removed_index as usize);
@@ -299,7 +303,7 @@ where
                     let len = from_history_store.len();
                     let out_of_bounds = removed_index < 0 || removed_index as usize >= len;
                     if out_of_bounds {
-                        println!("WARNING: Index {index} out of bounds when removing continuation");
+                        warn!(index, "Index out of bounds when removing continuation");
                         vacant.insert(from_history_store);
                         None
                     } else {
@@ -376,7 +380,7 @@ where
             Entry::Occupied(mut occupied) => {
                 let out_of_bounds = index < 0 || index as usize >= occupied.get().len();
                 if out_of_bounds {
-                    println!("WARNING: Index {index} out of bounds when removing datum");
+                    warn!(index, "Index out of bounds when removing datum");
                     None
                 } else {
                     occupied.get_mut().remove(index as usize);
@@ -387,7 +391,7 @@ where
                 let mut from_history_store = self.get_data_from_history_store(channel);
                 let out_of_bounds = index < 0 || index as usize >= from_history_store.len();
                 if out_of_bounds {
-                    println!("WARNING: Index {index} out of bounds when removing datum");
+                    warn!(index, "Index out of bounds when removing datum");
                     vacant.insert(from_history_store);
                     None
                 } else {
@@ -530,7 +534,7 @@ where
                     if let Some(idx) = occupied.get().iter().position(|x| x.as_slice() == join) {
                         occupied.get_mut().remove(idx);
                     } else {
-                        println!("WARNING: Join not found when removing join");
+                        warn!("Join not found when removing join");
                     }
                     Some(())
                 }
@@ -542,7 +546,7 @@ where
                     {
                         joins_in_history_store.remove(idx);
                     } else {
-                        println!("WARNING: Join not found when removing join");
+                        warn!("Join not found when removing join");
                     }
                     vacant.insert(joins_in_history_store);
                     Some(())

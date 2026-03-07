@@ -747,7 +747,7 @@ impl RuntimeManager {
     pub async fn get_data(&self, hash: StateHash, channel: &Par) -> Result<Vec<Par>, CasperError> {
         let mut runtime = self.spawn_runtime().await;
 
-        runtime.reset(&Blake2b256Hash::from_bytes_prost(&hash));
+        runtime.reset(&Blake2b256Hash::from_bytes_prost(&hash))?;
 
         let runtime_ops = RuntimeOps::new(runtime);
         let computed = runtime_ops.get_data_par(channel);
@@ -761,7 +761,7 @@ impl RuntimeManager {
     ) -> Result<Vec<(Vec<BindPattern>, Par)>, CasperError> {
         let mut runtime = self.spawn_runtime().await;
 
-        runtime.reset(&Blake2b256Hash::from_bytes_prost(&hash));
+        runtime.reset(&Blake2b256Hash::from_bytes_prost(&hash))?;
 
         let runtime_ops = RuntimeOps::new(runtime);
         let computed = runtime_ops.get_continuation_par(channels);

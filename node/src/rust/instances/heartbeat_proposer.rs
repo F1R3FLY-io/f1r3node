@@ -397,10 +397,10 @@ async fn check_lfb_and_propose(
         .dag
         .latest_message_hashes()
         .iter()
-        .filter_map(|entry| {
+        .filter_map(|(_, block_hash)| {
             casper
                 .block_store()
-                .get(entry.value())
+                .get(block_hash)
                 .ok()
                 .flatten()
                 .map(|block| block.header.timestamp as u128)
@@ -780,9 +780,7 @@ fn inspect_parent_updates(
 
     let mut update = ParentUpdate::default();
 
-    for entry in snapshot.dag.latest_message_hashes().iter() {
-        let validator = entry.key();
-        let current_hash = entry.value();
+    for (validator, current_hash) in snapshot.dag.latest_message_hashes().iter() {
 
         let known_hash_opt = if *validator == *validator_id {
             Some(&last_block_hash)

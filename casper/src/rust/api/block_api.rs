@@ -53,6 +53,12 @@ pub struct BlockAPI;
 
 pub type ApiErr<T> = eyre::Result<T>;
 
+#[derive(Debug, thiserror::Error)]
+#[error("Couldn't find block containing deploy with id: {deploy_id}")]
+pub struct DeployNotFoundError {
+    pub deploy_id: String,
+}
+
 // Look at shared/src/main/scala/coop/rchain/shared/Base16.scala
 // Scala Base16.decode pads odd-length hex strings with leading zero
 fn pad_hex_string(hash: &str) -> String {
@@ -1062,10 +1068,10 @@ impl BlockAPI {
                     {
                         Ok(fallback_block_info)
                     } else {
-                        Err(eyre::eyre!(
-                            "Couldn't find block containing deploy with id: {}",
-                            PrettyPrinter::build_string_no_limit(deploy_id)
-                        ))
+                        Err(DeployNotFoundError {
+                            deploy_id: PrettyPrinter::build_string_no_limit(deploy_id),
+                        }
+                        .into())
                     }
                 }
             }

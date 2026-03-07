@@ -257,7 +257,7 @@ async fn exec_replay_system_deploy<S: SystemDeployTrait>(
     replay_runtime_ops
         .runtime_ops
         .runtime
-        .reset(&Blake2b256Hash::from_bytes_prost(state_hash));
+        .reset(&Blake2b256Hash::from_bytes_prost(state_hash))?;
 
     let (value, eval_res) = replay_runtime_ops
         .replay_system_deploy_internal(system_deploy, &expected_failure)

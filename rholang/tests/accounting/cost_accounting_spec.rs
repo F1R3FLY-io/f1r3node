@@ -136,7 +136,9 @@ async fn evaluate_and_replay(initial_phlo: Cost, term: String) -> (EvaluateResul
         let root = checkpoint.root;
         let log = checkpoint.log;
 
-        replay_runtime.reset(&root);
+        replay_runtime
+            .reset(&root)
+            .expect("Failed to reset replay runtime");
         replay_runtime.rig(log).expect("Rig failed");
 
         let result = replay_runtime

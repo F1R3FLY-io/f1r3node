@@ -23,3 +23,4 @@ async fn registry_ops_spec() {
         .await
         .expect("RegistryOpsSpec tests failed");
 }
+

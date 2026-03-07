@@ -30,7 +30,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, LazyLock, RwLock};
 use std::task::{Context, Poll};
 
 use crate::rust::interpreter::accounting::costs::{
@@ -68,6 +68,22 @@ const STACK_RED_ZONE: usize = 1024 * 1024; // 1 MB
 
 /// Size of each new stack segment allocated when the red zone is reached.
 const STACK_GROW_SIZE: usize = 2 * 1024 * 1024; // 2 MB
+
+fn parse_env_flag(value: &str) -> bool {
+    value == "1" || value.eq_ignore_ascii_case("true")
+}
+
+fn env_flag(name: &str) -> bool {
+    std::env::var(name)
+        .ok()
+        .map(|value| parse_env_flag(value.trim()))
+        .unwrap_or(false)
+}
+
+static REDUCE_INNER_PROFILE_ENABLED: LazyLock<bool> =
+    LazyLock::new(|| env_flag("F1R3_REDUCE_INNER_PROFILE"));
+static REDUCE_OP_PROFILE_ENABLED: LazyLock<bool> =
+    LazyLock::new(|| env_flag("F1R3_REDUCE_OP_PROFILE"));
 
 /// A Future wrapper that dynamically grows the thread stack during polling.
 ///
@@ -152,10 +168,7 @@ impl DebruijnInterpreter {
         env: &Env<Par>,
         rand: Blake2b512Random,
     ) -> Result<(), InterpreterError> {
-        let mem_profile_enabled = std::env::var("F1R3_REDUCE_INNER_PROFILE")
-            .ok()
-            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-            .unwrap_or(false);
+        let mem_profile_enabled = *REDUCE_INNER_PROFILE_ENABLED;
         let read_vm_rss_kb = || -> Option<usize> {
             let status = std::fs::read_to_string("/proc/self/status").ok()?;
             status
@@ -394,10 +407,7 @@ impl DebruijnInterpreter {
         data: ListParWithRandom,
         persistent: bool,
     ) -> Result<DispatchType, InterpreterError> {
-        let op_mem_profile_enabled = std::env::var("F1R3_REDUCE_OP_PROFILE")
-            .ok()
-            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-            .unwrap_or(false);
+        let op_mem_profile_enabled = *REDUCE_OP_PROFILE_ENABLED;
         let read_vm_rss_kb = || -> Option<usize> {
             let status = std::fs::read_to_string("/proc/self/status").ok()?;
             status
@@ -518,10 +528,7 @@ impl DebruijnInterpreter {
         persistent: bool,
         peek: bool,
     ) -> Result<DispatchType, InterpreterError> {
-        let op_mem_profile_enabled = std::env::var("F1R3_REDUCE_OP_PROFILE")
-            .ok()
-            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-            .unwrap_or(false);
+        let op_mem_profile_enabled = *REDUCE_OP_PROFILE_ENABLED;
         let read_vm_rss_kb = || -> Option<usize> {
             let status = std::fs::read_to_string("/proc/self/status").ok()?;
             status
@@ -878,10 +885,7 @@ impl DebruijnInterpreter {
         is_replay: bool,
         previous_output: Vec<Par>,
     ) -> Result<DispatchType, InterpreterError> {
-        let op_mem_profile_enabled = std::env::var("F1R3_REDUCE_OP_PROFILE")
-            .ok()
-            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-            .unwrap_or(false);
+        let op_mem_profile_enabled = *REDUCE_OP_PROFILE_ENABLED;
         let read_vm_rss_kb = || -> Option<usize> {
             let status = std::fs::read_to_string("/proc/self/status").ok()?;
             status
@@ -1091,10 +1095,7 @@ impl DebruijnInterpreter {
         env: &Env<Par>,
         rand: Blake2b512Random,
     ) -> Result<(), InterpreterError> {
-        let op_mem_profile_enabled = std::env::var("F1R3_REDUCE_OP_PROFILE")
-            .ok()
-            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-            .unwrap_or(false);
+        let op_mem_profile_enabled = *REDUCE_OP_PROFILE_ENABLED;
         let read_vm_rss_kb = || -> Option<usize> {
             let status = std::fs::read_to_string("/proc/self/status").ok()?;
             status
@@ -1184,10 +1185,7 @@ impl DebruijnInterpreter {
         env: &Env<Par>,
         rand: Blake2b512Random,
     ) -> Result<(), InterpreterError> {
-        let op_mem_profile_enabled = std::env::var("F1R3_REDUCE_OP_PROFILE")
-            .ok()
-            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-            .unwrap_or(false);
+        let op_mem_profile_enabled = *REDUCE_OP_PROFILE_ENABLED;
         let body_locally_free = receive
             .body
             .as_ref()
@@ -1423,10 +1421,7 @@ impl DebruijnInterpreter {
         env: Env<Par>,
         mut rand: Blake2b512Random,
     ) -> Result<(), InterpreterError> {
-        let op_mem_profile_enabled = std::env::var("F1R3_REDUCE_OP_PROFILE")
-            .ok()
-            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-            .unwrap_or(false);
+        let op_mem_profile_enabled = *REDUCE_OP_PROFILE_ENABLED;
         let read_vm_rss_kb = || -> Option<usize> {
             let status = std::fs::read_to_string("/proc/self/status").ok()?;
             status

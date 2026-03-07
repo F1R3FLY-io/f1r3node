@@ -119,7 +119,7 @@ impl ReplayRuntimeOps {
         let reset_start = Instant::now();
         self.runtime_ops
             .runtime
-            .reset(&Blake2b256Hash::from_bytes_prost(start_hash));
+            .reset(&Blake2b256Hash::from_bytes_prost(start_hash))?;
         metrics::histogram!(BLOCK_REPLAY_PHASE_RESET_TIME_METRIC, "source" => CASPER_METRICS_SOURCE)
             .record(reset_start.elapsed().as_secs_f64());
 
