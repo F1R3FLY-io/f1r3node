@@ -1,6 +1,6 @@
 // See casper/src/test/scala/coop/rchain/casper/engine/RunningSpec.scala
 
-use casper::rust::{casper::MultiParentCasper, engine::engine::Engine};
+use casper::rust::engine::engine::Engine;
 use models::rust::{
     block_implicits::get_random_block,
     casper::protocol::casper_message::{
@@ -157,17 +157,34 @@ mod tests {
             .await
             .unwrap();
 
+        let engine_casper = fixture
+            .engine
+            .with_casper()
+            .expect("Running engine should expose a casper instance");
+        let expected_tips: HashSet<Bytes> = engine_casper
+            .block_dag()
+            .await
+            .expect("Failed to load block DAG")
+            .latest_message_hashes()
+            .into_iter()
+            .map(|(_, hash)| hash)
+            .collect();
+
         // Step 6: Get requests from transportLayer
         let requests = fixture.transport_layer.get_all_requests();
+        assert_eq!(
+            requests.len(),
+            expected_tips.len(),
+            "Expected one HasBlock response per fork-choice tip"
+        );
 
         // Step 8: Assert all transport-layer requests target local peer.
-        assert!(!requests.is_empty());
         for request in &requests {
             assert_eq!(request.peer, fixture.local);
         }
 
         // Step 9: Assert all responses are HasBlock messages with at least one tip hash.
-        let mut received_tips = HashSet::new();
+        let mut received_tips: HashSet<Bytes> = HashSet::new();
         let mut has_block_count = 0usize;
         for request in &requests {
             if let CasperMessage::HasBlock(HasBlock { hash }) =
@@ -175,10 +192,12 @@ mod tests {
             {
                 has_block_count += 1;
                 received_tips.insert(hash);
+            } else {
+                panic!("Expected HasBlock response for fork-choice tip request");
             }
         }
 
         assert_eq!(has_block_count, requests.len());
-        assert!(!received_tips.is_empty());
+        assert_eq!(received_tips, expected_tips);
     }
 }

@@ -166,3 +166,60 @@ impl Ord for DeployChainIndex {
         self.post_state_hash.cmp(&other.post_state_hash)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rspace_plus_plus::rspace::hashing::blake2b256_hash::Blake2b256Hash;
+    use std::collections::HashSet;
+
+    fn mk_index(deploys: &[(u8, u64)], post_state_seed: u8) -> DeployChainIndex {
+        let deploys_with_cost: HashSet<DeployIdWithCost> = deploys
+            .iter()
+            .map(|(id, cost)| DeployIdWithCost {
+                deploy_id: Bytes::from(vec![*id]),
+                cost: *cost,
+            })
+            .collect();
+
+        DeployChainIndex {
+            deploys_with_cost: HashableSet(deploys_with_cost),
+            pre_state_hash: Blake2b256Hash::from_bytes(vec![0u8; 32]),
+            post_state_hash: Blake2b256Hash::from_bytes(vec![post_state_seed; 32]),
+            event_log_index: EventLogIndex::empty(),
+            state_changes: StateChange::empty(),
+            hash_code: 0,
+        }
+    }
+
+    #[test]
+    fn ordering_prefers_higher_total_cost() {
+        let high_total = mk_index(&[(1, 10), (2, 1)], 1); // total = 11
+        let low_total = mk_index(&[(1, 9), (2, 1)], 2); // total = 10
+
+        assert_eq!(high_total.cmp(&low_total), std::cmp::Ordering::Less);
+        assert_eq!(low_total.cmp(&high_total), std::cmp::Ordering::Greater);
+    }
+
+    #[test]
+    fn ordering_tie_breaks_on_max_cost_then_signature() {
+        // Same total (11), different max (7 vs 6)
+        let max_seven = mk_index(&[(1, 7), (2, 4)], 1);
+        let max_six = mk_index(&[(1, 6), (2, 5)], 2);
+        assert_eq!(max_seven.cmp(&max_six), std::cmp::Ordering::Less);
+
+        // Same total/max, tie-break by smallest deploy signature (2 < 3)
+        let min_sig_two = mk_index(&[(2, 5), (9, 5)], 1);
+        let min_sig_three = mk_index(&[(3, 5), (9, 5)], 2);
+        assert_eq!(min_sig_two.cmp(&min_sig_three), std::cmp::Ordering::Less);
+    }
+
+    #[test]
+    fn ordering_final_tie_breaks_on_post_state_hash() {
+        let a = mk_index(&[(1, 5)], 0x01);
+        let b = mk_index(&[(1, 5)], 0x02);
+
+        assert_eq!(a.cmp(&b), std::cmp::Ordering::Less);
+        assert_eq!(b.cmp(&a), std::cmp::Ordering::Greater);
+    }
+}

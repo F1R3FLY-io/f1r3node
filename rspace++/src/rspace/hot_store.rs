@@ -237,12 +237,13 @@ where
         };
 
         let state = self.hot_store_state.lock().unwrap();
+        let wc_identity = Self::continuation_identity(&wc);
         match state.continuations.entry(channels.to_vec()) {
             Entry::Occupied(mut occupied) => {
                 if !occupied
                     .get()
                     .iter()
-                    .any(|existing| existing.source == wc.source)
+                    .any(|existing| Self::continuation_identity(existing) == wc_identity)
                 {
                     occupied.get_mut().insert(0, wc);
                     inserted = true;
@@ -252,7 +253,7 @@ where
                 let mut new_continuations = from_history_store.unwrap_or_default();
                 if !new_continuations
                     .iter()
-                    .any(|existing| existing.source == wc.source)
+                    .any(|existing| Self::continuation_identity(existing) == wc_identity)
                 {
                     new_continuations.insert(0, wc);
                     inserted = true;
@@ -775,6 +776,13 @@ where
     A: Clone + Debug + Sync + Send,
     K: Clone + Debug + Sync + Send,
 {
+    fn continuation_identity(wc: &WaitingContinuation<P, K>) -> String {
+        format!(
+            "{:?}|{:?}|{}|{:?}",
+            wc.patterns, wc.continuation, wc.persist, wc.peeks
+        )
+    }
+
     fn now_millis() -> u64 {
         SystemTime::now()
             .duration_since(UNIX_EPOCH)

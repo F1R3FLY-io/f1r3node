@@ -560,10 +560,16 @@ pub async fn create(
     let create_started = std::time::Instant::now();
     // Capture current time once to ensure consistency between deploy filtering and block timestamp.
     // This prevents race condition where a deploy could pass filtering but expire before block creation.
-    let now = SystemTime::now()
+    let now_u128 = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .map_err(|e| CasperError::RuntimeError(format!("Failed to get current time: {}", e)))?
-        .as_millis() as i64;
+        .as_millis();
+    let now = i64::try_from(now_u128).map_err(|_| {
+        CasperError::RuntimeError(format!(
+            "Current timestamp millis {} exceeds i64::MAX",
+            now_u128
+        ))
+    })?;
 
     let next_seq_num = casper_snapshot
         .max_seq_nums

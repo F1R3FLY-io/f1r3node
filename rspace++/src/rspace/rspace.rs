@@ -7,7 +7,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt::Debug;
 use std::hash::Hash;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
 
 use dashmap::DashMap;
@@ -59,6 +59,19 @@ pub struct RSpace<C, P, A, K> {
     matcher: Arc<Box<dyn Match<P, A>>>,
 }
 
+fn block_creator_phase_substep_profile_enabled() -> bool {
+    static VALUE: OnceLock<bool> = OnceLock::new();
+    *VALUE.get_or_init(|| {
+        std::env::var("F1R3_BLOCK_CREATOR_PHASE_SUBSTEP_PROFILE")
+            .ok()
+            .map(|v| {
+                let normalized = v.trim().to_ascii_lowercase();
+                matches!(normalized.as_str(), "1" | "true" | "yes" | "on")
+            })
+            .unwrap_or(false)
+    })
+}
+
 impl<C, P, A, K> SpaceMatcher<C, P, A, K> for RSpace<C, P, A, K>
 where
     C: Clone + Debug + Default + Serialize + std::hash::Hash + Ord + Eq + 'static + Sync + Send,
@@ -80,12 +93,7 @@ where
         // async
         let _span = tracing::info_span!(target: "f1r3fly.rspace", "create-checkpoint").entered();
         event!(Level::DEBUG, mark = "started-create-checkpoint", "create_checkpoint");
-        let mem_profile_enabled = std::env::var("F1R3_BLOCK_CREATOR_PHASE_SUBSTEP_PROFILE")
-            .map(|v| {
-                let normalized = v.trim().to_ascii_lowercase();
-                normalized == "1" || normalized == "true" || normalized == "yes"
-            })
-            .unwrap_or(false);
+        let mem_profile_enabled = block_creator_phase_substep_profile_enabled();
         let read_rss_kb = || -> Option<u64> {
             let status = std::fs::read_to_string("/proc/self/status").ok()?;
             let line = status.lines().find(|l| l.starts_with("VmRSS:"))?;

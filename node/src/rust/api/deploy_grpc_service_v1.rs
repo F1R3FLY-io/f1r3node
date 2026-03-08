@@ -3,7 +3,7 @@
 //! This module provides a gRPC service for deploy functionality,
 //! allowing clients to deploy contracts, query blocks, and perform various blockchain operations.
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use crate::rust::web::version_info::get_version_info_str;
 use block_storage::rust::key_value_block_store::KeyValueBlockStore;
@@ -51,6 +51,33 @@ impl IntoServiceError for casper::rust::api::block_report_api::BlockReportError 
             messages: vec![self.to_string()],
         }
     }
+}
+
+const FIND_DEPLOY_RETRY_INTERVAL_MS_ENV: &str = "F1R3_GRPC_FIND_DEPLOY_RETRY_INTERVAL_MS";
+const FIND_DEPLOY_MAX_ATTEMPTS_ENV: &str = "F1R3_GRPC_FIND_DEPLOY_MAX_ATTEMPTS";
+const DEFAULT_FIND_DEPLOY_RETRY_INTERVAL_MS: u64 = 100;
+const DEFAULT_FIND_DEPLOY_MAX_ATTEMPTS: u8 = 80;
+
+fn find_deploy_retry_interval_ms() -> u64 {
+    static VALUE: OnceLock<u64> = OnceLock::new();
+    *VALUE.get_or_init(|| {
+        shared::rust::env::var_or_filtered(
+            FIND_DEPLOY_RETRY_INTERVAL_MS_ENV,
+            DEFAULT_FIND_DEPLOY_RETRY_INTERVAL_MS,
+            |value: &u64| *value > 0,
+        )
+    })
+}
+
+fn find_deploy_max_attempts() -> u8 {
+    static VALUE: OnceLock<u8> = OnceLock::new();
+    *VALUE.get_or_init(|| {
+        shared::rust::env::var_or_filtered(
+            FIND_DEPLOY_MAX_ATTEMPTS_ENV,
+            DEFAULT_FIND_DEPLOY_MAX_ATTEMPTS,
+            |value: &u8| *value > 0,
+        )
+    })
 }
 
 /// Deploy gRPC Service V1 implementation
@@ -507,8 +534,8 @@ impl DeployService for DeployGrpcServiceV1Impl {
         request: tonic::Request<FindDeployQuery>,
     ) -> Result<tonic::Response<FindDeployResponse>, tonic::Status> {
         let request = request.into_inner();
-        const FIND_DEPLOY_RETRY_INTERVAL_MS: u64 = 100;
-        const FIND_DEPLOY_MAX_ATTEMPTS: u8 = 80;
+        let retry_interval_ms = find_deploy_retry_interval_ms();
+        let max_attempts = find_deploy_max_attempts();
 
         let mut attempt = 1;
         loop {
@@ -526,7 +553,7 @@ impl DeployService for DeployGrpcServiceV1Impl {
                     let not_found = e
                         .downcast_ref::<casper::rust::api::block_api::DeployNotFoundError>()
                         .is_some();
-                    if !not_found || attempt >= FIND_DEPLOY_MAX_ATTEMPTS {
+                    if !not_found || attempt >= max_attempts {
                         error!("Deploy service method error find_deploy");
                         return Ok(tonic::Response::new(FindDeployResponse {
                             message: Some(
@@ -539,10 +566,12 @@ impl DeployService for DeployGrpcServiceV1Impl {
 
                     tracing::debug!(
                         ?attempt,
+                        ?max_attempts,
+                        ?retry_interval_ms,
                         ?request,
                         "Waiting for deploy to become visible in block DAG"
                     );
-                    sleep(Duration::from_millis(FIND_DEPLOY_RETRY_INTERVAL_MS)).await;
+                    sleep(Duration::from_millis(retry_interval_ms)).await;
                     attempt += 1;
                 }
             }

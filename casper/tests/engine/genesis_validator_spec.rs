@@ -177,13 +177,13 @@ impl GenesisValidatorSpec {
                 .await
                 .expect("Failed to handle approved block request");
 
-            // head = transportLayer.requests.head
-            let head = fixture
-                .transport_layer
-                .get_all_requests()
-                .first()
-                .expect("No requests in transport layer")
-                .clone();
+            let requests = fixture.transport_layer.get_all_requests();
+            assert_eq!(
+                requests.len(),
+                1,
+                "Expected exactly one transport-layer response to ApprovedBlockRequest"
+            );
+            let head = requests[0].clone();
 
             let expected_response = packet_with_content(
                 &fixture.local,

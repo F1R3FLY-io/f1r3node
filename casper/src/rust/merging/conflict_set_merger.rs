@@ -471,3 +471,78 @@ fn get_merged_result_rejection<R: Clone + Eq + std::hash::Hash + Ord>(
         HashableSet(result)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::{BTreeMap, HashSet};
+
+    fn branch(items: &[i32]) -> Branch<i32> {
+        HashableSet(items.iter().copied().collect::<HashSet<i32>>())
+    }
+
+    fn rejection_option(branches: &[Branch<i32>]) -> HashableSet<Branch<i32>> {
+        HashableSet(branches.iter().cloned().collect::<HashSet<Branch<i32>>>())
+    }
+
+    #[test]
+    fn compare_branches_is_deterministic() {
+        let a = branch(&[1, 2]);
+        let b = branch(&[2, 1]);
+        let c = branch(&[1, 3]);
+        let d = branch(&[1, 4]);
+        let short = branch(&[1]);
+
+        assert_eq!(compare_branches(&a, &b), std::cmp::Ordering::Equal);
+        assert_eq!(compare_branches(&short, &a), std::cmp::Ordering::Less);
+        assert_eq!(compare_branches(&c, &d), std::cmp::Ordering::Less);
+    }
+
+    #[test]
+    fn optimal_rejection_tie_break_is_stable() {
+        // Both options have equal target sum (5) and equal branch count.
+        // Deterministic tie-break should pick option_a because its first branch
+        // starts with lower element (1 < 2).
+        let option_a = rejection_option(&[branch(&[1]), branch(&[4])]);
+        let option_b = rejection_option(&[branch(&[2]), branch(&[3])]);
+        let options = HashableSet(HashSet::from([option_b.clone(), option_a.clone()]));
+
+        let chosen = get_optimal_rejection(options, |branch| {
+            branch.0.iter().map(|value| *value as u64).sum()
+        });
+
+        assert_eq!(chosen, option_a);
+    }
+
+    #[test]
+    fn merge_rejects_negative_channel_balance() {
+        let actual_seq = vec![1, 2];
+        let late_seq = Vec::<i32>::new();
+        let base_channel = Blake2b256Hash::from_bytes(vec![7u8; 32]);
+
+        let result = merge(
+            actual_seq,
+            late_seq,
+            |_a, _b| false, // depends
+            |_a, _b| false, // conflicts
+            |_r| 1,         // cost
+            |_r| Ok(StateChange::empty()),
+            |r| {
+                let mut diff = BTreeMap::new();
+                // item 1 decrements channel, item 2 increments channel
+                let delta = if *r == 1 { -1 } else { 1 };
+                diff.insert(base_channel.clone(), delta);
+                diff
+            },
+            |_state_change, _channels| Ok(Vec::<HotStoreTrieAction<i32, i32, i32, i32>>::new()),
+            |_actions: Vec<HotStoreTrieAction<i32, i32, i32, i32>>| {
+                Ok(Blake2b256Hash::from_bytes(vec![9u8; 32]))
+            },
+            |_hash| Ok(Vec::new()),
+        );
+
+        assert!(result.is_ok());
+        let (_new_state, rejected) = result.unwrap();
+        assert!(!rejected.0.is_empty());
+    }
+}

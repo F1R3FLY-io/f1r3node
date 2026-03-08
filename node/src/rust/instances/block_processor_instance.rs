@@ -179,6 +179,8 @@ impl<T: TransportLayer + Send + Sync + 'static> BlockProcessorInstance<T> {
                         blocks_in_processing.insert(block.block_hash.clone());
                         let max_in_flight = max_blocks_in_processing();
                         if blocks_in_processing.len() > max_in_flight {
+                            // Ensure in-flight marker is always cleared, even when ack cleanup fails.
+                            blocks_in_processing.remove(&block.block_hash);
                             if let Err(err) = block_processor.ack_processed(&block).await {
                                 tracing::warn!(
                                     "Dropping block {} and cleanup failed: {}",

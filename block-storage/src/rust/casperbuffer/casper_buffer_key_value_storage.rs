@@ -242,7 +242,7 @@ impl CasperBufferKeyValueStorage {
             .into_iter()
             .filter(|(age_ms, _)| *age_ms >= stale_ttl_ms)
             .collect();
-        stale_candidates.sort_by(|a, b| b.0.cmp(&a.0));
+        stale_candidates.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
 
         let mut stale_pruned = 0usize;
         for (_, hash) in stale_candidates.into_iter().take(max_prune_batch) {
@@ -264,7 +264,7 @@ impl CasperBufferKeyValueStorage {
                 .dependency_free_nodes_with_age_ms(now)
                 .into_iter()
                 .collect();
-            oldest_nodes.sort_by(|a, b| a.0.cmp(&b.0));
+            oldest_nodes.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
 
             let Some((_, hash)) = oldest_nodes.into_iter().next() else {
                 break;

@@ -1,7 +1,7 @@
 use crypto::rust::hash::blake2b512_random::Blake2b512Random;
 use models::rhoapi::Par;
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, OnceLock, RwLock};
 use tracing::{event, Level};
 
 use super::accounting::_cost;
@@ -38,6 +38,19 @@ pub struct InterpreterImpl {
     merge_chs: Arc<RwLock<HashSet<Par>>>,
 }
 
+fn block_creator_phase_substep_profile_enabled() -> bool {
+    static VALUE: OnceLock<bool> = OnceLock::new();
+    *VALUE.get_or_init(|| {
+        std::env::var("F1R3_BLOCK_CREATOR_PHASE_SUBSTEP_PROFILE")
+            .ok()
+            .map(|v| {
+                let normalized = v.trim().to_ascii_lowercase();
+                matches!(normalized.as_str(), "1" | "true" | "yes" | "on")
+            })
+            .unwrap_or(false)
+    })
+}
+
 impl Interpreter for InterpreterImpl {
     async fn inj_attempt(
         &self,
@@ -47,10 +60,7 @@ impl Interpreter for InterpreterImpl {
         normalizer_env: HashMap<String, Par>,
         rand: Blake2b512Random,
     ) -> Result<EvaluateResult, InterpreterError> {
-        let mem_profile_enabled = std::env::var("F1R3_BLOCK_CREATOR_PHASE_SUBSTEP_PROFILE")
-            .ok()
-            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-            .unwrap_or(false);
+        let mem_profile_enabled = block_creator_phase_substep_profile_enabled();
         let read_vm_rss_kb = || -> Option<usize> {
             let status = std::fs::read_to_string("/proc/self/status").ok()?;
             status
