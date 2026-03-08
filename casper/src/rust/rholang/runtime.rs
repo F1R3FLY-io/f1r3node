@@ -989,7 +989,7 @@ impl RuntimeOps {
         self.runtime.cost().set(Cost::unsafe_max());
         log_mem_step("after_set_cost");
 
-        let mut rand = Blake2b512Random::create_from_bytes(&[0u8; 128]);
+        let rand = Blake2b512Random::create_from_bytes(&[0u8; 128]);
         let mut return_rand = rand.clone();
         let return_name = Par::default().with_unforgeables(vec![GUnforgeable {
             unf_instance: Some(UnfInstance::GPrivateBody(GPrivate {

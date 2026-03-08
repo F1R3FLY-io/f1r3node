@@ -860,13 +860,6 @@ impl<T: TransportLayer + Send + Sync> BlockProcessorDependencies<T> {
         Ok(())
     }
 
-    async fn drop_dependency_loop_block(&self, block: &BlockMessage) -> Result<(), CasperError> {
-        self.remove_from_buffer(block).await?;
-        self.mark_missing_dependency_quarantine(&block.block_hash)?;
-        self.ack_processed(block).await?;
-        Ok(())
-    }
-
     /// Equivalent to Scala's: requestMissingDependencies = (deps: Set[BlockHash]) => { ... }
     pub async fn request_missing_dependencies(
         &self,

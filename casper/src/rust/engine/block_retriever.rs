@@ -642,7 +642,7 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
         mark_as_received: bool,
         source_peers: Vec<PeerNode>,
     ) -> bool {
-        let mut normalized_waiting_list = {
+        let normalized_waiting_list = {
             let mut deduped = Vec::new();
             let mut seen = HashSet::new();
 

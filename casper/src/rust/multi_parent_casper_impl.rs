@@ -217,7 +217,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
 
         // Filter to blocks with matching bond maps (required for merge compatibility)
         // If no parent blocks exist (genesis case), use approved block as the parent
-        let mut unfiltered_parents = if sorted_parents_list.is_empty() {
+        let unfiltered_parents = if sorted_parents_list.is_empty() {
             vec![self.approved_block.clone()]
         } else {
             // Use the newest block as the bond-reference baseline.

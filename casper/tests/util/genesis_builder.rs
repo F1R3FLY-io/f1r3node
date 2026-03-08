@@ -156,11 +156,6 @@ impl GenesisBuilder {
         }
     }
 
-    pub async fn create_genesis(&mut self) -> Result<BlockMessage, CasperError> {
-        let context = self.build_genesis_with_parameters(None).await?;
-        Ok(context.genesis_block)
-    }
-
     pub fn build_genesis_parameters_with_defaults(
         bonds_function: Option<fn(Vec<PublicKey>) -> HashMap<PublicKey, i64>>,
         validators_num: Option<usize>,

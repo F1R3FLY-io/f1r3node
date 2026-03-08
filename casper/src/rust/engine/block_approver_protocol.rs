@@ -134,7 +134,7 @@ impl<T: TransportLayer + Send + Sync + 'static> BlockApproverProtocol<T> {
         runtime_manager: &mut RuntimeManager,
         candidate: &ApprovedBlockCandidate,
         required_sigs: i32,
-        deploy_timestamp: i64,
+        _deploy_timestamp: i64,
         vaults: &Vec<Vault>,
         bonds: &HashMap<Bytes, i64>,
         minimum_bond: i64,

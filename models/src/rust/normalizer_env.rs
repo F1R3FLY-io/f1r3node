@@ -8,6 +8,26 @@ use super::casper::protocol::casper_message::DeployData;
 
 use crate::rhoapi::{g_unforgeable::UnfInstance, GDeployId, GDeployerId, GUnforgeable, Par};
 
+const SYSTEM_DEPLOY_ID_URI: &str = "rho:system:deployId";
+const SYSTEM_DEPLOYER_ID_URI: &str = "rho:system:deployerId";
+const LEGACY_DEPLOY_ID_URI: &str = "rho:rchain:deployId";
+const LEGACY_DEPLOYER_ID_URI: &str = "rho:rchain:deployerId";
+
+fn insert_legacy_alias(
+    env: &mut HashMap<String, Par>,
+    legacy_uri: &'static str,
+    canonical_uri: &'static str,
+    value: Par,
+) {
+    tracing::debug!(
+        target: "f1r3fly.legacy-uri",
+        "Resolved legacy URI alias `{}` via canonical `{}`",
+        legacy_uri,
+        canonical_uri
+    );
+    env.insert(legacy_uri.to_string(), value);
+}
+
 pub fn with_deployer_id(deployer_pk: &PublicKey) -> HashMap<String, Par> {
     let mut env = HashMap::new();
     let deployer_id_par = Par::default().with_unforgeables(vec![GUnforgeable {
@@ -16,12 +36,14 @@ pub fn with_deployer_id(deployer_pk: &PublicKey) -> HashMap<String, Par> {
         })),
     }]);
 
-    env.insert(
-        "rho:system:deployerId".to_string(),
-        deployer_id_par.clone(),
-    );
+    env.insert(SYSTEM_DEPLOYER_ID_URI.to_string(), deployer_id_par.clone());
     // Backward-compatible alias used by external clients.
-    env.insert("rho:rchain:deployerId".to_string(), deployer_id_par);
+    insert_legacy_alias(
+        &mut env,
+        LEGACY_DEPLOYER_ID_URI,
+        SYSTEM_DEPLOYER_ID_URI,
+        deployer_id_par,
+    );
     env
 }
 
@@ -40,19 +62,23 @@ pub fn normalizer_env_from_deploy(deploy: &Signed<DeployData>) -> HashMap<String
         })),
     }]);
 
-    env.insert(
-        "rho:system:deployId".to_string(),
-        deploy_id_par.clone(),
-    );
+    env.insert(SYSTEM_DEPLOY_ID_URI.to_string(), deploy_id_par.clone());
     // Backward-compatible alias used by external clients.
-    env.insert("rho:rchain:deployId".to_string(), deploy_id_par);
+    insert_legacy_alias(
+        &mut env,
+        LEGACY_DEPLOY_ID_URI,
+        SYSTEM_DEPLOY_ID_URI,
+        deploy_id_par,
+    );
 
-    env.insert(
-        "rho:system:deployerId".to_string(),
-        deployer_id_par.clone(),
-    );
+    env.insert(SYSTEM_DEPLOYER_ID_URI.to_string(), deployer_id_par.clone());
     // Backward-compatible alias used by external clients.
-    env.insert("rho:rchain:deployerId".to_string(), deployer_id_par);
+    insert_legacy_alias(
+        &mut env,
+        LEGACY_DEPLOYER_ID_URI,
+        SYSTEM_DEPLOYER_ID_URI,
+        deployer_id_par,
+    );
 
     env
 }
@@ -86,10 +112,10 @@ mod tests {
         let env = with_deployer_id(&deployer_pk);
 
         let system = env
-            .get("rho:system:deployerId")
+            .get(SYSTEM_DEPLOYER_ID_URI)
             .expect("Missing rho:system:deployerId");
         let legacy = env
-            .get("rho:rchain:deployerId")
+            .get(LEGACY_DEPLOYER_ID_URI)
             .expect("Missing rho:rchain:deployerId");
 
         assert_eq!(system, legacy);
@@ -101,17 +127,17 @@ mod tests {
         let env = normalizer_env_from_deploy(&deploy);
 
         let system_deploy_id = env
-            .get("rho:system:deployId")
+            .get(SYSTEM_DEPLOY_ID_URI)
             .expect("Missing rho:system:deployId");
         let legacy_deploy_id = env
-            .get("rho:rchain:deployId")
+            .get(LEGACY_DEPLOY_ID_URI)
             .expect("Missing rho:rchain:deployId");
 
         let system_deployer_id = env
-            .get("rho:system:deployerId")
+            .get(SYSTEM_DEPLOYER_ID_URI)
             .expect("Missing rho:system:deployerId");
         let legacy_deployer_id = env
-            .get("rho:rchain:deployerId")
+            .get(LEGACY_DEPLOYER_ID_URI)
             .expect("Missing rho:rchain:deployerId");
 
         assert_eq!(system_deploy_id, legacy_deploy_id);
