@@ -801,15 +801,32 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
             PrettyPrinter::build_string_block_message(block, true)
         );
 
-        // Safety: verify the block carries the hashes we computed (should always match).
-        assert_eq!(
-            block.body.state.pre_state_hash, pre_state_hash,
-            "Self-created block pre_state_hash mismatch"
-        );
-        assert_eq!(
-            block.body.state.post_state_hash, post_state_hash,
-            "Self-created block post_state_hash mismatch"
-        );
+        // Safety: verify the block carries the hashes we computed.
+        // Never panic here: return a validation error so proposer can fail safely.
+        if block.body.state.pre_state_hash != pre_state_hash {
+            let msg = format!(
+                "Self-created block pre_state_hash mismatch: expected={}, actual={}, block={}",
+                PrettyPrinter::build_string_no_limit(&pre_state_hash),
+                PrettyPrinter::build_string_no_limit(&block.body.state.pre_state_hash),
+                PrettyPrinter::build_string_bytes(&block.block_hash),
+            );
+            tracing::error!("{}", msg);
+            return Ok(Either::Left(BlockError::BlockException(
+                CasperError::RuntimeError(msg),
+            )));
+        }
+        if block.body.state.post_state_hash != post_state_hash {
+            let msg = format!(
+                "Self-created block post_state_hash mismatch: expected={}, actual={}, block={}",
+                PrettyPrinter::build_string_no_limit(&post_state_hash),
+                PrettyPrinter::build_string_no_limit(&block.body.state.post_state_hash),
+                PrettyPrinter::build_string_bytes(&block.block_hash),
+            );
+            tracing::error!("{}", msg);
+            return Ok(Either::Left(BlockError::BlockException(
+                CasperError::RuntimeError(msg),
+            )));
+        }
 
         let start = std::time::Instant::now();
         let val_result = {

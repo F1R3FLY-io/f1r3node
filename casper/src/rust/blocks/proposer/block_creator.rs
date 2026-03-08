@@ -711,7 +711,7 @@ pub async fn create(
         .duration_since(SystemTime::UNIX_EPOCH)
         .map_err(|e| CasperError::RuntimeError(format!("Failed to get current time: {}", e)))?
         .as_millis();
-    let now = i64::try_from(now_u128).map_err(|_| {
+    let mut now_millis = i64::try_from(now_u128).map_err(|_| {
         CasperError::RuntimeError(format!(
             "Current timestamp millis {} exceeds i64::MAX",
             now_u128
@@ -726,6 +726,16 @@ pub async fn create(
     let next_block_num = casper_snapshot.max_block_num + 1;
     let parents = &casper_snapshot.parents;
     let justifications = &casper_snapshot.justifications;
+    if let Some(max_parent_ts) = parents.iter().map(|p| p.header.timestamp).max() {
+        if now_millis < max_parent_ts {
+            tracing::debug!(
+                "Adjusting block timestamp from {} to parent timestamp {} to avoid clock-skew regressions",
+                now_millis,
+                max_parent_ts
+            );
+            now_millis = max_parent_ts;
+        }
+    }
 
     tracing::info!(
         "Creating block #{} (seqNum {})",
@@ -738,9 +748,13 @@ pub async fn create(
     // Prepare deploys
     let (user_deploys, selected_user_deploy_cap, selected_user_deploy_cap_hit) = {
         let t = std::time::Instant::now();
-        let prepared =
-            prepare_user_deploys(casper_snapshot, next_block_num, now, deploy_storage.clone())
-                .await?;
+        let prepared = prepare_user_deploys(
+            casper_snapshot,
+            next_block_num,
+            now_millis,
+            deploy_storage.clone(),
+        )
+        .await?;
         let mut v = prepared.deploys;
         let self_chain_deploy_sigs =
             collect_self_chain_deploy_sigs(casper_snapshot, validator_identity, block_store)?;
@@ -828,11 +842,12 @@ pub async fn create(
         ),
     }));
 
-    // Use the `now` captured at the start of create for block timestamp.
+    // Use the adjusted `now_millis` captured at the start of create for block timestamp.
+    // The value is clamped to the max parent timestamp to avoid InvalidTimestamp from clock skew.
     // This ensures the same time is used for deploy filtering and block creation.
     let invalid_blocks = casper_snapshot.invalid_blocks.clone();
     let block_data = BlockData {
-        time_stamp: now,
+        time_stamp: now_millis,
         block_number: next_block_num,
         sender: validator_identity.public_key.clone(),
         seq_num: next_seq_num,
