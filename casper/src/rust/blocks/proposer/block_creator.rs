@@ -53,6 +53,19 @@ struct PreparedUserDeploys {
     cap_hit: bool,
 }
 
+fn deploy_selection_reserve_tail_enabled() -> bool {
+    const ENV: &str = "F1R3_DEPLOY_SELECTION_RESERVE_TAIL";
+    static VALUE: OnceLock<bool> = OnceLock::new();
+
+    *VALUE.get_or_init(|| match std::env::var(ENV) {
+        Ok(raw) => {
+            let normalized = raw.trim().to_ascii_lowercase();
+            !matches!(normalized.as_str(), "0" | "false" | "no" | "off")
+        }
+        Err(_) => true,
+    })
+}
+
 async fn prepare_user_deploys(
     casper_snapshot: &CasperSnapshot,
     block_number: i64,
@@ -177,7 +190,7 @@ async fn prepare_user_deploys(
         deploy_storage_guard.remove(expired_list)?;
     }
 
-    let max_user_deploys = effective_user_deploys_per_block_cap();
+    let max_user_deploys = effective_user_deploys_per_block_cap(valid_unique.len());
     if valid_unique.len() <= max_user_deploys {
         return Ok(PreparedUserDeploys {
             deploys: valid_unique,
@@ -186,8 +199,7 @@ async fn prepare_user_deploys(
         });
     }
 
-    // Prefer oldest eligible deploys first to preserve fairness while bounding
-    // checkpoint/replay latency for long-running clusters.
+    // Deterministically order deploys by age so selection remains stable across validators.
     let mut ordered: Vec<Signed<DeployData>> = valid_unique.into_iter().collect();
     ordered.sort_by(|a, b| {
         a.data
@@ -200,18 +212,42 @@ async fn prepare_user_deploys(
             })
     });
 
-    let selected: HashSet<Signed<DeployData>> =
-        ordered.into_iter().take(max_user_deploys).collect();
+    // To avoid head-of-line blocking after stress bursts, reserve one slot for
+    // the freshest deploy when capping is active. The remaining slots still drain
+    // oldest deploys first to preserve fairness.
+    let (selected, selection_strategy): (HashSet<Signed<DeployData>>, &'static str) =
+        if deploy_selection_reserve_tail_enabled() {
+            if max_user_deploys == 1 {
+                (
+                    ordered.iter().last().cloned().into_iter().collect(),
+                    "newest-only",
+                )
+            } else {
+                let oldest_take = max_user_deploys.saturating_sub(1);
+                let mut picked: HashSet<Signed<DeployData>> =
+                    ordered.iter().take(oldest_take).cloned().collect();
+                if let Some(newest) = ordered.iter().last().cloned() {
+                    picked.insert(newest);
+                }
+                (picked, "oldest-plus-newest")
+            }
+        } else {
+            (
+                ordered.iter().take(max_user_deploys).cloned().collect(),
+                "oldest-only",
+            )
+        };
     let deferred = valid_count
         .saturating_sub(already_in_scope_count)
         .saturating_sub(selected.len());
 
     tracing::info!(
-        "Deploy selection capped for block #{}: selected={}, deferred={}, cap={}",
+        "Deploy selection capped for block #{}: selected={}, deferred={}, cap={}, strategy={}",
         block_number,
         selected.len(),
         deferred,
-        max_user_deploys
+        max_user_deploys,
+        selection_strategy
     );
 
     Ok(PreparedUserDeploys {
@@ -297,18 +333,129 @@ fn adaptive_user_deploy_cap_state(
     })
 }
 
-fn effective_user_deploys_per_block_cap() -> usize {
+fn adaptive_backlog_floor_enabled() -> bool {
+    const ENV: &str = "F1R3_ADAPTIVE_DEPLOY_CAP_BACKLOG_FLOOR_ENABLED";
+    static VALUE: OnceLock<bool> = OnceLock::new();
+
+    *VALUE.get_or_init(|| match std::env::var(ENV) {
+        Ok(raw) => {
+            let normalized = raw.trim().to_ascii_lowercase();
+            !matches!(normalized.as_str(), "0" | "false" | "no" | "off")
+        }
+        Err(_) => true,
+    })
+}
+
+fn adaptive_backlog_floor_trigger() -> usize {
+    const ENV: &str = "F1R3_ADAPTIVE_DEPLOY_CAP_BACKLOG_TRIGGER";
+    const DEFAULT: usize = 2;
+    static VALUE: OnceLock<usize> = OnceLock::new();
+
+    *VALUE.get_or_init(|| {
+        std::env::var(ENV)
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .filter(|v| *v > 0)
+            .unwrap_or(DEFAULT)
+    })
+}
+
+fn adaptive_backlog_floor_divisor() -> usize {
+    const ENV: &str = "F1R3_ADAPTIVE_DEPLOY_CAP_BACKLOG_DIVISOR";
+    const DEFAULT: usize = 2;
+    static VALUE: OnceLock<usize> = OnceLock::new();
+
+    *VALUE.get_or_init(|| {
+        std::env::var(ENV)
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .filter(|v| *v > 0)
+            .unwrap_or(DEFAULT)
+    })
+}
+
+fn adaptive_backlog_floor_min(max_cap: usize) -> usize {
+    const ENV: &str = "F1R3_ADAPTIVE_DEPLOY_CAP_BACKLOG_MIN";
+    const DEFAULT: usize = 2;
+    static VALUE: OnceLock<usize> = OnceLock::new();
+
+    (*VALUE.get_or_init(|| {
+        std::env::var(ENV)
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .filter(|v| *v > 0)
+            .unwrap_or(DEFAULT)
+    }))
+    .clamp(1, max_cap)
+}
+
+fn adaptive_backlog_floor_max(max_cap: usize) -> usize {
+    const ENV: &str = "F1R3_ADAPTIVE_DEPLOY_CAP_BACKLOG_MAX";
+    const DEFAULT: usize = 8;
+    static VALUE: OnceLock<usize> = OnceLock::new();
+
+    (*VALUE.get_or_init(|| {
+        std::env::var(ENV)
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .filter(|v| *v > 0)
+            .unwrap_or(DEFAULT)
+    }))
+    .clamp(1, max_cap)
+}
+
+fn backlog_floor_for_pending(
+    pending_count: usize,
+    max_cap: usize,
+    trigger: usize,
+    divisor: usize,
+    min_floor: usize,
+    max_floor: usize,
+) -> usize {
+    if pending_count < trigger {
+        return 1;
+    }
+
+    let divisor = divisor.max(1);
+    let ceil_div = pending_count.saturating_add(divisor - 1) / divisor;
+    ceil_div
+        .clamp(min_floor.max(1), max_floor.max(min_floor))
+        .clamp(1, max_cap)
+}
+
+fn adaptive_backlog_floor(max_cap: usize, pending_count: usize) -> usize {
+    if !adaptive_backlog_floor_enabled() {
+        return 1;
+    }
+
+    let trigger = adaptive_backlog_floor_trigger();
+    let divisor = adaptive_backlog_floor_divisor();
+    let min_floor = adaptive_backlog_floor_min(max_cap);
+    let max_floor = adaptive_backlog_floor_max(max_cap);
+
+    backlog_floor_for_pending(
+        pending_count,
+        max_cap,
+        trigger,
+        divisor,
+        min_floor,
+        max_floor,
+    )
+}
+
+fn effective_user_deploys_per_block_cap(pending_count: usize) -> usize {
     let max_cap = max_user_deploys_per_block();
     if !adaptive_user_deploy_cap_enabled() {
         return max_cap;
     }
 
     let min_cap = adaptive_user_deploy_min_cap(max_cap);
+    let backlog_floor = adaptive_backlog_floor(max_cap, pending_count);
     let state = adaptive_user_deploy_cap_state(max_cap, min_cap);
     match state.lock() {
         Ok(mut guard) => {
             guard.current_cap = guard.current_cap.clamp(min_cap, max_cap);
-            guard.current_cap
+            std::cmp::max(guard.current_cap, backlog_floor)
         }
         Err(err) => {
             tracing::warn!(
@@ -856,7 +1003,7 @@ fn not_future_deploy(current_block_number: i64, deploy_data: &DeployData) -> boo
 
 #[cfg(test)]
 mod tests {
-    use super::next_adaptive_cap;
+    use super::{backlog_floor_for_pending, next_adaptive_cap};
 
     #[test]
     fn adaptive_cap_reduces_when_latency_exceeds_target() {
@@ -882,5 +1029,26 @@ mod tests {
         let up = next_adaptive_cap(3, 2, 4, 1000.0, 250.0, true);
         assert_eq!(down, 2);
         assert_eq!(up, 4);
+    }
+
+    #[test]
+    fn backlog_floor_disabled_below_trigger() {
+        let floor = backlog_floor_for_pending(7, 32, 8, 4, 2, 16);
+        assert_eq!(floor, 1);
+    }
+
+    #[test]
+    fn backlog_floor_scales_with_pending_pool() {
+        let floor = backlog_floor_for_pending(35, 32, 8, 4, 2, 16);
+        assert_eq!(floor, 9);
+    }
+
+    #[test]
+    fn backlog_floor_respects_bounds() {
+        let floor = backlog_floor_for_pending(512, 32, 8, 4, 2, 16);
+        assert_eq!(floor, 16);
+
+        let floor_small_cap = backlog_floor_for_pending(64, 6, 8, 4, 2, 16);
+        assert_eq!(floor_small_cap, 6);
     }
 }

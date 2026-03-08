@@ -39,6 +39,8 @@ const HEARTBEAT_FRONTIER_CHASE_MAX_LAG_ENV: &str = "F1R3_HEARTBEAT_FRONTIER_CHAS
 const DEFAULT_HEARTBEAT_FRONTIER_CHASE_MAX_LAG: i64 = 0;
 const HEARTBEAT_PENDING_DEPLOY_MAX_LAG_ENV: &str = "F1R3_HEARTBEAT_PENDING_DEPLOY_MAX_LAG";
 const DEFAULT_HEARTBEAT_PENDING_DEPLOY_MAX_LAG: i64 = 20;
+const HEARTBEAT_DEPLOY_RECOVERY_MAX_LAG_ENV: &str = "F1R3_HEARTBEAT_DEPLOY_RECOVERY_MAX_LAG";
+const DEFAULT_HEARTBEAT_DEPLOY_RECOVERY_MAX_LAG: i64 = 64;
 const HEARTBEAT_SELF_PROPOSE_COOLDOWN_MS_ENV: &str = "F1R3_HEARTBEAT_SELF_PROPOSE_COOLDOWN_MS";
 const DEFAULT_HEARTBEAT_SELF_PROPOSE_COOLDOWN_MS: u128 = 0;
 const HEARTBEAT_STALE_RECOVERY_MIN_INTERVAL_MS_ENV: &str =
@@ -60,6 +62,14 @@ fn heartbeat_pending_deploy_max_lag() -> i64 {
     env::var_or_filtered(
         HEARTBEAT_PENDING_DEPLOY_MAX_LAG_ENV,
         DEFAULT_HEARTBEAT_PENDING_DEPLOY_MAX_LAG,
+        |value: &i64| *value >= 0,
+    )
+}
+
+fn heartbeat_deploy_recovery_max_lag() -> i64 {
+    env::var_or_filtered(
+        HEARTBEAT_DEPLOY_RECOVERY_MAX_LAG_ENV,
+        DEFAULT_HEARTBEAT_DEPLOY_RECOVERY_MAX_LAG,
         |value: &i64| *value >= 0,
     )
 }
@@ -450,8 +460,22 @@ async fn check_lfb_and_propose(
     let has_new_parent_with_user_deploys = parent_update.has_new_parent_with_user_deploys;
     let deploy_recovery_hint =
         has_pending_deploys || has_new_parent_with_user_deploys || deploy_grace_active;
+    let deploy_recovery_max_lag =
+        std::cmp::max(heartbeat_pending_deploy_max_lag(), heartbeat_deploy_recovery_max_lag());
+
+    // Under active deploy-finalization recovery, allow a wider bounded chase window so
+    // validators can keep up with fast parent growth without stalling on tight lag caps.
+    // Outside deploy recovery, keep the tighter cap to avoid idle empty-block churn.
+    let deploy_recovery_frontier_chase_cap = if deploy_grace_active {
+        std::cmp::max(2, deploy_recovery_max_lag)
+    } else {
+        2
+    };
     let effective_frontier_chase_cap = if deploy_recovery_hint {
-        std::cmp::max(heartbeat_frontier_chase_max_lag(), 2)
+        std::cmp::max(
+            heartbeat_frontier_chase_max_lag(),
+            deploy_recovery_frontier_chase_cap,
+        )
     } else {
         heartbeat_frontier_chase_max_lag()
     };
@@ -472,20 +496,23 @@ async fn check_lfb_and_propose(
     //   - if frontier-chasing is throttled, allow a deterministic leader-only fallback when
     //     LFB is stale and lag is non-zero so low-lag dead zones do not stall progress;
     //   - if lag is already high, keep explicit leader recovery.
-    let can_propose_pending_deploys_while_ahead =
-        lfb_lag_blocks <= heartbeat_pending_deploy_max_lag();
+    let can_propose_pending_deploys_while_ahead = if deploy_grace_active {
+        lfb_lag_blocks <= deploy_recovery_max_lag
+    } else {
+        lfb_lag_blocks <= heartbeat_pending_deploy_max_lag()
+    };
     let pending_deploys_due =
         has_pending_deploys && (!self_recently_proposed || can_propose_pending_deploys_while_ahead);
     let can_follow_frontier_without_pending_deploys =
         deploy_recovery_hint || stale_recovery_interval_elapsed;
     // Cooldown protects idle clusters from empty-block churn, but during deploy-driven
-    // recovery we should not wait out the full cooldown before chasing frontier updates.
+    // recovery/finalization we should not wait out the full cooldown before advancing finality.
     let allow_cooldown_override_for_deploy_recovery =
-        has_pending_deploys || has_new_parent_with_user_deploys;
+        has_pending_deploys || has_new_parent_with_user_deploys || deploy_grace_active;
     // When a peer parent with user deploys is observed, allow one frontier-follow step
     // while ahead (bounded by pending-deploy lag threshold) to unblock synchrony progress.
     let allow_frontier_follow_while_ahead_for_deploy_parent =
-        has_new_parent_with_user_deploys && lfb_lag_blocks <= heartbeat_pending_deploy_max_lag();
+        has_new_parent_with_user_deploys && lfb_lag_blocks <= deploy_recovery_max_lag;
     let can_chase_frontier_while_ahead = lfb_lag_blocks <= effective_frontier_chase_cap
         && has_new_parents
         && (!self_proposed_too_recently || allow_cooldown_override_for_deploy_recovery);
@@ -497,7 +524,7 @@ async fn check_lfb_and_propose(
             || allow_frontier_follow_while_ahead_for_deploy_parent);
     let stale_lfb_recovery_due = lfb_is_stale
         && stale_recovery_window_open
-        && (!self_recently_proposed || can_chase_frontier_while_ahead);
+        && (!self_recently_proposed || can_chase_frontier_while_ahead || deploy_grace_active);
     let lag_recovery_leader = is_lag_recovery_leader(&snapshot, validator_identity);
     let lag_recovery_threshold = heartbeat_pending_deploy_max_lag();
     let moderate_lag_recovery_threshold = std::cmp::max(1, lag_recovery_threshold / 2);
@@ -507,13 +534,13 @@ async fn check_lfb_and_propose(
         && lfb_lag_blocks > 0
         && lag_recovery_leader
         && stale_recovery_window_open
-        && !self_proposed_too_recently
+        && (!self_proposed_too_recently || deploy_grace_active)
         && !stale_lfb_recovery_due;
     let high_lag_recovery_due = !has_pending_deploys
         && lfb_lag_blocks > lag_recovery_threshold
         && lag_recovery_leader
         && stale_recovery_window_open
-        && !self_proposed_too_recently;
+        && (!self_proposed_too_recently || deploy_grace_active);
     let should_propose = pending_deploys_due
         || frontier_follow_due
         || stale_lfb_recovery_due

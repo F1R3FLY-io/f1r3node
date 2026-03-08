@@ -6,6 +6,7 @@ use prost::Message;
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::sync::Arc;
+use std::time::Duration;
 
 use crypto::rust::{public_key::PublicKey, signatures::signed::Signed};
 use models::casper::{
@@ -95,6 +96,46 @@ fn recoverable_propose_failure_message(status: &ProposeStatus) -> Option<String>
             } else {
                 None
             }
+        }
+    }
+}
+
+const DEPLOY_PROPOSE_MAX_ATTEMPTS_ENV: &str = "F1R3_DEPLOY_PROPOSE_MAX_ATTEMPTS";
+const DEPLOY_PROPOSE_RETRY_DELAY_MS_ENV: &str = "F1R3_DEPLOY_PROPOSE_RETRY_DELAY_MS";
+const DEFAULT_DEPLOY_PROPOSE_MAX_ATTEMPTS: u32 = 4;
+const DEFAULT_DEPLOY_PROPOSE_RETRY_DELAY_MS: u64 = 250;
+const MAX_DEPLOY_PROPOSE_RETRY_DELAY_MS: u64 = 2_000;
+
+fn deploy_propose_max_attempts() -> u32 {
+    std::env::var(DEPLOY_PROPOSE_MAX_ATTEMPTS_ENV)
+        .ok()
+        .and_then(|value| value.parse::<u32>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_DEPLOY_PROPOSE_MAX_ATTEMPTS)
+}
+
+fn deploy_propose_retry_delay() -> Duration {
+    let delay_ms = std::env::var(DEPLOY_PROPOSE_RETRY_DELAY_MS_ENV)
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_DEPLOY_PROPOSE_RETRY_DELAY_MS)
+        .min(MAX_DEPLOY_PROPOSE_RETRY_DELAY_MS);
+    Duration::from_millis(delay_ms)
+}
+
+fn should_retry_deploy_propose(status: &ProposeStatus) -> bool {
+    match status {
+        ProposeStatus::Failure(ProposeFailure::InternalDeployError)
+        | ProposeStatus::Failure(ProposeFailure::CheckConstraintsFailure(
+            CheckProposeConstraintsFailure::NotEnoughNewBlocks,
+        ))
+        | ProposeStatus::Failure(ProposeFailure::CheckConstraintsFailure(
+            CheckProposeConstraintsFailure::TooFarAheadOfLastFinalized,
+        )) => true,
+        _ => {
+            let normalized = format!("{}", status);
+            normalized.contains("Must wait for more blocks from other validators")
         }
     }
 }
@@ -289,34 +330,68 @@ impl BlockAPI {
             if let Some(tp) = trigger_propose {
                 let tp = Arc::clone(tp);
                 let casper_for_propose = casper.clone();
+                let max_attempts = deploy_propose_max_attempts();
+                let retry_delay = deploy_propose_retry_delay();
                 tokio::spawn(async move {
-                    match tp(casper_for_propose, true).await {
-                        Ok(proposer_result) => match proposer_result {
-                            ProposerResult::Failure(status, seq_number) => {
-                                if let Some(msg) = recoverable_propose_failure_message(&status) {
-                                    tracing::info!("{} (seqNum {})", msg, seq_number);
-                                } else {
-                                    tracing::error!("Failure: {} (seqNum {})", status, seq_number);
+                    let mut attempt = 1u32;
+                    loop {
+                        match tp(casper_for_propose.clone(), true).await {
+                            Ok(proposer_result) => match proposer_result {
+                                ProposerResult::Failure(status, seq_number) => {
+                                    if should_retry_deploy_propose(&status)
+                                        && attempt < max_attempts
+                                    {
+                                        tracing::info!(
+                                            "Deploy-triggered propose transient failure (attempt {}/{}, seqNum {}): {}; retrying in {:?}",
+                                            attempt,
+                                            max_attempts,
+                                            seq_number,
+                                            status,
+                                            retry_delay
+                                        );
+                                        attempt += 1;
+                                        tokio::time::sleep(retry_delay).await;
+                                        continue;
+                                    }
+
+                                    if let Some(msg) = recoverable_propose_failure_message(&status) {
+                                        tracing::info!("{} (seqNum {})", msg, seq_number);
+                                    } else {
+                                        tracing::error!("Failure: {} (seqNum {})", status, seq_number);
+                                    }
                                 }
+                                ProposerResult::Empty => {
+                                    tracing::debug!("Propose already in progress");
+                                }
+                                ProposerResult::Started(seq_number) => {
+                                    tracing::debug!("Propose started (seqNum {})", seq_number);
+                                }
+                                ProposerResult::Success(_, block) => {
+                                    let block_hash_hex =
+                                        PrettyPrinter::build_string_no_limit(&block.block_hash);
+                                    tracing::info!(
+                                        "Success! Block {} created and added.",
+                                        block_hash_hex
+                                    );
+                                }
+                            },
+                            Err(err) => {
+                                if attempt < max_attempts {
+                                    tracing::warn!(
+                                        "Deploy-triggered propose call failed (attempt {}/{}): {}; retrying in {:?}",
+                                        attempt,
+                                        max_attempts,
+                                        err,
+                                        retry_delay
+                                    );
+                                    attempt += 1;
+                                    tokio::time::sleep(retry_delay).await;
+                                    continue;
+                                }
+                                tracing::error!("Failed to trigger propose from deploy path: {}", err);
                             }
-                            ProposerResult::Empty => {
-                                tracing::debug!("Propose already in progress");
-                            }
-                            ProposerResult::Started(seq_number) => {
-                                tracing::debug!("Propose started (seqNum {})", seq_number);
-                            }
-                            ProposerResult::Success(_, block) => {
-                                let block_hash_hex =
-                                    PrettyPrinter::build_string_no_limit(&block.block_hash);
-                                tracing::info!(
-                                    "Success! Block {} created and added.",
-                                    block_hash_hex
-                                );
-                            }
-                        },
-                        Err(err) => {
-                            tracing::error!("Failed to trigger propose from deploy path: {}", err);
                         }
+                        break;
                     }
                 });
             }
