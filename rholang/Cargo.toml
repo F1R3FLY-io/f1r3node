@@ -41,7 +41,7 @@ indexmap = "2.8.0"
 rayon = "1.10.0"
 tempfile = "3.19.1"
 clap = { version = "4.5", features = ["derive"] }
-rholang-parser = { git = "https://github.com/F1R3FLY-io/rholang-rs", branch = "f1r3node_dependecies" }
+rholang-parser = { git = "https://github.com/F1R3FLY-io/rholang-rs", rev = "600110e2f27d54a96cdb2ab08bc91e6252ab98e3" }
 validated = "1.0.0"
 smallvec = { version = "1.15.1", features = [
 	"union",
