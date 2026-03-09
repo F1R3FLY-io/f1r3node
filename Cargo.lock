@@ -3193,7 +3193,7 @@ dependencies = [
  "crypto",
  "hex",
  "itertools 0.14.0",
- "pathmap 0.2.2",
+ "pathmap 0.3.0",
  "proptest",
  "proptest-derive",
  "prost",
