@@ -5,7 +5,7 @@ use crate::util::genesis_builder::GenesisBuilder;
 use casper::rust::genesis::contracts::vault::Vault;
 use crypto::rust::public_key::PublicKey;
 use rholang::rust::build::compile_rholang_source::CompiledRholangSource;
-use rholang::rust::interpreter::util::rev_address::RevAddress;
+use rholang::rust::interpreter::util::vault_address::VaultAddress;
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -16,8 +16,8 @@ fn prepare_vault(vault_data: (&str, u64)) -> Vault {
     let pk = PublicKey::from_bytes(&pk_bytes);
 
     Vault {
-        rev_address: RevAddress::from_public_key(&pk)
-            .expect("Failed to create RevAddress from public key"),
+        vault_address: VaultAddress::from_public_key(&pk)
+            .expect("Failed to create VaultAddress from public key"),
         initial_balance: balance,
     }
 }

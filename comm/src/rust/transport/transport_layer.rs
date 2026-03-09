@@ -41,6 +41,12 @@ pub trait TransportLayer {
 
     async fn stream_mult(&self, peers: &[PeerNode], blob: &Blob) -> Result<(), CommError>;
 
+    /// Disconnect from a peer, shutting down any gRPC channels
+    async fn disconnect(&self, peer: &PeerNode) -> Result<(), CommError>;
+
+    /// Get the set of peers that have active channels
+    async fn get_channeled_peers(&self) -> Result<std::collections::HashSet<PeerNode>, CommError>;
+
     // See comm/src/main/scala/coop/rchain/comm/transport/TransportLayerSyntax.scala
 
     async fn send_packet_to_peer(

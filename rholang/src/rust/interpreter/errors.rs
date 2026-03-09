@@ -18,6 +18,7 @@ pub enum InterpreterError {
     UnexpectedBundleContent(String),
     UnrecognizedNormalizerError(String),
     OutOfPhlogistonsError,
+    UserAbortError,
     TopLevelWildcardsNotAllowedError(String),
     TopLevelFreeVariablesNotAllowedError(String),
     TopLevelLogicalConnectivesNotAllowedError(String),
@@ -88,8 +89,17 @@ pub enum InterpreterError {
     },
 
     OpenAIError(String),
+    OllamaError(String),
     IllegalArgumentError(String),
     IoError(String),
+    /// Raised when a non-deterministic process (OpenAI, Ollama, gRPC) fails during execution.
+    /// Contains the underlying cause and the empty output that would have been produced.
+    NonDeterministicProcessFailure {
+        cause: Box<InterpreterError>,
+        output_not_produced: Vec<Vec<u8>>,
+    },
+    /// Raised during replay when we encounter a failed non-deterministic produce that we cannot replay.
+    CanNotReplayFailedNonDeterministicProcess,
 }
 
 pub fn illegal_argument_error(method_name: &str) -> InterpreterError {
@@ -133,6 +143,10 @@ impl fmt::Display for InterpreterError {
 
             InterpreterError::OutOfPhlogistonsError => {
                 write!(f, "Computation ran out of phlogistons.")
+            }
+
+            InterpreterError::UserAbortError => {
+                write!(f, "Computation aborted by user request.")
             }
 
             InterpreterError::TopLevelWildcardsNotAllowedError(wildcards) => {
@@ -211,6 +225,8 @@ impl fmt::Display for InterpreterError {
             }
 
             InterpreterError::OpenAIError(msg) => write!(f, "OpenAI error: {}", msg),
+
+            InterpreterError::OllamaError(msg) => write!(f, "Ollama error: {}", msg),
 
             InterpreterError::IllegalArgumentError(msg) => write!(f, "Illegal argument: {}", msg),
 
@@ -293,6 +309,14 @@ impl fmt::Display for InterpreterError {
                     "Free variable {} is used twice as a binder (at {} and {}) in name context.",
                     var_name, first_use, second_use
                 )
+            }
+
+            InterpreterError::NonDeterministicProcessFailure { cause, .. } => {
+                write!(f, "Non-deterministic process failure: {}", cause)
+            }
+
+            InterpreterError::CanNotReplayFailedNonDeterministicProcess => {
+                write!(f, "Cannot replay failed non-deterministic process")
             }
         }
     }

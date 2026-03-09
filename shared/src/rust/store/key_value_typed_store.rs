@@ -23,4 +23,7 @@ pub trait KeyValueTypedStore<K, V> {
         F: FnMut((&K, &V)) -> Option<T>;
 
     fn to_map(&self) -> Result<HashMap<K, V>, KvStoreError>;
+
+    /// Check if the store contains any entries. O(1) time and space.
+    fn non_empty(&self) -> Result<bool, KvStoreError>;
 }

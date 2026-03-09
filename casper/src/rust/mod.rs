@@ -9,6 +9,7 @@ pub mod errors;
 pub mod estimator;
 pub mod finality;
 pub mod genesis;
+pub mod heartbeat_signal;
 pub mod helper;
 pub mod last_finalized_height_constraint_checker;
 pub mod merging;
@@ -24,9 +25,14 @@ pub mod safety_oracle;
 pub mod state;
 pub mod storage;
 pub mod synchrony_constraint_checker;
+pub mod system_deploy;
 pub mod util;
 pub mod validate;
 pub mod validator_identity;
+
+// Test utilities module - only available when "test-utils" feature is enabled
+#[cfg(feature = "test-utils")]
+pub mod test_utils;
 
 // See casper/src/main/scala/coop/rchain/casper/package.scala
 
@@ -56,4 +62,3 @@ pub type ProposeFunction = dyn Fn(
     ) -> Pin<Box<dyn Future<Output = Result<ProposerResult, CasperError>> + Send>>
     + Send
     + Sync;
-

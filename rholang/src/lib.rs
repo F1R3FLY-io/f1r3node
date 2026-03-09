@@ -50,6 +50,9 @@ use rspace_plus_plus::rspace::{
 use rust::interpreter::env::Env;
 #[cfg(feature = "mettatron")]
 use rust::interpreter::system_processes::metta_contracts;
+use rust::interpreter::external_services::ExternalServices;
+use rust::interpreter::ollama_service::OllamaConfig;
+use rust::interpreter::openai_service::OpenAIConfig;
 use rust::interpreter::system_processes::test_framework_contracts;
 use rust::interpreter::{
     accounting::costs::Cost,
@@ -563,6 +566,7 @@ extern "C" fn revert_to_soft_checkpoint(
                         persistent: produce_proto.persistent,
                         is_deterministic: produce_proto.is_deterministic,
                         output_value: produce_proto.output_value,
+                        failed: false,
                     }
                 },
             })
@@ -627,6 +631,7 @@ extern "C" fn revert_to_soft_checkpoint(
                                 persistent: produce_proto.persistent,
                                 is_deterministic: produce_proto.is_deterministic,
                                 output_value: produce_proto.output_value,
+                                failed: false,
                             })
                             .collect()
                     },
@@ -651,6 +656,7 @@ extern "C" fn revert_to_soft_checkpoint(
                                     persistent: key_proto.persistent,
                                     is_deterministic: key_proto.is_deterministic,
                                     output_value: key_proto.output_value,
+                                    failed: false,
                                 };
 
                                 let value = map_entry.value;
@@ -670,6 +676,7 @@ extern "C" fn revert_to_soft_checkpoint(
                         persistent: produce_proto.persistent,
                         is_deterministic: produce_proto.is_deterministic,
                         output_value: produce_proto.output_value,
+                        failed: false,
                     };
                     Event::IoEvent(IOEvent::Produce(produce))
                 }
@@ -702,6 +709,7 @@ extern "C" fn revert_to_soft_checkpoint(
                 persistent: key_proto.persistent,
                 is_deterministic: key_proto.is_deterministic,
                 output_value: key_proto.output_value,
+                failed: false,
             };
 
             let value = map_entry.value;
@@ -1215,6 +1223,7 @@ extern "C" fn rig(
                                 persistent: produce_proto.persistent,
                                 is_deterministic: produce_proto.is_deterministic,
                                 output_value: produce_proto.output_value,
+                                failed: false,
                             })
                             .collect()
                     },
@@ -1239,6 +1248,7 @@ extern "C" fn rig(
                                     persistent: key_proto.persistent,
                                     is_deterministic: key_proto.is_deterministic,
                                     output_value: key_proto.output_value,
+                                    failed: false,
                                 };
 
                                 let value = map_entry.value;
@@ -1258,6 +1268,7 @@ extern "C" fn rig(
                         persistent: produce_proto.persistent,
                         is_deterministic: produce_proto.is_deterministic,
                         output_value: produce_proto.output_value,
+                        failed: false,
                     };
                     Event::IoEvent(IOEvent::Produce(produce))
                 }
@@ -1310,7 +1321,9 @@ extern "C" fn create_runtime(
 
     let tokio_runtime = tokio::runtime::Runtime::new().unwrap();
     let rho_runtime = tokio_runtime.block_on(async {
-        create_rho_runtime(rspace, mergeable_tag_name, init_registry, &mut Vec::new()).await
+        let openai_config = OpenAIConfig::from_env();
+        let ollama_config = OllamaConfig::from_env();
+        create_rho_runtime(rspace, mergeable_tag_name, init_registry, &mut Vec::new(), ExternalServices::for_validator(&openai_config, &ollama_config)).await
     });
 
     Box::into_raw(Box::new(RhoRuntime {
@@ -1341,11 +1354,14 @@ extern "C" fn create_runtime_with_test_framework(
 
     let tokio_runtime = tokio::runtime::Runtime::new().unwrap();
     let rho_runtime = tokio_runtime.block_on(async {
+        let openai_config = OpenAIConfig::from_env();
+        let ollama_config = OllamaConfig::from_env();
         create_rho_runtime(
             rspace,
             mergeable_tag_name,
             init_registry,
             &mut extra_system_processes,
+            ExternalServices::for_validator(&openai_config, &ollama_config),
         )
         .await
     });
@@ -1374,7 +1390,9 @@ extern "C" fn create_replay_runtime(
 
     let tokio_runtime = tokio::runtime::Runtime::new().unwrap();
     let replay_rho_runtime = tokio_runtime.block_on(async {
-        create_rho_runtime(rspace, mergeable_tag_name, init_registry, &mut Vec::new()).await
+        let openai_config = OpenAIConfig::from_env();
+        let ollama_config = OllamaConfig::from_env();
+        create_rho_runtime(rspace, mergeable_tag_name, init_registry, &mut Vec::new(), ExternalServices::for_validator(&openai_config, &ollama_config)).await
     });
 
     Box::into_raw(Box::new(ReplayRhoRuntime {

@@ -59,11 +59,11 @@ pub trait TransactionAPI {
     async fn get_transaction(&self, block_hash: Blake2b256Hash) -> Result<Vec<TransactionInfo>>;
 }
 
-/// This API is totally based on how RevVault.rho is written. If the `RevVault.rho` is re-written or changed,
+/// This API is totally based on how SystemVault.rho is written. If the `SystemVault.rho` is re-written or changed,
 /// this API might end up with useless.
 pub struct TransactionAPIImpl {
     block_report_api: BlockReportAPI,
-    transfer_unforgeable: Par, // The transferUnforgeable can be retrieved based on the deployer and the timestamp of RevVault.rho
+    transfer_unforgeable: Par, // The transferUnforgeable can be retrieved based on the deployer and the timestamp of SystemVault.rho
                                // in the genesis ceremony.
 }
 
@@ -299,47 +299,55 @@ where
 
     /// Get transaction response for a block hash with caching
     pub async fn get_transaction(&self, block_hash: String) -> Result<TransactionResponse> {
-        let transaction_response = {
+        // Check cache first — treat missing/empty results as cache miss, not error
+        let cached = {
             let store = self.store.read().await;
             store
                 .get(&vec![block_hash.clone()])?
-                .first()
-                .ok_or(eyre::eyre!("No response found"))?
-                .clone()
+                .into_iter()
+                .next()
+                .flatten()
         };
 
-        if let Some(transaction_response) = transaction_response {
-            return Ok(transaction_response.clone());
+        if let Some(response) = cached {
+            return Ok(response);
         }
 
-        let fetch_task = {
-            self.block_defer_map
-                .get(&block_hash)
-                .map(|entry| entry.value().clone())
-        }
-        .unwrap_or_else(|| {
-            let transaction_api = self.transaction_api.clone();
-            let block_hash_str = block_hash.clone();
-            let store = self.store.clone();
+        // Check for in-flight request (deduplication)
+        let fetch_task = match self
+            .block_defer_map
+            .get(&block_hash)
+            .map(|entry| entry.value().clone())
+        {
+            Some(existing) => existing,
+            None => {
+                let transaction_api = self.transaction_api.clone();
+                let block_hash_str = block_hash.clone();
+                let store = self.store.clone();
 
-            async move {
-                let data = transaction_api
-                    .get_transaction(Blake2b256Hash::from_hex(&block_hash_str))
-                    .await
-                    .map_err(|e| e.to_string())?;
+                let shared_future = async move {
+                    let data = transaction_api
+                        .get_transaction(Blake2b256Hash::from_hex(&block_hash_str))
+                        .await
+                        .map_err(|e| e.to_string())?;
 
-                let response = TransactionResponse { data };
+                    let response = TransactionResponse { data };
 
-                let store = store.write().await;
-                store
-                    .put(vec![(block_hash_str, response.clone())])
-                    .map_err(|e| e.to_string())?;
+                    let store = store.write().await;
+                    store
+                        .put(vec![(block_hash_str, response.clone())])
+                        .map_err(|e| e.to_string())?;
 
-                Ok(response)
+                    Ok(response)
+                }
+                .boxed()
+                .shared();
+
+                self.block_defer_map
+                    .insert(block_hash.clone(), shared_future.clone());
+                shared_future
             }
-            .boxed()
-            .shared()
-        });
+        };
 
         let res = fetch_task.await.map_err(|e| eyre::eyre!(e))?;
 
@@ -410,33 +418,33 @@ where
 //         .as[TransactionResponse]
 //     }
 
-/// This is the hard-coded unforgeable name for
+/// (Historical ref: was RevVault.rho in upstream rchain/rchain)
 /// https://github.com/rchain/rchain/blob/43257ddb7b2b53cffb59a5fe1d4c8296c18b8292/casper/src/main/resources/RevVault.rho#L25
-/// This hard-coded value is only useful with current(above link version) `RevVault.rho` implementation but it is
-/// useful for all the networks(testnet, custom network and mainnet) starting with this `RevVault.rho`.
+/// This hard-coded value is only useful with current(above link version) `SystemVault.rho` implementation but it is
+/// useful for all the networks(testnet, custom network and mainnet) starting with this `SystemVault.rho`.
 ///
 /// This hard-coded value needs to be changed when:
-/// 1. `RevVault.rho` is changed
-/// 2. `StandardDeploys.revVault` is changed
+/// 1. `SystemVault.rho` is changed
+/// 2. `StandardDeploys.system_vault` is changed
 /// 3. The random seed algorithm for unforgeable name of the deploy is changed
 ///
 /// This is not needed when onChain transfer history is implemented and deployed to new network in the future.
 pub fn transfer_unforgeable() -> Par {
     use casper::rust::genesis::contracts::standard_deploys::{
-        to_public, REV_VAULT_PK, REV_VAULT_TIMESTAMP,
+        to_public, SYSTEM_VAULT_PK, SYSTEM_VAULT_TIMESTAMP,
     };
     use casper::rust::util::rholang::tools::Tools;
     use models::rhoapi::{g_unforgeable::UnfInstance, GPrivate, GUnforgeable};
 
-    let rev_vault_pub_key = to_public(REV_VAULT_PK);
-    let mut seed_for_rev_vault =
-        Tools::unforgeable_name_rng(&rev_vault_pub_key, REV_VAULT_TIMESTAMP);
+    let system_vault_pub_key = to_public(SYSTEM_VAULT_PK);
+    let mut seed_for_system_vault =
+        Tools::unforgeable_name_rng(&system_vault_pub_key, SYSTEM_VAULT_TIMESTAMP);
 
     // the 11th unforgeable name (drop 10, take the next one)
     for _ in 0..10 {
-        seed_for_rev_vault.next();
+        seed_for_system_vault.next();
     }
-    let unforgeable_bytes = seed_for_rev_vault.next();
+    let unforgeable_bytes = seed_for_system_vault.next();
 
     Par {
         unforgeables: vec![GUnforgeable {
@@ -485,7 +493,6 @@ mod helpers {
     ) -> Option<Transaction> {
         let pars = &produce.data.as_ref()?.pars;
 
-        // Extract transaction fields
         if pars.len() >= 6 {
             let from_addr = pars[0].get_g_string()?;
             let to_addr = pars[2].get_g_string()?;
@@ -500,6 +507,11 @@ mod helpers {
                 fail_reason: None,
             })
         } else {
+            tracing::warn!(
+                target: "f1r3fly.transaction",
+                par_count = pars.len(),
+                "Malformed produce data in transfer channel: expected >= 6 pars"
+            );
             None
         }
     }

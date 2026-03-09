@@ -54,13 +54,13 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
     last_approved_block: Arc<Mutex<Option<ApprovedBlock>>>,
 ) -> Result<
     (
-    Arc<dyn PacketHandler>,
-    APIServers,
-    CasperLoop,
-    CasperLoop,
-    EngineInit,
-    Arc<dyn CasperLaunch>,
-    ReportingHttpRoutes,
+        Arc<dyn PacketHandler>,
+        APIServers,
+        CasperLoop,
+        CasperLoop,
+        EngineInit,
+        Arc<dyn CasperLaunch>,
+        ReportingHttpRoutes,
         Arc<dyn WebApi + Send + Sync + 'static>,
         Arc<dyn AdminWebApi + Send + Sync + 'static>,
         Option<ProductionProposer<T>>,
@@ -82,10 +82,17 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
         Option<Arc<ProposeFunction>>,
         Arc<casper::rust::api::block_report_api::BlockReportAPI>,
         block_storage::rust::key_value_block_store::KeyValueBlockStore,
+        // Heartbeat dependencies
+        Option<casper::rust::validator_identity::ValidatorIdentity>,
+        Arc<casper::rust::engine::engine_cell::EngineCell>,
+        casper::rust::casper_conf::HeartbeatConf,
+        i32, // max_number_of_parents for heartbeat safety check
+        casper::rust::heartbeat_signal::HeartbeatSignalRef,
+        // Mergeable channels GC loop (optional - only when GC enabled)
+        Option<CasperLoop>,
     ),
     CasperError,
 > {
-
     // RNode key-value store manager / manages LMDB databases
     let mut rnode_store_manager = {
         use casper::rust::storage::rnode_key_value_store_manager::new_key_value_store_manager;
@@ -158,6 +165,28 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
         )
     };
 
+    // Determine if this node is a validator
+    let is_validator = conf.casper.validator_private_key.is_some();
+
+    // Create external services based on node type
+    // Load OpenAI config from HOCON with environment variable override
+    let external_services = {
+        use rholang::rust::interpreter::external_services::ExternalServices;
+        use rholang::rust::interpreter::ollama_service::OllamaConfig;
+        use rholang::rust::interpreter::openai_service::OpenAIConfig;
+
+        // Load config from HOCON values, with env vars taking priority
+        let config = OpenAIConfig::from_config_values(
+            conf.openai.enabled,
+            conf.openai.api_key.clone(),
+            conf.openai.validate_api_key,
+            conf.openai.validation_timeout_sec,
+        );
+        let ollama_config = OllamaConfig::from_env();
+        ExternalServices::for_node_type(is_validator, &config, &ollama_config)
+    };
+
+
     // Runtime for `rnode eval`
     let eval_runtime = {
         use models::rhoapi::Par;
@@ -175,6 +204,7 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
             false,
             &mut Vec::new(),
             Arc::new(Box::new(Matcher)),
+            external_services.clone(),
         )
         .await
     };
@@ -191,11 +221,15 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
             .map_err(|e| CasperError::Other(format!("Failed to get rspace stores: {}", e)))?;
 
         let mergeable_store = RuntimeManager::mergeable_store(&mut rnode_store_manager).await?;
-        RuntimeManager::create_with_history(
+        tracing::debug!("[Setup] Creating RuntimeManager with history...");
+        let result = RuntimeManager::create_with_history(
             rspace_stores,
             mergeable_store,
             Genesis::non_negative_mergeable_tag_name(),
-        )
+            external_services.clone(),
+        );
+        tracing::debug!("[Setup] RuntimeManager created successfully");
+        result
     };
 
     // Reporting runtime
@@ -209,7 +243,12 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
                 .r_space_stores()
                 .await
                 .map_err(|e| CasperError::Other(format!("Failed to get rspace stores: {}", e)))?;
-            reporting_casper::rho_reporter(&rspace_stores, &block_store, &block_dag_storage)
+            reporting_casper::rho_reporter(
+                &rspace_stores,
+                &block_store,
+                &block_dag_storage,
+                rholang::rust::interpreter::external_services::ExternalServices::noop(),
+            )
         } else {
             reporting_casper::noop()
         }
@@ -265,6 +304,9 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
         )
     };
 
+    // Clone validator_identity for heartbeat (used by both proposer and heartbeat)
+    let validator_identity_for_heartbeat = validator_identity_opt.clone();
+
     let proposer = validator_identity_opt.map(|validator_identity| {
         use crypto::rust::private_key::PrivateKey;
 
@@ -291,6 +333,7 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
             rp_connections.clone(),
             rp_conf.clone(),
             event_publisher.clone(),
+            conf.casper.heartbeat_conf.enabled,
         )
     });
 
@@ -339,6 +382,10 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
         .map(|_| Arc::new(RwLock::new(ProposerState::default())));
 
     // CasperLaunch - orchestrates the launch of the Casper consensus
+    // Create heartbeat signal reference - starts empty, will be set when heartbeat starts
+    // Created outside the block so it can be returned for use by HeartbeatProposer
+    let heartbeat_signal_ref = casper::rust::heartbeat_signal::new_heartbeat_signal_ref();
+
     let casper_launch = {
         // Determine which propose function to use based on autopropose config
         let propose_f_for_launch = if conf.autopropose {
@@ -371,6 +418,8 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
             conf.casper.clone(),
             !conf.protocol_client.disable_lfs,
             conf.protocol_server.disable_state_exporter,
+            heartbeat_signal_ref.clone(),
+            conf.standalone,
         )) as Arc<dyn CasperLaunch>
     };
 
@@ -393,6 +442,7 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
         engine_cell.clone(),
         block_store.clone(),
         oracle,
+        conf.dev_mode,
     );
 
     // API Servers - gRPC services for REPL, Deploy, Propose, and LSP
@@ -609,6 +659,70 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
         )
     };
 
+    // Mergeable Channels GC Loop - background garbage collection for mergeable channel data
+    // Only created when GC is enabled in config (required for multi-parent mode)
+    let mergeable_channels_gc_loop: Option<CasperLoop> =
+        if conf.casper.enable_mergeable_channel_gc {
+            use casper::rust::casper::CasperShardConf;
+
+            let gc_block_dag_storage = block_dag_storage.clone();
+            let gc_block_store = block_store.clone();
+            let gc_runtime_manager = Arc::new(tokio::sync::Mutex::new(runtime_manager.clone()));
+            let gc_interval = conf.casper.mergeable_channels_gc_interval;
+            let gc_casper_shard_conf = CasperShardConf {
+                fault_tolerance_threshold: conf.casper.fault_tolerance_threshold,
+                shard_name: conf.casper.shard_name.clone(),
+                parent_shard_id: conf.casper.parent_shard_id.clone(),
+                finalization_rate: conf.casper.finalization_rate,
+                max_number_of_parents: conf.casper.max_number_of_parents,
+                max_parent_depth: conf.casper.max_parent_depth,
+                synchrony_constraint_threshold: conf.casper.synchrony_constraint_threshold,
+                height_constraint_threshold: conf.casper.height_constraint_threshold,
+                deploy_lifespan: 50,
+                casper_version: 1,
+                config_version: 1,
+                bond_minimum: conf.casper.genesis_block_data.bond_minimum,
+                bond_maximum: conf.casper.genesis_block_data.bond_maximum,
+                epoch_length: conf.casper.genesis_block_data.epoch_length,
+                quarantine_length: conf.casper.genesis_block_data.quarantine_length,
+                min_phlo_price: conf.casper.min_phlo_price,
+                disable_late_block_filtering: conf.casper.disable_late_block_filtering,
+                disable_validator_progress_check: conf.standalone,
+                enable_mergeable_channel_gc: conf.casper.enable_mergeable_channel_gc,
+                mergeable_channels_gc_depth_buffer: conf.casper.mergeable_channels_gc_depth_buffer,
+            };
+
+            Some(Arc::new(move || -> Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>> {
+                use casper::rust::util::mergeable_channels_gc;
+
+                let gc_block_dag_storage = gc_block_dag_storage.clone();
+                let gc_block_store = gc_block_store.clone();
+                let gc_runtime_manager = gc_runtime_manager.clone();
+                let gc_casper_shard_conf = gc_casper_shard_conf.clone();
+                let gc_interval = gc_interval;
+
+                Box::pin(async move {
+                    // Sleep for the configured interval
+                    tokio::time::sleep(gc_interval).await;
+
+                    // Run GC
+                    let dag = gc_block_dag_storage.get_representation();
+                    mergeable_channels_gc::collect_garbage(
+                        &dag,
+                        &gc_block_store,
+                        &gc_runtime_manager,
+                        &gc_casper_shard_conf,
+                    )
+                    .await
+                    .map_err(|e| CasperError::RuntimeError(e.to_string()))?;
+
+                    Ok::<(), CasperError>(())
+                })
+            }))
+        } else {
+            None
+        };
+
     // Return all initialized components
     Ok((
         packet_handler,
@@ -631,5 +745,13 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
         trigger_propose_f_opt_for_return,
         Arc::new(block_report_api_for_return),
         block_store,
+        // Heartbeat dependencies
+        validator_identity_for_heartbeat,
+        Arc::new(engine_cell.clone()),
+        conf.casper.heartbeat_conf.clone(),
+        conf.casper.max_number_of_parents,
+        heartbeat_signal_ref,
+        // Mergeable channels GC loop
+        mergeable_channels_gc_loop,
     ))
 }

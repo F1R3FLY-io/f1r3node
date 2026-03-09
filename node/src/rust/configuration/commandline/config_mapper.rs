@@ -289,6 +289,25 @@ impl ConfigMapper<Options> for NodeConf {
                 run.standalone,
             );
             Self::try_override_value(&mut self.casper.min_phlo_price, run.min_phlo_price);
+
+            // Heartbeat configuration overrides
+            // Only override if heartbeat-enabled flag was explicitly set
+            if run.heartbeat_enabled {
+                self.casper.heartbeat_conf.enabled = true;
+            }
+            // --heartbeat-disabled is a dedicated flag that explicitly sets enabled=false.
+            // It takes precedence over --heartbeat-enabled if both are somehow provided.
+            if run.heartbeat_disabled {
+                self.casper.heartbeat_conf.enabled = false;
+            }
+            Self::try_override_value(
+                &mut self.casper.heartbeat_conf.check_interval,
+                run.heartbeat_check_interval,
+            );
+            Self::try_override_value(
+                &mut self.casper.heartbeat_conf.max_lfb_age,
+                run.heartbeat_max_lfb_age,
+            );
         }
     }
 
@@ -401,7 +420,11 @@ mod tests {
         "--influxdb",
         "--influxdb-udp",
         "--zipkin",
-        "--sigar"
+        "--sigar",
+        "--heartbeat-enabled",
+        "--heartbeat-disabled",
+        "--heartbeat-check-interval=111111seconds",
+        "--heartbeat-max-lfb-age=222222seconds"
         ];
 
         let res = Options::try_parse_from(argv);
@@ -499,6 +522,10 @@ mod tests {
                 dev_mode: true,
                 deployer_private_key: Some("test-key".to_string()),
                 min_phlo_price: Some(1),
+                heartbeat_enabled: true,
+                heartbeat_disabled: true,
+                heartbeat_check_interval: Some(Duration::from_secs(111111)),
+                heartbeat_max_lfb_age: Some(Duration::from_secs(222222)),
             })),
         };
 
@@ -611,6 +638,10 @@ mod tests {
                     check_interval: Duration::from_secs(30),
                     max_lfb_age: Duration::from_secs(60),
                 },
+                disable_late_block_filtering: true,
+                enable_mergeable_channel_gc: false,
+                mergeable_channels_gc_interval: Duration::from_secs(5 * 60),
+                mergeable_channels_gc_depth_buffer: 10,
             },
             metrics: crate::rust::configuration::model::Metrics {
                 prometheus: false,
@@ -623,6 +654,7 @@ mod tests {
             dev: crate::rust::configuration::model::DevConf {
                 deployer_private_key: None,
             },
+            openai: Default::default(),
         };
 
         // Apply CLI options to the configuration
@@ -797,6 +829,18 @@ mod tests {
         );
         assert_eq!(default_config.casper.height_constraint_threshold, 111111);
         assert_eq!(default_config.casper.min_phlo_price, 1);
+
+        // Heartbeat configuration
+        // --heartbeat-disabled takes precedence over --heartbeat-enabled (both set in test options)
+        assert!(!default_config.casper.heartbeat_conf.enabled);
+        assert_eq!(
+            default_config.casper.heartbeat_conf.check_interval,
+            Duration::from_secs(111111)
+        );
+        assert_eq!(
+            default_config.casper.heartbeat_conf.max_lfb_age,
+            Duration::from_secs(222222)
+        );
 
         // Round robin dispatcher fields
         assert_eq!(

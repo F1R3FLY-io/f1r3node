@@ -31,7 +31,7 @@ async fn deployer_id_should_be_equal_to_the_deployers_public_key() {
         let pk = Bytes::from(Secp256k1.to_public(&sk).bytes.to_vec());
 
         let deploy = construct_deploy::source_deploy_now_full(
-            r#"new return, auth(`rho:rchain:deployerId`) in { return!(*auth) }"#.to_string(),
+            r#"new return, auth(`rho:system:deployerId`) in { return!(*auth) }"#.to_string(),
             None,
             None,
             Some(sk),
@@ -69,13 +69,13 @@ async fn check_access_granted(
 ) {
     let check_deployer_definition = r#"
 contract @"checkAuth"(input, ret) = {
-  new auth(`rho:rchain:deployerId`) in {
+  new auth(`rho:system:deployerId`) in {
     ret!(*input == *auth)
   }
 }"#;
 
     let check_deployer_call = r#"
-new return, auth(`rho:rchain:deployerId`), ret in {
+new return, auth(`rho:system:deployerId`), ret in {
   @"checkAuth"!(*auth, *ret) |
   for(isAuthenticated <- ret) {
     return!(*isAuthenticated)

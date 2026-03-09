@@ -1,5 +1,0 @@
-new ping in {
-  contract ping(out) = {
-    out!("Pong: @placeholder@")
-  }
-}

@@ -552,4 +552,24 @@ impl TransportLayer for GrpcTransportClient {
 
         Ok(())
     }
+
+    /// Disconnect from a peer, shutting down any gRPC channels
+    async fn disconnect(&self, peer: &PeerNode) -> Result<(), CommError> {
+        let mut channels_map = self.channels_map.lock().await;
+        if let Some(channel_cell) = channels_map.remove(peer) {
+            tracing::info!("Shutting down gRPC channel to peer {}", peer.to_address());
+            // If the channel was initialized, abort its buffer subscriber
+            if let Some(channel) = channel_cell.get() {
+                channel.buffer_subscriber.abort();
+            }
+            // The channel itself will be dropped when removed from the map
+        }
+        Ok(())
+    }
+
+    /// Get the set of peers that have active channels
+    async fn get_channeled_peers(&self) -> Result<std::collections::HashSet<PeerNode>, CommError> {
+        let channels_map = self.channels_map.lock().await;
+        Ok(channels_map.keys().cloned().collect())
+    }
 }

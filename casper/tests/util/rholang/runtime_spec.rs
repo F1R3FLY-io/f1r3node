@@ -28,6 +28,7 @@ async fn empty_state_hash_should_be_the_same_as_hard_coded_cached_value() {
         false,
         &mut Vec::new(),
         Arc::new(Box::new(Matcher)),
+        rholang::rust::interpreter::external_services::ExternalServices::noop(),
     )
     .await;
 
@@ -51,6 +52,7 @@ async fn state_hash_after_fixed_rholang_term_execution_should_be_hash_fixed_with
         false,
         &mut Vec::new(),
         Arc::new(Box::new(Matcher)),
+        rholang::rust::interpreter::external_services::ExternalServices::noop(),
     )
     .await;
 
@@ -80,7 +82,7 @@ async fn state_hash_after_fixed_rholang_term_execution_should_be_hash_fixed_with
 
     let checkpoint = runtime.create_checkpoint();
     let expected_hash = Blake2b256Hash::from_hex(
-        "18e91cdc71e51e08a1a0f3f8aebf7d58b9768e05b7539da02cc953fc9d548fc4",
+        "5a17a1ed5ddcec2394d9d0b47d514eafeaec6fd78c3e38b70fcdfb43c4d96bfa",
     );
 
     assert_eq!(expected_hash, checkpoint.root);

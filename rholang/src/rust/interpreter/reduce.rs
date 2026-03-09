@@ -28,8 +28,10 @@ use prost::Message;
 use rspace_plus_plus::rspace::util::unpack_option_with_peek;
 use std::collections::{BTreeMap, BTreeSet};
 use std::collections::{HashMap, HashSet};
+use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, RwLock};
+use std::task::{Context, Poll};
 
 use crate::rust::interpreter::accounting::costs::{
     add_cost, bytes_to_hex_cost, diff_cost, hex_to_bytes_cost, interpolate_cost, keys_method_cost,
@@ -62,6 +64,46 @@ use mettatron::{
     decode_space_bytes_to_pars, metta_state_to_pathmap_par, pathmap_par_to_metta_state,
     run_state_async, MettaState,
 };
+
+/// Minimum remaining stack space (in bytes) before growing.
+/// When the current stack has less than this amount remaining, a new stack segment is allocated.
+// 128 KB is too small: a single recursion frame in the Rholang interpreter
+// (eval → produce/consume → dispatch → eval) consumes more than 128 KB between
+// stacker checks, so the overflow happens before stacker can grow the stack.
+const STACK_RED_ZONE: usize = 1024 * 1024; // 1 MB
+
+/// Size of each new stack segment allocated when the red zone is reached.
+const STACK_GROW_SIZE: usize = 2 * 1024 * 1024; // 2 MB
+
+/// A Future wrapper that dynamically grows the thread stack during polling.
+///
+/// The Rholang interpreter uses deep async recursion: eval → produce/consume → dispatch → eval.
+/// Each poll of this recursive future chain adds stack frames. In debug builds, unoptimized
+/// async state machines consume ~1-2KB per recursion level, causing stack overflow with the
+/// default 2MB thread stack.
+///
+/// `StackGrowingFuture` wraps each recursive entry point (eval, produce, consume, dispatch).
+/// On each poll, `stacker::maybe_grow` checks remaining stack space. If below STACK_RED_ZONE,
+/// it allocates a new STACK_GROW_SIZE segment and runs the poll there. This allows arbitrarily
+/// deep Rholang recursion (e.g., longslow.rho with 32768 iterations) without stack overflow.
+///
+/// See: https://github.com/F1R3FLY-io/f1r3node/issues/305
+/// See: https://github.com/F1R3FLY-io/f1r3node/issues/306
+struct StackGrowingFuture<F> {
+    inner: F,
+}
+
+impl<F: Future> Future for StackGrowingFuture<F> {
+    type Output = F::Output;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        // SAFETY: Structural pin projection on a single-field struct with no Drop impl.
+        // `inner` is only accessed through this pinned projection, and StackGrowingFuture
+        // does not implement Unpin when F doesn't, preserving pin guarantees.
+        let inner = unsafe { self.map_unchecked_mut(|s| &mut s.inner) };
+        stacker::maybe_grow(STACK_RED_ZONE, STACK_GROW_SIZE, || inner.poll(cx))
+    }
+}
 
 /**
  * Reduce is the interface for evaluating Rholang expressions.
@@ -101,7 +143,7 @@ impl DebruijnInterpreter {
         env: &'a Env<Par>,
         rand: Blake2b512Random,
     ) -> Pin<Box<dyn std::future::Future<Output = Result<(), InterpreterError>> + std::marker::Send + 'a>> {
-        Box::pin(self.eval_inner(par, env, rand))
+        Box::pin(StackGrowingFuture { inner: self.eval_inner(par, env, rand) })
     }
 
     async fn eval_inner(
@@ -218,7 +260,7 @@ impl DebruijnInterpreter {
         data: ListParWithRandom,
         persistent: bool,
     ) -> Pin<Box<dyn std::future::Future<Output = Result<DispatchType, InterpreterError>> + std::marker::Send + 'a>> {
-        Box::pin(self.produce_inner(chan, data, persistent))
+        Box::pin(StackGrowingFuture { inner: self.produce_inner(chan, data, persistent) })
     }
 
     async fn produce_inner(
@@ -249,6 +291,7 @@ impl DebruijnInterpreter {
                         persistent,
                         is_replay,
                         produce_event.clone().output_value,
+                        produce_event.failed,
                     )
                     .await?;
 
@@ -259,6 +302,19 @@ impl DebruijnInterpreter {
                         space_locked.update_produce(produce1);
                         drop(space_locked);
                         Ok(dispatch_type)
+                    }
+
+                    DispatchType::FailedNonDeterministicCall(error) => {
+                        // Mark the produce as failed for replay safety
+                        let failed_produce = produce_event.with_error();
+                        let mut space_locked = self.space.try_lock().unwrap();
+                        space_locked.update_produce(failed_produce);
+                        drop(space_locked);
+                        // Wrap the original error in NonDeterministicProcessFailure
+                        Err(InterpreterError::NonDeterministicProcessFailure {
+                            cause: Box::new(error),
+                            output_not_produced: vec![],
+                        })
                     }
 
                     _ => Ok(dispatch_type),
@@ -275,7 +331,7 @@ impl DebruijnInterpreter {
         persistent: bool,
         peek: bool,
     ) -> Pin<Box<dyn std::future::Future<Output = Result<DispatchType, InterpreterError>> + std::marker::Send + 'a>> {
-        Box::pin(self.consume_inner(binds, body, persistent, peek))
+        Box::pin(StackGrowingFuture { inner: self.consume_inner(binds, body, persistent, peek) })
     }
 
     async fn consume_inner(
@@ -338,8 +394,15 @@ impl DebruijnInterpreter {
         persistent: bool,
         is_replay: bool,
         previous_output: Vec<Vec<u8>>,
+        trace_failed: bool,
     ) -> Result<DispatchType, InterpreterError> {
         // println!("\ncontinue_produce_process");
+        // During replay, if the trace shows a failed non-deterministic process,
+        // we cannot replay it - the external service call failed during original execution
+        if is_replay && trace_failed {
+            return Err(InterpreterError::CanNotReplayFailedNonDeterministicProcess);
+        }
+        
         let previous_output_as_par = previous_output
             .into_iter()
             .map(|bytes| {
@@ -528,7 +591,7 @@ impl DebruijnInterpreter {
         is_replay: bool,
         previous_output: Vec<Par>,
     ) -> Pin<Box<dyn std::future::Future<Output = Result<DispatchType, InterpreterError>> + std::marker::Send + 'a>> {
-        Box::pin(self.dispatch_inner(continuation, data_list, is_replay, previous_output))
+        Box::pin(StackGrowingFuture { inner: self.dispatch_inner(continuation, data_list, is_replay, previous_output) })
     }
 
     async fn dispatch_inner(
@@ -609,13 +672,15 @@ impl DebruijnInterpreter {
             // No errors
             [] => Ok(DispatchType::Skip),
 
-            // Out Of Phlogiston error is always single
-            // - if one execution path is out of phlo, the whole evaluation is also
-            err_list
-                if err_list
-                    .iter()
-                    .any(|e| matches!(e, InterpreterError::OutOfPhlogistonsError)) =>
-            {
+            // Out Of Phlogiston or User Abort error is always single
+            // - if one execution path hits these, the whole evaluation stops as well
+            // UserAbortError takes precedence over OutOfPhlogistonsError
+            // Use single-pass find() to avoid double iteration
+            err_list if err_list.iter().find(|e| matches!(e, InterpreterError::UserAbortError)).is_some() => {
+                Err(InterpreterError::UserAbortError)
+            }
+
+            err_list if err_list.iter().find(|e| matches!(e, InterpreterError::OutOfPhlogistonsError)).is_some() => {
                 Err(InterpreterError::OutOfPhlogistonsError)
             }
 
@@ -1143,8 +1208,11 @@ impl DebruijnInterpreter {
 
                 ExprInstance::ENegBody(eneg) => {
                     let v = self.eval_to_i64(&eneg.p.as_ref().unwrap(), env)?;
+                    let result = v.checked_neg().ok_or_else(|| {
+                        InterpreterError::ReduceError("Arithmetic overflow in negation".to_string())
+                    })?;
                     Ok(Expr {
-                        expr_instance: Some(ExprInstance::GInt(-v)),
+                        expr_instance: Some(ExprInstance::GInt(result)),
                     })
                 }
 
@@ -1152,14 +1220,27 @@ impl DebruijnInterpreter {
                     let v1 = self.eval_to_i64(&p1.clone().unwrap(), env)?;
                     let v2 = self.eval_to_i64(&p2.clone().unwrap(), env)?;
                     self.cost.charge(multiplication_cost())?;
+                    let result = v1.checked_mul(v2).ok_or_else(|| {
+                        InterpreterError::ReduceError(
+                            "Arithmetic overflow in multiplication".to_string(),
+                        )
+                    })?;
                     Ok(Expr {
-                        expr_instance: Some(ExprInstance::GInt(v1 * v2)),
+                        expr_instance: Some(ExprInstance::GInt(result)),
                     })
                 }
 
                 ExprInstance::EDivBody(EDiv { p1, p2 }) => {
                     let v1 = self.eval_to_i64(&p1.clone().unwrap(), env)?;
                     let v2 = self.eval_to_i64(&p2.clone().unwrap(), env)?;
+                    if v2 == 0 {
+                      return Err(InterpreterError::ReduceError("Division by zero".to_string()));
+                    }
+                    if v1 == i64::MIN && v2 == -1 {
+                      return Err(InterpreterError::ReduceError(
+                          "Arithmetic overflow in division".to_string(),
+                      ));
+                    }
                     self.cost.charge(division_cost())?;
                     Ok(Expr {
                         expr_instance: Some(ExprInstance::GInt(v1 / v2)),
@@ -1169,6 +1250,9 @@ impl DebruijnInterpreter {
                 ExprInstance::EModBody(EMod { p1, p2 }) => {
                     let v1 = self.eval_to_i64(&p1.clone().unwrap(), env)?;
                     let v2 = self.eval_to_i64(&p2.clone().unwrap(), env)?;
+                    if v2 == 0 {
+                      return Err(InterpreterError::ReduceError("Modulo by zero".to_string()));
+                    }
                     self.cost.charge(modulo_cost())?;
                     Ok(Expr {
                         expr_instance: Some(ExprInstance::GInt(v1 % v2)),

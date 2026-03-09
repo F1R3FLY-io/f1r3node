@@ -12,7 +12,11 @@ use super::history::history_reader::HistoryReader;
 use super::history::instances::radix_history::RadixHistory;
 use super::logging::BasicLogger;
 use super::r#match::Match;
-use super::metrics_constants::{CONSUME_COMM_LABEL, PRODUCE_COMM_LABEL, RSPACE_METRICS_SOURCE};
+use super::metrics_constants::{
+    CONSUME_COMM_LABEL, PRODUCE_COMM_LABEL, RSPACE_METRICS_SOURCE,
+    RESET_SPAN, REVERT_SOFT_CHECKPOINT_SPAN, CHANGES_SPAN, HISTORY_CHECKPOINT_SPAN,
+    LOCKED_CONSUME_SPAN, LOCKED_PRODUCE_SPAN,
+};
 use super::replay_rspace::ReplayRSpace;
 use super::rspace_interface::ContResult;
 use super::rspace_interface::ISpace;
@@ -84,10 +88,17 @@ where
         let _span = tracing::info_span!(target: "f1r3fly.rspace", "create-checkpoint").entered();
         event!(Level::DEBUG, mark = "started-create-checkpoint", "create_checkpoint");
 
-        // println!("\nhit rspace++ create_checkpoint");
-        // println!("\nspace in create_checkpoint: {:?}", self.store.to_map().len());
-        let changes = self.store.changes();
-        let next_history = self.history_repository.checkpoint(&changes);
+        // Get changes with span
+        let changes = {
+            let _changes_span = tracing::info_span!(target: "f1r3fly.rspace", CHANGES_SPAN).entered();
+            self.store.changes()
+        };
+
+        // Create history checkpoint with span
+        let next_history = {
+            let _history_span = tracing::info_span!(target: "f1r3fly.rspace", HISTORY_CHECKPOINT_SPAN).entered();
+            self.history_repository.checkpoint(&changes)
+        };
         self.history_repository = Arc::new(next_history);
 
         let log = self.event_log.clone();
@@ -101,8 +112,6 @@ where
         self.create_new_hot_store(history_reader);
         self.restore_installs();
 
-        // println!("\nspace after create_checkpoint: {:?}", self.store.to_map().len());
-
         // Mark the completion of create-checkpoint
         event!(Level::DEBUG, mark = "finished-create-checkpoint", "create_checkpoint");
 
@@ -113,7 +122,7 @@ where
     }
 
     fn reset(&mut self, root: &Blake2b256Hash) -> Result<(), RSpaceError> {
-        // println!("\nhit rspace++ reset, root: {:?}", root);
+        let _span = tracing::info_span!(target: "f1r3fly.rspace", RESET_SPAN).entered();
         let next_history = self.history_repository.reset(root)?;
         self.history_repository = Arc::new(next_history);
 
@@ -177,6 +186,7 @@ where
         &mut self,
         checkpoint: SoftCheckpoint<C, P, A, K>,
     ) -> Result<(), RSpaceError> {
+        let _span = tracing::info_span!(target: "f1r3fly.rspace", REVERT_SOFT_CHECKPOINT_SPAN).entered();
         let history = &self.history_repository;
         let history_reader = history.get_history_reader(&history.root())?;
         let hot_store = HotStoreInstances::create_from_mhs_and_hr(
@@ -476,7 +486,8 @@ where
         peeks: &BTreeSet<i32>,
         consume_ref: &Consume,
     ) -> Result<MaybeConsumeResult<C, P, A, K>, RSpaceError> {
-        // Mark the start of locked-consume (matching Scala's Span[F].traceI("locked-consume"))
+        // Span[F].traceI("locked-consume") from Scala
+        let _span = tracing::info_span!(target: "f1r3fly.rspace", LOCKED_CONSUME_SPAN).entered();
         event!(Level::DEBUG, mark = "started-locked-consume", "locked_consume");
 
         // println!("\nHit locked_consume");
@@ -567,7 +578,8 @@ where
         persist: bool,
         produce_ref: &Produce,
     ) -> Result<MaybeProduceResult<C, P, A, K>, RSpaceError> {
-        // Mark the start of locked-produce (matching Scala's Span[F].traceI("locked-produce"))
+        // Span[F].traceI("locked-produce") from Scala
+        let _span = tracing::info_span!(target: "f1r3fly.rspace", LOCKED_PRODUCE_SPAN).entered();
         event!(Level::DEBUG, mark = "started-locked-produce", "locked_produce");
 
         // println!("\nHit locked_produce");

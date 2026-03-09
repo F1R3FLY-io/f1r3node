@@ -17,6 +17,7 @@ use crate::rust::interpreter::{
     reduce::DebruijnInterpreter,
     rho_runtime::{create_runtime_from_kv_store, RhoISpace, RhoRuntimeImpl},
     system_processes::test_framework_contracts,
+    external_services::ExternalServices,
 };
 
 pub async fn create_test_space<T>() -> (
@@ -57,6 +58,7 @@ pub async fn create_test_runtime_with_genesis_contracts() -> RhoRuntimeImpl {
         true,
         &mut test_framework_contracts(),
         Arc::new(Box::new(Matcher)),
+        ExternalServices::noop(),
     )
     .await;
 

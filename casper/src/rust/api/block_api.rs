@@ -82,6 +82,19 @@ impl std::fmt::Display for BlockRetrievalError {
 impl std::error::Error for BlockRetrievalError {}
 
 #[derive(Debug)]
+pub struct DeployExpiredError {
+    pub message: String,
+}
+
+impl std::fmt::Display for DeployExpiredError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "DeployExpiredError: {}", self.message)
+    }
+}
+
+impl std::error::Error for DeployExpiredError {}
+
+#[derive(Debug)]
 pub enum LatestBlockMessageError {
     ValidatorReadOnlyError,
     NoBlockMessageError,
@@ -172,6 +185,25 @@ impl BlockAPI {
                         "Phlo price {} is less than minimum price {}.",
                         d.data.phlo_price, min_phlo_price
                     ))
+                } else {
+                    Ok(())
+                }
+            })
+            .and_then(|_| {
+                // Check if deploy has already expired based on expirationTimestamp
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis() as i64)
+                    .unwrap_or(0);
+                if d.data.is_expired_at(now) {
+                    // Use DeployExpiredError for consistent error classification
+                    Err(DeployExpiredError {
+                        message: format!(
+                            "Deploy has expired: expirationTimestamp={:?} is in the past.",
+                            d.data.expiration_timestamp
+                        ),
+                    }
+                    .to_string())
                 } else {
                     Ok(())
                 }
@@ -333,20 +365,14 @@ impl BlockAPI {
             ))
         }
 
-        if depth > max_blocks_limit {
-            Err(eyre::eyre!(
-                "Your request on getListeningName depth {} exceed the max limit {}",
-                depth,
-                max_blocks_limit
-            ))
+        let depth = depth.min(max_blocks_limit);
+
+        let eng = engine_cell.get().await;
+        if let Some(casper) = eng.with_casper() {
+            casper_response(casper.as_ref(), depth, listening_name).await
         } else {
-            let eng = engine_cell.get().await;
-            if let Some(casper) = eng.with_casper() {
-                casper_response(casper.as_ref(), depth, listening_name).await
-            } else {
-                tracing::warn!("{}", error_message);
-                Err(eyre::eyre!("Error: {}", error_message))
-            }
+            tracing::warn!("{}", error_message);
+            Err(eyre::eyre!("Error: {}", error_message))
         }
     }
 
@@ -395,20 +421,14 @@ impl BlockAPI {
             ))
         }
 
-        if depth > max_blocks_limit {
-            Err(eyre::eyre!(
-                "Your request on getListeningNameContinuation depth {} exceed the max limit {}",
-                depth,
-                max_blocks_limit
-            ))
+        let depth = depth.min(max_blocks_limit);
+
+        let eng = engine_cell.get().await;
+        if let Some(casper) = eng.with_casper() {
+            casper_response(casper.as_ref(), depth, listening_names).await
         } else {
-            let eng = engine_cell.get().await;
-            if let Some(casper) = eng.with_casper() {
-                casper_response(casper.as_ref(), depth, listening_names).await
-            } else {
-                tracing::warn!("{}", error_message);
-                Err(eyre::eyre!("Error: {}", error_message))
-            }
+            tracing::warn!("{}", error_message);
+            Err(eyre::eyre!("Error: {}", error_message))
         }
     }
 
@@ -418,11 +438,19 @@ impl BlockAPI {
     ) -> ApiErr<Vec<BlockMessage>> {
         let mut dag = casper.block_dag().await?;
         let tip_hashes = casper.estimator(&mut dag).await?;
-        let tip_hash = tip_hashes
-            .first()
-            .cloned()
+
+        // With multi-parent merging, estimator returns all validators' latest blocks.
+        // Find the tip with the highest block number to use as the main chain head.
+        let tips: Vec<BlockMessage> = tip_hashes
+            .iter()
+            .filter_map(|h| casper.block_store().get(h).ok().flatten())
+            .collect();
+
+        let tip = tips
+            .into_iter()
+            .max_by_key(|b| b.body.state.block_number)
             .ok_or_else(|| eyre::eyre!("No tip"))?;
-        let tip = casper.block_store().get_unsafe(&tip_hash);
+
         let main_chain =
             proto_util::get_main_chain_until_depth(casper.block_store(), tip, Vec::new(), depth)?;
         Ok(main_chain)
@@ -571,13 +599,7 @@ impl BlockAPI {
             result
         }
 
-        if depth > max_depth_limit {
-            return Err(eyre::eyre!(
-                "Your request depth {} exceed the max limit {}",
-                depth,
-                max_depth_limit
-            ));
-        }
+        let depth = depth.min(max_depth_limit);
 
         let eng = engine_cell.get().await;
         if let Some(casper) = eng.with_casper() {
@@ -627,14 +649,8 @@ impl BlockAPI {
             result
         }
 
-        if end_block_number - start_block_number > max_blocks_limit as i64 {
-            return Err(eyre::eyre!(
-                "Your request startBlockNumber {} and endBlockNumber {} exceed the max limit {}",
-                start_block_number,
-                end_block_number,
-                max_blocks_limit
-            ));
-        }
+        let end_block_number =
+            end_block_number.min(start_block_number + max_blocks_limit as i64);
 
         let eng = engine_cell.get().await;
         if let Some(casper) = eng.with_casper() {
@@ -798,9 +814,7 @@ impl BlockAPI {
             Ok(block_infos)
         }
 
-        if depth > max_depth_limit {
-            return Vec::new();
-        }
+        let depth = depth.min(max_depth_limit);
 
         let eng = engine_cell.get().await;
 
@@ -1113,36 +1127,105 @@ impl BlockAPI {
         if let Some(casper) = eng.with_casper() {
             let is_read_only = casper.get_validator().is_none();
             if is_read_only || dev_mode {
-                let target_block = if block_hash.is_none() {
-                    Some(casper.last_finalized_block().await?)
+                let runtime_manager = casper.runtime_manager();
+
+                // When no block specified, compute merged state from all DAG tips
+                let (state_hash, target_block) = if block_hash.is_none() {
+                    let snapshot = match casper.get_snapshot().await {
+                        Ok(s) => s,
+                        Err(CasperError::FinalizationInProgress) => {
+                            // Finalization temporarily locks the DAG state, preventing
+                            // snapshot creation. Return a clean API error so the caller
+                            // can retry.
+                            tracing::info!(
+                                "exploratoryDeploy: finalization in progress, returning transient error"
+                            );
+                            return Err(eyre::eyre!(
+                                "Finalization in progress, please retry shortly"
+                            ));
+                        }
+                        Err(e) => return Err(e.into()),
+                    };
+                    let lfb = casper.last_finalized_block().await?;
+                    let parents = &snapshot.parents;
+
+                    tracing::warn!(
+                        "exploratoryDeploy: parents.size={}, LFB=#{} {}",
+                        parents.len(),
+                        lfb.body.state.block_number,
+                        PrettyPrinter::build_string_bytes(&lfb.block_hash)
+                    );
+
+                    let merged_state = if parents.len() <= 1 {
+                        // Single parent or no parents: use LFB post-state directly
+                        let lfb_state = proto_util::post_state_hash(&lfb);
+                        tracing::warn!(
+                            "exploratoryDeploy: Using LFB post-state={} (single parent)",
+                            PrettyPrinter::build_string_bytes(&lfb_state)
+                        );
+                        lfb_state
+                    } else {
+                        // Multiple parents: compute merged state using DAG merger
+                        // For exploratory deploy (read-only queries), always disable
+                        // late block filtering to see the full merged state
+                        tracing::warn!(
+                            "exploratoryDeploy: Computing merged state from {} parents",
+                            parents.len()
+                        );
+                        let runtime_guard = runtime_manager.lock().await;
+                        let (merged_state_hash, _rejected) =
+                            crate::rust::util::rholang::interpreter_util::compute_parents_post_state(
+                                casper.block_store(),
+                                parents.clone(),
+                                &snapshot,
+                                &runtime_guard,
+                                Some(true), // disable_late_block_filtering = true for exploratory deploy
+                            )?;
+                        merged_state_hash
+                    };
+
+                    tracing::warn!(
+                        "exploratoryDeploy: Final state={}",
+                        PrettyPrinter::build_string_bytes(&merged_state)
+                    );
+
+                    (merged_state, Some(lfb))
                 } else {
+                    // Specific block requested: use its post-state
                     let hash_str = block_hash.as_ref().unwrap();
                     let padded_hash = pad_hex_string(hash_str);
                     let hash_byte_string = hex::decode(&padded_hash).map_err(|_| {
                         eyre::eyre!("Input hash value is not valid hex string: {:?}", block_hash)
                     })?;
-                    casper.block_store().get(&hash_byte_string.into())?
+                    let block_opt = casper.block_store().get(&hash_byte_string.into())?;
+
+                    match block_opt {
+                        Some(b) => {
+                            let state = if use_pre_state_hash {
+                                proto_util::pre_state_hash(&b)
+                            } else {
+                                proto_util::post_state_hash(&b)
+                            };
+                            (state, Some(b))
+                        }
+                        None => {
+                            return Err(eyre::eyre!("Can not find block {:?}", block_hash));
+                        }
+                    }
                 };
 
-                let res = match target_block {
+                match target_block {
                     Some(b) => {
-                        let post_state_hash = if use_pre_state_hash {
-                            proto_util::pre_state_hash(&b)
-                        } else {
-                            proto_util::post_state_hash(&b)
-                        };
-                        let runtime_manager = casper.runtime_manager();
                         let res = runtime_manager
                             .lock()
                             .await
-                            .play_exploratory_deploy(term, &post_state_hash)
+                            .play_exploratory_deploy(term, &state_hash)
                             .await?;
                         let light_block_info = Self::get_light_block_info(casper.as_ref(), &b).await?;
-                        Some((res, light_block_info))
+                        Ok((res, light_block_info))
                     }
-                    None => None,
-                };
-                res.ok_or_else(|| eyre::eyre!("Can not find block {:?}", block_hash))
+                    None => Err(eyre::eyre!("Can not find block {:?}", block_hash)),
+                }
             } else {
                 Err(eyre::eyre!(
                     "Exploratory deploy can only be executed on read-only RNode."

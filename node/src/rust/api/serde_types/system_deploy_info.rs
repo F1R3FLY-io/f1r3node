@@ -38,6 +38,7 @@ impl From<BondInfoSerde> for BondInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JustificationInfoSerde {
     pub validator: String,
+    #[serde(rename = "latestBlockHash")]
     pub latest_block_hash: String,
 }
 
@@ -78,7 +79,9 @@ impl From<RejectedDeployInfoSerde> for RejectedDeployInfo {
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct SlashSystemDeployDataSerde {
+    #[serde(rename = "invalidBlockHash")]
     pub invalid_block_hash: Vec<u8>,
+    #[serde(rename = "issuerPublicKey")]
     pub issuer_public_key: Vec<u8>,
 }
 
@@ -157,6 +160,7 @@ impl From<SystemDeployDataSerde> for SystemDeployDataProto {
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct PeekProtoSerde {
+    #[serde(rename = "channelIndex")]
     pub channel_index: i32,
 }
 
@@ -316,6 +320,7 @@ impl From<SingleReportSerde> for SingleReport {
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct SystemDeployInfoWithEventSerde {
+    #[serde(rename = "systemDeploy")]
     pub system_deploy: Option<SystemDeployDataSerde>,
     pub report: Vec<SingleReportSerde>,
 }

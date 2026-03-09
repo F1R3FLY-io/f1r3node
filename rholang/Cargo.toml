@@ -56,6 +56,10 @@ smallvec = { version = "1.15.1", features = [
 typed-arena = "2.0.2"
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+metrics = { workspace = true }
+stacker = { workspace = true }
+reqwest = { version = "0.11", features = ["json"] }
+serde_json = { workspace = true }
 
 [dev-dependencies]
 proptest = "1.4.0"

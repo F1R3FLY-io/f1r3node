@@ -112,6 +112,7 @@ impl ContractCall {
                                         .map_err(|e| InterpreterError::DecodeError(e.to_string()))
                                 })
                                 .collect::<Result<Vec<_>, _>>(),
+                            DispatchType::FailedNonDeterministicCall(e) => Err(e),
                             DispatchType::DeterministicCall => Ok(Vec::new()),
                             DispatchType::Skip => Ok(Vec::new()),
                         },
