@@ -6,13 +6,27 @@ import cats.instances.list._
 import cats.syntax.all._
 import coop.rchain.casper.blocks.BlockProcessor
 import coop.rchain.casper.protocol.BlockMessage
-import coop.rchain.casper.{Casper, PrettyPrinter, ProposeFunction, ValidBlockProcessing}
+import coop.rchain.casper.{
+  Casper,
+  FinalizationInProgressException,
+  PrettyPrinter,
+  ProposeFunction,
+  ValidBlockProcessing
+}
 import coop.rchain.models.BlockHash.BlockHash
 import coop.rchain.shared.Log
 import fs2.Stream
 import fs2.concurrent.Queue
 
 object BlockProcessorInstance {
+  private val maxBlocksInProcessing: Int =
+    sys
+      .env
+      .get("F1R3_MAX_BLOCKS_IN_PROCESSING")
+      .flatMap(v => scala.util.Try(v.toInt).toOption)
+      .filter(_ > 0)
+      .getOrElse(512)
+
   def create[F[_]: Concurrent: Log](
       blocksQueue: Queue[F, (Casper[F], BlockMessage)],
       blockProcessor: BlockProcessor[F],
@@ -38,10 +52,25 @@ object BlockProcessorInstance {
           val logFinished                        = Log[F].info(s"Block $blockStr processing finished.")
 
           Stream
-            .eval(state.modify(s => (s + b.blockHash, s.contains(b.blockHash))))
-            // stop here if hash is in processing already
-            .filterNot(
-              inProcessing => inProcessing
+            .eval(
+              state.modify { inProcessing =>
+                if (inProcessing.contains(b.blockHash)) {
+                  (inProcessing, Some("already queued/in-processing"))
+                } else if (inProcessing.size >= maxBlocksInProcessing) {
+                  (inProcessing, Some(s"in-flight block cap $maxBlocksInProcessing is reached"))
+                } else {
+                  (inProcessing + b.blockHash, None)
+                }
+              }
+            )
+            // stop here if hash is in processing already or processing cap reached
+            .evalFilter(
+              maybeSkipReason =>
+                maybeSkipReason.fold(true.pure[F])(_ =>
+                  Log[F].warn(
+                    s"Block $blockStr skipped because it is $maybeSkipReason."
+                  ).as(false)
+                )
             )
             .evalFilter(
               _ =>
@@ -85,6 +114,22 @@ object BlockProcessorInstance {
             }
             // ensure to remove hash from state
             .onFinalize(state.update(s => s - b.blockHash))
+            // Finalization in progress: the snapshot could not be obtained because
+            // finalization is temporarily locking the DAG state. This is transient
+            // (completes within seconds). Re-queue the block so it will be validated
+            // on the next dequeue after finalization finishes. The onFinalize above
+            // already removed the block hash from the processing set, so the
+            // re-queued block will not be rejected by the duplicate guard.
+            .handleErrorWith {
+              case _: FinalizationInProgressException =>
+                Stream
+                  .eval(
+                    Log[F].info(
+                      s"Block $blockStr validation deferred: finalization in progress, re-queuing"
+                    ) >> blocksQueue.enqueue1((c, b))
+                  )
+                  .drain
+            }
         }
       }
       .parJoin(parallelism)

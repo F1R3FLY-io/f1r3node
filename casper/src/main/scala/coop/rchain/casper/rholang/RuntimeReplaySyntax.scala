@@ -31,21 +31,21 @@ import coop.rchain.models.Par
 import coop.rchain.models.Validator.Validator
 import coop.rchain.models.block.StateHash.StateHash
 import coop.rchain.models.syntax._
-import coop.rchain.rholang.interpreter.SystemProcesses.BlockData
+import coop.rchain.rholang.interpreter.SystemProcesses.{BlockData, DeployData => SystemDeployData}
 import coop.rchain.rholang.interpreter.{EvaluateResult, ReplayRhoRuntime}
 import coop.rchain.rspace.hashing.Blake2b256Hash
 import coop.rchain.rspace.merger.MergingLogic.NumberChannelsEndVal
 import coop.rchain.rspace.util.ReplayException
-import coop.rchain.shared.Log
+import coop.rchain.shared.{Log, Stopwatch}
 
 trait RuntimeReplaySyntax {
-  implicit final def casperSyntaxRholangRuntimeReplay[F[_]: Sync: Span: Log](
+  implicit final def casperSyntaxRholangRuntimeReplay[F[_]: Sync: Span: Log: Metrics](
       runtime: ReplayRhoRuntime[F]
   ): RuntimeReplayOps[F] =
     new RuntimeReplayOps[F](runtime)
 }
 
-final class RuntimeReplayOps[F[_]: Sync: Span: Log](
+final class RuntimeReplayOps[F[_]: Sync: Span: Log: Metrics](
     private val runtime: ReplayRhoRuntime[F]
 ) extends RuntimeSyntax {
 
@@ -115,13 +115,53 @@ final class RuntimeReplayOps[F[_]: Sync: Span: Log](
 
     refT.flatMap { mergeable =>
       EitherT
-        .liftF(runtime.reset(startHash.toBlake2b256Hash))
-        .flatMap(_ => EitherT(deploys).semiflatTap(chs => mergeable.update(_ ++ chs)))
-        .flatMap(_ => EitherT(sysDeploys).semiflatTap(chs => mergeable.update(_ ++ chs)))
+        .liftF(
+          Stopwatch.durationRaw(runtime.reset(startHash.toBlake2b256Hash)).flatMap {
+            case (result, elapsed) =>
+              Metrics[F]
+                .record("block.replay.phase.reset.time", elapsed.toMillis)(
+                  Metrics.Source(CasperMetricsSource, "casper")
+                )
+                .as(result)
+          }
+        )
+        .flatMap(
+          _ =>
+            EitherT(
+              Stopwatch.durationRaw(deploys).flatMap {
+                case (result, elapsed) =>
+                  Metrics[F]
+                    .record("block.replay.phase.user-deploys.time", elapsed.toMillis)(
+                      Metrics.Source(CasperMetricsSource, "casper")
+                    )
+                    .as(result)
+              }
+            ).semiflatTap(chs => mergeable.update(_ ++ chs))
+        )
+        .flatMap(
+          _ =>
+            EitherT(
+              Stopwatch.durationRaw(sysDeploys).flatMap {
+                case (result, elapsed) =>
+                  Metrics[F]
+                    .record("block.replay.phase.system-deploys.time", elapsed.toMillis)(
+                      Metrics.Source(CasperMetricsSource, "casper")
+                    )
+                    .as(result)
+              }
+            ).semiflatTap(chs => mergeable.update(_ ++ chs))
+        )
         .semiflatMap(_ => mergeable.get)
         .semiflatMap { allMergeable =>
           Span[F].traceI("create-checkpoint") {
-            runtime.createCheckpoint.map(c => (c.root, allMergeable))
+            Stopwatch.durationRaw(runtime.createCheckpoint).flatMap {
+              case (checkpoint, elapsed) =>
+                Metrics[F]
+                  .record("block.replay.phase.create-checkpoint.time", elapsed.toMillis)(
+                    Metrics.Source(CasperMetricsSource, "casper")
+                  )
+                  .as((checkpoint.root, allMergeable))
+            }
           }
         }
     }.value
@@ -184,7 +224,9 @@ final class RuntimeReplayOps[F[_]: Sync: Span: Log](
       val deployEvaluator = EitherT
         .liftF {
           runtime.withSoftTransaction {
+            val deployData = SystemDeployData.fromDeploy(processedDeploy.deploy)
             for {
+              _      <- runtime.setDeployData(deployData)
               result <- runtime.evaluate(processedDeploy.deploy)
 
               logErrors = printDeployErrors(processedDeploy.deploy.sig, result.errors)
@@ -260,24 +302,56 @@ final class RuntimeReplayOps[F[_]: Sync: Span: Log](
             SystemDeployUtil.generateSlashDeployRandomSeed(sender, blockData.seqNum)
           )
         }
-        rigWithCheck(
+        rigWithCheckTimed(
           processedSysDeploy,
-          replaySystemDeployInternal(slashDeploy, none).semiflatMap {
+          EitherT(
+            Metrics[F].timer(
+              "block.replay.sysdeploy.eval.time",
+              replaySystemDeployInternal(slashDeploy, none).value
+            )(Metrics.Source(CasperMetricsSource, "casper"))
+          ).semiflatMap {
             case (_, er) =>
-              runtime.createSoftCheckpoint.whenA(er.succeeded) *>
-                runtime.getNumberChannelsData(er.mergeable).map((_, er))
+              Stopwatch
+                .durationRaw(
+                  runtime.createSoftCheckpoint.whenA(er.succeeded) *>
+                    runtime.getNumberChannelsData(er.mergeable)
+                )
+                .flatMap {
+                  case (result, elapsed) =>
+                    Metrics[F]
+                      .record("block.replay.sysdeploy.checkpoint-mergeable.time", elapsed.toMillis)(
+                        Metrics.Source(CasperMetricsSource, "casper")
+                      )
+                      .as((result, er))
+                }
           }
         ).map(_._1)
       case CloseBlockSystemDeployData =>
         val closeBlockDeploy = CloseBlockDeploy(
           SystemDeployUtil.generateCloseDeployRandomSeed(sender, blockData.seqNum)
         )
-        rigWithCheck(
+        rigWithCheckTimed(
           processedSysDeploy,
-          replaySystemDeployInternal(closeBlockDeploy, none).semiflatMap {
+          EitherT(
+            Metrics[F].timer(
+              "block.replay.sysdeploy.eval.time",
+              replaySystemDeployInternal(closeBlockDeploy, none).value
+            )(Metrics.Source(CasperMetricsSource, "casper"))
+          ).semiflatMap {
             case (_, er) =>
-              runtime.createSoftCheckpoint.whenA(er.succeeded) *>
-                runtime.getNumberChannelsData(er.mergeable).map((_, er))
+              Stopwatch
+                .durationRaw(
+                  runtime.createSoftCheckpoint.whenA(er.succeeded) *>
+                    runtime.getNumberChannelsData(er.mergeable)
+                )
+                .flatMap {
+                  case (result, elapsed) =>
+                    Metrics[F]
+                      .record("block.replay.sysdeploy.checkpoint-mergeable.time", elapsed.toMillis)(
+                        Metrics.Source(CasperMetricsSource, "casper")
+                      )
+                      .as((result, er))
+                }
           }
         ).map(_._1)
       case Empty =>
@@ -336,6 +410,34 @@ final class RuntimeReplayOps[F[_]: Sync: Span: Log](
     rig(processedSystemDeploy).liftEitherT[ReplayFailure] *> action flatMap {
       case r @ (_, evalRes) => checkReplayDataWithFix(evalRes.succeeded).as(r)
     }
+
+  def rigWithCheckTimed[A](
+      processedSystemDeploy: ProcessedSystemDeploy,
+      action: EitherT[F, ReplayFailure, (A, EvaluateResult)]
+  ): EitherT[F, ReplayFailure, (A, EvaluateResult)] = {
+    // Time rig phase
+    val rigTimed = EitherT.liftF[F, ReplayFailure, Unit](
+      Stopwatch.durationRaw(rig(processedSystemDeploy)).flatMap {
+        case (result, elapsed) =>
+          Metrics[F]
+            .record("block.replay.sysdeploy.rig.time", elapsed.toMillis)(
+              Metrics.Source(CasperMetricsSource, "casper")
+            )
+            .as(result)
+      }
+    )
+
+    rigTimed *> action.flatMap {
+      case r @ (_, evalRes) =>
+        // Time checkReplayDataWithFix phase
+        EitherT[F, ReplayFailure, Unit](
+          Metrics[F].timer(
+            "block.replay.sysdeploy.check.time",
+            checkReplayDataWithFix(evalRes.succeeded).value
+          )(Metrics.Source(CasperMetricsSource, "casper"))
+        ).as(r)
+    }
+  }
 
   def rig(processedDeploy: ProcessedDeploy): F[Unit] =
     runtime.rig(processedDeploy.deployLog.map(EventConverter.toRspaceEvent))

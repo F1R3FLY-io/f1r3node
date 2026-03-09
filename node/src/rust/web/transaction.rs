@@ -124,45 +124,44 @@ impl TransactionAPIImpl {
             .map(|info| info.sig.clone())
             .unwrap_or_else(|| "unknown".to_string());
 
-        // Determine transaction types based on report length (matching Scala logic)
-        let transaction_types = match deploy.report.len() {
-            1 => vec![TransactionType::PreCharge {
-                deploy_id: deploy_sig.clone(),
-            }],
-            2 => vec![
-                TransactionType::PreCharge {
-                    deploy_id: deploy_sig.clone(),
-                },
-                TransactionType::Refund {
-                    deploy_id: deploy_sig.clone(),
-                },
-            ],
-            3 => vec![
-                TransactionType::PreCharge {
-                    deploy_id: deploy_sig.clone(),
-                },
-                TransactionType::UserDeploy {
-                    deploy_id: deploy_sig.clone(),
-                },
-                TransactionType::Refund {
-                    deploy_id: deploy_sig.clone(),
-                },
-            ],
-            _ => {
-                return Err(eyre::eyre!(
-                    "It is not possible that user report {} amount is not equal to 1, 2 or 3",
-                    deploy_sig
-                ));
-            }
-        };
+        if deploy.report.is_empty() {
+            return Err(eyre::eyre!(
+                "It is not possible that user report {} amount is 0",
+                deploy_sig
+            ));
+        }
 
-        // Process each report with its corresponding transaction type
-        for (report, tx_type) in deploy.report.iter().zip(transaction_types) {
+        // Precharge is always emitted in the first report batch.
+        let first_report_transactions = self.find_transactions(&deploy.report[0]);
+        let deployer_addr = first_report_transactions
+            .first()
+            .map(|t| t.from_addr.clone());
+        for transaction in first_report_transactions {
+            transactions.push(TransactionInfo {
+                transaction,
+                transaction_type: TransactionType::PreCharge {
+                    deploy_id: deploy_sig.clone(),
+                },
+            });
+        }
+
+        // Subsequent batches may contain either user-transfer events, refund events, or both.
+        // Classify by sender address: transactions sent by deployer are user deploy effects;
+        // others are refund/system side-effects.
+        for report in deploy.report.iter().skip(1) {
             let found_transactions = self.find_transactions(report);
             for transaction in found_transactions {
+                let tx_type = match deployer_addr.as_ref() {
+                    Some(addr) if transaction.from_addr == *addr => TransactionType::UserDeploy {
+                        deploy_id: deploy_sig.clone(),
+                    },
+                    _ => TransactionType::Refund {
+                        deploy_id: deploy_sig.clone(),
+                    },
+                };
                 transactions.push(TransactionInfo {
                     transaction,
-                    transaction_type: tx_type.clone(),
+                    transaction_type: tx_type,
                 });
             }
         }
@@ -313,8 +312,8 @@ where
 
     /// Get transaction response for a block hash with caching
     pub async fn get_transaction(&self, block_hash: String) -> Result<TransactionResponse> {
-        // Check cache first — treat missing/empty results as cache miss, not error
-        let cached = {
+        // Treat missing/empty cache entries as cache miss, not an error.
+        let transaction_response = {
             let store = self.store.read().await;
             store
                 .get(&vec![block_hash.clone()])?
@@ -323,49 +322,44 @@ where
                 .flatten()
         };
 
-        if let Some(response) = cached {
-            return Ok(response);
+        if let Some(transaction_response) = transaction_response {
+            return Ok(transaction_response);
         }
 
-        // Check for in-flight request (deduplication)
-        let fetch_task = match self
-            .block_defer_map
-            .get(&block_hash)
-            .map(|entry| entry.value().clone())
-        {
-            Some(existing) => existing,
-            None => {
-                let transaction_api = self.transaction_api.clone();
-                let block_hash_str = block_hash.clone();
-                let store = self.store.clone();
+        let fetch_task = if let Some(entry) = self.block_defer_map.get(&block_hash) {
+            entry.value().clone()
+        } else {
+            let transaction_api = self.transaction_api.clone();
+            let block_hash_str = block_hash.clone();
+            let store = self.store.clone();
 
-                let shared_future = async move {
-                    let data = transaction_api
-                        .get_transaction(Blake2b256Hash::from_hex(&block_hash_str))
-                        .await
-                        .map_err(|e| e.to_string())?;
+            let task = async move {
+                let data = transaction_api
+                    .get_transaction(Blake2b256Hash::from_hex(&block_hash_str))
+                    .await
+                    .map_err(|e| e.to_string())?;
 
-                    let response = TransactionResponse { data };
+                let response = TransactionResponse { data };
 
-                    let store = store.write().await;
-                    store
-                        .put(vec![(block_hash_str, response.clone())])
-                        .map_err(|e| e.to_string())?;
+                let store = store.write().await;
+                store
+                    .put(vec![(block_hash_str, response.clone())])
+                    .map_err(|e| e.to_string())?;
 
-                    Ok(response)
-                }
-                .boxed()
-                .shared();
-
-                self.block_defer_map
-                    .insert(block_hash.clone(), shared_future.clone());
-                shared_future
+                Ok(response)
             }
+            .boxed()
+            .shared();
+
+            self.block_defer_map
+                .insert(block_hash.clone(), task.clone());
+            task
         };
 
-        let res = fetch_task.await.map_err(|e| eyre::eyre!(e))?;
-
+        let res = fetch_task.await.map_err(|e| eyre::eyre!(e));
+        // Cleanup in-flight dedup entry regardless of success/failure.
         self.block_defer_map.remove(&block_hash);
+        let res = res?;
 
         Ok(res)
     }
@@ -507,6 +501,7 @@ mod helpers {
     ) -> Option<Transaction> {
         let pars = &produce.data.as_ref()?.pars;
 
+        // Extract transaction fields
         if pars.len() >= 6 {
             let from_addr = pars[0].get_g_string()?;
             let to_addr = pars[2].get_g_string()?;
@@ -521,11 +516,6 @@ mod helpers {
                 fail_reason: None,
             })
         } else {
-            tracing::warn!(
-                target: "f1r3fly.transaction",
-                par_count = pars.len(),
-                "Malformed produce data in transfer channel: expected >= 6 pars"
-            );
             None
         }
     }

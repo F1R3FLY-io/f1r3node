@@ -37,9 +37,7 @@ impl LastFinalizedKeyValueStorage {
     }
 
     /// Create a new LastFinalizedKeyValueStorage from a KeyValueStoreManager
-    pub async fn create_from_kvm(
-        kvm: &mut dyn KeyValueStoreManager,
-    ) -> Result<Self, KvStoreError> {
+    pub async fn create_from_kvm(kvm: &mut dyn KeyValueStoreManager) -> Result<Self, KvStoreError> {
         let last_finalized_kv_store = kvm.store("last-finalized-block".to_string()).await?;
         let last_finalized_block_db: KeyValueTypedStoreImpl<i32, BlockHashSerde> =
             KeyValueTypedStoreImpl::new(last_finalized_kv_store);
@@ -203,4 +201,3 @@ impl LastFinalizedStorage for LastFinalizedKeyValueStorage {
 struct BlockInfo {
     parents: Vec<BlockHash>,
 }
-

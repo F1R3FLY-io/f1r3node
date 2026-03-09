@@ -1,14 +1,13 @@
 // See rspace/src/main/scala/coop/rchain/rspace/state/RSpaceExporter.scala
 
+use std::sync::Arc;
+
 use shared::rust::{Byte, ByteVector};
 
-use crate::rspace::{
-    errors::RootError,
-    hashing::blake2b256_hash::Blake2b256Hash,
-    history::radix_tree::{ExportData, ExportDataSettings, sequential_export},
-    shared::trie_exporter::{KeyHash, TrieExporter, TrieNode},
-};
-use std::sync::Arc;
+use crate::rspace::errors::RootError;
+use crate::rspace::hashing::blake2b256_hash::Blake2b256Hash;
+use crate::rspace::history::radix_tree::{ExportData, ExportDataSettings, sequential_export};
+use crate::rspace::shared::trie_exporter::{KeyHash, TrieExporter, TrieNode};
 
 pub trait RSpaceExporter: TrieExporter + Send + Sync {
     // Get current root

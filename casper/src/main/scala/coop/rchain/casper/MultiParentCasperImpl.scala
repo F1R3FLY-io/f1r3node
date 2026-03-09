@@ -2,6 +2,7 @@ package coop.rchain.casper
 
 import cats.data.EitherT
 import cats.effect.{Concurrent, Sync, Timer}
+import cats.effect.concurrent.Ref
 import cats.syntax.all._
 import coop.rchain.blockstorage._
 import coop.rchain.blockstorage.casperbuffer.CasperBufferStorage
@@ -44,7 +45,11 @@ class MultiParentCasperImpl[F[_]
     validatorId: Option[ValidatorIdentity],
     // todo this should be read from chain, for now read from startup options
     casperShardConf: CasperShardConf,
-    approvedBlock: BlockMessage
+    approvedBlock: BlockMessage,
+    finalizationInProgress: Ref[F, Boolean],
+    heartbeatSignalRef: Ref[F, Option[HeartbeatSignal[F]]],
+    // Callback invoked for each finalized block (e.g., to extract/cache transfer data)
+    onBlockFinalized: String => F[Unit]
 ) extends MultiParentCasper[F] {
   import MultiParentCasperImpl._
 
@@ -106,39 +111,78 @@ class MultiParentCasperImpl[F[_]
 
   def addDeploy(deploy: Signed[DeployData]): F[DeployId] =
     for {
-      _ <- DeployStorage[F].add(List(deploy))
-      _ <- Log[F].info(s"Received ${PrettyPrinter.buildString(deploy)}")
+      _       <- DeployStorage[F].add(List(deploy))
+      message = PrettyPrinter.buildString(deploy)
+      _       <- Log[F].info(s"Received ${message.substring(0, math.min(message.length, 1000))}") // TODO: 1000? or less? or remove?
+      // Trigger heartbeat signal to propose block immediately with this deploy
+      _ <- heartbeatSignalRef.get.flatMap {
+            case Some(signal) =>
+              Log[F].debug("Triggering heartbeat wake for immediate block proposal") >>
+                signal.triggerWake()
+            case None =>
+              Log[F].debug("No heartbeat signal available (heartbeat may be disabled)")
+          }
     } yield deploy.sig
 
   def estimator(dag: BlockDagRepresentation[F]): F[IndexedSeq[BlockHash]] =
-    Estimator[F].tips(dag, approvedBlock).map(_.tips)
+    // Use latest message from each validator (matching getSnapshot behavior)
+    // No fork choice ranking - all validators' latest blocks included
+    // Filter out invalid messages (from slashed validators)
+    // When latestMessages is empty, return genesis block hash
+    for {
+      lmh        <- dag.latestMessageHashes
+      invalidLms <- dag.invalidLatestMessages(lmh)
+      validLms   = lmh -- invalidLms.keys
+    } yield
+      if (validLms.isEmpty) IndexedSeq(approvedBlock.blockHash)
+      // Deduplicate: multiple validators may have the same latest block (e.g., genesis)
+      else validLms.values.toSet.toIndexedSeq
 
   def lastFinalizedBlock: F[BlockMessage] = {
 
     def processFinalised(finalizedSet: Set[BlockHash]): F[Unit] =
-      finalizedSet.toList.traverse { h =>
-        for {
-          block   <- BlockStore[F].getUnsafe(h)
-          deploys = block.body.deploys.map(_.deploy)
+      // Set flag to prevent concurrent block proposals during finalization
+      for {
+        _ <- finalizationInProgress.set(true)
+        _ <- Log[F].debug(s"Finalization started for ${finalizedSet.size} blocks")
+        _ <- finalizedSet.toList.traverse { h =>
+              for {
+                block   <- BlockStore[F].getUnsafe(h)
+                deploys = block.body.deploys.map(_.deploy)
 
-          // Remove block deploys from persistent store
-          deploysRemoved   <- DeployStorage[F].remove(deploys)
-          finalizedSetStr  = PrettyPrinter.buildString(finalizedSet)
-          removedDeployMsg = s"Removed $deploysRemoved deploys from deploy history as we finalized block $finalizedSetStr."
-          _                <- Log[F].info(removedDeployMsg)
+                // Remove block deploys from persistent store
+                deploysRemoved   <- DeployStorage[F].remove(deploys)
+                finalizedSetStr  = PrettyPrinter.buildString(finalizedSet)
+                removedDeployMsg = s"Removed $deploysRemoved deploys from deploy history as we finalized block $finalizedSetStr."
+                _                <- Log[F].info(removedDeployMsg)
 
-          // Remove block index from cache
-          _ <- BlockIndex.cache.remove(h).pure
+                // Remove block index from cache
+                _ <- BlockIndex.cache.remove(h).pure
 
-          // Remove block post-state mergeable channels from persistent store
-          stateHash = block.body.state.postStateHash.toBlake2b256Hash.bytes
-          _         <- RuntimeManager[F].getMergeableStore.delete(stateHash)
-        } yield ()
-      }.void
+                // Remove block post-state mergeable channels from persistent store
+                // When GC enabled: Skip immediate deletion, let background GC handle it safely
+                // When GC disabled: Keep all mergeable data (no deletion to prevent premature GC)
+                stateHash = block.body.state.postStateHash.toBlake2b256Hash.bytes
+                _ <- if (casperShardConf.enableMergeableChannelGC) {
+                      // GC enabled: defer to background GC for safe deletion
+                      ().pure[F]
+                    } else {
+                      // GC disabled: keep all data indefinitely
+                      ().pure[F]
+                    }
+                // Publish BlockFinalised event for each newly finalized block
+                _ <- EventPublisher[F].publish(finalisedEvent(block))
+                // Trigger callback for finalized block (e.g., transfer extraction)
+                blockHashHex = PrettyPrinter.buildStringNoLimit(block.blockHash)
+                _            <- onBlockFinalized(blockHashHex)
+              } yield ()
+            }
+        _ <- finalizationInProgress.set(false)
+        _ <- Log[F].debug("Finalization completed")
+      } yield ()
 
     def newLfbFoundEffect(newLfb: BlockHash): F[Unit] =
-      BlockDagStorage[F].recordDirectlyFinalized(newLfb, processFinalised) >>
-        EventPublisher[F].publish(RChainEvent.blockFinalised(newLfb.toHexString))
+      BlockDagStorage[F].recordDirectlyFinalized(newLfb, processFinalised)
 
     implicit val ms = CasperMetricsSource
 
@@ -174,6 +218,8 @@ class MultiParentCasperImpl[F[_]
 
   def getRuntimeManager: F[RuntimeManager[F]] = Sync[F].delay(RuntimeManager[F])
 
+  def hasPendingDeploysInStorage: F[Boolean] = DeployStorage[F].nonEmpty
+
   def fetchDependencies: F[Unit] = {
     import cats.instances.list._
     for {
@@ -205,22 +251,100 @@ class MultiParentCasperImpl[F[_]
         shardConfig = casperShardConf
       } yield OnChainCasperState(shardConfig, bm.map(v => v.validator -> v.stake).toMap, av)
 
+    // Check if finalization is in progress - fail fast if it is
+    // Block proposals will retry later via heartbeat
     for {
-      dag         <- BlockDagStorage[F].getRepresentation
-      r           <- Estimator[F].tips(dag, approvedBlock)
-      (lca, tips) = (r.lca, r.tips)
+      inProgress <- finalizationInProgress.get
+      _ <- if (inProgress) {
+            Log[F].debug("Finalization in progress, skipping snapshot creation") *>
+              Sync[F].raiseError(new FinalizationInProgressException)
+          } else {
+            ().pure[F]
+          }
+      dag <- BlockDagStorage[F].getRepresentation
 
       /**
-        * Before block merge, `EstimatorHelper.chooseNonConflicting` were used to filter parents, as we could not
-        * have conflicting parents. With introducing block merge, all parents that share the same bonds map
-        * should be parents. Parents that have different bond maps are only one that cannot be merged in any way.
+        * Parent selection: Use latest block from EACH bonded validator.
+        * Every block should have one parent per validator to ensure all deploy effects
+        * are included in the merged state. Apply maxNumberOfParents and maxParentDepth limits.
         */
-      parents <- for {
-                  // For now main parent bonds map taken as a reference, but might be we want to pick a subset with equal
-                  // bond maps that has biggest cumulative stake.
-                  blocks  <- tips.toList.traverse(BlockStore[F].getUnsafe)
-                  parents = blocks.filter(b => b.body.state.bonds == blocks.head.body.state.bonds)
-                } yield parents
+      latestMsgs <- dag.latestMessageHashes
+      // Filter out invalid latest messages (e.g., from slashed validators)
+      invalidLatestMsgs <- dag.invalidLatestMessages(latestMsgs)
+      validLatestMsgs   = latestMsgs -- invalidLatestMsgs.keys
+      // Deduplicate: multiple validators may have the same latest block (e.g., genesis)
+      uniqueParentHashes = validLatestMsgs.values.toSet.toList
+      parentBlocksList   <- uniqueParentHashes.traverse(BlockStore[F].getUnsafe)
+
+      // Sort parents deterministically: highest block number first, then by hash as tiebreaker.
+      // This ensures the newest block is the "main parent" for finalization traversal.
+      // The main parent chain must go through recent blocks for stake to accumulate correctly.
+      sortedParentsList = parentBlocksList.sortBy(
+        (b: BlockMessage) => (-b.body.state.blockNumber, b.blockHash.toStringUtf8)
+      )
+
+      // Filter to blocks with matching bond maps (required for merge compatibility)
+      // If no parent blocks exist (genesis case), use approved block as the parent
+      unfilteredParents = if (sortedParentsList.nonEmpty) {
+        val filtered =
+          sortedParentsList.filter(
+            b => b.body.state.bonds == sortedParentsList.head.body.state.bonds
+          )
+        if (filtered.nonEmpty) filtered else List(approvedBlock)
+      } else {
+        List(approvedBlock)
+      }
+
+      // Apply maxNumberOfParents limit (parents are already sorted by block number desc)
+      parentsAfterCountLimit = if (casperShardConf.maxNumberOfParents != Estimator.UnlimitedParents) {
+        unfilteredParents.take(casperShardConf.maxNumberOfParents)
+      } else {
+        unfilteredParents
+      }
+
+      // Apply maxParentDepth filtering (similar to Estimator.filterDeepParents)
+      // Find the parent with highest block number to use as reference for depth filtering
+      parents <- if (casperShardConf.maxParentDepth != Int.MaxValue && parentsAfterCountLimit.size > 1) {
+                  for {
+                    parentsWithMeta <- parentsAfterCountLimit.traverse(
+                                        b => dag.lookupUnsafe(b.blockHash).map(meta => (b, meta))
+                                      )
+                    // Find the parent with max block number as the reference point
+                    maxBlockNum = parentsWithMeta.map(_._2.blockNum).max
+                    // Filter to keep only parents within maxParentDepth of the highest block
+                    filteredParents = parentsWithMeta
+                      .filter {
+                        case (_, meta) =>
+                          maxBlockNum - meta.blockNum <= casperShardConf.maxParentDepth
+                      }
+                      .map(_._1)
+                  } yield filteredParents
+                } else {
+                  parentsAfterCountLimit.pure[F]
+                }
+
+      // Calculate LCA via fold over parent pairs (for DagMerger)
+      parentMetasForLca = parents.map(BlockMetadata.fromBlock(_, false))
+      lca <- if (parentMetasForLca.size > 1) {
+              parentMetasForLca.tail
+                .foldM(parentMetasForLca.head) { (acc, meta) =>
+                  DagOperations.lowestUniversalCommonAncestorF(acc, meta, dag)
+                }
+                .map(_.blockHash)
+            } else {
+              // Single parent or genesis case - use that block as LCA
+              parentMetasForLca.head.blockHash.pure[F]
+            }
+
+      tips = parents.map(_.blockHash).toIndexedSeq
+
+      // Log parent selection for debugging
+      _ <- Log[F].info(
+            s"Parent selection: ${latestMsgs.size} validators, ${invalidLatestMsgs.size} invalid, " +
+              s"${validLatestMsgs.size} valid, ${unfilteredParents.size} after bond filter, " +
+              s"${parents.size} parents"
+          )
+
       onChainState <- getOnChainState(parents.head)
 
       /**
@@ -285,48 +409,106 @@ class MultiParentCasperImpl[F[_]
       b: BlockMessage,
       s: CasperSnapshot[F]
   ): F[Either[BlockError, ValidBlock]] = {
+    // Helper to time and log individual validation steps
+    def timedStep[A](
+        stepName: String,
+        step: F[Either[BlockError, A]]
+    ): EitherT[F, BlockError, (A, String)] =
+      for {
+        _ <- EitherT.liftF(Span[F].mark(s"before-$stepName"))
+        result <- EitherT(Stopwatch.durationRaw(step).flatMap {
+                   case (eitherResult, elapsedDuration) =>
+                     val elapsed    = Stopwatch.showTime(elapsedDuration)
+                     val stepTimeMs = elapsedDuration.toMillis
+                     // Record metric for this validation step
+                     Metrics[F]
+                       .record(s"block.validation.step.$stepName.time", stepTimeMs)(
+                         Metrics.Source(CasperMetricsSource, "casper")
+                       )
+                       .as(eitherResult.map(r => (r, elapsed)))
+                 })
+        _ <- EitherT.liftF(Span[F].mark(s"after-$stepName"))
+      } yield result
+
     val validationProcess: EitherT[F, BlockError, ValidBlock] =
       for {
-        _ <- EitherT(
-              Validate
-                .blockSummary(b, approvedBlock, s, casperShardConf.shardName, deployLifespan)
-            )
-        _ <- EitherT.liftF(Span[F].mark("post-validation-block-summary"))
-        _ <- EitherT(
-              InterpreterUtil
-                .validateBlockCheckpoint(b, s, RuntimeManager[F])
-                .map {
-                  case Left(ex)       => Left(ex)
-                  case Right(Some(_)) => Right(BlockStatus.valid)
-                  case Right(None)    => Left(BlockStatus.invalidTransaction)
-                }
-            )
-        _ <- EitherT.liftF(Span[F].mark("transactions-validated"))
-        _ <- EitherT(Validate.bondsCache(b, RuntimeManager[F]))
-        _ <- EitherT.liftF(Span[F].mark("bonds-cache-validated"))
-        _ <- EitherT(Validate.neglectedInvalidBlock(b, s))
-        _ <- EitherT.liftF(Span[F].mark("neglected-invalid-block-validated"))
-        _ <- EitherT(
-              EquivocationDetector.checkNeglectedEquivocationsWithUpdate(b, s.dag, approvedBlock)
-            )
-        _ <- EitherT.liftF(Span[F].mark("neglected-equivocation-validated"))
+        result1 <- timedStep(
+                    "block-summary",
+                    Validate
+                      .blockSummary(
+                        b,
+                        approvedBlock,
+                        s,
+                        casperShardConf.shardName,
+                        deployLifespan,
+                        casperShardConf.maxNumberOfParents,
+                        casperShardConf.disableValidatorProgressCheck
+                      )
+                  )
+        t1 = result1._2
+        _  <- EitherT.liftF(Span[F].mark("post-validation-block-summary"))
+
+        result2 <- timedStep(
+                    "checkpoint",
+                    InterpreterUtil
+                      .validateBlockCheckpoint(b, s, RuntimeManager[F])
+                      .map {
+                        case Left(ex)       => Left(ex)
+                        case Right(Some(_)) => Right(BlockStatus.valid)
+                        case Right(None)    => Left(BlockStatus.invalidTransaction)
+                      }
+                  )
+        t2 = result2._2
+        _  <- EitherT.liftF(Span[F].mark("transactions-validated"))
+
+        result3 <- timedStep("bonds-cache", Validate.bondsCache(b, RuntimeManager[F]))
+        t3      = result3._2
+        _       <- EitherT.liftF(Span[F].mark("bonds-cache-validated"))
+
+        result4 <- timedStep("neglected-invalid-block", Validate.neglectedInvalidBlock(b, s))
+        t4      = result4._2
+        _       <- EitherT.liftF(Span[F].mark("neglected-invalid-block-validated"))
+
+        result5 <- timedStep(
+                    "neglected-equivocation",
+                    EquivocationDetector
+                      .checkNeglectedEquivocationsWithUpdate(b, s.dag, approvedBlock)
+                  )
+        t5 = result5._2
+        _  <- EitherT.liftF(Span[F].mark("neglected-equivocation-validated"))
 
         // This validation is only to punish validator which accepted lower price deploys.
         // And this can happen if not configured correctly.
         minPhloPrice = casperShardConf.minPhloPrice
-        _ <- EitherT(Validate.phloPrice(b, minPhloPrice)).recoverWith {
-              case _ =>
-                val warnToLog = EitherT.liftF[F, BlockError, Unit](
-                  Log[F].warn(s"One or more deploys has phloPrice lower than $minPhloPrice")
-                )
-                val asValid = EitherT.rightT[F, BlockError](BlockStatus.valid)
-                warnToLog *> asValid
-            }
-        _ <- EitherT.liftF(Span[F].mark("phlogiston-price-validated"))
+        result6 <- timedStep(
+                    "phlo-price",
+                    Validate.phloPrice(b, minPhloPrice).recoverWith {
+                      case _ =>
+                        Log[F]
+                          .warn(s"One or more deploys has phloPrice lower than $minPhloPrice")
+                          .as(BlockStatus.valid.asRight[BlockError])
+                    }
+                  )
+        t6 = result6._2
+        _  <- EitherT.liftF(Span[F].mark("phlogiston-price-validated"))
 
         depDag <- EitherT.liftF(CasperBufferStorage[F].toDoublyLinkedDag)
-        status <- EitherT(EquivocationDetector.checkEquivocations(depDag, b, s.dag))
+        result7 <- timedStep(
+                    "simple-equivocation",
+                    EquivocationDetector.checkEquivocations(depDag, b, s.dag)
+                  )
+        status = result7._1
+        t7     = result7._2
         _      <- EitherT.liftF(Span[F].mark("equivocation-validated"))
+
+        // Log detailed timing breakdown
+        _ <- EitherT.liftF(
+              Log[F].debug(
+                s"Validation timing breakdown: " +
+                  s"summary=$t1, checkpoint=$t2, bonds=$t3, neglected-invalid=$t4, " +
+                  s"neglected-equiv=$t5, phlo=$t6, simple-equiv=$t7"
+              )
+            )
       } yield status
 
     val blockPreState  = b.body.state.preStateHash
@@ -348,14 +530,20 @@ class MultiParentCasperImpl[F[_]
     } yield ()
 
     val validationProcessDiag = for {
-      // Create block and measure duration
-      r                    <- Stopwatch.duration(validationProcess.value)
-      (valResult, elapsed) = r
+      // Execute validation with accurate Kamon metric recording
+      // Note: Metrics[F].timer properly measures and records the metric without double-counting
+      // inner timing measurements that may exist in validationProcess
+      valResult <- Metrics[F].timer(
+                    "block.processing.stage.replay.time",
+                    validationProcess.value
+                  )(Metrics.Source(CasperMetricsSource, "casper"))
+
+      // Log validation result
       _ <- valResult
             .map { status =>
               val blockInfo   = PrettyPrinter.buildString(b, short = true)
               val deployCount = b.body.deploys.size
-              Log[F].info(s"Block replayed: $blockInfo (${deployCount}d) ($status) [$elapsed]") <*
+              Log[F].info(s"Block replayed: $blockInfo (${deployCount}d) ($status)") <*
                 indexBlock.whenA(casperShardConf.maxNumberOfParents > 1)
             }
             .getOrElse(().pure[F])
@@ -368,6 +556,7 @@ class MultiParentCasperImpl[F[_]
     for {
       updatedDag <- BlockDagStorage[F].insert(block, invalid = false)
       _          <- CasperBufferStorage[F].remove(block.blockHash)
+      _          <- EventPublisher[F].publish(addedEvent(block))
       _          <- updateLastFinalizedBlock(block)
     } yield updatedDag
 
@@ -451,24 +640,36 @@ object MultiParentCasperImpl {
   val deployLifespan = 50
 
   def addedEvent(block: BlockMessage): RChainEvent = {
-    val (blockHash, parents, justifications, deployIds, creator, seqNum) = blockEvent(block)
+    val (blockHash, parents, justifications, deploys, creator, seqNum) = blockEvent(block)
     RChainEvent.blockAdded(
       blockHash,
       parents,
       justifications,
-      deployIds,
+      deploys,
       creator,
       seqNum
     )
   }
 
   def createdEvent(b: BlockMessage): RChainEvent = {
-    val (blockHash, parents, justifications, deployIds, creator, seqNum) = blockEvent(b)
+    val (blockHash, parents, justifications, deploys, creator, seqNum) = blockEvent(b)
     RChainEvent.blockCreated(
       blockHash,
       parents,
       justifications,
-      deployIds,
+      deploys,
+      creator,
+      seqNum
+    )
+  }
+
+  def finalisedEvent(b: BlockMessage): RChainEvent = {
+    val (blockHash, parents, justifications, deploys, creator, seqNum) = blockEvent(b)
+    RChainEvent.blockFinalised(
+      blockHash,
+      parents,
+      justifications,
+      deploys,
       creator,
       seqNum
     )
@@ -482,10 +683,19 @@ object MultiParentCasperImpl {
     val justificationHashes =
       block.justifications.toList
         .map(j => (j.validator.toHexString, j.latestBlockHash.toHexString))
-    val deployIds: List[String] =
-      block.body.deploys.map(pd => PrettyPrinter.buildStringNoLimit(pd.deploy.sig))
+    val deploys =
+      block.body.deploys
+        .map(
+          pd =>
+            DeployEvent(
+              PrettyPrinter.buildStringNoLimit(pd.deploy.sig),
+              pd.cost.cost,
+              PrettyPrinter.buildStringNoLimit(pd.deploy.pk.bytes),
+              pd.isFailed
+            )
+        )
     val creator = block.sender.toHexString
     val seqNum  = block.seqNum
-    (blockHash, parentHashes, justificationHashes, deployIds, creator, seqNum)
+    (blockHash, parentHashes, justificationHashes, deploys, creator, seqNum)
   }
 }

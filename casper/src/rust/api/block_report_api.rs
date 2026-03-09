@@ -5,7 +5,8 @@ use std::sync::Arc;
 use block_storage::rust::key_value_block_store::KeyValueBlockStore;
 use dashmap::DashMap;
 use models::casper::{
-    BlockEventInfo, DeployInfoWithEventData, ReportProto, SingleReport, SystemDeployInfoWithEventData,
+    BlockEventInfo, DeployInfoWithEventData, ReportProto, SingleReport,
+    SystemDeployInfoWithEventData,
 };
 use models::rust::{
     block_hash::BlockHash,
@@ -13,18 +14,12 @@ use models::rust::{
 };
 use prost::bytes::Bytes;
 use rspace_plus_plus::rspace::reporting_transformer::ReportingTransformer;
-use shared::rust::{
-    ByteString,
-    store::key_value_typed_store::KeyValueTypedStore,
-};
+use shared::rust::{store::key_value_typed_store::KeyValueTypedStore, ByteString};
 use tokio::sync::Semaphore;
 
 use crate::rust::{
-    api::block_api::BlockAPI,
-    engine::engine_cell::EngineCell,
-    report_store::ReportStore,
-    reporting_casper::ReportingCasper,
-    reporting_proto_transformer::ReportingProtoTransformer,
+    api::block_api::BlockAPI, engine::engine_cell::EngineCell, report_store::ReportStore,
+    reporting_casper::ReportingCasper, reporting_proto_transformer::ReportingProtoTransformer,
     safety_oracle::CliqueOracleImpl,
 };
 
@@ -96,15 +91,20 @@ impl BlockReportAPI {
         block: &BlockMessage,
         casper: &Arc<dyn crate::rust::casper::MultiParentCasper + Send + Sync>,
     ) -> ApiErr<BlockEventInfo> {
-        let report_result = self.reporting_casper.trace(block).await
+        let report_result = self
+            .reporting_casper
+            .trace(block)
+            .await
             .map_err(|e| BlockReportError::ReplayFailed(e))?;
 
-        let light_block = BlockAPI::get_light_block_info(casper.as_ref(), block).await
+        let light_block = BlockAPI::get_light_block_info(casper.as_ref(), block)
+            .await
             .map_err(|e| BlockReportError::BlockInfoError(e.to_string()))?;
 
         let deploys = self.create_deploy_report(&report_result.deploy_report_result);
 
-        let sys_deploys = self.create_system_deploy_report(&report_result.system_deploy_report_result);
+        let sys_deploys =
+            self.create_system_deploy_report(&report_result.system_deploy_report_result);
 
         let post_state_hash_bytes: Bytes = report_result.post_state_hash.into();
         Ok(BlockEventInfo {
@@ -124,17 +124,18 @@ impl BlockReportAPI {
     ) -> ApiErr<BlockEventInfo> {
         let block_hash = block.block_hash.clone();
 
-        let semaphore = self.block_lock_map
+        let semaphore = self
+            .block_lock_map
             .entry(block_hash.clone())
             .or_insert_with(|| Arc::new(Semaphore::new(1)))
             .clone();
 
-        metrics::gauge!("block_report.lock.queue_size", "source" => "casper")
-            .increment(1.0);
-        let _permit = semaphore.acquire().await
+        metrics::gauge!("block_report.lock.queue_size", "source" => "casper").increment(1.0);
+        let _permit = semaphore
+            .acquire()
+            .await
             .map_err(|e| BlockReportError::SemaphoreError(e.to_string()))?;
-        metrics::gauge!("block_report.lock.queue_size", "source" => "casper")
-            .decrement(1.0);
+        metrics::gauge!("block_report.lock.queue_size", "source" => "casper").decrement(1.0);
 
         let result = self.block_report_inner(force_replay, block, casper).await;
 
@@ -152,7 +153,9 @@ impl BlockReportAPI {
         casper: &Arc<dyn crate::rust::casper::MultiParentCasper + Send + Sync>,
     ) -> ApiErr<BlockEventInfo> {
         let block_hash_bytes: ByteString = block.block_hash.to_vec().into();
-        let cached = self.report_store.get(&vec![block_hash_bytes.clone()])
+        let cached = self
+            .report_store
+            .get(&vec![block_hash_bytes.clone()])
             .map_err(|e| BlockReportError::StoreError(e.to_string()))?;
 
         if let Some(Some(cached_report)) = cached.first() {
@@ -163,7 +166,8 @@ impl BlockReportAPI {
 
         let report = self.replay_block(block, casper).await?;
 
-        self.report_store.put(vec![(block_hash_bytes, report.clone())])
+        self.report_store
+            .put(vec![(block_hash_bytes, report.clone())])
             .map_err(|e| BlockReportError::StoreError(e.to_string()))?;
 
         Ok(report)
@@ -176,7 +180,9 @@ impl BlockReportAPI {
         force_replay: bool,
     ) -> ApiErr<BlockEventInfo> {
         let eng = self.engine_cell.get().await;
-        let casper = eng.with_casper().ok_or(BlockReportError::CasperNotInitialized)?;
+        let casper = eng
+            .with_casper()
+            .ok_or(BlockReportError::CasperNotInitialized)?;
 
         let validator_opt = casper.get_validator();
         if validator_opt.is_some() && !self.dev_mode {
@@ -184,12 +190,14 @@ impl BlockReportAPI {
         }
 
         let casper_block_store = casper.block_store();
-        let block_opt = casper_block_store.get(&hash)
+        let block_opt = casper_block_store
+            .get(&hash)
             .map_err(|e| BlockReportError::StoreError(e.to_string()))?;
 
         let block = block_opt.ok_or_else(|| BlockReportError::BlockNotFound(hash))?;
 
-        self.block_report_within_lock(force_replay, &block, &casper).await
+        self.block_report_within_lock(force_replay, &block, &casper)
+            .await
     }
 
     /// Create system deploy report from replay results
@@ -197,22 +205,36 @@ impl BlockReportAPI {
         &self,
         result: &[crate::rust::reporting_casper::SystemDeployReportResult],
     ) -> Vec<SystemDeployInfoWithEventData> {
-        result.iter().map(|sd| {
-            let system_deploy_proto = SystemDeployData::to_proto(sd.processed_system_deploy.clone());
-            
-            let report: Vec<SingleReport> = sd.events.iter().map(|event_batch| {
-                let events: Vec<ReportProto> = event_batch.iter().map(|event| {
-                    ReportingTransformer::transform_event(self.report_transformer.as_ref(), event)
-                }).collect();
-                
-                SingleReport { events }
-            }).collect();
+        result
+            .iter()
+            .map(|sd| {
+                let system_deploy_proto =
+                    SystemDeployData::to_proto(sd.processed_system_deploy.clone());
 
-            SystemDeployInfoWithEventData {
-                system_deploy: Some(system_deploy_proto).into(),
-                report,
-            }
-        }).collect()
+                let report: Vec<SingleReport> = sd
+                    .events
+                    .iter()
+                    .map(|event_batch| {
+                        let events: Vec<ReportProto> = event_batch
+                            .iter()
+                            .map(|event| {
+                                ReportingTransformer::transform_event(
+                                    self.report_transformer.as_ref(),
+                                    event,
+                                )
+                            })
+                            .collect();
+
+                        SingleReport { events }
+                    })
+                    .collect();
+
+                SystemDeployInfoWithEventData {
+                    system_deploy: Some(system_deploy_proto).into(),
+                    report,
+                }
+            })
+            .collect()
     }
 
     /// Create deploy report from replay results
@@ -220,21 +242,34 @@ impl BlockReportAPI {
         &self,
         result: &[crate::rust::reporting_casper::DeployReportResult],
     ) -> Vec<DeployInfoWithEventData> {
-        result.iter().map(|p| {
-            let deploy_info = p.processed_deploy.clone().to_deploy_info();
-            
-            let report: Vec<SingleReport> = p.events.iter().map(|event_batch| {
-                let events: Vec<ReportProto> = event_batch.iter().map(|event| {
-                    ReportingTransformer::transform_event(self.report_transformer.as_ref(), event)
-                }).collect();
-                
-                SingleReport { events }
-            }).collect();
+        result
+            .iter()
+            .map(|p| {
+                let deploy_info = p.processed_deploy.clone().to_deploy_info();
 
-            DeployInfoWithEventData {
-                deploy_info: Some(deploy_info).into(),
-                report,
-            }
-        }).collect()
+                let report: Vec<SingleReport> = p
+                    .events
+                    .iter()
+                    .map(|event_batch| {
+                        let events: Vec<ReportProto> = event_batch
+                            .iter()
+                            .map(|event| {
+                                ReportingTransformer::transform_event(
+                                    self.report_transformer.as_ref(),
+                                    event,
+                                )
+                            })
+                            .collect();
+
+                        SingleReport { events }
+                    })
+                    .collect();
+
+                DeployInfoWithEventData {
+                    deploy_info: Some(deploy_info).into(),
+                    report,
+                }
+            })
+            .collect()
     }
 }

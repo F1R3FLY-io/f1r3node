@@ -36,8 +36,9 @@ object StateChangeMerger {
       ) => F[Option[HotStoreTrieAction]]
   ): F[Vector[HotStoreTrieAction]] = {
 
+    // Sort by consume channels hash for deterministic ordering across JVM instances
     val consumeAndJoinActionsCompute: F[Vector[ConsumeAndJoinActions]] =
-      changes.kontChanges.toVector.traverse {
+      changes.kontChanges.toVector.sortBy(kv => StableHashProvider.hash(kv._1)).traverse {
         case (consumeChannels, ChannelChange(added, removed)) =>
           val historyPointer = StableHashProvider.hash(consumeChannels)
           for {
@@ -98,8 +99,8 @@ object StateChangeMerger {
       consumeWithJoinActions <- consumeAndJoinActionsCompute
       // trie actions for consumes
       consumeTrieActions = consumeWithJoinActions.collect { case ConsumeAndJoinActions(v, _) => v }
-      // trie actions for produces
-      produceTrieActions <- changes.datumsChanges.toVector.traverse {
+      // trie actions for produces - sort by history pointer for deterministic ordering
+      produceTrieActions <- changes.datumsChanges.toVector.sortBy(_._1).traverse {
                              case (historyPointer, changes) =>
                                for {
                                  actionOpt <- handleChannelChange(
@@ -141,7 +142,9 @@ object StateChangeMerger {
           }
         case (acc, _) => acc // no join action
       }
+      // Sort by history pointer for deterministic ordering
       joinsTrieActions <- joinsChanges.toVector
+                           .sortBy(_._1)
                            .traverse {
                              case (historyPointer, changes) =>
                                mkTrieAction(

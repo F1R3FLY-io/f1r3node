@@ -23,7 +23,7 @@ use models::rust::casper::protocol::casper_message::{
 use prost::bytes::Bytes;
 use std::collections::HashMap;
 
-use crate::util::rholang::resources::{generate_scope_id, mk_test_rnode_store_manager_shared};
+use crate::util::rholang::resources::mk_test_rnode_store_manager_from_genesis;
 use block_storage::rust::dag::block_dag_key_value_storage::KeyValueDagRepresentation;
 use block_storage::rust::key_value_block_store::KeyValueBlockStore;
 use block_storage::rust::test::indexed_block_dag_storage::IndexedBlockDagStorage;
@@ -1862,12 +1862,15 @@ async fn justification_regression_validation_should_return_valid_for_regressive_
 #[tokio::test]
 async fn bonds_cache_validation_should_succeed_on_a_valid_block_and_fail_on_modified_bonds() {
     with_storage(|mut block_store, mut block_dag_storage| async move {
-        let genesis = GenesisBuilder::new().create_genesis().await.unwrap();
+        let context = GenesisBuilder::new()
+            .build_genesis_with_parameters(None)
+            .await
+            .unwrap();
+        let genesis = context.genesis_block.clone();
 
         block_dag_storage.insert(&genesis, false, true).unwrap();
 
-        let scope_id = generate_scope_id();
-        let mut kvm = mk_test_rnode_store_manager_shared(scope_id);
+        let mut kvm = mk_test_rnode_store_manager_from_genesis(&context);
 
         let m_store = crate::util::rholang::resources::mergeable_store_from_dyn(&mut *kvm)
             .await

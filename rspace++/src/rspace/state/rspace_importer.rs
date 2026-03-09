@@ -1,20 +1,16 @@
-use rayon::{
-    ThreadPoolBuilder,
-    iter::{IntoParallelRefIterator, ParallelIterator},
-};
-use shared::rust::ByteVector;
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-};
-
-use crate::rspace::{
-    hashing::blake2b256_hash::Blake2b256Hash,
-    history::cold_store::PersistedData,
-    shared::{trie_exporter::KeyHash, trie_importer::TrieImporter},
-    state::rspace_exporter::RSpaceExporterInstance,
-};
+use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
+use std::sync::Arc;
+
+use rayon::ThreadPoolBuilder;
+use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
+use shared::rust::ByteVector;
+
+use crate::rspace::hashing::blake2b256_hash::Blake2b256Hash;
+use crate::rspace::history::cold_store::PersistedData;
+use crate::rspace::shared::trie_exporter::KeyHash;
+use crate::rspace::shared::trie_importer::TrieImporter;
+use crate::rspace::state::rspace_exporter::RSpaceExporterInstance;
 
 // See rspace/src/main/scala/coop/rchain/rspace/state/RSpaceImporter.scala
 pub trait RSpaceImporter: TrieImporter + Send + Sync {
@@ -40,7 +36,8 @@ impl RSpaceImporterInstance {
             let size_is_valid = || received_history_size == chunk_size || is_end();
             if !size_is_valid() {
                 panic!(
-                    "RSpace Importer: Input size of history items is not valid. Expected chunk size {}, received {}.",
+                    "RSpace Importer: Input size of history items is not valid. Expected chunk \
+                     size {}, received {}.",
                     chunk_size, received_history_size
                 )
             }
@@ -55,7 +52,8 @@ impl RSpaceImporterInstance {
                     validated_items.push((trie_hash.bytes(), trie_bytes));
                 } else {
                     panic!(
-                        "RSpace Importer: Trie hash does not match decoded trie, key: {}, decoded: {}",
+                        "RSpace Importer: Trie hash does not match decoded trie, key: {}, \
+                         decoded: {}",
                         hex::encode(hash.bytes()),
                         hex::encode(trie_hash.bytes())
                     );
@@ -98,7 +96,8 @@ impl RSpaceImporterInstance {
                     {
                         Some(bytes) => Some(bytes),
                         None => panic!(
-                            "RSpace Importer: Trie hash not found in received items or in history store, hash: {}",
+                            "RSpace Importer: Trie hash not found in received items or in history \
+                             store, hash: {}",
                             hex::encode(Blake2b256Hash::new(&hash).bytes())
                         ),
                     }
@@ -114,7 +113,8 @@ impl RSpaceImporterInstance {
             get_and_validate_history_items().into_iter().collect();
 
         let get_node_function = get_node(trie_map);
-        // Traverse trie and extract nodes / the same as in export. Nodes must match hashed keys.
+        // Traverse trie and extract nodes / the same as in export. Nodes must match
+        // hashed keys.
         let nodes = RSpaceExporterInstance::traverse_history(
             start_path,
             skip,
@@ -130,7 +130,8 @@ impl RSpaceImporterInstance {
             .collect();
         let data_keys: Vec<Blake2b256Hash> = leafs.into_iter().map(|leaf| leaf.hash).collect();
 
-        // Validate keys / cryptographic proof that store chunk is not corrupted or modified.
+        // Validate keys / cryptographic proof that store chunk is not corrupted or
+        // modified.
         let history_item_keys: Vec<Blake2b256Hash> =
             history_items.into_iter().map(|item| item.0).collect();
         // println!("\nhistory_item_keys: {:?}", history_item_keys);

@@ -38,6 +38,27 @@ docker-compose -f shard-with-autopropose.yml logs -f | grep "Making a transition
 
 Once you see this message from all validators, the network is ready. Press `Ctrl+C` to stop watching logs.
 
+**Automated startup SLA check (recommended for CI/smoke):**
+```bash
+./scripts/ci/check-casper-init-sla.sh docker/shard-with-autopropose.yml 180
+```
+
+This check now validates both:
+- validator log transition to `Running` within the SLA, and
+- init metrics (`casper_init_attempts`, `casper_init_approved_block_received`, `casper_init_transition_to_running`, `casper_init_time_to_running_count`).
+
+Optional tuning:
+```bash
+METRICS_CHECK_SECONDS=45 ./scripts/ci/check-casper-init-sla.sh docker/shard-with-autopropose.yml 180
+```
+
+On smoke failures, collect a local debug bundle:
+```bash
+./scripts/ci/collect-casper-init-artifacts.sh docker/shard-with-autopropose.yml /tmp/casper-init-artifacts
+```
+The bundle includes `summary.txt` with per-node running-transition evidence and init counters.
+For validator nodes, `summary.txt` also includes `validator_init_gate: PASS|FAIL` based on the same required init metrics as the SLA smoke script.
+
 **Follow logs for all services in the shard:**
 ```bash
 docker-compose -f shard-with-autopropose.yml logs -f

@@ -7,6 +7,7 @@ trait DeployStorage[F[_]] {
   def add(deploys: List[Signed[DeployData]]): F[Unit]
   def remove(deploys: List[Signed[DeployData]]): F[Int]
   def readAll: F[Set[Signed[DeployData]]]
+  def nonEmpty: F[Boolean]
 }
 
 object DeployStorage {

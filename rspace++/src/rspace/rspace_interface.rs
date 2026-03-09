@@ -1,17 +1,16 @@
 // See rspace/src/main/scala/coop/rchain/rspace/ISpace.scala
 
-use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap};
 
-use crate::rspace::checkpoint::SoftCheckpoint;
+use serde::{Deserialize, Serialize};
 
-use super::{
-    checkpoint::Checkpoint,
-    errors::RSpaceError,
-    hashing::blake2b256_hash::Blake2b256Hash,
-    internal::{Datum, ProduceCandidate, Row, WaitingContinuation},
-    trace::{Log, event::Produce},
-};
+use super::checkpoint::Checkpoint;
+use super::errors::RSpaceError;
+use super::hashing::blake2b256_hash::Blake2b256Hash;
+use super::internal::{Datum, ProduceCandidate, Row, WaitingContinuation};
+use super::trace::Log;
+use super::trace::event::Produce;
+use crate::rspace::checkpoint::SoftCheckpoint;
 
 #[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq, Hash)]
 pub struct RSpaceResult<C, A> {
@@ -43,7 +42,8 @@ pub type MaybeProduceResult<C, P, A, K> =
  * @tparam A a type representing an arbitrary piece of data and match result
  * @tparam K a type representing a continuation
  *
- * The traits 'Tuplespace' and 'IReplayRSpace' have been combined into this trait
+ * The traits 'Tuplespace' and 'IReplayRSpace' have been combined into this
+ * trait
  *
  */
 pub trait ISpace<C: Eq + std::hash::Hash, P: Clone, A: Clone, K: Clone> {
@@ -62,6 +62,9 @@ pub trait ISpace<C: Eq + std::hash::Hash, P: Clone, A: Clone, K: Clone> {
     /** Clears the store.  Does not affect the history trie.
      */
     fn clear(&mut self) -> Result<(), RSpaceError>;
+
+    /// Return current history root hash without creating a checkpoint.
+    fn get_root(&self) -> Blake2b256Hash;
 
     /** Resets the store to the given root.
      *
@@ -85,6 +88,11 @@ pub trait ISpace<C: Eq + std::hash::Hash, P: Clone, A: Clone, K: Clone> {
     */
     fn create_soft_checkpoint(&mut self) -> SoftCheckpoint<C, P, A, K>;
 
+    /// Drain and return the in-memory event log without cloning the hot-store
+    /// snapshot. This is a lightweight alternative when only logs are
+    /// needed.
+    fn take_event_log(&mut self) -> Log;
+
     /**
     Reverts the ISpace to the state checkpointed using {@link #createSoftCheckpoint()}
     */
@@ -95,27 +103,31 @@ pub trait ISpace<C: Eq + std::hash::Hash, P: Clone, A: Clone, K: Clone> {
 
     /* TUPLESPACE */
 
-    /** Searches the store for data matching all the given patterns at the given channels.
+    /** Searches the store for data matching all the given patterns at the
+     * given channels.
      *
-     * If no match is found, then the continuation and patterns are put in the store at the given
-     * channels.
+     * If no match is found, then the continuation and patterns are put in
+     * the store at the given channels.
      *
-     * If a match is found, then the continuation is returned along with the matching data.
+     * If a match is found, then the continuation is returned along with the
+     * matching data.
      *
-     * Matching data stored with the `persist` flag set to `true` will not be removed when it is
-     * retrieved. See below for more information about using the `persist` flag.
+     * Matching data stored with the `persist` flag set to `true` will not
+     * be removed when it is retrieved. See below for more information
+     * about using the `persist` flag.
      *
      * '''NOTE''':
      *
-     * A call to [[consume]] that is made with the persist flag set to `true` only persists when
-     * there is no matching data.
+     * A call to [[consume]] that is made with the persist flag set to
+     * `true` only persists when there is no matching data.
      *
-     * This means that in order to make a continuation "stick" in the store, the user will have to
-     * continue to call [[consume]] until a `None` is received.
+     * This means that in order to make a continuation "stick" in the store,
+     * the user will have to continue to call [[consume]] until a `None`
+     * is received.
      *
-     * @param channels A Seq of channels on which to search for matching data
-     * @param patterns A Seq of patterns with which to search for matching data
-     * @param continuation A continuation
+     * @param channels A Seq of channels on which to search for matching
+     * data @param patterns A Seq of patterns with which to search for
+     * matching data @param continuation A continuation
      * @param persist Whether or not to attempt to persist the data
      */
     fn consume(
@@ -127,27 +139,30 @@ pub trait ISpace<C: Eq + std::hash::Hash, P: Clone, A: Clone, K: Clone> {
         peeks: BTreeSet<i32>,
     ) -> Result<MaybeConsumeResult<C, P, A, K>, RSpaceError>;
 
-    /** Searches the store for a continuation that has patterns that match the given data at the
-     * given channel.
+    /** Searches the store for a continuation that has patterns that match
+     * the given data at the given channel.
      *
-     * If no match is found, then the data is put in the store at the given channel.
+     * If no match is found, then the data is put in the store at the given
+     * channel.
      *
-     * If a match is found, then the continuation is returned along with the matching data.
+     * If a match is found, then the continuation is returned along with the
+     * matching data.
      *
-     * Matching data or continuations stored with the `persist` flag set to `true` will not be
-     * removed when they are retrieved. See below for more information about using the `persist`
-     * flag.
+     * Matching data or continuations stored with the `persist` flag set to
+     * `true` will not be removed when they are retrieved. See below for
+     * more information about using the `persist` flag.
      *
      * '''NOTE''':
      *
-     * A call to [[produce]] that is made with the persist flag set to `true` only persists when
-     * there are no matching continuations.
+     * A call to [[produce]] that is made with the persist flag set to
+     * `true` only persists when there are no matching continuations.
      *
-     * This means that in order to make a piece of data "stick" in the store, the user will have to
-     * continue to call [[produce]] until a `None` is received.
+     * This means that in order to make a piece of data "stick" in the
+     * store, the user will have to continue to call [[produce]] until a
+     * `None` is received.
      *
-     * @param channel A channel on which to search for matching continuations and/or store data
-     * @param data A piece of data
+     * @param channel A channel on which to search for matching
+     * continuations and/or store data @param data A piece of data
      * @param persist Whether or not to attempt to persist the data
      */
     fn produce(

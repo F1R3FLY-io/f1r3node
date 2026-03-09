@@ -22,44 +22,24 @@ impl BlockDependencyDag {
         }
     }
 
-    fn updated_with<K, V>(map: &DashMap<K, V>, key: K, default: V, f: impl FnOnce(V) -> V)
-    where
-        K: std::hash::Hash + Eq,
-        V: Clone,
-    {
-        let current_value = map.get(&key).map(|v| v.clone()).unwrap_or(default);
-        let new_value = f(current_value);
-        map.insert(key, new_value);
-    }
-
     pub fn add(&self, parent: BlockHashSerde, child: BlockHashSerde) {
-        Self::updated_with(
-            &self.parent_to_child_adjacency_list,
-            parent.clone(),
-            {
-                let set = DashSet::new();
-                set.insert(child.clone());
-                set
-            },
-            |set: DashSet<BlockHashSerde>| {
-                set.insert(child.clone());
-                set
-            },
-        );
+        if let Some(set) = self.parent_to_child_adjacency_list.get_mut(&parent) {
+            set.insert(child.clone());
+        } else {
+            let set = DashSet::new();
+            set.insert(child.clone());
+            self.parent_to_child_adjacency_list
+                .insert(parent.clone(), set);
+        }
 
-        Self::updated_with(
-            &self.child_to_parent_adjacency_list,
-            child.clone(),
-            {
-                let set = DashSet::new();
-                set.insert(parent.clone());
-                set
-            },
-            |set: DashSet<BlockHashSerde>| {
-                set.insert(parent.clone());
-                set
-            },
-        );
+        if let Some(set) = self.child_to_parent_adjacency_list.get_mut(&child) {
+            set.insert(parent.clone());
+        } else {
+            let set = DashSet::new();
+            set.insert(parent.clone());
+            self.child_to_parent_adjacency_list
+                .insert(child.clone(), set);
+        }
 
         if !self.child_to_parent_adjacency_list.contains_key(&parent) {
             self.dependency_free.insert(parent);
@@ -71,12 +51,39 @@ impl BlockDependencyDag {
     pub fn remove(
         &self,
         element: BlockHashSerde,
-    ) -> Result<(HashSet<BlockHashSerde>, HashSet<BlockHashSerde>), KvStoreError> {
-        assert!(!self.child_to_parent_adjacency_list.contains_key(&element));
-        assert!(!self
-            .parent_to_child_adjacency_list
-            .iter()
-            .any(|entry| entry.value().contains(&element)));
+    ) -> Result<
+        (
+            HashSet<BlockHashSerde>,
+            HashSet<BlockHashSerde>,
+            HashSet<BlockHashSerde>,
+        ),
+        KvStoreError,
+    > {
+        let mut orphaned_parents = HashSet::new();
+
+        let parent_links: Vec<BlockHashSerde> =
+            match self.child_to_parent_adjacency_list.get(&element) {
+                Some(parents) => parents.iter().map(|parent| parent.key().clone()).collect(),
+                None => Vec::new(),
+            };
+
+        // Remove incoming links from all direct parents so this node does not
+        // remain as a dangling child after removal.
+        for parent in parent_links {
+            let mut remove_parent_entry = false;
+            if let Some(children) = self.parent_to_child_adjacency_list.get_mut(&parent) {
+                children.remove(&element);
+                if children.is_empty() {
+                    remove_parent_entry = true;
+                }
+            }
+
+            if remove_parent_entry {
+                self.parent_to_child_adjacency_list.remove(&parent);
+                orphaned_parents.insert(parent.clone());
+                self.dependency_free.remove(&parent);
+            }
+        }
 
         // Get children first and release the lock
         let children: Vec<BlockHashSerde> = match self.parent_to_child_adjacency_list.get(&element)
@@ -90,6 +97,8 @@ impl BlockDependencyDag {
             }
             None => Vec::new(),
         };
+
+        self.child_to_parent_adjacency_list.remove(&element);
 
         let mut new_dependency_free = HashSet::new();
         let mut children_affected = HashSet::new();
@@ -108,10 +117,9 @@ impl BlockDependencyDag {
                         set
                     }
                     None => {
-                        return Err(KvStoreError::KeyNotFound(format!(
-                            "We should have at least {:?} as parent",
-                            element
-                        )))
+                        // A stale forward edge can exist in parent_to_child without a reverse edge.
+                        // Treat it as a removable orphan relation and continue.
+                        HashSet::new()
                     }
                 };
 
@@ -141,7 +149,15 @@ impl BlockDependencyDag {
         }
         self.dependency_free.remove(&element);
 
-        Ok((children_affected, children_removed))
+        for parent in &orphaned_parents {
+            if self.child_to_parent_adjacency_list.contains_key(&parent) {
+                continue;
+            }
+
+            self.dependency_free.remove(&parent);
+        }
+
+        Ok((children_affected, children_removed, orphaned_parents))
     }
 }
 
@@ -231,7 +247,7 @@ mod tests {
         let child = create_block_hash(b"child");
 
         dag.add(parent.clone(), child.clone());
-        let result = dag.remove(parent.clone()).unwrap();
+        let (affected, removed, _orphaned_parents) = dag.remove(parent.clone()).unwrap();
 
         // Check that parent is removed from all structures
         assert!(!dag.parent_to_child_adjacency_list.contains_key(&parent));
@@ -242,9 +258,27 @@ mod tests {
         assert!(dag.dependency_free.contains(&child));
 
         // Check returned sets
-        let (affected, removed) = result;
         assert!(affected.is_empty());
         assert!(removed.contains(&child));
+    }
+
+    #[test]
+    fn test_remove_child_cleans_orphan_parent_from_dependency_free() {
+        let dag = BlockDependencyDag::empty();
+        let parent = create_block_hash(b"orphan-parent");
+        let child = create_block_hash(b"child");
+
+        dag.add(parent.clone(), child.clone());
+        assert!(dag.dependency_free.contains(&parent));
+
+        let (affected, removed, orphaned_parents) = dag.remove(child.clone()).unwrap();
+
+        assert!(!dag.dependency_free.contains(&parent));
+        assert!(dag.parent_to_child_adjacency_list.get(&parent).is_none());
+        assert!(!dag.child_to_parent_adjacency_list.contains_key(&parent));
+        assert!(orphaned_parents.contains(&parent));
+        assert!(affected.is_empty());
+        assert!(removed.is_empty());
     }
 
     #[test]
@@ -256,7 +290,7 @@ mod tests {
 
         dag.add(parent.clone(), child1.clone());
         dag.add(parent.clone(), child2.clone());
-        let result = dag.remove(parent.clone()).unwrap();
+        let (affected, removed, _orphaned_parents) = dag.remove(parent.clone()).unwrap();
 
         // Check that parent is removed
         assert!(!dag.parent_to_child_adjacency_list.contains_key(&parent));
@@ -268,7 +302,6 @@ mod tests {
         assert!(dag.dependency_free.contains(&child2));
 
         // Check returned sets
-        let (affected, removed) = result;
         assert!(affected.is_empty());
         assert!(removed.contains(&child1));
         assert!(removed.contains(&child2));
@@ -283,7 +316,7 @@ mod tests {
 
         dag.add(parent1.clone(), child.clone());
         dag.add(parent2.clone(), child.clone());
-        let result = dag.remove(parent1.clone()).unwrap();
+        let (affected, removed, _orphaned_parents) = dag.remove(parent1.clone()).unwrap();
 
         // Check that parent1 is removed
         assert!(!dag.parent_to_child_adjacency_list.contains_key(&parent1));
@@ -299,8 +332,99 @@ mod tests {
         assert!(!dag.dependency_free.contains(&child));
 
         // Check returned sets
-        let (affected, removed) = result;
         assert!(affected.contains(&child));
         assert!(removed.is_empty());
+    }
+
+    #[test]
+    fn test_remove_node_with_parents_only() {
+        let dag = BlockDependencyDag::empty();
+        let parent = create_block_hash(b"parent");
+        let child = create_block_hash(b"child");
+
+        dag.add(parent.clone(), child.clone());
+        let (affected, removed, _orphaned_parents) = dag.remove(child.clone()).unwrap();
+
+        assert!(!dag
+            .parent_to_child_adjacency_list
+            .get(&parent)
+            .is_some_and(|children| children.contains(&child)));
+        assert!(!dag.parent_to_child_adjacency_list.contains_key(&child));
+        assert!(!dag.child_to_parent_adjacency_list.contains_key(&child));
+        assert!(affected.is_empty());
+        assert!(removed.is_empty());
+    }
+
+    #[test]
+    fn test_remove_node_with_children_but_no_parents() {
+        let dag = BlockDependencyDag::empty();
+        let parent = create_block_hash(b"tempblock");
+        let child = create_block_hash(b"child");
+
+        dag.add(parent.clone(), child.clone());
+        let result = dag.remove(parent.clone());
+        assert!(result.is_ok());
+
+        let (affected, removed, _orphaned_parents) = result.unwrap();
+        assert!(affected.is_empty());
+        assert!(removed.contains(&child));
+        assert!(!dag.parent_to_child_adjacency_list.contains_key(&parent));
+        assert!(!dag.child_to_parent_adjacency_list.contains_key(&parent));
+        assert!(!dag.child_to_parent_adjacency_list.contains_key(&child));
+        assert!(dag.dependency_free.contains(&child));
+    }
+
+    #[test]
+    fn test_remove_tolerates_stale_parent_links() {
+        let dag = BlockDependencyDag::empty();
+        let valid_parent = create_block_hash(b"valid-parent");
+        let stale_parent = create_block_hash(b"stale-parent");
+        let child = create_block_hash(b"child");
+
+        dag.add(valid_parent.clone(), child.clone());
+
+        // Inject a stale parent link for the child that has no corresponding forward edge.
+        if let Some(child_parents) = dag.child_to_parent_adjacency_list.get_mut(&child) {
+            child_parents.insert(stale_parent.clone());
+        }
+
+        assert!(dag
+            .child_to_parent_adjacency_list
+            .get(&child)
+            .is_some_and(|parents| parents.contains(&stale_parent)));
+
+        let (_affected, _removed, _orphaned_parents) = dag.remove(child.clone()).unwrap();
+
+        assert!(!dag.child_to_parent_adjacency_list.contains_key(&child));
+        assert!(!dag.parent_to_child_adjacency_list.contains_key(&child));
+        assert!(!dag
+            .parent_to_child_adjacency_list
+            .get(&valid_parent)
+            .is_some_and(|children| children.contains(&child)));
+        assert!(!dag
+            .parent_to_child_adjacency_list
+            .get(&stale_parent)
+            .is_some_and(|children| children.contains(&child)));
+    }
+
+    #[test]
+    fn test_remove_tolerates_stale_child_to_parent_entry() {
+        let dag = BlockDependencyDag::empty();
+        let parent = create_block_hash(b"parent");
+        let child = create_block_hash(b"child");
+
+        dag.add(parent.clone(), child.clone());
+
+        // Simulate a stale/partial edge where reverse lookup is missing.
+        dag.child_to_parent_adjacency_list.remove(&child);
+
+        let (affected, removed, _orphaned_parents) = dag.remove(parent.clone()).unwrap();
+
+        assert!(!dag.parent_to_child_adjacency_list.contains_key(&parent));
+        assert!(!dag.child_to_parent_adjacency_list.contains_key(&parent));
+        assert!(!dag.parent_to_child_adjacency_list.contains_key(&child));
+        assert!(!dag.child_to_parent_adjacency_list.contains_key(&child));
+        assert!(removed.contains(&child));
+        assert!(affected.is_empty());
     }
 }

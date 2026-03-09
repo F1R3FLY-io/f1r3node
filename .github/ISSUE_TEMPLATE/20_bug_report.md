@@ -1,7 +1,10 @@
 ---
 name: Report a bug
-about: Create a bug report to help us improve RChain platform
+about: Create a bug report to help us improve F1R3FLY platform
+title: ''
 labels: bug
+assignees: ''
+
 ---
 
 <!-- Please answer these questions before submitting a bug report. -->
@@ -13,7 +16,7 @@ labels: bug
 ### Steps to reproduce the bug
 <!-- Make sure you include information that can help us debug (code example, error messages, logs, ...). -->
 
-### What version of RNode are you using?
+### What version of F1R3FLY Node are you using?
 
 ### What is your environment?
 <!-- Operating system (Linux, Windows,...) and version, Docker, jdk version, etc. -->

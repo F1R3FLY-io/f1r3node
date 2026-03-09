@@ -41,6 +41,46 @@ object GroundNormalizeMatcher {
   // a custom string token
   def stripString(raw: String): String = {
     require(raw.length >= 2)
-    raw.substring(1, raw.length - 1)
+    val unquoted = raw.substring(1, raw.length - 1)
+    unescapeString(unquoted)
+  }
+
+  // Process escape sequences in strings
+  private def unescapeString(s: String): String = {
+    val sb = new StringBuilder()
+    var i  = 0
+    while (i < s.length) {
+      if (s(i) == '\\' && i + 1 <= s.length) {
+        s(i + 1) match {
+          case '"'  => sb.append('"'); i += 2
+          case '\\' => sb.append('\\'); i += 2
+          case 'n'  => sb.append('\n'); i += 2
+          case 't'  => sb.append('\t'); i += 2
+          case 'r'  => sb.append('\r'); i += 2
+          case 'b'  => sb.append('\b'); i += 2
+          case 'f'  => sb.append('\f'); i += 2
+          case 'u' if i + 5 < s.length =>
+            try {
+              val hexCode   = s.substring(i + 2, i + 6)
+              val codePoint = Integer.parseInt(hexCode, 16)
+              sb.append(codePoint.toChar)
+              i += 6
+            } catch {
+              case _: NumberFormatException =>
+                sb.append(s(i))
+                i += 1
+            }
+          case _ =>
+            // For any unrecognized escape sequence, treat the backslash as literal
+            // and append both characters to preserve original formatting
+            sb.append(s(i))
+            i += 1
+        }
+      } else {
+        sb.append(s(i))
+        i += 1
+      }
+    }
+    sb.toString()
   }
 }

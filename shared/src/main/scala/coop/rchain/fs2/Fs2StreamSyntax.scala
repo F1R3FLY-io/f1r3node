@@ -88,6 +88,61 @@ class Fs2StreamOps[F[_], A](
       stream.flatTap(_ => resetTimeRef) concurrently nextStream.repeat
     }
 
+  /**
+    * Run action if stream is idle with exponential backoff.
+    * Timeout starts at initialTimeout and doubles on each idle timeout (up to maxTimeout).
+    * Timeout resets to initialTimeout when stream produces an element.
+    *
+    * @param initialTimeout starting timeout duration (e.g., 2.seconds)
+    * @param maxTimeout maximum timeout duration (e.g., 128.seconds)
+    * @param action action to execute when timeout expires, receives current timeout for logging
+    */
+  def onIdleWithBackoff[B](
+      initialTimeout: FiniteDuration,
+      maxTimeout: FiniteDuration,
+      action: FiniteDuration => F[B]
+  )(implicit c: Concurrent[F], t: Time[F]): Stream[F, A] =
+    Stream.eval((Ref.of(System.nanoTime), Ref.of(initialTimeout)).tupled) flatMap {
+      case (lastActivityRef, currentTimeoutRef) =>
+        // Reset idle timer to current time
+        val resetTimeRef = Stream.eval(lastActivityRef.set(System.nanoTime))
+
+        // Reset both idle timer AND timeout to initial (on successful response)
+        val resetAll = Stream.eval(
+          lastActivityRef.set(System.nanoTime) *> currentTimeoutRef.set(initialTimeout)
+        )
+
+        // Calculate elapsed time and check if timeout reached
+        val elapsed = for {
+          prevTime       <- lastActivityRef.get
+          currentTimeout <- currentTimeoutRef.get
+          now            = System.nanoTime
+          duration       = now - prevTime
+          timeoutNano    = currentTimeout.toNanos
+          isElapsed      = duration > timeoutNano
+          nextNano       = if (isElapsed) timeoutNano else timeoutNano - duration
+          // Next check for timeout, min. 25 ms
+          nextDuration = FiniteDuration(nextNano, TimeUnit.NANOSECONDS).max(25.millis)
+        } yield (isElapsed, nextDuration, currentTimeout)
+
+        // Stream to execute action when timeout is reached, then double timeout
+        val nextStream = resetTimeRef.drain ++ Stream.eval(elapsed) flatMap {
+          case (isElapsed, next, currentTimeout) =>
+            val executeAction = Stream.eval(action(currentTimeout)) ++
+              // Double timeout after action (up to max)
+              Stream
+                .eval(
+                  currentTimeoutRef.update(t => (t * 2).min(maxTimeout))
+                )
+                .drain
+
+            executeAction.whenA(isElapsed) ++ Stream.eval(Time[F].sleep(next)).drain
+        }
+
+        // On each element reset idle timer AND reset timeout to initial
+        stream.flatTap(_ => resetAll) concurrently nextStream.repeat
+    }
+
 }
 
 class Fs2StreamOfStreamsOps[F[_], A](

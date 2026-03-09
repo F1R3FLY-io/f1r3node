@@ -1,7 +1,7 @@
 use crypto::rust::hash::blake2b512_random::Blake2b512Random;
 use models::rhoapi::Par;
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, OnceLock, RwLock};
 use tracing::{event, Level};
 
 use super::accounting::_cost;
@@ -38,6 +38,19 @@ pub struct InterpreterImpl {
     merge_chs: Arc<RwLock<HashSet<Par>>>,
 }
 
+fn block_creator_phase_substep_profile_enabled() -> bool {
+    static VALUE: OnceLock<bool> = OnceLock::new();
+    *VALUE.get_or_init(|| {
+        std::env::var("F1R3_BLOCK_CREATOR_PHASE_SUBSTEP_PROFILE")
+            .ok()
+            .map(|v| {
+                let normalized = v.trim().to_ascii_lowercase();
+                matches!(normalized.as_str(), "1" | "true" | "yes" | "on")
+            })
+            .unwrap_or(false)
+    })
+}
+
 impl Interpreter for InterpreterImpl {
     async fn inj_attempt(
         &self,
@@ -47,7 +60,45 @@ impl Interpreter for InterpreterImpl {
         normalizer_env: HashMap<String, Par>,
         rand: Blake2b512Random,
     ) -> Result<EvaluateResult, InterpreterError> {
+        let mem_profile_enabled = block_creator_phase_substep_profile_enabled();
+        let read_vm_rss_kb = || -> Option<usize> {
+            let status = std::fs::read_to_string("/proc/self/status").ok()?;
+            status
+                .lines()
+                .find(|line| line.starts_with("VmRSS:"))
+                .and_then(|line| line.split_whitespace().nth(1))
+                .and_then(|value| value.parse::<usize>().ok())
+        };
+        let mut rss_baseline = if mem_profile_enabled {
+            read_vm_rss_kb()
+        } else {
+            None
+        };
+        let mut rss_prev = rss_baseline;
+        let mut log_mem_step = |step: &str| {
+            if !mem_profile_enabled {
+                return;
+            }
+            if let Some(curr) = read_vm_rss_kb() {
+                let prev = rss_prev.unwrap_or(curr);
+                let baseline = rss_baseline.unwrap_or(curr);
+                eprintln!(
+                    "inj_attempt.mem step={} rss_kb={} delta_prev_kb={} delta_total_kb={}",
+                    step,
+                    curr,
+                    curr as i64 - prev as i64,
+                    curr as i64 - baseline as i64
+                );
+                rss_prev = Some(curr);
+                if rss_baseline.is_none() {
+                    rss_baseline = Some(curr);
+                }
+            }
+        };
+        log_mem_step("start");
+
         let parsing_cost = parsing_cost(term);
+        log_mem_step("after_parsing_cost");
 
         // Using tracing events for async context
         // Scala spans: "set-initial-cost", "charge-parsing-cost", "build-normalized-term", "reduce-term"
@@ -55,59 +106,100 @@ impl Interpreter for InterpreterImpl {
         let evaluation_result: Result<EvaluateResult, InterpreterError> = {
             // Trace: set-initial-cost (matching Scala's Span[F].traceI("set-initial-cost"))
             {
-                event!(Level::DEBUG, mark = "started-set-initial-cost", "inj_attempt");
+                event!(
+                    Level::DEBUG,
+                    mark = "started-set-initial-cost",
+                    "inj_attempt"
+                );
                 let _ = self.c.set(initial_phlo.clone());
-                event!(Level::DEBUG, mark = "finished-set-initial-cost", "inj_attempt");
+                event!(
+                    Level::DEBUG,
+                    mark = "finished-set-initial-cost",
+                    "inj_attempt"
+                );
+                log_mem_step("after_set_initial_cost");
             }
-            
+
             // Trace: charge-parsing-cost (matching Scala's Span[F].traceI("charge-parsing-cost"))
             {
-                event!(Level::DEBUG, mark = "started-charge-parsing-cost", "inj_attempt");
+                event!(
+                    Level::DEBUG,
+                    mark = "started-charge-parsing-cost",
+                    "inj_attempt"
+                );
                 // Scala: charge[F](parsingCost) is inside for-comprehension with .handleErrorWith at the end
                 // In Rust, we must catch charge errors explicitly to match Scala's monadic error handling.
                 // If charge fails (e.g., OutOfPhlogistonsError), convert to EvaluateResult with errors.
                 if let Err(e) = self.c.charge(parsing_cost.clone()) {
-                    event!(Level::DEBUG, mark = "failed-charge-parsing-cost", "inj_attempt");
+                    event!(
+                        Level::DEBUG,
+                        mark = "failed-charge-parsing-cost",
+                        "inj_attempt"
+                    );
+                    log_mem_step("charge_parsing_cost_error");
                     return self.handle_error(initial_phlo.clone(), parsing_cost.clone(), e);
                 }
-                event!(Level::DEBUG, mark = "finished-charge-parsing-cost", "inj_attempt");
+                event!(
+                    Level::DEBUG,
+                    mark = "finished-charge-parsing-cost",
+                    "inj_attempt"
+                );
+                log_mem_step("after_charge_parsing_cost");
             }
-            
+
             // Trace: build-normalized-term (matching Scala's Span[F].traceI("build-normalized-term"))
             let parsed = {
-                event!(Level::DEBUG, mark = "started-build-normalized-term", "inj_attempt");
-                let result = match Compiler::source_to_adt_with_normalizer_env(&term, normalizer_env) {
-                    Ok(p) => {
-                        event!(Level::DEBUG, mark = "finished-build-normalized-term", "inj_attempt");
-                        Ok(p)
-                    },
-                    Err(e) => {
-                        event!(Level::DEBUG, mark = "failed-build-normalized-term", "inj_attempt");
-                        Err(self.handle_error(
-                            initial_phlo.clone(),
-                            parsing_cost.clone(),
-                            InterpreterError::ParserError(e.to_string()),
-                        ))
-                    }
-                };
+                event!(
+                    Level::DEBUG,
+                    mark = "started-build-normalized-term",
+                    "inj_attempt"
+                );
+                let result =
+                    match Compiler::source_to_adt_with_normalizer_env(&term, normalizer_env) {
+                        Ok(p) => {
+                            event!(
+                                Level::DEBUG,
+                                mark = "finished-build-normalized-term",
+                                "inj_attempt"
+                            );
+                            Ok(p)
+                        }
+                        Err(e) => {
+                            event!(
+                                Level::DEBUG,
+                                mark = "failed-build-normalized-term",
+                                "inj_attempt"
+                            );
+                            log_mem_step("build_normalized_term_error");
+                            Err(self.handle_error(
+                                initial_phlo.clone(),
+                                parsing_cost.clone(),
+                                InterpreterError::ParserError(e.to_string()),
+                            ))
+                        }
+                    };
                 match result {
                     Ok(p) => p,
                     Err(err) => return err,
                 }
             };
+            log_mem_step("after_build_normalized_term");
 
             // Empty mergeable channels
             {
                 let mut merge_chs_lock = self.merge_chs.write().unwrap();
                 merge_chs_lock.clear();
             }
+            log_mem_step("after_clear_mergeable_channels");
 
             // Trace: reduce-term (matching Scala's Span[F].traceI("reduce-term"))
             event!(Level::DEBUG, mark = "started-reduce-term", "inj_attempt");
+            log_mem_step("before_reduce_term");
             let reduce_result = reducer.inj(parsed, rand).await;
             match reduce_result {
                 Ok(()) => {
                     event!(Level::DEBUG, mark = "finished-reduce-term", "inj_attempt");
+                    log_mem_step("after_reduce_term_ok");
                     let phlos_left = self.c.get();
                     let mergeable_channels = { self.merge_chs.read().unwrap().clone() };
 
@@ -119,10 +211,12 @@ impl Interpreter for InterpreterImpl {
                 }
                 Err(e) => {
                     event!(Level::DEBUG, mark = "failed-reduce-term", "inj_attempt");
+                    log_mem_step("after_reduce_term_error");
                     self.handle_error(initial_phlo.clone(), parsing_cost.clone(), e)
                 }
             }
         };
+        log_mem_step("finish");
 
         evaluation_result
     }

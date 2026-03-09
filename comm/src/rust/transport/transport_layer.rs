@@ -3,9 +3,9 @@
 // See casper/src/main/scala/coop/rchain/casper/util/comm/CommUtil.scala
 
 use async_trait::async_trait;
-use tracing::{info, warn};
 use prost::bytes::Bytes;
 use std::{sync::Arc, time::Duration};
+use tracing::{info, warn};
 
 use models::{
     casper::{

@@ -23,5 +23,7 @@ async fn system_vault_spec() {
 
     let spec = RhoSpec::new(compiled, vec![], GENESIS_TEST_TIMEOUT);
 
-    spec.run_tests().await.expect("SystemVaultSpec tests failed");
+    spec.run_tests()
+        .await
+        .expect("SystemVaultSpec tests failed");
 }

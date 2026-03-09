@@ -3,21 +3,21 @@
 // All imports fixed for library crate context
 
 use crate::rust::test_utils::util::test_mocks::MockKeyValueStore;
-use async_trait::async_trait;
 use crate::rust::validator_identity::ValidatorIdentity;
+use async_trait::async_trait;
 use rspace_plus_plus::rspace::state::rspace_exporter::RSpaceExporter;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use block_storage::rust::{
-    dag::block_dag_key_value_storage::{DeployId, KeyValueDagRepresentation},
-    key_value_block_store::KeyValueBlockStore,
-};
 use crate::rust::{
     block_status::{BlockError, InvalidBlock, ValidBlock},
     casper::{Casper, CasperSnapshot, DeployError, MultiParentCasper},
     errors::CasperError,
     util::rholang::runtime_manager::RuntimeManager,
+};
+use block_storage::rust::{
+    dag::block_dag_key_value_storage::{DeployId, KeyValueDagRepresentation},
+    key_value_block_store::KeyValueBlockStore,
 };
 use crypto::rust::signatures::signed::Signed;
 use models::rust::{
@@ -27,6 +27,7 @@ use models::rust::{
     casper::protocol::casper_message::{BlockMessage, DeployData},
     validator::Validator,
 };
+use prost::bytes::Bytes;
 use rspace_plus_plus::rspace::history::Either;
 
 pub struct NoOpsCasperEffect {
@@ -38,7 +39,6 @@ pub struct NoOpsCasperEffect {
     shared_approved_block_data: Arc<Mutex<HashMap<Vec<u8>, Vec<u8>>>>,
     block_dag_storage: KeyValueDagRepresentation,
 }
-
 
 // For testing purposes, we'll implement Clone manually by creating stub instances
 impl Clone for NoOpsCasperEffect {
@@ -174,7 +174,9 @@ impl MultiParentCasper for NoOpsCasperEffect {
 #[async_trait]
 impl Casper for NoOpsCasperEffect {
     async fn get_snapshot(&self) -> Result<CasperSnapshot, CasperError> {
-        todo!()
+        Err(CasperError::RuntimeError(
+            "get_snapshot not implemented for NoOpsCasperEffect - use TestCasperWithSnapshot for heartbeat tests".to_string(),
+        ))
     }
 
     fn contains(&self, hash: &BlockHash) -> bool {
@@ -211,19 +213,33 @@ impl Casper for NoOpsCasperEffect {
         1
     }
 
+    fn get_all_from_buffer(&self) -> Result<Vec<BlockMessage>, CasperError> {
+        Ok(Vec::new())
+    }
+
     async fn validate(
         &self,
         _block: &BlockMessage,
         _snapshot: &mut CasperSnapshot,
     ) -> Result<Either<BlockError, ValidBlock>, CasperError> {
-        todo!()
+        Ok(Either::Right(ValidBlock::Valid))
+    }
+
+    async fn validate_self_created(
+        &self,
+        _block: &BlockMessage,
+        _snapshot: &mut CasperSnapshot,
+        _pre_state_hash: Bytes,
+        _post_state_hash: Bytes,
+    ) -> Result<Either<BlockError, ValidBlock>, CasperError> {
+        Ok(Either::Right(ValidBlock::Valid))
     }
 
     async fn handle_valid_block(
         &self,
         _block: &BlockMessage,
     ) -> Result<KeyValueDagRepresentation, CasperError> {
-        todo!()
+        Ok(self.block_dag_storage.clone())
     }
 
     fn handle_invalid_block(
@@ -232,11 +248,11 @@ impl Casper for NoOpsCasperEffect {
         _status: &InvalidBlock,
         _dag: &KeyValueDagRepresentation,
     ) -> Result<KeyValueDagRepresentation, CasperError> {
-        todo!()
+        Ok(self.block_dag_storage.clone())
     }
 
     fn get_dependency_free_from_buffer(&self) -> Result<Vec<BlockMessage>, CasperError> {
-        todo!()
+        Ok(Vec::new())
     }
 
     fn get_approved_block(&self) -> Result<&BlockMessage, CasperError> {
@@ -371,5 +387,3 @@ impl NoOpsCasperEffect {
         }
     }
 }
-
-

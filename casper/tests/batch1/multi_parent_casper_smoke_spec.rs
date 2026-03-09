@@ -23,4 +23,3 @@ async fn multi_parent_casper_should_perform_the_most_basic_deploy_successfully()
 
     node.add_block_from_deploys(&[deploy]).await.unwrap();
 }
-

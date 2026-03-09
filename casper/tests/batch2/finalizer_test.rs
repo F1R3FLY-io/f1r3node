@@ -3,6 +3,7 @@
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
+use std::time::Instant;
 
 use crate::helper::{
     block_dag_storage_fixture::with_storage,
@@ -17,6 +18,7 @@ use models::rust::{
     casper::protocol::casper_message::{BlockMessage, Bond},
     validator::Validator,
 };
+use shared::rust::store::key_value_store::KvStoreError;
 
 fn create_block_creator<'a>(
     bonds: &'a [Bond],
@@ -302,4 +304,86 @@ async fn test_not_advance_finalization_if_no_new_lfb_found_advance_otherwise_inv
     })
     .await
     .expect("Test should complete successfully");
+}
+
+#[tokio::test]
+#[ignore = "diagnostic: run manually for fast finalizer growth feedback"]
+async fn finalizer_growth_feedback_loop_stale_justification_chain() {
+    with_storage(|mut store, mut dag_store| async move {
+        let validators = vec![
+            generate_validator(Some("Growth Validator 1")),
+            generate_validator(Some("Growth Validator 2")),
+            generate_validator(Some("Growth Validator 3")),
+        ];
+        let bonds: Vec<Bond> = validators
+            .iter()
+            .map(|v| Bond {
+                validator: v.clone(),
+                stake: 10,
+            })
+            .collect();
+
+        let genesis = create_genesis_block(
+            &mut store,
+            &mut dag_store,
+            None,
+            Some(bonds.clone()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+
+        let creator1 = create_block_creator(&bonds, &genesis, &validators[0]);
+        let creator2 = create_block_creator(&bonds, &genesis, &validators[1]);
+        let creator3 = create_block_creator(&bonds, &genesis, &validators[2]);
+
+        let checkpoints = [24usize, 48usize, 96usize];
+        let mut timing_samples: Vec<(usize, u128)> = Vec::with_capacity(checkpoints.len());
+        let mut latest_by_validator = vec![genesis.clone(), genesis.clone(), genesis.clone()];
+
+        for height in 1..=checkpoints[checkpoints.len() - 1] {
+            let creator_index = (height - 1) % validators.len();
+
+            let mut justifications: HashMap<&Validator, &BlockMessage> = HashMap::new();
+            for (idx, validator) in validators.iter().enumerate() {
+                let justification = if idx == creator_index {
+                    &latest_by_validator[idx]
+                } else {
+                    &genesis
+                };
+                justifications.insert(validator, justification);
+            }
+
+            let parent = &latest_by_validator[creator_index];
+            let next_block = match creator_index {
+                0 => creator1(&mut store, &mut dag_store, vec![parent], &justifications),
+                1 => creator2(&mut store, &mut dag_store, vec![parent], &justifications),
+                2 => creator3(&mut store, &mut dag_store, vec![parent], &justifications),
+                _ => unreachable!("creator_index should be in [0, 2]"),
+            };
+            latest_by_validator[creator_index] = next_block;
+
+            if checkpoints.contains(&height) {
+                let dag = dag_store.get_representation();
+                let started = Instant::now();
+                let _ = Finalizer::run(&dag, -1.0, 0, |_m| async { Ok::<(), KvStoreError>(()) })
+                    .await
+                    .expect("Finalizer run should succeed");
+                timing_samples.push((height, started.elapsed().as_millis()));
+            }
+        }
+
+        assert_eq!(timing_samples.len(), checkpoints.len());
+        eprintln!("finalizer growth feedback (stale-justification chain):");
+        for (height, elapsed_ms) in timing_samples {
+            eprintln!("  height={height:>3} finalizer_run_ms={elapsed_ms}");
+        }
+
+        Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
+    })
+    .await
+    .expect("growth feedback test should complete successfully");
 }

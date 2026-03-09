@@ -10,7 +10,7 @@ import coop.rchain.casper._
 import coop.rchain.casper.helper.TestNode._
 import coop.rchain.casper.helper.{BlockUtil, TestNode}
 import coop.rchain.casper.protocol._
-import coop.rchain.casper.util.rholang.RegistrySigGen
+import coop.rchain.casper.util.rholang.Tools
 import coop.rchain.casper.util.{ConstructDeploy, ProtoUtil, RSpaceUtil}
 import coop.rchain.catscontrib.TaskContrib.TaskOps
 import coop.rchain.comm.rp.ProtocolHelper.packet
@@ -82,7 +82,11 @@ class MultiParentCasperAddBlockSpec extends FlatSpec with Matchers with Inspecto
         signedBlock <- node.addBlock(deploy)
         dag         <- node.casperEff.blockDag
         estimate    <- node.casperEff.estimator(dag)
-      } yield (estimate shouldBe IndexedSeq(signedBlock.blockHash))
+      } yield {
+        // With multi-parent merging, estimator returns all validators' latest blocks
+        // The newly created block should be among them
+        estimate should contain(signedBlock.blockHash)
+      }
     }
   }
 
@@ -106,15 +110,14 @@ class MultiParentCasperAddBlockSpec extends FlatSpec with Matchers with Inspecto
         data <- getDataAtPrivateChannel[Effect](
                  signedBlock2,
                  Base16.encode(
-                   RegistrySigGen.generateUnforgeableNameId(
-                     deploy2.pk,
-                     deploy2.data.timestamp
-                   )
+                   Tools.unforgeableNameRng(deploy2.pk, deploy2.data.timestamp).next()
                  )
                )
       } yield {
-        ProtoUtil.parentHashes(signedBlock2) should be(Seq(signedBlock1.blockHash))
-        estimate shouldBe IndexedSeq(signedBlock2.blockHash)
+        // Block 2 should have block 1 as a parent (single parent from this validator)
+        ProtoUtil.parentHashes(signedBlock2) should contain(signedBlock1.blockHash)
+        // With multi-parent merging, estimator returns all validators' latest blocks
+        estimate should contain(signedBlock2.blockHash)
         data shouldBe Seq("12")
       }
     }
@@ -386,7 +389,7 @@ class MultiParentCasperAddBlockSpec extends FlatSpec with Matchers with Inspecto
     }
   }
 
-  it should "prepare to slash an block that includes a invalid block pointer" ignore effectTest {
+  it should "prepare to slash an block that includes a invalid block pointer" in effectTest {
     TestNode.networkEff(genesis, networkSize = 3).use { nodes =>
       for {
         deploys <- (0 to 5).toList.traverse(i => ConstructDeploy.basicDeployData[Effect](i))

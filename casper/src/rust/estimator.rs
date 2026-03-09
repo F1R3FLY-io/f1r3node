@@ -44,10 +44,10 @@ impl Estimator {
         dag: &mut KeyValueDagRepresentation,
         genesis: &BlockMessage,
     ) -> Result<ForkChoice, KvStoreError> {
-        let imbl_latest_message_hashes = dag.latest_message_hashes();
-        let latest_message_hashes: HashMap<Validator, BlockHash> = imbl_latest_message_hashes
+        let arc_latest_message_hashes = dag.latest_message_hashes();
+        let latest_message_hashes: HashMap<Validator, BlockHash> = arc_latest_message_hashes
             .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
+            .map(|(validator, hash)| (validator.clone(), hash.clone()))
             .collect();
         tracing::debug!(target: "f1r3fly.casper.estimator.tips0", "latest-message-hashes");
         self.tips_with_latest_messages(dag, genesis, latest_message_hashes)
@@ -70,7 +70,7 @@ impl Estimator {
             .retain(|validator, _| !invalid_latest_messages.contains_key(validator));
 
         let genesis_metadata = BlockMetadata::from_block(genesis, false, None, None);
-        
+
         tracing::debug!(target: "f1r3fly.casper.estimator.tips1", "lca");
         let lca =
             Self::calculate_lca(dag, &genesis_metadata, &filtered_latest_messages_hashes).await?;
@@ -149,20 +149,9 @@ impl Estimator {
         let result = if filtered_lm.is_empty() {
             genesis.block_hash.clone()
         } else {
-            let (head, tail) = filtered_lm.split_first().unwrap();
-
-            let mut acc = head.clone();
-            // TODO: Scala message - Change to mainParentLCA
-            for latest_message in tail {
-                acc = DagOperations::lowest_universal_common_ancestor(
-                    &acc,
-                    latest_message,
-                    block_dag,
-                )
-                .await?;
-            }
-
-            acc.block_hash
+            DagOperations::lowest_universal_common_ancestor_many(&filtered_lm, block_dag)
+                .await?
+                .block_hash
         };
 
         Ok(result)

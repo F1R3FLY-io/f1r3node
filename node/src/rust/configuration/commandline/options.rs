@@ -67,9 +67,7 @@ pub enum OptionsSubCommand {
     FindDeploy {
         id: Vec<u8>,
     },
-    Propose {
-        print_unmatched_sends: bool,
-    },
+    Propose(ProposeOptions),
     ShowBlock {
         hash: String,
     },

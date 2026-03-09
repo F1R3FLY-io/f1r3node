@@ -13,5 +13,3 @@ impl UnlimitedParentsEstimatorFixture {
         Estimator::apply(Estimator::UNLIMITED_PARENTS, None)
     }
 }
-
-

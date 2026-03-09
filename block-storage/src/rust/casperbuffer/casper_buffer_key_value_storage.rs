@@ -3,7 +3,10 @@
 
 use dashmap::DashSet;
 use std::collections::HashSet;
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use models::rust::block_hash::BlockHashSerde;
 use rspace_plus_plus::rspace::shared::key_value_store_manager::KeyValueStoreManager;
@@ -22,9 +25,9 @@ use crate::rust::util::doubly_linked_dag_operations::BlockDependencyDag;
 pub struct CasperBufferKeyValueStorage {
     parents_store: KeyValueTypedStoreImpl<BlockHashSerde, HashSet<BlockHashSerde>>,
     block_dependency_dag: Arc<BlockDependencyDag>,
-    // Protects compound mutations on block_dependency_dag.
-    // All clones share the same lock and DAG via Arc, ensuring consistent state.
-    lock: Arc<Mutex<()>>,
+    first_seen_ms: Arc<dashmap::DashMap<BlockHashSerde, u64>>,
+    last_prune_ms: Arc<AtomicU64>,
+    state_lock: Arc<RwLock<()>>,
 }
 
 impl CasperBufferKeyValueStorage {
@@ -54,16 +57,27 @@ impl CasperBufferKeyValueStorage {
         Ok(Self {
             parents_store: kv_store,
             block_dependency_dag: Arc::new(in_mem_store),
-            lock: Arc::new(Mutex::new(())),
+            first_seen_ms: Arc::new(dashmap::DashMap::new()),
+            last_prune_ms: Arc::new(AtomicU64::new(0)),
+            state_lock: Arc::new(RwLock::new(())),
         })
     }
 
-    pub fn add_relation(
+    fn read_guard(&self) -> RwLockReadGuard<'_, ()> {
+        self.state_lock.read().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn write_guard(&self) -> RwLockWriteGuard<'_, ()> {
+        self.state_lock.write().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn add_relation_unlocked(
         &self,
         parent: BlockHashSerde,
         child: BlockHashSerde,
     ) -> Result<(), KvStoreError> {
-        let _guard = self.lock.lock().unwrap();
+        self.track_hash_first_seen(&parent);
+        self.track_hash_first_seen(&child);
         let mut parents = self.parents_store.get_one(&child)?.unwrap_or_default();
         parents.insert(parent.clone());
         self.parents_store.put_one(child.clone(), parents)?;
@@ -71,16 +85,10 @@ impl CasperBufferKeyValueStorage {
         Ok(())
     }
 
-    pub fn put_pendant(&self, block: BlockHashSerde) -> Result<(), KvStoreError> {
-        let temp_block = BlockHashSerde(prost::bytes::Bytes::from_static(b"tempblock"));
-        self.add_relation(temp_block.clone(), block)?;
-        self.remove(temp_block)?;
-        Ok(())
-    }
-
-    pub fn remove(&self, hash: BlockHashSerde) -> Result<(), KvStoreError> {
-        let _guard = self.lock.lock().unwrap();
-        let (hashes_affected, hashes_removed) = self.block_dependency_dag.remove(hash)?;
+    fn remove_unlocked(&self, hash: BlockHashSerde) -> Result<(), KvStoreError> {
+        let (hashes_affected, hashes_removed, orphaned_hashes) =
+            self.block_dependency_dag.remove(hash.clone())?;
+        self.first_seen_ms.remove(&hash);
 
         // Process each affected hash
         let mut changes = Vec::new();
@@ -100,12 +108,41 @@ impl CasperBufferKeyValueStorage {
 
         self.parents_store.put(changes)?;
         let hashes_to_delete: Vec<BlockHashSerde> = hashes_removed.into_iter().collect();
-        self.parents_store.delete(hashes_to_delete)?;
+        let mut hashes_to_delete_with_node = hashes_to_delete;
+        hashes_to_delete_with_node.push(hash);
+        hashes_to_delete_with_node.extend(orphaned_hashes);
+        for h in &hashes_to_delete_with_node {
+            self.first_seen_ms.remove(h);
+        }
+        self.parents_store.delete(hashes_to_delete_with_node)?;
 
         Ok(())
     }
 
+    pub fn add_relation(
+        &self,
+        parent: BlockHashSerde,
+        child: BlockHashSerde,
+    ) -> Result<(), KvStoreError> {
+        let _guard = self.write_guard();
+        self.add_relation_unlocked(parent, child)
+    }
+
+    pub fn put_pendant(&self, block: BlockHashSerde) -> Result<(), KvStoreError> {
+        let _guard = self.write_guard();
+        let temp_block = BlockHashSerde(prost::bytes::Bytes::from_static(b"tempblock"));
+        self.add_relation_unlocked(temp_block.clone(), block)?;
+        self.remove_unlocked(temp_block)?;
+        Ok(())
+    }
+
+    pub fn remove(&self, hash: BlockHashSerde) -> Result<(), KvStoreError> {
+        let _guard = self.write_guard();
+        self.remove_unlocked(hash)
+    }
+
     pub fn get_parents(&self, block_hash: &BlockHashSerde) -> Option<DashSet<BlockHashSerde>> {
+        let _guard = self.read_guard();
         self.block_dependency_dag
             .child_to_parent_adjacency_list
             .get(&block_hash)
@@ -113,6 +150,7 @@ impl CasperBufferKeyValueStorage {
     }
 
     pub fn get_children(&self, block_hash: &BlockHashSerde) -> Option<DashSet<BlockHashSerde>> {
+        let _guard = self.read_guard();
         self.block_dependency_dag
             .parent_to_child_adjacency_list
             .get(&block_hash)
@@ -120,11 +158,13 @@ impl CasperBufferKeyValueStorage {
     }
 
     pub fn get_pendants(&self) -> DashSet<BlockHashSerde> {
+        let _guard = self.read_guard();
         self.block_dependency_dag.dependency_free.clone()
     }
 
     // Block is considered to be in CasperBuffer when there is a records about its parents
     pub fn contains(&self, block_hash: &BlockHashSerde) -> bool {
+        let _guard = self.read_guard();
         self.block_dependency_dag
             .child_to_parent_adjacency_list
             .get(block_hash)
@@ -132,19 +172,131 @@ impl CasperBufferKeyValueStorage {
     }
 
     pub fn to_doubly_linked_dag(&self) -> BlockDependencyDag {
-        (*self.block_dependency_dag).clone()
+        let _guard = self.read_guard();
+        self.block_dependency_dag.as_ref().clone()
+    }
+
+    pub fn requested_as_dependency(&self, block_hash: &BlockHashSerde) -> bool {
+        let _guard = self.read_guard();
+        self.block_dependency_dag
+            .parent_to_child_adjacency_list
+            .contains_key(block_hash)
     }
 
     pub fn size(&self) -> usize {
+        let _guard = self.read_guard();
         self.block_dependency_dag
             .child_to_parent_adjacency_list
             .len()
     }
 
+    pub fn approx_node_count(&self) -> usize {
+        let _guard = self.read_guard();
+        self.block_dependency_dag
+            .child_to_parent_adjacency_list
+            .len()
+            + self
+                .block_dependency_dag
+                .parent_to_child_adjacency_list
+                .len()
+    }
+
     pub fn is_pendant(&self, block_hash: &BlockHashSerde) -> bool {
+        let _guard = self.read_guard();
         self.block_dependency_dag
             .dependency_free
             .contains(block_hash)
+    }
+
+    fn dependency_free_nodes_with_age_ms(&self, now_ms: u64) -> Vec<(u64, BlockHashSerde)> {
+        let mut nodes = Vec::new();
+
+        for hash in self.block_dependency_dag.dependency_free.iter() {
+            let seen_ms = self
+                .first_seen_ms
+                .get(hash.key())
+                .map(|seen| *seen)
+                .unwrap_or(now_ms);
+            nodes.push((now_ms.saturating_sub(seen_ms), hash.key().clone()));
+        }
+
+        nodes
+    }
+
+    pub fn enforce_limits(
+        &self,
+        max_approx_nodes: usize,
+        stale_ttl_ms: u64,
+        max_prune_batch: usize,
+        prune_interval_ms: u64,
+    ) -> Result<(usize, usize), KvStoreError> {
+        let now = Self::now_millis();
+        let last_prune = self.last_prune_ms.load(Ordering::Relaxed);
+        if now.saturating_sub(last_prune) < prune_interval_ms {
+            return Ok((0, 0));
+        }
+        self.last_prune_ms.store(now, Ordering::Relaxed);
+
+        let mut stale_candidates: Vec<(u64, BlockHashSerde)> = self
+            .dependency_free_nodes_with_age_ms(now)
+            .into_iter()
+            .filter(|(age_ms, _)| *age_ms >= stale_ttl_ms)
+            .collect();
+        stale_candidates.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+
+        let mut stale_pruned = 0usize;
+        for (_, hash) in stale_candidates.into_iter().take(max_prune_batch) {
+            match self.remove(hash) {
+                Ok(_) => stale_pruned += 1,
+                Err(KvStoreError::InvalidArgument(_)) => {}
+                Err(e) => return Err(e),
+            }
+        }
+
+        let mut overflow_pruned = 0usize;
+        let mut approx_nodes = self.approx_node_count();
+        let mut attempts = 0usize;
+        while overflow_pruned < max_prune_batch
+            && attempts < max_prune_batch
+            && approx_nodes > max_approx_nodes
+        {
+            let mut oldest_nodes: Vec<(u64, BlockHashSerde)> = self
+                .dependency_free_nodes_with_age_ms(now)
+                .into_iter()
+                .collect();
+            oldest_nodes.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+
+            let Some((_, hash)) = oldest_nodes.into_iter().next() else {
+                break;
+            };
+
+            let removed = self.remove(hash);
+            attempts += 1;
+
+            match removed {
+                Ok(_) => {
+                    overflow_pruned += 1;
+                    approx_nodes = self.approx_node_count();
+                }
+                Err(KvStoreError::InvalidArgument(_)) => {}
+                Err(e) => return Err(e),
+            }
+        }
+
+        Ok((stale_pruned, overflow_pruned))
+    }
+
+    fn track_hash_first_seen(&self, hash: &BlockHashSerde) {
+        self.first_seen_ms
+            .entry(hash.clone())
+            .or_insert_with(Self::now_millis);
+    }
+
+    fn now_millis() -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0)
     }
 }
 
@@ -208,6 +360,69 @@ mod tests {
 
         // When removed hash A is the last parent for hash B, B should be pendant
         assert!(casper_buffer.is_pendant(&b));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn casper_buffer_put_pendant_stays_dependency_free() -> Result<(), KvStoreError> {
+        let mut kvm = InMemoryStoreManager::new();
+        let store = kvm.store("parents-map".to_string()).await?;
+        let typed_store = KeyValueTypedStoreImpl::new(store);
+        let casper_buffer = CasperBufferKeyValueStorage::new_from_kv_store(typed_store).await?;
+
+        let block = create_block_hash(b"dependent_block");
+        let temp_block = BlockHashSerde(prost::bytes::Bytes::from_static(b"tempblock"));
+        casper_buffer.put_pendant(block.clone())?;
+
+        assert!(casper_buffer.contains(&block) == false);
+        assert!(casper_buffer.is_pendant(&block));
+        assert!(!casper_buffer.contains(&temp_block));
+        assert!(!casper_buffer.is_pendant(&temp_block));
+        assert!(casper_buffer.get_parents(&block).is_none());
+        assert!(casper_buffer.get_children(&temp_block).is_none());
+
+        let pendants = casper_buffer.get_pendants();
+        assert!(pendants.contains(&block));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn casper_buffer_remove_repairs_stale_parent_links() -> Result<(), KvStoreError> {
+        let mut kvm = InMemoryStoreManager::new();
+        let store = kvm.store("parents-map".to_string()).await?;
+        let typed_store = KeyValueTypedStoreImpl::new(store);
+        let casper_buffer = CasperBufferKeyValueStorage::new_from_kv_store(typed_store).await?;
+
+        let block = create_block_hash(b"orphan");
+        let valid_parent = create_block_hash(b"valid-parent");
+        let stale_parent = create_block_hash(b"stale-parent");
+
+        casper_buffer.add_relation(valid_parent.clone(), block.clone())?;
+
+        {
+            let parents = casper_buffer
+                .block_dependency_dag
+                .child_to_parent_adjacency_list
+                .get_mut(&block)
+                .expect("expected block to have parent links");
+            parents.insert(stale_parent.clone());
+        }
+
+        let before = casper_buffer
+            .get_parents(&block)
+            .expect("expected pendant-parent linkage");
+        assert!(before.contains(&valid_parent));
+        assert!(before.contains(&stale_parent));
+        assert!(casper_buffer.first_seen_ms.get(&valid_parent).is_some());
+
+        casper_buffer.remove(block.clone())?;
+
+        assert!(!casper_buffer.contains(&block));
+        assert!(casper_buffer.get_parents(&block).is_none());
+        assert!(casper_buffer.parents_store.get_one(&block)?.is_none());
+        assert!(!casper_buffer.requested_as_dependency(&valid_parent));
+        assert!(casper_buffer.first_seen_ms.get(&valid_parent).is_none());
 
         Ok(())
     }

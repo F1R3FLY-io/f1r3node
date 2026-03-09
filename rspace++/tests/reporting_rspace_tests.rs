@@ -1,3 +1,6 @@
+use std::collections::BTreeSet;
+use std::sync::Arc;
+
 use rspace_plus_plus::rspace::history::history_repository::HistoryRepositoryInstances;
 use rspace_plus_plus::rspace::hot_store::{HotStoreInstances, HotStoreState};
 use rspace_plus_plus::rspace::r#match::Match;
@@ -7,8 +10,6 @@ use rspace_plus_plus::rspace::rspace_interface::ISpace;
 use rspace_plus_plus::rspace::shared::in_mem_store_manager::InMemoryStoreManager;
 use rspace_plus_plus::rspace::shared::key_value_store_manager::KeyValueStoreManager;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
-use std::sync::Arc;
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq, Eq, Hash)]
 enum Pattern {
@@ -20,9 +21,7 @@ enum Pattern {
 struct StringMatch;
 
 impl Match<Pattern, String> for StringMatch {
-    fn get(&self, _p: Pattern, a: String) -> Option<String> {
-        Some(a)
-    }
+    fn get(&self, _p: Pattern, a: String) -> Option<String> { Some(a) }
 }
 
 fn build_reporting_rspace()
@@ -47,7 +46,7 @@ fn build_reporting_rspace()
         let hr = history_reader.base();
         HotStoreInstances::create_from_hs_and_hr(cache, hr)
     };
-    
+
     let space = RSpace::apply(history_repo.clone(), hot_store, Arc::new(Box::new(StringMatch)));
 
     let reporting_store = {

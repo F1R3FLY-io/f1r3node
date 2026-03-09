@@ -3,7 +3,10 @@
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
-    sync::{Arc, RwLock},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, RwLock,
+    },
 };
 
 use models::rust::{
@@ -25,15 +28,15 @@ use super::{
 
 pub type DeployId = shared::rust::ByteString;
 
-/// Immutable point-in-time snapshot of the DAG state.
-/// Uses imbl persistent collections for O(1) clone via structural sharing.
-/// Safe to use concurrently — snapshot is fully independent of live DAG mutations.
 #[derive(Clone)]
 pub struct KeyValueDagRepresentation {
     pub dag_set: imbl::HashSet<BlockHash>,
     pub latest_messages_map: imbl::HashMap<Validator, BlockHash>,
     pub child_map: imbl::HashMap<BlockHash, imbl::HashSet<BlockHash>>,
     pub height_map: imbl::OrdMap<i64, imbl::HashSet<BlockHash>>,
+    pub block_number_map: imbl::HashMap<BlockHash, i64>,
+    pub main_parent_map: imbl::HashMap<BlockHash, BlockHash>,
+    pub self_justification_map: imbl::HashMap<BlockHash, BlockHash>,
     pub invalid_blocks_set: imbl::HashSet<BlockMetadata>,
     pub last_finalized_block_hash: BlockHash,
     pub finalized_blocks_set: imbl::HashSet<BlockHash>,
@@ -82,11 +85,7 @@ impl KeyValueDagRepresentation {
         if self.height_map.is_empty() {
             0
         } else {
-            self.height_map
-                .get_max()
-                .expect("height_map is empty")
-                .0
-                + 1
+            self.height_map.get_max().expect("height_map is empty").0 + 1
         }
     }
 
@@ -94,8 +93,35 @@ impl KeyValueDagRepresentation {
         self.get_max_height()
     }
 
+    pub fn block_number(&self, block_hash: &BlockHash) -> Option<i64> {
+        self.block_number_map.get(block_hash).copied()
+    }
+
+    pub fn block_number_unsafe(&self, block_hash: &BlockHash) -> Result<i64, KvStoreError> {
+        self.block_number(block_hash).ok_or_else(|| {
+            KvStoreError::InvalidArgument(format!(
+                "DAG storage is missing hash {}",
+                PrettyPrinter::build_string_bytes(block_hash)
+            ))
+        })
+    }
+
+    pub fn main_parent(&self, block_hash: &BlockHash) -> Option<BlockHash> {
+        self.main_parent_map.get(block_hash).cloned()
+    }
+
     pub fn is_finalized(&self, block_hash: &BlockHash) -> bool {
-        self.finalized_blocks_set.contains(block_hash)
+        if self.finalized_blocks_set.contains(block_hash) {
+            return true;
+        }
+
+        // Finalized status is persisted in block metadata; in-memory set is a bounded cache.
+        self.block_metadata_index
+            .read()
+            .ok()
+            .and_then(|store| store.get(block_hash).ok().flatten())
+            .map(|m| m.finalized)
+            .unwrap_or(false)
     }
 
     pub fn find(&self, truncated_hash: &str) -> Option<BlockHash> {
@@ -104,7 +130,7 @@ impl KeyValueDagRepresentation {
             self.dag_set
                 .iter()
                 .find(|hash| hash.starts_with(&truncated_bytes))
-                .cloned()
+                .map(|v| v.clone())
         } else {
             // if truncatedHash is odd length string we cannot convert it to ByteString with 8 bit resolution
             // because each symbol has 4 bit resolution. Need to make a string of even length by removing the last symbol,
@@ -115,7 +141,7 @@ impl KeyValueDagRepresentation {
                 .iter()
                 .filter(|hash| hash.starts_with(&truncated_bytes))
                 .find(|hash| hex::encode(&**hash).starts_with(truncated_hash))
-                .cloned()
+                .map(|v| v.clone())
         }
     }
 
@@ -171,7 +197,14 @@ impl KeyValueDagRepresentation {
         &self,
         hashes: Vec<BlockHash>,
     ) -> Result<Vec<BlockMetadata>, KvStoreError> {
-        hashes.par_iter().map(|h| self.lookup_unsafe(h)).collect()
+        // Small batches are common on propose/snapshot paths; avoid Rayon scheduling overhead there.
+        const PARALLEL_LOOKUP_THRESHOLD: usize = 64;
+
+        if hashes.len() < PARALLEL_LOOKUP_THRESHOLD {
+            hashes.iter().map(|h| self.lookup_unsafe(h)).collect()
+        } else {
+            hashes.par_iter().map(|h| self.lookup_unsafe(h)).collect()
+        }
     }
 
     pub fn latest_message_hash_unsafe(
@@ -253,21 +286,12 @@ impl KeyValueDagRepresentation {
         let mut current_hash = block_hash;
 
         loop {
-            let metadata = self.lookup_unsafe(&current_hash)?;
-            let next_justification = metadata
-                .justifications
-                .iter()
-                .find(|justification| justification.validator == metadata.sender);
-
-            match next_justification {
-                Some(justification) => {
-                    let next_hash = justification.latest_block_hash.clone();
+            match self.self_justification(&current_hash)? {
+                Some(next_hash) => {
                     result.push(next_hash.clone());
                     current_hash = next_hash;
                 }
-                None => {
-                    break;
-                }
+                None => break,
             }
         }
 
@@ -278,8 +302,18 @@ impl KeyValueDagRepresentation {
         &self,
         block_hash: &BlockHash,
     ) -> Result<Option<BlockHash>, KvStoreError> {
-        self.self_justification_chain(block_hash.clone())
-            .map(|chain| chain.into_iter().next())
+        if let Some(hash) = self.self_justification_map.get(block_hash).cloned() {
+            return Ok(Some(hash));
+        }
+
+        // Keep behavior for blocks that intentionally have no self-justification.
+        if !self.contains(block_hash) {
+            return Err(KvStoreError::InvalidArgument(format!(
+                "DAG storage is missing hash {}",
+                PrettyPrinter::build_string_bytes(block_hash)
+            )));
+        }
+        Ok(None)
     }
 
     pub fn main_parent_chain(
@@ -291,15 +325,13 @@ impl KeyValueDagRepresentation {
         let mut current_hash = block_hash;
 
         loop {
-            let metadata = self.lookup_unsafe(&current_hash)?;
-
-            if metadata.block_number <= stop_at_height {
+            let current_block_number = self.block_number_unsafe(&current_hash)?;
+            if current_block_number <= stop_at_height {
                 break;
             }
 
-            match metadata.parents.first() {
-                Some(parent) => {
-                    let parent_hash = parent.clone();
+            match self.main_parent(&current_hash) {
+                Some(parent_hash) => {
                     result.push(parent_hash.clone());
                     current_hash = parent_hash;
                 }
@@ -319,12 +351,20 @@ impl KeyValueDagRepresentation {
             return Ok(true);
         }
 
-        let metadata_ancestor = self.lookup_unsafe(ancestor)?;
-        let height = metadata_ancestor.block_number;
+        let stop_height = self.block_number_unsafe(ancestor)?;
+        let mut current_hash = descendant.clone();
 
-        let main_chain = self.main_parent_chain(descendant.clone(), height)?;
+        loop {
+            let current_height = self.block_number_unsafe(&current_hash)?;
+            if current_height <= stop_height {
+                return Ok(&current_hash == ancestor);
+            }
 
-        Ok(main_chain.contains(ancestor))
+            let Some(main_parent) = self.main_parent(&current_hash) else {
+                return Ok(false);
+            };
+            current_hash = main_parent;
+        }
     }
 
     pub fn parents_unsafe(&self, block_hash: &BlockHash) -> Result<Vec<BlockHash>, KvStoreError> {
@@ -430,6 +470,9 @@ pub struct BlockDagKeyValueStorage {
     pub deploy_index: Arc<RwLock<KeyValueTypedStoreImpl<DeployId, BlockHashSerde>>>,
     pub invalid_blocks_index: KeyValueTypedStoreImpl<BlockHashSerde, BlockMetadata>,
     pub equivocation_tracker_index: EquivocationTrackerStore,
+    /// Monotonically increasing counter incremented on every successful block insert.
+    /// Used by caches to detect when the DAG has changed.
+    pub dag_generation: Arc<AtomicU64>,
 }
 
 impl BlockDagKeyValueStorage {
@@ -465,6 +508,7 @@ impl BlockDagKeyValueStorage {
             invalid_blocks_index: invalid_blocks_db,
             equivocation_tracker_index: equivocation_tracker_store,
             latest_messages_index: latest_messages_db,
+            dag_generation: Arc::new(AtomicU64::new(0)),
         })
     }
 
@@ -488,6 +532,12 @@ impl BlockDagKeyValueStorage {
             record.equivocation_detected_block_hashes.insert(block_hash);
             record
         })
+    }
+
+    /// Current DAG generation — incremented on every block insert.
+    /// Can be used by caches to detect whether the DAG has changed since the last snapshot.
+    pub fn current_generation(&self) -> u64 {
+        self.dag_generation.load(Ordering::Relaxed)
     }
 
     /// Public method to get DAG representation with global lock protection.
@@ -518,15 +568,14 @@ impl BlockDagKeyValueStorage {
             .map(|(_, v)| v)
             .collect();
 
-        // Take O(1) snapshot of DagState via imbl structural sharing.
-        // This is the key fix: the cloned collections are fully independent
-        // of any concurrent mutations to the live DagState.
         let block_metadata_index_guard = self.block_metadata_index.read().unwrap();
         let dag_state_guard = block_metadata_index_guard.dag_state().read().unwrap();
-
         let dag_set = dag_state_guard.dag_set.clone();
         let child_map = dag_state_guard.child_map.clone();
         let height_map = dag_state_guard.height_map.clone();
+        let block_number_map = dag_state_guard.block_number_map.clone();
+        let main_parent_map = dag_state_guard.main_parent_map.clone();
+        let self_justification_map = dag_state_guard.self_justification_map.clone();
         let last_finalized_block = dag_state_guard
             .last_finalized_block
             .as_ref()
@@ -543,6 +592,9 @@ impl BlockDagKeyValueStorage {
             latest_messages_map: latest_messages,
             child_map,
             height_map,
+            block_number_map,
+            main_parent_map,
+            self_justification_map,
             invalid_blocks_set: invalid_blocks,
             last_finalized_block_hash: last_finalized_block,
             finalized_blocks_set: finalized_blocks,
@@ -586,6 +638,10 @@ impl BlockDagKeyValueStorage {
         );
 
         let new_latest_messages = || -> Result<HashMap<Validator, BlockHash>, KvStoreError> {
+            if invalid {
+                return Ok(HashMap::new());
+            }
+
             let block_hash: BlockHash = block.block_hash.clone();
 
             let newly_bonded_set: HashSet<_> = block
@@ -652,6 +708,7 @@ impl BlockDagKeyValueStorage {
             let mut block_metadata_guard = self.block_metadata_index.write().unwrap();
             block_metadata_guard.add(block_metadata.clone())?;
             drop(block_metadata_guard);
+            self.dag_generation.fetch_add(1, Ordering::Relaxed);
 
             let deploy_hashes: Vec<DeployId> = block
                 .body
@@ -672,7 +729,7 @@ impl BlockDagKeyValueStorage {
                     .put_one(block_hash.clone().into(), block_metadata)?;
             }
 
-            let new_latest_from_sender = if !sender_is_empty {
+            let new_latest_from_sender = if !sender_is_empty && !invalid {
                 // Add LM either if there is no existing message for the sender, or if sequence number advances
                 // - assumes block sender is not valid hash
                 if match self
@@ -737,7 +794,7 @@ impl BlockDagKeyValueStorage {
         // Compute finalized blocks under lock (must drop before .await)
         let (indirectly_finalized, all_finalized) = {
             let _lock_guard = self.global_lock.lock().unwrap();
-            
+
             let dag = self.get_representation_internal();
             if !dag.contains(&directly_finalized_hash) {
                 return Err(KvStoreError::InvalidArgument(format!(
@@ -752,7 +809,7 @@ impl BlockDagKeyValueStorage {
 
             let mut all_finalized = indirectly_finalized.clone();
             all_finalized.insert(directly_finalized_hash.clone());
-            
+
             (indirectly_finalized, all_finalized)
             // Lock is dropped here before .await
         };

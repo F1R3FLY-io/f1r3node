@@ -12,6 +12,7 @@ use comm::rust::{
     transport::transport_layer::TransportLayer,
 };
 use crypto::rust::private_key::PrivateKey;
+use models::rust::casper::pretty_printer::PrettyPrinter;
 use models::rust::casper::protocol::casper_message::BlockMessage;
 use shared::rust::shared::f1r3fly_events::F1r3flyEvents;
 
@@ -199,6 +200,7 @@ where
         &mut self,
         casper_snapshot: &mut CasperSnapshot,
         casper: Arc<dyn Casper + Send + Sync + 'static>,
+        allow_empty_blocks_for_request: bool,
     ) -> Result<(ProposeResult, Option<BlockMessage>), CasperError> {
         // check if node is allowed to propose a block
         let constraint_check = self.check_propose_constraints(casper_snapshot).await?;
@@ -215,7 +217,7 @@ where
                         casper_snapshot,
                         &self.validator,
                         self.dummy_deploy_opt.clone(),
-                        self.allow_empty_blocks,
+                        allow_empty_blocks_for_request,
                     )
                     .await?;
 
@@ -223,13 +225,17 @@ where
                     BlockCreatorResult::NoNewDeploys => {
                         Ok((ProposeResult::failure(ProposeFailure::NoNewDeploys), None))
                     }
-                    BlockCreatorResult::Created(block) => {
+                    BlockCreatorResult::Created(block, pre_state_hash, post_state_hash) => {
                         // Publish BlockCreated event immediately after block is created (before validation)
                         self.propose_effect_handler.publish_block_created(&block)?;
 
-                        let validation_result = self
-                            .block_validator
-                            .validate_block(casper.clone(), casper_snapshot, &block)
+                        let validation_result = casper
+                            .validate_self_created(
+                                &block,
+                                casper_snapshot,
+                                pre_state_hash,
+                                post_state_hash,
+                            )
                             .await?;
 
                         match validation_result {
@@ -240,43 +246,63 @@ where
                                 Ok((ProposeResult::success(valid_status), Some(block)))
                             }
                             ValidBlockProcessing::Left(invalid_reason) => {
-                                // Transient conditions: DAG/state changed between snapshot
-                                // and block creation. These are expected in a concurrent
-                                // multi-validator network and will resolve on the next
-                                // heartbeat cycle with a fresh snapshot.
-                                let is_transient = matches!(
+                                // Some self-validation failures are recoverable races in fast, multi-parent
+                                // proposing: parent selection can become stale, and safety checks can reject
+                                // the candidate by the time validation runs.
+                                if matches!(
                                     invalid_reason,
-                                    BlockError::Invalid(
-                                        InvalidBlock::InvalidParents
-                                            | InvalidBlock::InvalidBondsCache
-                                            | InvalidBlock::InvalidTransaction
-                                            | InvalidBlock::InvalidRejectedDeploy
-                                            | InvalidBlock::ContainsExpiredDeploy
-                                            | InvalidBlock::ContainsTimeExpiredDeploy
-                                            | InvalidBlock::InvalidTimestamp
+                                    BlockError::Invalid(InvalidBlock::InvalidParents)
+                                        | BlockError::Invalid(InvalidBlock::InvalidFollows)
+                                        | BlockError::Invalid(
+                                            InvalidBlock::JustificationRegression
+                                        )
+                                        | BlockError::Invalid(InvalidBlock::InvalidBondsCache)
+                                        | BlockError::Invalid(InvalidBlock::InvalidRepeatDeploy)
+                                        | BlockError::Invalid(InvalidBlock::NeglectedInvalidBlock)
+                                ) {
+                                    let recoverable_reason = match &invalid_reason {
+                                        BlockError::Invalid(InvalidBlock::InvalidParents) => {
+                                            "invalid_parents"
+                                        }
+                                        BlockError::Invalid(InvalidBlock::InvalidFollows) => {
+                                            "invalid_follows"
+                                        }
+                                        BlockError::Invalid(InvalidBlock::InvalidBondsCache) => {
+                                            "invalid_bonds_cache"
+                                        }
+                                        BlockError::Invalid(InvalidBlock::InvalidRepeatDeploy) => {
+                                            "invalid_repeat_deploy"
+                                        }
+                                        BlockError::Invalid(
+                                            InvalidBlock::JustificationRegression,
+                                        ) => "justification_regression",
+                                        BlockError::Invalid(
+                                            InvalidBlock::NeglectedInvalidBlock,
+                                        ) => "neglected_invalid_block",
+                                        _ => "other",
+                                    };
+                                    metrics::counter!(
+                                        "propose_recoverable_self_validation_failures_total",
+                                        "source" => "casper_proposer",
+                                        "reason" => recoverable_reason
                                     )
-                                );
-
-                                if is_transient {
-                                    tracing::error!(
-                                        "Self-created block validation failed with transient reason: {:?} \
-                                         -- discarding block and will retry on next heartbeat",
+                                    .increment(1);
+                                    tracing::info!(
+                                        "Block validation failed with {:?} - \
+                                         proposal conditions no longer met, skipping propose",
                                         invalid_reason
                                     );
-                                    Ok((
+                                    return Ok((
                                         ProposeResult::failure(ProposeFailure::InternalDeployError),
                                         None,
-                                    ))
-                                } else {
-                                    // Structural errors: indicate a bug in block creation code.
-                                    // These will never self-heal on retry, so error to make
-                                    // the problem immediately visible to the operator.
-                                    Err(CasperError::RuntimeError(format!(
-                                        "Self-created block validation failed with structural error: {:?} \
-                                         -- this indicates a bug in block creation",
-                                        invalid_reason
-                                    )))
+                                    ));
                                 }
+
+                                // Other validation failures are unexpected and should error
+                                Err(CasperError::RuntimeError(format!(
+                                    "Validation of self created block failed with reason: {:?}, cancelling propose.",
+                                    invalid_reason
+                                )))
                             }
                         }
                     }
@@ -346,48 +372,99 @@ where
         let start_time = std::time::Instant::now();
 
         // get snapshot to serve as a base for propose
-        let mut casper_snapshot = match self
+        let snapshot_start = std::time::Instant::now();
+        let mut casper_snapshot = self
             .casper_snapshot_provider
             .get_casper_snapshot(casper.clone())
-            .await
-        {
-            Ok(snapshot) => snapshot,
-            Err(CasperError::FinalizationInProgress) => {
-                // Finalization is in progress -- the snapshot cannot be obtained right now.
-                // This is a transient condition that resolves within seconds once finalization
-                // completes. Skip this propose cycle; the heartbeat will trigger another attempt.
-                tracing::info!(
-                    "Snapshot unavailable: finalization in progress, skipping propose cycle"
-                );
-                return Ok(ProposeReturnType {
-                    propose_result: ProposeResult::failure(ProposeFailure::InternalDeployError),
-                    propose_result_to_send: ProposerResult::empty(),
-                    block_message_opt: None,
-                });
-            }
-            Err(e) => return Err(e),
-        };
+            .await?;
+        let snapshot_ms = snapshot_start.elapsed().as_millis();
 
         let elapsed = start_time.elapsed();
         tracing::info!("getCasperSnapshot [{}ms]", elapsed.as_millis());
 
-        let result = if is_async {
-            let next_seq =
-                get_validator_next_seq_number(&casper_snapshot, &self.validator.public_key.bytes);
+        let self_seq = casper_snapshot
+            .max_seq_nums
+            .get(&self.validator.public_key.bytes)
+            .map(|seq| *seq as i64)
+            .unwrap_or(0);
+        let observed_max_seq = casper_snapshot
+            .max_seq_nums
+            .iter()
+            .map(|entry| *entry.value())
+            .max()
+            .unwrap_or(0) as i64;
+        let (block_lag, seq_lag) = match casper_snapshot
+            .dag
+            .lookup_unsafe(&casper_snapshot.last_finalized_block)
+        {
+            Ok(lfb_meta) => (
+                casper_snapshot
+                    .max_block_num
+                    .saturating_sub(lfb_meta.block_number),
+                observed_max_seq.saturating_sub(lfb_meta.sequence_number as i64),
+            ),
+            Err(_) => (0, 0),
+        };
+        let finality_lag = std::cmp::max(block_lag, seq_lag);
+        let allow_empty_for_recovery = finality_lag > 20;
+        if allow_empty_for_recovery && !is_async {
+            tracing::info!(
+                "Enabling empty-block propose in sync recovery mode due to finality lag (lag={}, block_lag={}, seq_lag={}, self_seq={}, observed_max_seq={})",
+                finality_lag,
+                block_lag,
+                seq_lag,
+                self_seq,
+                observed_max_seq
+            );
+        }
 
+        let allow_empty_blocks_for_request =
+            (self.allow_empty_blocks && is_async) || allow_empty_for_recovery;
+
+        let (result, propose_core_ms) = if is_async {
+            // Empty blocks are reserved for heartbeat/liveness-driven proposes.
+            // Synchronous/manual propose calls should fail fast when no new deploys exist.
             // propose
+            let propose_start = std::time::Instant::now();
             let (propose_result, block_opt) = self
-                .do_propose(&mut casper_snapshot, casper.clone())
+                .do_propose(
+                    &mut casper_snapshot,
+                    casper.clone(),
+                    allow_empty_blocks_for_request,
+                )
                 .await?;
+            let propose_core_ms = propose_start.elapsed().as_millis();
 
-            ProposeReturnType {
-                propose_result,
-                propose_result_to_send: ProposerResult::started(next_seq),
-                block_message_opt: block_opt,
-            }
+            let propose_result_to_send = match &block_opt {
+                Some(block) => {
+                    ProposerResult::success(propose_result.propose_status.clone(), block.clone())
+                }
+                None => {
+                    let next_seq = get_validator_next_seq_number(
+                        &casper_snapshot,
+                        &self.validator.public_key.bytes,
+                    );
+                    ProposerResult::failure(propose_result.propose_status.clone(), next_seq)
+                }
+            };
+
+            (
+                ProposeReturnType {
+                    propose_result,
+                    propose_result_to_send,
+                    block_message_opt: block_opt,
+                },
+                propose_core_ms,
+            )
         } else {
+            // Empty blocks are reserved for heartbeat/liveness-driven proposes.
+            // Synchronous/manual propose calls should fail fast when no new deploys exist.
             // propose
-            let (propose_result, block_opt) = self.do_propose(&mut casper_snapshot, casper).await?;
+            let propose_start = std::time::Instant::now();
+            let (propose_result, block_opt) = self
+                .do_propose(&mut casper_snapshot, casper, allow_empty_blocks_for_request)
+                .await?;
+            let propose_core_ms = propose_start.elapsed().as_millis();
 
             let propose_result_to_send = match &block_opt {
                 None => {
@@ -402,12 +479,25 @@ where
                 }
             };
 
-            ProposeReturnType {
-                propose_result,
-                propose_result_to_send,
-                block_message_opt: block_opt,
-            }
+            (
+                ProposeReturnType {
+                    propose_result,
+                    propose_result_to_send,
+                    block_message_opt: block_opt,
+                },
+                propose_core_ms,
+            )
         };
+
+        let total_ms = start_time.elapsed().as_millis();
+        tracing::info!(
+            target: "f1r3fly.propose.timing",
+            "Propose timing: mode={}, snapshot_ms={}, propose_core_ms={}, total_ms={}",
+            if is_async { "async" } else { "sync" },
+            snapshot_ms,
+            propose_core_ms,
+            total_ms
+        );
 
         tracing::debug!(target: "f1r3fly.casper.proposer", "finished-do-propose");
         tracing::info!(target: "f1r3fly.casper.proposer", "do-propose-finished");
@@ -425,7 +515,7 @@ pub type ProductionProposer<T> = Proposer<
     ProductionProposeEffectHandler<T>,
 >;
 
-pub fn new_proposer<T: TransportLayer + Send + Sync>(
+pub fn new_proposer<T: TransportLayer + Send + Sync + 'static>(
     validator: ValidatorIdentity,
     dummy_deploy_opt: Option<(PrivateKey, String)>,
     runtime_manager: RuntimeManager,
@@ -630,7 +720,9 @@ impl<T: TransportLayer + Send + Sync> ProductionProposeEffectHandler<T> {
     }
 }
 
-impl<T: TransportLayer + Send + Sync> ProposeEffectHandler for ProductionProposeEffectHandler<T> {
+impl<T: TransportLayer + Send + Sync + 'static> ProposeEffectHandler
+    for ProductionProposeEffectHandler<T>
+{
     async fn handle_propose_effect(
         &mut self,
         casper: Arc<dyn Casper + Send + Sync + 'static>,
@@ -647,15 +739,25 @@ impl<T: TransportLayer + Send + Sync> ProposeEffectHandler for ProductionPropose
             .ack_in_casper(block.block_hash.clone())
             .await?;
 
-        // broadcast hash to peers
-        self.transport
-            .send_block_hash(
-                &self.connections_cell,
-                &self.conf,
-                &block.block_hash,
-                &block.sender,
-            )
-            .await?;
+        // Broadcast hash to peers on a best-effort basis, but do not let network fan-out tail
+        // block local propose completion latency.
+        let transport = Arc::clone(&self.transport);
+        let connections_cell = self.connections_cell.clone();
+        let conf = self.conf.clone();
+        let block_hash = block.block_hash.clone();
+        let sender = block.sender.clone();
+        tokio::spawn(async move {
+            if let Err(err) = transport
+                .send_block_hash(&connections_cell, &conf, &block_hash, &sender)
+                .await
+            {
+                tracing::warn!(
+                    "Failed to broadcast block hash {} to some peers: {}",
+                    PrettyPrinter::build_string_bytes(&block_hash),
+                    err
+                );
+            }
+        });
 
         Ok(())
     }

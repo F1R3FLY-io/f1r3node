@@ -1,25 +1,40 @@
 package coop.rchain.rholang.interpreter
 
+import akka.actor.ActorSystem
+import akka.stream.Materializer
 import cats.effect.{Concurrent, Sync}
 import cats.effect.concurrent.Ref
 import cats.syntax.all._
 import com.google.protobuf.ByteString
 import com.typesafe.scalalogging.Logger
-import coop.rchain.casper.protocol.BlockMessage
+import coop.rchain.casper.protocol.{BlockMessage, DeployData => CasperDeployData}
 import coop.rchain.crypto.PublicKey
 import coop.rchain.crypto.hash.{Blake2b256, Keccak256, Sha256}
-import coop.rchain.crypto.signatures.{Ed25519, Secp256k1}
+import coop.rchain.crypto.signatures.{Ed25519, Secp256k1, Signed}
 import coop.rchain.metrics.Span
+import coop.rchain.models.Expr.ExprInstance.GString
+import coop.rchain.models.GUnforgeable.UnfInstance
+import coop.rchain.models.GUnforgeable.UnfInstance.GPrivateBody
+import coop.rchain.models.TaggedContinuation.TaggedCont.ScalaBodyRef
 import coop.rchain.models._
 import coop.rchain.models.rholang.implicits._
+import coop.rchain.rholang.externalservices.ExternalServices
 import coop.rchain.rholang.interpreter.RhoRuntime.RhoTuplespace
 import coop.rchain.rholang.interpreter.registry.Registry
 import coop.rchain.rholang.interpreter.RholangAndScalaDispatcher.RhoDispatch
-import coop.rchain.rholang.interpreter.util.RevAddress
+import coop.rchain.rholang.interpreter.errors.NonDeterministicProcessFailure
+import coop.rchain.rholang.interpreter.util.VaultAddress
 import coop.rchain.rspace.{ContResult, Result}
-import coop.rchain.shared.Base16
+import coop.rchain.shared.{Base16, Log}
+import io.cequence.openaiscala.domain.ModelId
+import io.cequence.openaiscala.domain.settings.CreateCompletionSettings
+import io.cequence.openaiscala.service.OpenAIServiceFactory
 
-import scala.util.Try
+import java.io.{File, FileOutputStream, FileWriter}
+import java.nio.file.Files
+import java.util.UUID
+import scala.concurrent.{ExecutionContext, Future}
+import scala.util.{Random, Try}
 
 //TODO: Make each of the system processes into a case class,
 //      so that implementation is not repetitive.
@@ -37,15 +52,25 @@ trait SystemProcesses[F[_]] {
   def keccak256Hash: Contract[F]
   def blake2b256Hash: Contract[F]
   def getBlockData(blockData: Ref[F, SystemProcesses.BlockData]): Contract[F]
+  def getDeployData(blockData: Ref[F, SystemProcesses.DeployData]): Contract[F]
   def invalidBlocks(invalidBlocks: SystemProcesses.InvalidBlocks[F]): Contract[F]
-  def revAddress: Contract[F]
+  def vaultAddress: Contract[F]
   def deployerIdOps: Contract[F]
   def registryOps: Contract[F]
   def sysAuthTokenOps: Contract[F]
+  def gpt4: Contract[F]
+  def dalle3: Contract[F]
+  def textToAudio: Contract[F]
+  def ollamaChat: Contract[F]
+  def ollamaGenerate: Contract[F]
+  def ollamaModels: Contract[F]
+  def grpcTell: Contract[F]
+  def devNull: Contract[F]
+  def abort: Contract[F]
 }
 
 object SystemProcesses {
-  type RhoSysFunction[F[_]] = Seq[ListParWithRandom] => F[Unit]
+  type RhoSysFunction[F[_]] = (Seq[ListParWithRandom], Boolean, Seq[Par]) => F[Seq[Par]]
   type RhoDispatchMap[F[_]] = Map[Long, RhoSysFunction[F]]
   type Name                 = Par
   type Arity                = Int
@@ -73,6 +98,38 @@ object SystemProcesses {
       seqNum: Int
   )
 
+  object BlockData {
+    def empty: BlockData = BlockData(0, 0, PublicKey(Base16.unsafeDecode("00")), 0)
+    def fromBlock(template: BlockMessage) =
+      BlockData(
+        template.header.timestamp,
+        template.body.state.blockNumber,
+        PublicKey(template.sender),
+        template.seqNum
+      )
+  }
+
+  final case class DeployData private (
+      timestamp: Long,
+      deployerId: PublicKey,
+      deployId: ByteString
+  )
+
+  object DeployData {
+    def empty: DeployData =
+      DeployData(
+        0,
+        PublicKey(Base16.unsafeDecode("00")),
+        ByteString.copyFrom(Base16.unsafeDecode("00"))
+      )
+    def fromDeploy(template: Signed[CasperDeployData]) =
+      DeployData(
+        template.data.timestamp,
+        template.pk,
+        template.sig
+      )
+  }
+
   def byteName(b: Byte): Par = GPrivate(ByteString.copyFrom(Array[Byte](b)))
 
   object FixedChannels {
@@ -87,13 +144,23 @@ object SystemProcesses {
     val SECP256K1_VERIFY: Par   = byteName(8)
     val GET_BLOCK_DATA: Par     = byteName(10)
     val GET_INVALID_BLOCKS: Par = byteName(11)
-    val REV_ADDRESS: Par        = byteName(12)
+    val VAULT_ADDRESS: Par      = byteName(12)
     val DEPLOYER_ID_OPS: Par    = byteName(13)
     val REG_LOOKUP: Par         = byteName(14)
     val REG_INSERT_RANDOM: Par  = byteName(15)
     val REG_INSERT_SIGNED: Par  = byteName(16)
     val REG_OPS: Par            = byteName(17)
     val SYS_AUTHTOKEN_OPS: Par  = byteName(18)
+    val GPT4: Par               = byteName(20)
+    val DALLE3: Par             = byteName(21)
+    val TEXT_TO_AUDIO: Par      = byteName(22)
+    val GRPC_TELL: Par          = byteName(25)
+    val DEV_NULL: Par           = byteName(26)
+    val ABORT: Par              = byteName(27)
+    val OLLAMA_CHAT: Par        = byteName(28)
+    val OLLAMA_GENERATE: Par    = byteName(29)
+    val OLLAMA_MODELS: Par      = byteName(30)
+    val DEPLOY_DATA: Par        = byteName(31)
   }
   object BodyRefs {
     val STDOUT: Long             = 0L
@@ -107,30 +174,52 @@ object SystemProcesses {
     val SECP256K1_VERIFY: Long   = 9L
     val GET_BLOCK_DATA: Long     = 11L
     val GET_INVALID_BLOCKS: Long = 12L
-    val REV_ADDRESS: Long        = 13L
+    val VAULT_ADDRESS: Long      = 13L
     val DEPLOYER_ID_OPS: Long    = 14L
     val REG_OPS: Long            = 15L
     val SYS_AUTHTOKEN_OPS: Long  = 16L
+    val GPT4: Long               = 18L
+    val DALLE3: Long             = 19L
+    val TEXT_TO_AUDIO: Long      = 20L
+    val GRPC_TELL: Long          = 23L
+    val DEV_NULL: Long           = 24L
+    val ABORT: Long              = 25L
+    val OLLAMA_CHAT: Long        = 26L
+    val OLLAMA_GENERATE: Long    = 27L
+    val OLLAMA_MODELS: Long      = 28L
+    val DEPLOY_DATA: Long        = 29L
   }
-  final case class ProcessContext[F[_]: Concurrent: Span](
+
+  val nonDeterministicCalls: Set[Long] = Set(
+    BodyRefs.GPT4,
+    BodyRefs.DALLE3,
+    BodyRefs.TEXT_TO_AUDIO,
+    BodyRefs.OLLAMA_CHAT,
+    BodyRefs.OLLAMA_GENERATE,
+    BodyRefs.OLLAMA_MODELS
+  )
+
+  final case class ProcessContext[F[_]: Concurrent: Span: Log](
       space: RhoTuplespace[F],
       dispatcher: RhoDispatch[F],
       blockData: Ref[F, BlockData],
-      invalidBlocks: InvalidBlocks[F]
+      invalidBlocks: InvalidBlocks[F],
+      deployData: Ref[F, DeployData],
+      externalServices: ExternalServices
   ) {
-    val systemProcesses = SystemProcesses[F](dispatcher, space)
+    val systemProcesses = SystemProcesses[F](dispatcher, space, externalServices)
   }
   final case class Definition[F[_]](
       urn: String,
       fixedChannel: Name,
       arity: Arity,
       bodyRef: BodyRef,
-      handler: ProcessContext[F] => Seq[ListParWithRandom] => F[Unit],
+      handler: ProcessContext[F] => (Seq[ListParWithRandom], Boolean, Seq[Par]) => F[Seq[Par]],
       remainder: Remainder = None
   ) {
     def toDispatchTable(
         context: ProcessContext[F]
-    ): (BodyRef, Seq[ListParWithRandom] => F[Unit]) =
+    ): (BodyRef, (Seq[ListParWithRandom], Boolean, Seq[Par]) => F[Seq[Par]]) =
       bodyRef -> handler(context)
 
     def toUrnMap: (String, Par) = {
@@ -141,22 +230,14 @@ object SystemProcesses {
     def toProcDefs: (Name, Arity, Remainder, BodyRef) =
       (fixedChannel, arity, remainder, bodyRef)
   }
-  object BlockData {
-    def empty: BlockData = BlockData(0, 0, PublicKey(Base16.unsafeDecode("00")), 0)
-    def fromBlock(template: BlockMessage) =
-      BlockData(
-        template.header.timestamp,
-        template.body.state.blockNumber,
-        PublicKey(template.sender),
-        template.seqNum
-      )
-  }
-  type Contract[F[_]] = Seq[ListParWithRandom] => F[Unit]
+
+  type Contract[F[_]] = (Seq[ListParWithRandom], Boolean, Seq[Par]) => F[Seq[Par]]
 
   def apply[F[_]](
       dispatcher: Dispatch[F, ListParWithRandom, TaggedContinuation],
-      space: RhoTuplespace[F]
-  )(implicit F: Concurrent[F], spanF: Span[F]): SystemProcesses[F] =
+      space: RhoTuplespace[F],
+      externalServices: ExternalServices
+  )(implicit F: Concurrent[F], spanF: Span[F], L: Log[F]): SystemProcesses[F] =
     new SystemProcesses[F] {
 
       type ContWithMetaData = ContResult[Par, BindPattern, TaggedContinuation]
@@ -169,8 +250,9 @@ object SystemProcesses {
 
       private val stdOutLogger = Logger("coop.rchain.rholang.stdout")
       private val stdErrLogger = Logger("coop.rchain.rholang.stderr")
+      private val logger       = Logger("coop.rchain.rholang.ollama")
 
-      private def illegalArgumentException(msg: String): F[Unit] =
+      private def illegalArgumentException(msg: String): F[Seq[Par]] =
         F.raiseError(new IllegalArgumentException(msg))
 
       def verifySignatureContract(
@@ -179,6 +261,8 @@ object SystemProcesses {
       ): Contract[F] = {
         case isContractCall(
             produce,
+            _,
+            _,
             Seq(
               RhoType.ByteArray(data),
               RhoType.ByteArray(signature),
@@ -188,8 +272,9 @@ object SystemProcesses {
             ) =>
           for {
             verified <- F.fromTry(Try(algorithm(data, signature, pub)))
-            _        <- produce(Seq(RhoType.Boolean(verified)), ack)
-          } yield ()
+            output   = Seq(RhoType.Boolean(verified): Par)
+            _        <- produce(output, ack)
+          } yield output
         case _ =>
           illegalArgumentException(
             s"$name expects data, signature, public key (all as byte arrays), and an acknowledgement channel"
@@ -197,62 +282,67 @@ object SystemProcesses {
       }
 
       def hashContract(name: String, algorithm: Array[Byte] => Array[Byte]): Contract[F] = {
-        case isContractCall(produce, Seq(RhoType.ByteArray(input), ack)) =>
+        case isContractCall(produce, _, _, Seq(RhoType.ByteArray(input), ack)) =>
           for {
-            hash <- F.fromTry(Try(algorithm(input)))
-            _    <- produce(Seq(RhoType.ByteArray(hash)), ack)
-          } yield ()
+            hash   <- F.fromTry(Try(algorithm(input)))
+            output = Seq(RhoType.ByteArray(hash))
+            _      <- produce(output, ack)
+          } yield output
         case _ =>
           illegalArgumentException(
             s"$name expects a byte array and return channel"
           )
       }
 
-      private def printStdOut(s: String): F[Unit] =
+      private def printStdOut(s: String): F[Seq[Par]] =
         for {
           _ <- F.delay(Console.println(s))
           _ <- F.delay(stdOutLogger.debug(s))
-        } yield ()
+        } yield Seq.empty[Par]
 
-      private def printStdErr(s: String): F[Unit] =
+      private def printStdErr(s: String): F[Seq[Par]] =
         for {
           _ <- F.delay(Console.err.println(s))
           _ <- F.delay(stdErrLogger.debug(s))
-        } yield ()
+        } yield Seq.empty[Par]
 
       def stdOut: Contract[F] = {
-        case isContractCall(_, Seq(arg)) =>
+        case isContractCall(_, _, _, Seq(arg)) =>
           printStdOut(prettyPrinter.buildString(arg))
       }
 
       def stdOutAck: Contract[F] = {
-        case isContractCall(produce, Seq(arg, ack)) =>
+        case isContractCall(produce, _, _, Seq(arg, ack)) =>
           for {
-            _ <- printStdOut(prettyPrinter.buildString(arg))
-            _ <- produce(Seq(Par.defaultInstance), ack)
-          } yield ()
+            _      <- printStdOut(prettyPrinter.buildString(arg))
+            output = Seq(Par.defaultInstance)
+            _      <- produce(output, ack)
+          } yield output
       }
 
       def stdErr: Contract[F] = {
-        case isContractCall(_, Seq(arg)) =>
+        case isContractCall(_, _, _, Seq(arg)) =>
           printStdErr(prettyPrinter.buildString(arg))
       }
 
       def stdErrAck: Contract[F] = {
-        case isContractCall(produce, Seq(arg, ack)) =>
+        case isContractCall(produce, _, _, Seq(arg, ack)) =>
           for {
-            _ <- printStdErr(prettyPrinter.buildString(arg))
-            _ <- produce(Seq(Par.defaultInstance), ack)
-          } yield ()
+            _      <- printStdErr(prettyPrinter.buildString(arg))
+            output = Seq(Par.defaultInstance)
+            _      <- produce(output, ack)
+          } yield output
       }
 
-      def revAddress: Contract[F] = {
+      def vaultAddress: Contract[F] = {
         case isContractCall(
             produce,
+            _,
+            _,
             Seq(RhoType.String("validate"), RhoType.String(address), ack)
             ) =>
           val errorMessage =
-            RevAddress
+            VaultAddress
               .parse(address)
               .swap
               .toOption
@@ -262,69 +352,79 @@ object SystemProcesses {
           produce(Seq(errorMessage), ack)
 
         // TODO: Invalid type for address should throw error!
-        case isContractCall(produce, Seq(RhoType.String("validate"), _, ack)) =>
+        case isContractCall(produce, _, _, Seq(RhoType.String("validate"), _, ack)) =>
           produce(Seq(Par()), ack)
 
         case isContractCall(
             produce,
+            _,
+            _,
             Seq(RhoType.String("fromPublicKey"), RhoType.ByteArray(publicKey), ack)
             ) =>
           val response =
-            RevAddress
+            VaultAddress
               .fromPublicKey(PublicKey(publicKey))
               .map(ra => RhoType.String(ra.toBase58))
               .getOrElse(Par())
 
           produce(Seq(response), ack)
 
-        case isContractCall(produce, Seq(RhoType.String("fromPublicKey"), _, ack)) =>
+        case isContractCall(produce, _, _, Seq(RhoType.String("fromPublicKey"), _, ack)) =>
           produce(Seq(Par()), ack)
 
         case isContractCall(
             produce,
+            _,
+            _,
             Seq(RhoType.String("fromDeployerId"), RhoType.DeployerId(id), ack)
             ) =>
           val response =
-            RevAddress
+            VaultAddress
               .fromDeployerId(id)
               .map(ra => RhoType.String(ra.toBase58))
               .getOrElse(Par())
 
           produce(Seq(response), ack)
 
-        case isContractCall(produce, Seq(RhoType.String("fromDeployerId"), _, ack)) =>
+        case isContractCall(produce, _, _, Seq(RhoType.String("fromDeployerId"), _, ack)) =>
           produce(Seq(Par()), ack)
 
         case isContractCall(
             produce,
+            _,
+            _,
             Seq(RhoType.String("fromUnforgeable"), argument, ack)
             ) =>
           val response = argument match {
             case RhoType.Name(gprivate) =>
-              RhoType.String(RevAddress.fromUnforgeable(gprivate).toBase58)
+              RhoType.String(VaultAddress.fromUnforgeable(gprivate).toBase58)
             case _ => Par()
           }
 
           produce(Seq(response), ack)
 
-        case isContractCall(produce, Seq(RhoType.String("fromUnforgeable"), _, ack)) =>
+        case isContractCall(produce, _, _, Seq(RhoType.String("fromUnforgeable"), _, ack)) =>
           produce(Seq(Par()), ack)
       }
 
       def deployerIdOps: Contract[F] = {
         case isContractCall(
             produce,
+            _,
+            _,
             Seq(RhoType.String("pubKeyBytes"), RhoType.DeployerId(publicKey), ack)
             ) =>
           produce(Seq(RhoType.ByteArray(publicKey)), ack)
 
-        case isContractCall(produce, Seq(RhoType.String("pubKeyBytes"), _, ack)) =>
+        case isContractCall(produce, _, _, Seq(RhoType.String("pubKeyBytes"), _, ack)) =>
           produce(Seq(Par()), ack)
       }
 
       def registryOps: Contract[F] = {
         case isContractCall(
             produce,
+            _,
+            _,
             Seq(RhoType.String("buildUri"), argument, ack)
             ) =>
           val response = argument match {
@@ -339,6 +439,8 @@ object SystemProcesses {
       def sysAuthTokenOps: Contract[F] = {
         case isContractCall(
             produce,
+            _,
+            _,
             Seq(RhoType.String("check"), argument, ack)
             ) =>
           val response = argument match {
@@ -363,31 +465,249 @@ object SystemProcesses {
       def blake2b256Hash: Contract[F] =
         hashContract("blake2b256Hash", Blake2b256.hash)
 
+      def gpt4: Contract[F] = {
+        case isContractCall(produce, true, previousOutput, Seq(RhoType.String(_), ack)) => {
+          produce(previousOutput, ack).map(_ => previousOutput)
+        }
+        case isContractCall(produce, _, _, Seq(RhoType.String(prompt), ack)) => {
+          def callApi: F[String] =
+            externalServices.openAIService
+              .gpt4TextCompletion(prompt)
+              .recoverWith {
+                case e => // API error
+                  NonDeterministicProcessFailure(outputNotProduced = Seq.empty, cause = e).raiseError
+              }
+
+          def mapOutput(response: String): Seq[Par] = Seq(RhoType.String(response))
+
+          def produceNonDeterministicOutput(output: Seq[Par]) =
+            produce(output, ack)
+              .map(_ => output)
+              .recoverWith {
+                case e => // usually happens when the cost is exhausted
+                  NonDeterministicProcessFailure(output.map(_.toByteArray), e).raiseError //return the not produced non-deterministic output to re-use in replay
+              }
+
+          callApi.map(mapOutput).flatMap(produceNonDeterministicOutput)
+        }
+      }
+
+      def dalle3: Contract[F] = {
+        case isContractCall(produce, true, previousOutput, Seq(_, ack)) => {
+          produce(previousOutput, ack).map(_ => previousOutput)
+        }
+        case isContractCall(produce, _, _, Seq(RhoType.String(prompt), ack)) => {
+
+          def callApi: F[String] =
+            externalServices.openAIService
+              .dalle3CreateImage(prompt)
+              .recoverWith {
+                case e => // API error
+                  NonDeterministicProcessFailure(outputNotProduced = Seq.empty, cause = e).raiseError
+              }
+
+          def mapOutput(response: String): Seq[Par] = Seq(RhoType.String(response))
+
+          def produceNonDeterministicOutput(output: Seq[Par]) =
+            produce(output, ack)
+              .map(_ => output)
+              .recoverWith {
+                case e => // usually happens when the cost is exhausted
+                  NonDeterministicProcessFailure(output.map(_.toByteArray), e).raiseError //return the not produced non-deterministic output to re-use in replay
+              }
+
+          callApi.map(mapOutput).flatMap(produceNonDeterministicOutput)
+        }
+      }
+
+      def textToAudio: Contract[F] = {
+        case isContractCall(produce, true, previousOutput, Seq(_, ack)) => {
+          produce(previousOutput, ack).map(_ => previousOutput)
+        }
+        case isContractCall(produce, _, _, Seq(RhoType.String(text), ack)) => {
+
+          def callApi: F[Array[Byte]] =
+            externalServices.openAIService
+              .ttsCreateAudioSpeech(text)
+              .recoverWith {
+                case e => // API error
+                  NonDeterministicProcessFailure(outputNotProduced = Seq.empty, cause = e).raiseError
+              }
+
+          def mapOutput(bytes: Array[Byte]): Seq[Par] = Seq(RhoType.ByteArray(bytes))
+
+          def produceNonDeterministicOutput(output: Seq[Par]) =
+            produce(output, ack)
+              .map(_ => output)
+              .recoverWith {
+                case e => // usually happens when the cost is exhausted
+                  NonDeterministicProcessFailure(output.map(_.toByteArray), e).raiseError //return the not produced non-deterministic output to re-use in replay
+              }
+
+          callApi.map(mapOutput).flatMap(produceNonDeterministicOutput)
+        }
+      }
+
+      def ollamaChat: Contract[F] = {
+        case isContractCall(produce, true, previousOutput, Seq(_, _, ack)) => {
+          logger.info(s"ollamaChat: called in replay mode")
+          produce(previousOutput, ack).map(_ => previousOutput)
+        }
+
+        case isContractCall(
+            produce,
+            _,
+            _,
+            Seq(RhoType.String(model), RhoType.String(prompt), ack)
+            ) => {
+
+          logger.info(s"ollamaChat: called in real mode: $prompt")
+          (for {
+            response <- externalServices.ollamaService.chatCompletion(model, prompt)
+            output   = Seq(RhoType.String(response))
+            _        <- produce(output, ack)
+          } yield output).recoverWith {
+            case e => // API error
+              NonDeterministicProcessFailure(outputNotProduced = Seq.empty, cause = e).raiseError
+          }
+        }
+      }
+
+      def ollamaGenerate: Contract[F] = {
+        case isContractCall(produce, true, previousOutput, Seq(_, _, ack)) => {
+          produce(previousOutput, ack).map(_ => previousOutput)
+        }
+        case isContractCall(
+            produce,
+            _,
+            _,
+            Seq(RhoType.String(model), RhoType.String(prompt), ack)
+            ) => {
+          (for {
+            response <- externalServices.ollamaService.textGeneration(model, prompt)
+            output   = Seq(RhoType.String(response))
+            _        <- produce(output, ack)
+          } yield output).recoverWith {
+            case e => // API error
+              NonDeterministicProcessFailure(outputNotProduced = Seq.empty, cause = e).raiseError
+          }
+        }
+      }
+
+      def ollamaModels: Contract[F] = {
+        case isContractCall(produce, true, previousOutput, Seq(ack)) => {
+          produce(previousOutput, ack).map(_ => previousOutput)
+        }
+        case isContractCall(produce, _, _, Seq(ack)) => {
+          (for {
+            models    <- externalServices.ollamaService.listModels()
+            modelPars = models.map(model => Par(exprs = Seq(Expr(GString(model)))))
+            output    = Seq(Par(exprs = Seq(EList(modelPars))))
+            _         <- produce(output, ack)
+          } yield output).recoverWith {
+            case e => // API error
+              NonDeterministicProcessFailure(outputNotProduced = Seq.empty, cause = e).raiseError
+          }
+        }
+      }
+
+      override def grpcTell: Contract[F] = {
+        case isContractCall(_, true, previous, _) =>
+          F.delay(previous)
+
+        case isContractCall(
+            _,
+            false,
+            _,
+            Seq(
+              RhoType.String(clientHost),
+              RhoType.Number(clientPort),
+              RhoType.String(payload)
+            )
+            ) =>
+          externalServices.grpcClient
+            .initClientAndTell(clientHost, clientPort, payload)
+            .map(_ => Seq(RhoType.Nil()))
+            .recoverWith {
+              case e => // API error
+                NonDeterministicProcessFailure(outputNotProduced = Seq.empty, cause = e).raiseError
+            }
+      }
+
+      override def devNull: Contract[F] = {
+        case isContractCall(_, _, _, _) =>
+          F.pure(Seq.empty[Par])
+      }
+
+      /**
+        * Execution abort system process.
+        *
+        * Terminates the current Rholang computation immediately when called.
+        * This allows users to explicitly halt program execution, useful for
+        * error handling and controlled termination scenarios.
+        *
+        * Usage:
+        *   - `rho:execution:abort!()`
+        *   - `rho:execution:abort!(reason)`
+        *   - `rho:execution:abort!(code, message, details)`
+        *
+        * @param args Any number of arguments (logged for debugging before termination)
+        * @return Never returns - raises UserAbortError to terminate execution
+        */
+      def abort: Contract[F] = {
+        case isContractCall(_, _, _, Seq(logMessage)) =>
+          F.delay {
+            stdErrLogger.warn(s"Execution aborted with arguments: $logMessage")
+          } >> errors.UserAbortError.raiseError[F, Seq[Par]]
+      }
+
       def getBlockData(
           blockData: Ref[F, BlockData]
       ): Contract[F] = {
-        case isContractCall(produce, Seq(ack)) =>
+        case isContractCall(produce, _, _, Seq(ack)) =>
           for {
             data <- blockData.get
+            output = Seq(
+              RhoType.Number(data.blockNumber),
+              RhoType.Number(data.timeStamp),
+              RhoType.ByteArray(data.sender.bytes)
+            )
             _ <- produce(
-                  Seq(
-                    RhoType.Number(data.blockNumber),
-                    RhoType.Number(data.timeStamp),
-                    RhoType.ByteArray(data.sender.bytes)
-                  ),
+                  output,
                   ack
                 )
-          } yield ()
+          } yield output
         case _ =>
           illegalArgumentException("blockData expects only a return channel")
       }
 
+      def getDeployData(
+          deployData: Ref[F, DeployData]
+      ): Contract[F] = {
+        case isContractCall(produce, _, _, Seq(ack)) =>
+          for {
+            data <- deployData.get
+            output = Seq(
+              RhoType.Number(data.timestamp),
+              RhoType.DeployerId(data.deployerId.bytes),
+              RhoType.DeployId(data.deployId)
+            )
+            _ <- produce(
+                  output,
+                  ack
+                )
+          } yield output
+        case _ =>
+          illegalArgumentException("deployData expects only a return channel")
+      }
+
       def invalidBlocks(invalidBlocks: InvalidBlocks[F]): Contract[F] = {
-        case isContractCall(produce, Seq(ack)) =>
+        case isContractCall(produce, _, _, Seq(ack)) =>
           for {
             invalidBlocks <- invalidBlocks.invalidBlocks.get
-            _             <- produce(Seq(invalidBlocks), ack)
-          } yield ()
+            output        = Seq(invalidBlocks)
+            _             <- produce(output, ack)
+          } yield output
         case _ =>
           illegalArgumentException("invalidBlocks expects only a return channel")
       }

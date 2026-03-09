@@ -2,11 +2,11 @@ use std::sync::{Arc, Mutex};
 
 use shared::rust::{Byte, ByteVector};
 
-use crate::rspace::{
-    hashing::blake2b256_hash::Blake2b256Hash, state::rspace_exporter::RSpaceExporter,
-};
+use crate::rspace::hashing::blake2b256_hash::Blake2b256Hash;
+use crate::rspace::state::rspace_exporter::RSpaceExporter;
 
-//See rspace/src/main/scala/coop/rchain/rspace/state/exporters/RSpaceExporterItems.scala
+//See rspace/src/main/scala/coop/rchain/rspace/state/exporters/
+// RSpaceExporterItems.scala
 pub struct StoreItems<KeyHash, Value> {
     pub items: Vec<(KeyHash, Value)>,
     pub last_path: Vec<(KeyHash, Option<Byte>)>,

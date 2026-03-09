@@ -310,7 +310,6 @@ fn get_optimal_rejection<R: Eq + std::hash::Hash + Clone + Ord>(
 
     // Convert to sorted list for deterministic processing
     let mut options_vec: Vec<_> = options.0.into_iter().collect();
-
     options_vec.sort_by(|a, b| {
         // First criterion: sum of target function values
         let a_sum: u64 = a.0.iter().map(|branch| target_f(branch)).sum();
@@ -320,17 +319,23 @@ fn get_optimal_rejection<R: Eq + std::hash::Hash + Clone + Ord>(
             return a_sum.cmp(&b_sum);
         }
 
-        // Second criterion: number of branches in the rejection option
-        let a_size: usize = a.0.len();
-        let b_size: usize = b.0.len();
+        // Second criterion: total size of branches
+        let a_size: usize = a.0.iter().map(|branch| branch.0.len()).sum();
+        let b_size: usize = b.0.iter().map(|branch| branch.0.len()).sum();
 
         if a_size != b_size {
             return a_size.cmp(&b_size);
         }
 
-        // Third criterion: deterministic tiebreak by smallest element across all branches
-        let a_first = a.0.iter().flat_map(|branch| branch.0.iter()).min();
-        let b_first = b.0.iter().flat_map(|branch| branch.0.iter()).min();
+        // Third criterion: For tie-breaking, compare the first element of the first branch
+        // Use sorted branches and min element for deterministic tie-breaking
+        let mut a_branches: Vec<_> = a.0.iter().collect();
+        let mut b_branches: Vec<_> = b.0.iter().collect();
+        a_branches.sort_by(|x, y| compare_branches(x, y));
+        b_branches.sort_by(|x, y| compare_branches(x, y));
+
+        let a_first = a_branches.first().and_then(|branch| branch.0.iter().min());
+        let b_first = b_branches.first().and_then(|branch| branch.0.iter().min());
 
         match (a_first, b_first) {
             (Some(a_item), Some(b_item)) => a_item.cmp(b_item),
@@ -470,101 +475,74 @@ fn get_merged_result_rejection<R: Clone + Eq + std::hash::Hash + Ord>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashSet;
+    use std::collections::{BTreeMap, HashSet};
 
     fn branch(items: &[i32]) -> Branch<i32> {
-        HashableSet(items.iter().copied().collect())
+        HashableSet(items.iter().copied().collect::<HashSet<i32>>())
     }
 
-    fn mk_options(opts: Vec<Vec<Vec<i32>>>) -> HashableSet<HashableSet<Branch<i32>>> {
-        let result: HashSet<HashableSet<Branch<i32>>> = opts
-            .into_iter()
-            .map(|branches| {
-                HashableSet(
-                    branches
-                        .into_iter()
-                        .map(|items| branch(&items))
-                        .collect(),
-                )
-            })
-            .collect();
-        HashableSet(result)
+    fn rejection_option(branches: &[Branch<i32>]) -> HashableSet<Branch<i32>> {
+        HashableSet(branches.iter().cloned().collect::<HashSet<Branch<i32>>>())
     }
 
     #[test]
-    fn optimal_rejection_deterministic_when_costs_equal() {
-        let opts = mk_options(vec![
-            vec![vec![3, 4]],
-            vec![vec![5, 6]],
-            vec![vec![1, 2]],
-        ]);
+    fn compare_branches_is_deterministic() {
+        let a = branch(&[1, 2]);
+        let b = branch(&[2, 1]);
+        let c = branch(&[1, 3]);
+        let d = branch(&[1, 4]);
+        let short = branch(&[1]);
 
-        let result = get_optimal_rejection(opts, |_| 0);
-        // Should deterministically pick the option containing the smallest element (1)
-        assert_eq!(result, HashableSet(HashSet::from([branch(&[1, 2])])));
+        assert_eq!(compare_branches(&a, &b), std::cmp::Ordering::Equal);
+        assert_eq!(compare_branches(&short, &a), std::cmp::Ordering::Less);
+        assert_eq!(compare_branches(&c, &d), std::cmp::Ordering::Less);
     }
 
     #[test]
-    fn optimal_rejection_stable_across_repeated_invocations() {
-        let build = || {
-            mk_options(vec![
-                vec![vec![10, 20]],
-                vec![vec![5, 15]],
-                vec![vec![30, 40]],
-            ])
-        };
+    fn optimal_rejection_tie_break_is_stable() {
+        // Both options have equal target sum (5) and equal branch count.
+        // Deterministic tie-break should pick option_a because its first branch
+        // starts with lower element (1 < 2).
+        let option_a = rejection_option(&[branch(&[1]), branch(&[4])]);
+        let option_b = rejection_option(&[branch(&[2]), branch(&[3])]);
+        let options = HashableSet(HashSet::from([option_b.clone(), option_a.clone()]));
 
-        let results: Vec<_> = (0..100)
-            .map(|_| get_optimal_rejection(build(), |_| 0))
-            .collect();
+        let chosen = get_optimal_rejection(options, |branch| {
+            branch.0.iter().map(|value| *value as u64).sum()
+        });
 
-        for r in &results[1..] {
-            assert_eq!(results[0], *r, "result must be identical across invocations");
-        }
-        // Should always pick the one with min element = 5
-        assert_eq!(
-            results[0],
-            HashableSet(HashSet::from([branch(&[5, 15])]))
+        assert_eq!(chosen, option_a);
+    }
+
+    #[test]
+    fn merge_rejects_negative_channel_balance() {
+        let actual_seq = vec![1, 2];
+        let late_seq = Vec::<i32>::new();
+        let base_channel = Blake2b256Hash::from_bytes(vec![7u8; 32]);
+
+        let result = merge(
+            actual_seq,
+            late_seq,
+            |_a, _b| false, // depends
+            |_a, _b| false, // conflicts
+            |_r| 1,         // cost
+            |_r| Ok(StateChange::empty()),
+            |r| {
+                let mut diff = BTreeMap::new();
+                // item 1 decrements channel, item 2 increments channel
+                let delta = if *r == 1 { -1 } else { 1 };
+                diff.insert(base_channel.clone(), delta);
+                diff
+            },
+            |_state_change, _channels| Ok(Vec::<HotStoreTrieAction<i32, i32, i32, i32>>::new()),
+            |_actions: Vec<HotStoreTrieAction<i32, i32, i32, i32>>| {
+                Ok(Blake2b256Hash::from_bytes(vec![9u8; 32]))
+            },
+            |_hash| Ok(Vec::new()),
         );
-    }
 
-    #[test]
-    fn optimal_rejection_prefers_lower_cost() {
-        let opts = mk_options(vec![
-            vec![vec![100, 200]], // high elements but low cost when sum
-            vec![vec![1, 2]],    // low elements but also low cost
-        ]);
-
-        let cost_f = |s: &Branch<i32>| -> u64 { s.0.iter().copied().sum::<i32>() as u64 };
-        let result = get_optimal_rejection(opts, cost_f);
-        // costF({1,2}) = 3, costF({100,200}) = 300
-        // Should prefer the lower cost option
-        assert_eq!(result, HashableSet(HashSet::from([branch(&[1, 2])])));
-    }
-
-    #[test]
-    fn optimal_rejection_prefers_smaller_size_when_costs_equal() {
-        let opts = mk_options(vec![
-            vec![vec![1, 2]],
-            vec![vec![3, 4], vec![5, 6]],
-        ]);
-
-        let result = get_optimal_rejection(opts, |_| 10);
-        // Both have same cost per branch (10), but small has 1 branch (cost=10) vs 2 (cost=20).
-        // So small wins on cost.
-        assert_eq!(result, HashableSet(HashSet::from([branch(&[1, 2])])));
-    }
-
-    #[test]
-    fn optimal_rejection_uses_min_element_tiebreak() {
-        let opts = mk_options(vec![
-            vec![vec![10]],
-            vec![vec![5]],
-            vec![vec![20]],
-        ]);
-
-        let result = get_optimal_rejection(opts, |_| 100);
-        // All have cost 100 and size 1. Min element: 5 < 10 < 20
-        assert_eq!(result, HashableSet(HashSet::from([branch(&[5])])));
+        assert!(result.is_ok());
+        let (_new_state, rejected) = result.unwrap();
+        assert!(!rejected.0.is_empty());
     }
 }

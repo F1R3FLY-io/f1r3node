@@ -38,6 +38,40 @@ where
     result
 }
 
+pub fn bf_traverse_find<A, F, P>(start: Vec<A>, mut neighbors: F, mut predicate: P) -> Option<A>
+where
+    A: Eq + Hash + Clone,
+    F: FnMut(&A) -> Vec<A>,
+    P: FnMut(&A) -> bool,
+{
+    let mut queue = VecDeque::new();
+    let mut visited = HashSet::new();
+
+    for node in start {
+        queue.push_back(node);
+    }
+
+    while let Some(curr) = queue.pop_front() {
+        if visited.contains(&curr) {
+            continue;
+        }
+
+        visited.insert(curr.clone());
+        if predicate(&curr) {
+            return Some(curr);
+        }
+
+        let ns = neighbors(&curr);
+        for n in ns {
+            if !visited.contains(&n) {
+                queue.push_back(n);
+            }
+        }
+    }
+
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -115,5 +149,21 @@ mod tests {
         // The remaining nodes should include 3 and 4 (order may vary)
         assert!(result.contains(&3));
         assert!(result.contains(&4));
+    }
+
+    #[test]
+    fn test_bf_traverse_find_stops_on_match() {
+        let mut graph = HashMap::new();
+        graph.insert(1, vec![2, 3]);
+        graph.insert(2, vec![4, 5]);
+        graph.insert(3, vec![6, 7]);
+        graph.insert(4, vec![]);
+        graph.insert(5, vec![]);
+        graph.insert(6, vec![]);
+        graph.insert(7, vec![]);
+
+        let neighbors = |n: &i32| graph.get(n).unwrap_or(&vec![]).clone();
+        let found = bf_traverse_find(vec![1], neighbors, |n| *n == 6);
+        assert_eq!(found, Some(6));
     }
 }

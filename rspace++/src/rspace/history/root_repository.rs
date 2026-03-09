@@ -1,7 +1,7 @@
 use super::instances::radix_history::RadixHistory;
-use crate::rspace::{
-    errors::RootError, hashing::blake2b256_hash::Blake2b256Hash, history::roots_store::RootsStore,
-};
+use crate::rspace::errors::RootError;
+use crate::rspace::hashing::blake2b256_hash::Blake2b256Hash;
+use crate::rspace::history::roots_store::RootsStore;
 
 // See rspace/src/main/scala/coop/rchain/rspace/history/RootRepository.scala
 pub struct RootRepository {
@@ -38,10 +38,7 @@ impl RootRepository {
             .validate_and_set_current_root(root.clone())?
         {
             Some(_) => {
-                tracing::debug!(
-                    "[RootRepository] validateAndSetCurrentRoot OK: {}",
-                    root
-                );
+                tracing::debug!("[RootRepository] validateAndSetCurrentRoot OK: {}", root);
                 Ok(())
             }
             None => {
@@ -49,10 +46,7 @@ impl RootRepository {
                     "[RootRepository] validateAndSetCurrentRoot FAILED: {} not in roots store",
                     root
                 );
-                Err(RootError::UnknownRootError(format!(
-                    "unknown root: {}",
-                    root
-                )))
+                Err(RootError::UnknownRootError(format!("unknown root: {}", root)))
             }
         }
     }

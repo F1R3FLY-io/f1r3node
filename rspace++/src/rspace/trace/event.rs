@@ -1,14 +1,12 @@
-use crate::rspace::{
-    hashing::{
-        blake2b256_hash::Blake2b256Hash,
-        stable_hash_provider::{hash, hash_consume, hash_produce, hash_vec},
-    },
-    internal::ConsumeCandidate,
-};
+use std::collections::{BTreeMap, BTreeSet};
+use std::hash::{Hash, Hasher};
+
 use proptest_derive::Arbitrary;
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, hash::Hash};
-use std::{collections::BTreeSet, hash::Hasher};
+
+use crate::rspace::hashing::blake2b256_hash::Blake2b256Hash;
+use crate::rspace::hashing::stable_hash_provider::{hash, hash_consume, hash_produce, hash_vec};
+use crate::rspace::internal::ConsumeCandidate;
 
 // See rspace/src/main/scala/coop/rchain/rspace/trace/Event.scala
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
@@ -33,14 +31,14 @@ pub struct COMM {
 
 impl COMM {
     pub fn new<C, A: Clone>(
-        data_candidates: Vec<ConsumeCandidate<C, A>>,
+        data_candidates: &[ConsumeCandidate<C, A>],
         consume_ref: Consume,
         peeks: BTreeSet<i32>,
-        produce_counters: impl Fn(Vec<Produce>) -> BTreeMap<Produce, i32>,
+        produce_counters: impl Fn(&[Produce]) -> BTreeMap<Produce, i32>,
     ) -> Self {
         let mut produce_refs: Vec<Produce> = data_candidates
-            .into_iter()
-            .map(|candidate| candidate.datum.source)
+            .iter()
+            .map(|candidate| candidate.datum.source.clone())
             .collect();
 
         // produce_refs.sort_by(|a, b| {
@@ -67,7 +65,7 @@ impl COMM {
             consume: consume_ref,
             produces: produce_refs.clone(),
             peeks,
-            times_repeated: produce_counters(produce_refs),
+            times_repeated: produce_counters(&produce_refs),
         }
     }
 }
@@ -107,8 +105,9 @@ pub struct Produce {
     pub persistent: bool,
     pub is_deterministic: bool,
     pub output_value: Vec<Vec<u8>>,
-    /// Indicates whether this produce event represents a failed non-deterministic process.
-    /// Used for replay safety of external service calls (OpenAI, Ollama, gRPC).
+    /// Indicates whether this produce event represents a failed
+    /// non-deterministic process. Used for replay safety of external
+    /// service calls (OpenAI, Ollama, gRPC).
     pub failed: bool,
 }
 
@@ -145,9 +144,10 @@ impl Produce {
         }
     }
 
-    /// Mark this produce event as failed, indicating a non-deterministic process failure.
-    /// Used to record failures from external service calls (OpenAI, Ollama, gRPC) 
-    /// so replay can correctly handle them without re-executing the external call.
+    /// Mark this produce event as failed, indicating a non-deterministic
+    /// process failure. Used to record failures from external service calls
+    /// (OpenAI, Ollama, gRPC) so replay can correctly handle them without
+    /// re-executing the external call.
     pub fn with_error(&self) -> Self {
         Produce {
             failed: true,

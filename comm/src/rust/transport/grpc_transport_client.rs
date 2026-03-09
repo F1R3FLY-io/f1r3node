@@ -93,6 +93,9 @@ pub struct GrpcTransportClient {
     cache: StreamCache,
 }
 
+const MIN_PEER_REQUEST_TIMEOUT: Duration = Duration::from_secs(1);
+const MAX_CHANNEL_MAP_ENTRIES: usize = 1024;
+
 impl GrpcTransportClient {
     /// Create a new GrpcTransportClient
     pub fn new(
@@ -105,6 +108,15 @@ impl GrpcTransportClient {
         channels_map: Arc<Mutex<HashMap<PeerNode, Arc<OnceCell<Arc<BufferedGrpcStreamChannel>>>>>>,
         network_timeout: Duration,
     ) -> Result<Self, CommError> {
+        let effective_timeout = std::cmp::max(network_timeout, MIN_PEER_REQUEST_TIMEOUT);
+        if effective_timeout != network_timeout {
+            tracing::warn!(
+                "Configured network timeout {}ms is too low; using minimum {}ms for peer requests",
+                network_timeout.as_millis(),
+                effective_timeout.as_millis()
+            );
+        }
+
         Ok(Self {
             network_id,
             cert,
@@ -113,7 +125,7 @@ impl GrpcTransportClient {
             packet_chunk_size,
             client_queue_size,
             channels_map,
-            default_send_timeout: network_timeout,
+            default_send_timeout: effective_timeout,
             cache: Arc::new(dashmap::DashMap::new()),
         })
     }
@@ -135,11 +147,12 @@ impl GrpcTransportClient {
             f1r3fly_id_hex
         );
 
-        let f1r3fly_connector = F1r3flyConnector::new(
+        let f1r3fly_connector = F1r3flyConnector::new_with_timeout(
             self.network_id.clone(),
             &self.cert,
             &self.key,
             f1r3fly_id_hex.clone(),
+            self.default_send_timeout,
         )
         .map_err(|e| CommError::ConfigError(format!("Failed to create F1r3flyConnector: {}", e)))?;
 
@@ -277,6 +290,7 @@ impl GrpcTransportClient {
         loop {
             // Create a new OnceCell for potential new channel
             let new_once_cell = Arc::new(OnceCell::new());
+            let mut evicted_peer_count = 0usize;
 
             // Atomic operation: check if peer exists, if not add new OnceCell
             let (once_cell, is_new_channel) = {
@@ -288,9 +302,34 @@ impl GrpcTransportClient {
                 } else {
                     // Peer doesn't exist, add new OnceCell
                     channels_map.insert(peer.clone(), new_once_cell.clone());
+                    if channels_map.len() > MAX_CHANNEL_MAP_ENTRIES {
+                        let overflow = channels_map.len() - MAX_CHANNEL_MAP_ENTRIES;
+                        let victims: Vec<PeerNode> = channels_map
+                            .keys()
+                            .filter(|other_peer| *other_peer != peer)
+                            .take(overflow)
+                            .cloned()
+                            .collect();
+                        for victim in victims {
+                            if let Some(victim_channel_cell) = channels_map.remove(&victim) {
+                                if let Some(victim_channel) = victim_channel_cell.get() {
+                                    victim_channel.buffer_subscriber.abort();
+                                }
+                                evicted_peer_count += 1;
+                            }
+                        }
+                    }
                     (new_once_cell, true)
                 }
             };
+
+            if evicted_peer_count > 0 {
+                tracing::debug!(
+                    "Evicted {} stale/overflow gRPC channel entries (hard max: {})",
+                    evicted_peer_count,
+                    MAX_CHANNEL_MAP_ENTRIES
+                );
+            }
 
             // If this is a new channel, create it and store in OnceCell
             if is_new_channel {

@@ -58,12 +58,16 @@ async fn two_deploys_executed_inside_single_state_transition_should_be_dependent
 
         let invalid_blocks = HashMap::new();
         let user_deploys = vec![d1, d2];
-        let system_deploys = vec![casper::rust::util::rholang::system_deploy_enum::SystemDeployEnum::Close(CloseBlockDeploy {
-            initial_rand: system_deploy_util::generate_close_deploy_random_seed_from_pk(
-                state_transition_creator.clone(),
-                seq_num,
+        let system_deploys = vec![
+            casper::rust::util::rholang::system_deploy_enum::SystemDeployEnum::Close(
+                CloseBlockDeploy {
+                    initial_rand: system_deploy_util::generate_close_deploy_random_seed_from_pk(
+                        state_transition_creator.clone(),
+                        seq_num,
+                    ),
+                },
             ),
-        })];
+        ];
 
         let (post_state_hash, processed_deploys, _) = runtime_manager
             .compute_state(
@@ -97,7 +101,7 @@ async fn two_deploys_executed_inside_single_state_transition_should_be_dependent
             .into_iter()
             .map(|(d, merge_chs)| {
                 block_index::create_event_log_index(
-                    d.deploy_log,
+                    &d.deploy_log,
                     runtime_manager.get_history_repo(),
                     &Blake2b256Hash::from_bytes_prost(&base_state),
                     merge_chs,
