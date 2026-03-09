@@ -52,7 +52,7 @@ fn mk_snapshot(
     let mut snapshot = CasperSnapshot::new(dag);
     snapshot.last_finalized_block = last_finalized_block;
 
-    let mut max_seq_nums: DashMap<Validator, u64> = DashMap::new();
+    let max_seq_nums: DashMap<Validator, u64> = DashMap::new();
     max_seq_nums.insert(validator.clone(), 0);
     snapshot.max_seq_nums = max_seq_nums;
 

@@ -458,15 +458,19 @@ async fn check_lfb_and_propose(
     let parent_update = inspect_parent_updates(&snapshot, validator_identity, &casper);
     let has_new_parents = parent_update.has_new_parents;
     let has_new_parent_with_user_deploys = parent_update.has_new_parent_with_user_deploys;
-    let deploy_recovery_hint =
-        has_pending_deploys || has_new_parent_with_user_deploys || deploy_grace_active;
-    let deploy_recovery_max_lag =
-        std::cmp::max(heartbeat_pending_deploy_max_lag(), heartbeat_deploy_recovery_max_lag());
+    // Treat "deploy recovery" as actively deploy-driven conditions only.
+    // Keeping grace-only mode out of this hint avoids prolonged frontier-chase churn
+    // once deploy pressure is gone.
+    let deploy_recovery_hint = has_pending_deploys || has_new_parent_with_user_deploys;
+    let deploy_recovery_max_lag = std::cmp::max(
+        heartbeat_pending_deploy_max_lag(),
+        heartbeat_deploy_recovery_max_lag(),
+    );
 
     // Under active deploy-finalization recovery, allow a wider bounded chase window so
     // validators can keep up with fast parent growth without stalling on tight lag caps.
     // Outside deploy recovery, keep the tighter cap to avoid idle empty-block churn.
-    let deploy_recovery_frontier_chase_cap = if deploy_grace_active {
+    let deploy_recovery_frontier_chase_cap = if deploy_recovery_hint {
         std::cmp::max(2, deploy_recovery_max_lag)
     } else {
         2
@@ -503,12 +507,23 @@ async fn check_lfb_and_propose(
     };
     let pending_deploys_due =
         has_pending_deploys && (!self_recently_proposed || can_propose_pending_deploys_while_ahead);
+    // Backstop: even when high lag throttles pending-deploy proposals, force a bounded
+    // retry based on local self-proposal cadence so deploys cannot starve indefinitely.
+    let pending_deploy_backstop_due = has_pending_deploys
+        && self_recently_proposed
+        && !can_propose_pending_deploys_while_ahead
+        && self_latest_block_timestamp_ms
+            .map(|timestamp_ms| {
+                now.saturating_sub(timestamp_ms) >= heartbeat_stale_recovery_min_interval_ms()
+            })
+            .unwrap_or(true)
+        && (!self_proposed_too_recently || deploy_grace_active);
     let can_follow_frontier_without_pending_deploys =
         deploy_recovery_hint || stale_recovery_interval_elapsed;
     // Cooldown protects idle clusters from empty-block churn, but during deploy-driven
     // recovery/finalization we should not wait out the full cooldown before advancing finality.
     let allow_cooldown_override_for_deploy_recovery =
-        has_pending_deploys || has_new_parent_with_user_deploys || deploy_grace_active;
+        has_pending_deploys || has_new_parent_with_user_deploys;
     // When a peer parent with user deploys is observed, allow one frontier-follow step
     // while ahead (bounded by pending-deploy lag threshold) to unblock synchrony progress.
     let allow_frontier_follow_while_ahead_for_deploy_parent =
@@ -542,13 +557,25 @@ async fn check_lfb_and_propose(
         && stale_recovery_window_open
         && (!self_proposed_too_recently || deploy_grace_active);
     let should_propose = pending_deploys_due
+        || pending_deploy_backstop_due
         || frontier_follow_due
         || stale_lfb_recovery_due
         || stale_lfb_leader_recovery_due
         || high_lag_recovery_due;
 
     if should_propose {
-        let reason = if has_pending_deploys && !pending_deploys_due {
+        let reason = if pending_deploy_backstop_due {
+            format!(
+                "pending deploy recovery backstop: lag={} exceeds cap={} while ahead; forcing propose after {}ms",
+                lfb_lag_blocks,
+                if deploy_grace_active {
+                    deploy_recovery_max_lag
+                } else {
+                    heartbeat_pending_deploy_max_lag()
+                },
+                heartbeat_stale_recovery_min_interval_ms()
+            )
+        } else if has_pending_deploys && !pending_deploys_due {
             format!(
                 "pending deploys exist but lag={} exceeds pending-deploy cap={} while already ahead of finalized (throttling)",
                 lfb_lag_blocks,
@@ -663,10 +690,21 @@ async fn check_lfb_and_propose(
                 && self_recently_proposed
                 && !can_propose_pending_deploys_while_ahead
             {
+                let pending_backstop_remaining_ms = self_latest_block_timestamp_ms
+                    .map(|timestamp_ms| {
+                        heartbeat_stale_recovery_min_interval_ms()
+                            .saturating_sub(now.saturating_sub(timestamp_ms))
+                    })
+                    .unwrap_or(0);
                 format!(
-                    "pending deploy lag throttle active: lag {} exceeds cap {} while already ahead",
+                    "pending deploy lag throttle active: lag {} exceeds cap {} while already ahead (next backstop in {}ms)",
                     lfb_lag_blocks,
-                    heartbeat_pending_deploy_max_lag()
+                    if deploy_grace_active {
+                        deploy_recovery_max_lag
+                    } else {
+                        heartbeat_pending_deploy_max_lag()
+                    },
+                    pending_backstop_remaining_ms
                 )
             } else if has_new_parents && self_recently_proposed && !can_chase_frontier_while_ahead {
                 format!(

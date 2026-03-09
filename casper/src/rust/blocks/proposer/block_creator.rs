@@ -190,7 +190,20 @@ async fn prepare_user_deploys(
         deploy_storage_guard.remove(expired_list)?;
     }
 
-    let max_user_deploys = effective_user_deploys_per_block_cap(valid_unique.len());
+    let pending_unique_count = valid_unique.len();
+    if should_bypass_adaptive_cap_for_small_batch(
+        pending_unique_count,
+        max_user_deploys_per_block(),
+        adaptive_small_batch_bypass_threshold(),
+    ) {
+        return Ok(PreparedUserDeploys {
+            deploys: valid_unique,
+            effective_cap: pending_unique_count,
+            cap_hit: false,
+        });
+    }
+
+    let max_user_deploys = effective_user_deploys_per_block_cap(pending_unique_count);
     if valid_unique.len() <= max_user_deploys {
         return Ok(PreparedUserDeploys {
             deploys: valid_unique,
@@ -318,6 +331,32 @@ fn adaptive_user_deploy_min_cap(max_cap: usize) -> usize {
             .unwrap_or(DEFAULT)
     }))
     .clamp(1, max_cap)
+}
+
+fn adaptive_small_batch_bypass_threshold() -> usize {
+    const ENV: &str = "F1R3_ADAPTIVE_DEPLOY_CAP_SMALL_BATCH_BYPASS";
+    const DEFAULT: usize = 3;
+    static VALUE: OnceLock<usize> = OnceLock::new();
+
+    *VALUE.get_or_init(|| {
+        std::env::var(ENV)
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(DEFAULT)
+    })
+}
+
+fn should_bypass_adaptive_cap_for_small_batch(
+    pending_count: usize,
+    max_cap: usize,
+    bypass_threshold: usize,
+) -> bool {
+    if pending_count == 0 {
+        return false;
+    }
+
+    let effective_threshold = bypass_threshold.min(max_cap);
+    pending_count <= effective_threshold
 }
 
 fn adaptive_user_deploy_cap_state(
@@ -1018,7 +1057,9 @@ fn not_future_deploy(current_block_number: i64, deploy_data: &DeployData) -> boo
 
 #[cfg(test)]
 mod tests {
-    use super::{backlog_floor_for_pending, next_adaptive_cap};
+    use super::{
+        backlog_floor_for_pending, next_adaptive_cap, should_bypass_adaptive_cap_for_small_batch,
+    };
 
     #[test]
     fn adaptive_cap_reduces_when_latency_exceeds_target() {
@@ -1065,5 +1106,23 @@ mod tests {
 
         let floor_small_cap = backlog_floor_for_pending(64, 6, 8, 4, 2, 16);
         assert_eq!(floor_small_cap, 6);
+    }
+
+    #[test]
+    fn small_batch_bypass_applies_when_pending_within_threshold() {
+        assert!(should_bypass_adaptive_cap_for_small_batch(3, 32, 3));
+        assert!(should_bypass_adaptive_cap_for_small_batch(2, 32, 3));
+    }
+
+    #[test]
+    fn small_batch_bypass_does_not_apply_for_zero_or_large_pending() {
+        assert!(!should_bypass_adaptive_cap_for_small_batch(0, 32, 3));
+        assert!(!should_bypass_adaptive_cap_for_small_batch(4, 32, 3));
+    }
+
+    #[test]
+    fn small_batch_bypass_respects_max_cap_bound() {
+        assert!(should_bypass_adaptive_cap_for_small_batch(6, 6, 16));
+        assert!(!should_bypass_adaptive_cap_for_small_batch(7, 6, 16));
     }
 }

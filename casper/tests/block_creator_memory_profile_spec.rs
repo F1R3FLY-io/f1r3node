@@ -119,7 +119,7 @@ fn create_snapshot_with_parent(
         latest_block_hash: parent.block_hash.clone(),
     });
 
-    let mut max_seq_nums: DashMap<Validator, u64> = DashMap::new();
+    let max_seq_nums: DashMap<Validator, u64> = DashMap::new();
     max_seq_nums.insert(validator.clone(), parent.seq_num as u64);
     snapshot.max_seq_nums = max_seq_nums;
 
@@ -438,7 +438,7 @@ async fn run_block_creator_phase_split_memory_profile() {
     let shard_name = "test-shard".to_string();
 
     let mut kvm = InMemoryStoreManager::new();
-    let mut block_store = KeyValueBlockStore::create_from_kvm(&mut kvm)
+    let block_store = KeyValueBlockStore::create_from_kvm(&mut kvm)
         .await
         .expect("Failed to create block store");
     let dag_storage = BlockDagKeyValueStorage::new(&mut kvm)
