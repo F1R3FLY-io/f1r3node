@@ -10,29 +10,29 @@ use models::rust::casper::protocol::casper_message::DeployData;
 
 /// Creates a bonding deploy
 /// Scala equivalent: BondingUtil.bondingDeploy[F]
-/// 
+///
 pub fn bonding_deploy(
     amount: i64,
     private_key: &PrivateKey,
     shard_id: Option<String>,
 ) -> Result<Signed<DeployData>, CasperError> {
-    let source = format!(r#"
+    let source = format!(
+        r#"
 new retCh, PoSCh, rl(`rho:registry:lookup`), stdout(`rho:io:stdout`), deployerId(`rho:rchain:deployerId`) in {{
   rl!(`rho:rchain:pos`, *PoSCh) |
   for(@(_, PoS) <- PoSCh) {{
     @PoS!("bond", *deployerId, {amount}, *retCh)
   }}
 }}
-"#);
+"#
+    );
 
-construct_deploy::source_deploy_now_full(
-  source,
-  None,
-  None,
-  Some(private_key.clone()),
-  None,
-  shard_id,
-)
+    construct_deploy::source_deploy_now_full(
+        source,
+        None,
+        None,
+        Some(private_key.clone()),
+        None,
+        shard_id,
+    )
 }
-
-

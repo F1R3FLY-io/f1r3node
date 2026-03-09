@@ -6,7 +6,7 @@ use casper::rust::engine::lfs_tuple_space_requester::{
 };
 use casper::rust::errors::CasperError;
 use prost::bytes::Bytes;
-use std::sync::{Arc, Mutex};
+use std::sync::{atomic::AtomicUsize, Arc, Mutex};
 use tokio::sync::mpsc;
 
 use models::rust::block_implicits::get_random_block;
@@ -161,7 +161,7 @@ type SavedStoreItems = Vec<(Blake2b256Hash, Bytes)>;
 pub struct MockImpl {
     /// Channel sender to simulate receiving store items from external source
     /// Scala equivalent: responseQueue.enqueue(Stream.emits(msgs)).compile.drain
-    store_items_sender: mpsc::UnboundedSender<StoreItemsMessage>,
+    store_items_sender: mpsc::Sender<StoreItemsMessage>,
 
     /// Channel receiver to observe outgoing state chunk requests
     /// Scala equivalent: Stream.eval(requestQueue.dequeue1).repeat
@@ -191,6 +191,7 @@ impl MockImpl {
         for item in items {
             self.store_items_sender
                 .send(item.clone())
+                .await
                 .map_err(|_| TestError::ChannelClosed)?;
         }
         Ok(())
@@ -457,7 +458,7 @@ where
     // Scala equivalent: Queue.unbounded[F, StoreItemsMessage], Queue.unbounded[F, (StatePartPath, Int)], etc.
 
     // Queue for received store messages
-    let (store_items_tx, store_items_rx) = mpsc::unbounded_channel::<StoreItemsMessage>();
+    let (store_items_tx, store_items_rx) = mpsc::channel::<StoreItemsMessage>(1024);
 
     // Queue for requested state chunks
     let (request_tx, request_rx) = mpsc::unbounded_channel::<(StatePartPath, i32)>();
@@ -480,6 +481,7 @@ where
     let stream_result = lfs_tuple_space_requester::stream(
         &approved_block,
         store_items_rx,
+        Arc::new(AtomicUsize::new(0)),
         request_timeout,
         mock_ops,
         Arc::new(mock_importer),

@@ -13,6 +13,7 @@ import coop.rchain.monix.Monixable
 import coop.rchain.shared.Log
 import coop.rchain.shared.syntax._
 import coop.rchain.shared.{Log, UncaughtExceptionLogger}
+import coop.rchain.shared.RecentHashFilter
 import io.grpc.netty.{NettyChannelBuilder, NettyServerBuilder}
 import io.netty.handler.ssl.SslContext
 import monix.eval.Task
@@ -42,6 +43,8 @@ object GrpcTransportReceiver {
   )(implicit mainScheduler: Scheduler): F[Cancelable] = {
 
     val service = new RoutingGrpcMonix.TransportLayer {
+      // --- NEW: filter to avoid redundant gossip of already seen block hashes ---
+      private val recentHashFilter = new coop.rchain.shared.RecentHashFilter(8192)
 
       private val circuitBreaker: StreamHandler.CircuitBreaker = streamed =>
         if (streamed.header.exists(_.networkId != networkId))
@@ -89,17 +92,41 @@ object GrpcTransportReceiver {
 
       def send(request: TLRequest): Task[TLResponse] =
         (for {
-          _                <- Metrics[F].incrementCounter("packets.received")
-          self             <- RPConfAsk[F].reader(_.local)
-          peer             = PeerNode.from(request.protocol.header.sender)
-          packetDroppedMsg = s"Packet dropped, ${peer.endpoint.host} packet queue overflown."
-          targetBuffer     <- getBuffers(peer).map(_._1)
-          r <- if (targetBuffer.pushNext(Send(request.protocol)))
-                Metrics[F].incrementCounter("packets.enqueued") *>
-                  ack(self).pure[F]
+          _    <- Metrics[F].incrementCounter("packets.received")
+          self <- RPConfAsk[F].reader(_.local)
+          peer = PeerNode.from(request.protocol.header.sender)
+
+          // --- NEW: derive a deterministic hash from the Protocol message ---
+          hashTag = java.util.Arrays.hashCode(request.protocol.toByteArray).toHexString
+
+          // --- Determine if this is a gossip message (not a request) ---
+          // Only filter pure gossip announcements, not request/response messages
+          isGossip = request.protocol.message.packet.exists { packet =>
+            packet.typeId == "BlockHashMessage" || packet.typeId == "HasBlock"
+          }
+
+          // --- Deduplicate redundant gossip (but allow requests through) ---
+          skip <- if (isGossip) Sync[F].delay(recentHashFilter.seenBefore(hashTag))
+                 else false.pure[F]
+          _ <- if (skip)
+                Log[F].debug(
+                  s"[GOSSIP] Suppressed redundant hash broadcast $hashTag from ${peer.endpoint.host}"
+                )
+              else ().pure[F]
+
+          r <- if (skip) ack(self).pure[F]
               else
-                Metrics[F].incrementCounter("packets.dropped") *>
-                  internalServerError(packetDroppedMsg).pure[F]
+                for {
+                  targetBuffer <- getBuffers(peer).map(_._1)
+                  result <- if (targetBuffer.pushNext(Send(request.protocol)))
+                             Metrics[F].incrementCounter("packets.enqueued") *> ack(self).pure[F]
+                           else {
+                             val packetDroppedMsg =
+                               s"Packet dropped, ${peer.endpoint.host} packet queue overflown."
+                             Metrics[F].incrementCounter("packets.dropped") *>
+                               internalServerError(packetDroppedMsg).pure[F]
+                           }
+                } yield result
         } yield r).toTask
 
       def stream(observable: Observable[Chunk]): Task[TLResponse] = {

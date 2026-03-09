@@ -1,31 +1,28 @@
 // See rspace/src/main/scala/coop/rchain/rspace/merger/StateChange.scala
 
-use dashmap::DashMap;
-use rayon::prelude::*;
-use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
 
-use crate::rspace::{
-    errors::HistoryError,
-    hashing::{blake2b256_hash::Blake2b256Hash, stable_hash_provider},
-    history::{
-        history_reader::HistoryReader,
-        instances::rspace_history_reader_impl::RSpaceHistoryReaderImpl,
-    },
-};
+use dashmap::DashMap;
+use rayon::prelude::*;
+use serde::{Deserialize, Serialize};
 
-use super::{
-    channel_change::ChannelChange,
-    event_log_index::EventLogIndex,
-    merging_logic::{consumes_affected, produces_affected},
-};
+use super::channel_change::ChannelChange;
+use super::event_log_index::EventLogIndex;
+use super::merging_logic::{consumes_affected, produces_affected};
+use crate::rspace::errors::HistoryError;
+use crate::rspace::hashing::blake2b256_hash::Blake2b256Hash;
+use crate::rspace::hashing::stable_hash_provider;
+use crate::rspace::history::history_reader::HistoryReader;
+use crate::rspace::history::instances::rspace_history_reader_impl::RSpaceHistoryReaderImpl;
 
 /**
- * Datum changes are referenced by channel, continuation changes are references by consume.
- * In addition, map from consume channels to binary representation of a join in trie have to be maintained.
- * This is because only hashes of channels are available in log event, and computing a join binary to be
- * inserted or removed on merge requires channels before hashing.
+ * Datum changes are referenced by channel, continuation changes are
+ * references by consume. In addition, map from consume channels to binary
+ * representation of a join in trie have to be maintained. This is because
+ * only hashes of channels are available in log event, and computing a join
+ * binary to be inserted or removed on merge requires channels before
+ * hashing.
  */
 #[derive(Debug, Clone)]
 pub struct StateChange {
@@ -37,13 +34,14 @@ pub struct StateChange {
 impl PartialEq for StateChange {
     fn eq(&self, other: &Self) -> bool {
         // Compare by counting entries and checking if all keys and values match
-        // This is an approximate equality check since DashMap doesn't implement PartialEq
+        // This is an approximate equality check since DashMap doesn't implement
+        // PartialEq
 
         // Check if maps have same size
-        if self.datums_changes.len() != other.datums_changes.len()
-            || self.cont_changes.len() != other.cont_changes.len()
-            || self.consume_channels_to_join_serialized_map.len()
-                != other.consume_channels_to_join_serialized_map.len()
+        if self.datums_changes.len() != other.datums_changes.len() ||
+            self.cont_changes.len() != other.cont_changes.len() ||
+            self.consume_channels_to_join_serialized_map.len() !=
+                other.consume_channels_to_join_serialized_map.len()
         {
             return false;
         }
@@ -72,9 +70,9 @@ impl PartialEq for StateChange {
                 let other_key = other_entry.key();
                 let other_value = other_entry.value();
 
-                key == other_key
-                    && value.added == other_value.added
-                    && value.removed == other_value.removed
+                key == other_key &&
+                    value.added == other_value.added &&
+                    value.removed == other_value.removed
             });
 
             if !found {
@@ -114,12 +112,12 @@ impl PartialOrd for StateChange {
         // For a real implementation, you'd need to define a sensible ordering
 
         // Compare by the number of entries in each map
-        let self_total = self.datums_changes.len()
-            + self.cont_changes.len()
-            + self.consume_channels_to_join_serialized_map.len();
-        let other_total = other.datums_changes.len()
-            + other.cont_changes.len()
-            + other.consume_channels_to_join_serialized_map.len();
+        let self_total = self.datums_changes.len() +
+            self.cont_changes.len() +
+            self.consume_channels_to_join_serialized_map.len();
+        let other_total = other.datums_changes.len() +
+            other.cont_changes.len() +
+            other.consume_channels_to_join_serialized_map.len();
 
         self_total.partial_cmp(&other_total)
     }
@@ -257,12 +255,12 @@ impl Ord for StateChange {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         // Implement total ordering consistent with partial_cmp
         // Compare by the number of entries in each map
-        let self_total = self.datums_changes.len()
-            + self.cont_changes.len()
-            + self.consume_channels_to_join_serialized_map.len();
-        let other_total = other.datums_changes.len()
-            + other.cont_changes.len()
-            + other.consume_channels_to_join_serialized_map.len();
+        let self_total = self.datums_changes.len() +
+            self.cont_changes.len() +
+            self.consume_channels_to_join_serialized_map.len();
+        let other_total = other.datums_changes.len() +
+            other.cont_changes.len() +
+            other.consume_channels_to_join_serialized_map.len();
 
         self_total.cmp(&other_total)
     }
@@ -282,14 +280,15 @@ impl StateChange {
     {
         let datums_diff = DashMap::new();
         let cont_diff = DashMap::new();
-        // Since event log only contains hashes of channels, so to know which join stored corresponds to channels,
-        // this index have to be maintained
+        // Since event log only contains hashes of channels, so to know which join
+        // stored corresponds to channels, this index have to be maintained
         let joins_map = DashMap::new();
 
         let produces_affected = produces_affected(&event_log_index);
 
         // Deduplicate by channel hash before processing
-        // Without this, if multiple Produces have the same channel_hash, we'd compute changes multiple times
+        // Without this, if multiple Produces have the same channel_hash, we'd compute
+        // changes multiple times
         let unique_produce_channels: HashSet<Blake2b256Hash> = produces_affected
             .0
             .iter()
@@ -324,7 +323,8 @@ impl StateChange {
                 Ok::<(), HistoryError>(())
             })?;
 
-        // Process consumes in parallel - each unique consume channels set is processed exactly once
+        // Process consumes in parallel - each unique consume channels set is processed
+        // exactly once
         channels_of_consumes_affected
             .par_iter()
             .try_for_each(|consume_channels| {
@@ -337,64 +337,53 @@ impl StateChange {
                     |h| post_state_reader.get_continuations_proj_binary(h),
                 )?;
 
-                // Since each consume channels set is processed exactly once, we can just insert directly
+                // Since each consume channels set is processed exactly once, we can just insert
+                // directly
                 cont_diff.insert(consume_channels, change);
 
                 Ok::<(), HistoryError>(())
             })?;
 
         // Process joins in parallel
-        channels_of_consumes_affected.par_iter().try_for_each(|consume_channels| {
-            let mut consume_channels = consume_channels.clone();
-            let history_pointer = consume_channels[0].clone();
-            let pre = pre_state_reader.get_joins(&history_pointer)?;
-            let post = post_state_reader.get_joins(&history_pointer)?;
+        channels_of_consumes_affected
+            .par_iter()
+            .try_for_each(|consume_channels| {
+                let mut consume_channels = consume_channels.clone();
+                let history_pointer = consume_channels[0].clone();
+                let pre = pre_state_reader.get_joins(&history_pointer)?;
+                let post = post_state_reader.get_joins(&history_pointer)?;
 
-            // find join which match channels
-            let join = pre
-                .into_iter()
-                .chain(post)
-                .find(|join| {
-                    let mut join_channels = join
-                        .iter()
-                        .map(|item| stable_hash_provider::hash(item))
-                        .collect::<Vec<_>>();
-                    // sorting is required because channels of a consume in event log and channels of a join in
-                    // history might not be ordered the same way
-                    consume_channels.sort();
-                    join_channels.sort();
-                    *consume_channels == join_channels
-                })
-                .expect("Tuple space inconsistency found: channel of consume does not contain join record corresponding to the consume channels.");
+                // find join which match channels
+                let join = pre
+                    .into_iter()
+                    .chain(post)
+                    .find(|join| {
+                        let mut join_channels = join
+                            .iter()
+                            .map(|item| stable_hash_provider::hash(item))
+                            .collect::<Vec<_>>();
+                        // sorting is required because channels of a consume in event log and
+                        // channels of a join in history might not be
+                        // ordered the same way
+                        consume_channels.sort();
+                        join_channels.sort();
+                        *consume_channels == join_channels
+                    })
+                    .expect(
+                        "Tuple space inconsistency found: channel of consume does not contain \
+                         join record corresponding to the consume channels.",
+                    );
 
-            let raw_join = bincode::serialize(&join)
-                .expect("Unable to serialize join");
-            joins_map.insert(consume_channels, raw_join);
-            Ok::<(), HistoryError>(())
-        })?;
+                let raw_join = bincode::serialize(&join).expect("Unable to serialize join");
+                joins_map.insert(consume_channels, raw_join);
+                Ok::<(), HistoryError>(())
+            })?;
 
-        // Check for errors - empty changes
-        let has_empty_produce_changes = datums_diff.iter().any(|entry| {
-            let change = entry.value();
-            change.added.is_empty() && change.removed.is_empty()
-        });
-
-        if has_empty_produce_changes {
-            return Err(HistoryError::MergeError(
-                "State change compute logic error: empty channel change for produce.".to_string(),
-            ));
-        }
-
-        let has_empty_consume_changes = cont_diff.iter().any(|entry| {
-            let change = entry.value();
-            change.added.is_empty() && change.removed.is_empty()
-        });
-
-        if has_empty_consume_changes {
-            return Err(HistoryError::MergeError(
-                "State change compute logic error: empty channel change for consume.".to_string(),
-            ));
-        }
+        // Drop no-op channel changes. In practice these can appear in complex
+        // COMM/peek scenarios where a channel is touched in event log but the
+        // net pre/post tuple-space value is unchanged.
+        datums_diff.retain(|_, change| !(change.added.is_empty() && change.removed.is_empty()));
+        cont_diff.retain(|_, change| !(change.added.is_empty() && change.removed.is_empty()));
 
         Ok(Self {
             datums_changes: datums_diff,
@@ -406,7 +395,8 @@ impl StateChange {
     /// Compute multiset difference using O(n+m) HashMap-based algorithm.
     /// Removes each element of `to_remove` from `from` exactly once.
     ///
-    /// This is an improvement over Scala's `Seq.diff` which has O(n*m) complexity.
+    /// This is an improvement over Scala's `Seq.diff` which has O(n*m)
+    /// complexity.
     pub fn multiset_diff(from: &[Vec<u8>], to_remove: &[Vec<u8>]) -> Vec<Vec<u8>> {
         use std::collections::HashMap;
 
@@ -439,10 +429,12 @@ impl StateChange {
         let end = end_value(history_pointer)?;
 
         // Use multiset diff for correct merge semantics
-        // added = endValue diff startValue (items in end that aren't in start, multiset)
+        // added = endValue diff startValue (items in end that aren't in start,
+        // multiset)
         let added = Self::multiset_diff(&end, &start);
 
-        // deleted = startValue diff endValue (items in start that aren't in end, multiset)
+        // deleted = startValue diff endValue (items in start that aren't in end,
+        // multiset)
         let deleted = Self::multiset_diff(&start, &end);
 
         Ok(ChannelChange {
@@ -468,8 +460,7 @@ impl StateChange {
         for (key, value) in other.datums_changes {
             match datums_changes.entry(key) {
                 dashmap::mapref::entry::Entry::Occupied(mut entry) => {
-                    let current =
-                        std::mem::replace(entry.get_mut(), ChannelChange::empty());
+                    let current = std::mem::replace(entry.get_mut(), ChannelChange::empty());
                     *entry.get_mut() = current.combine(value);
                 }
                 dashmap::mapref::entry::Entry::Vacant(entry) => {
@@ -482,8 +473,7 @@ impl StateChange {
         for (key, value) in other.cont_changes {
             match cont_changes.entry(key) {
                 dashmap::mapref::entry::Entry::Occupied(mut entry) => {
-                    let current =
-                        std::mem::replace(entry.get_mut(), ChannelChange::empty());
+                    let current = std::mem::replace(entry.get_mut(), ChannelChange::empty());
                     *entry.get_mut() = current.combine(value);
                 }
                 dashmap::mapref::entry::Entry::Vacant(entry) => {

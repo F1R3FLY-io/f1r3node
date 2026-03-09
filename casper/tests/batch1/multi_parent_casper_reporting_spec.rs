@@ -25,9 +25,13 @@ async fn reporting_casper_should_behave_the_same_way_as_multi_parent_casper() {
 
     let correct_rholang = r#" for(@a <- @"1"){ Nil } | @"1"!("x") "#;
 
-    let deploy =
-        construct_deploy::source_deploy_now(correct_rholang.to_string(), None, None, Some(genesis.genesis_block.shard_id.clone()))
-            .unwrap();
+    let deploy = construct_deploy::source_deploy_now(
+        correct_rholang.to_string(),
+        None,
+        None,
+        Some(genesis.genesis_block.shard_id.clone()),
+    )
+    .unwrap();
 
     let _signed_block = node.add_block_from_deploys(&[deploy]).await.unwrap();
 
@@ -42,4 +46,3 @@ async fn reporting_casper_should_behave_the_same_way_as_multi_parent_casper() {
     // For now, just verify the block was created successfully (basic smoke test)
     // Once reporting is implemented, uncomment and complete the assertions above
 }
-

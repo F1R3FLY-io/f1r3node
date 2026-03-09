@@ -175,12 +175,10 @@ fn run_cli(options: Options, rt: &Runtime) -> Result<()> {
                 rt.block_on(DeployRuntime::find_deploy(&mut deploy_client, &id));
                 Ok(())
             }
-            OptionsSubCommand::Propose {
-                print_unmatched_sends,
-            } => {
+            OptionsSubCommand::Propose(propose_options) => {
                 rt.block_on(DeployRuntime::propose(
                     propose_client,
-                    print_unmatched_sends,
+                    propose_options.print_unmatched_sends,
                 ));
                 Ok(())
             }

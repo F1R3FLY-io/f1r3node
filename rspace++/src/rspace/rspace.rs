@@ -4,50 +4,42 @@
 // the functions are not async-compatible with Span trait's closure pattern.
 // This matches Scala's Span[F].traceI() and withMarks() semantics.
 
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::fmt::Debug;
+use std::hash::Hash;
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Instant;
+
+use dashmap::DashMap;
+use rand::seq::SliceRandom;
+use rand::thread_rng;
+use serde::{Deserialize, Serialize};
+use shared::rust::store::key_value_store::KeyValueStore;
+use tracing::{Level, event};
+
 use super::checkpoint::SoftCheckpoint;
-use super::errors::HistoryRepositoryError;
-use super::errors::RSpaceError;
+use super::errors::{HistoryRepositoryError, RSpaceError};
 use super::hashing::blake2b256_hash::Blake2b256Hash;
 use super::history::history_reader::HistoryReader;
 use super::history::instances::radix_history::RadixHistory;
 use super::logging::BasicLogger;
 use super::r#match::Match;
 use super::metrics_constants::{
-    CONSUME_COMM_LABEL, PRODUCE_COMM_LABEL, RSPACE_METRICS_SOURCE,
-    RESET_SPAN, REVERT_SOFT_CHECKPOINT_SPAN, CHANGES_SPAN, HISTORY_CHECKPOINT_SPAN,
-    LOCKED_CONSUME_SPAN, LOCKED_PRODUCE_SPAN,
+    CHANGES_SPAN, CONSUME_COMM_LABEL, HISTORY_CHECKPOINT_SPAN, LOCKED_CONSUME_SPAN,
+    LOCKED_PRODUCE_SPAN, PRODUCE_COMM_LABEL, RESET_SPAN, REVERT_SOFT_CHECKPOINT_SPAN,
+    RSPACE_METRICS_SOURCE,
 };
 use super::replay_rspace::ReplayRSpace;
-use super::rspace_interface::ContResult;
-use super::rspace_interface::ISpace;
-use super::rspace_interface::MaybeConsumeResult;
-use super::rspace_interface::MaybeProduceCandidate;
-use super::rspace_interface::MaybeProduceResult;
-use super::rspace_interface::RSpaceResult;
+use super::rspace_interface::{
+    ContResult, ISpace, MaybeConsumeResult, MaybeProduceCandidate, MaybeProduceResult, RSpaceResult,
+};
 use super::trace::Log;
-use super::trace::event::COMM;
-use super::trace::event::Consume;
-use super::trace::event::Event;
-use super::trace::event::IOEvent;
-use super::trace::event::Produce;
+use super::trace::event::{COMM, Consume, Event, IOEvent, Produce};
 use crate::rspace::checkpoint::Checkpoint;
-use crate::rspace::history::history_repository::HistoryRepository;
-use crate::rspace::history::history_repository::HistoryRepositoryInstances;
+use crate::rspace::history::history_repository::{HistoryRepository, HistoryRepositoryInstances};
 use crate::rspace::hot_store::{HotStore, HotStoreInstances};
 use crate::rspace::internal::*;
 use crate::rspace::space_matcher::SpaceMatcher;
-use dashmap::DashMap;
-use rand::seq::SliceRandom;
-use rand::thread_rng;
-use serde::{Deserialize, Serialize};
-use shared::rust::store::key_value_store::KeyValueStore;
-use std::collections::BTreeMap;
-use std::collections::{BTreeSet, HashMap};
-use std::fmt::Debug;
-use std::hash::Hash;
-use std::sync::{Arc, Mutex};
-use std::time::Instant;
-use tracing::{Level, event};
 
 #[derive(Clone)]
 pub struct RSpaceStore {
@@ -67,6 +59,19 @@ pub struct RSpace<C, P, A, K> {
     matcher: Arc<Box<dyn Match<P, A>>>,
 }
 
+fn block_creator_phase_substep_profile_enabled() -> bool {
+    static VALUE: OnceLock<bool> = OnceLock::new();
+    *VALUE.get_or_init(|| {
+        std::env::var("F1R3_BLOCK_CREATOR_PHASE_SUBSTEP_PROFILE")
+            .ok()
+            .map(|v| {
+                let normalized = v.trim().to_ascii_lowercase();
+                matches!(normalized.as_str(), "1" | "true" | "yes" | "on")
+            })
+            .unwrap_or(false)
+    })
+}
+
 impl<C, P, A, K> SpaceMatcher<C, P, A, K> for RSpace<C, P, A, K>
 where
     C: Clone + Debug + Default + Serialize + std::hash::Hash + Ord + Eq + 'static + Sync + Send,
@@ -84,36 +89,78 @@ where
     K: Clone + Debug + Default + Serialize + 'static + Sync + Send,
 {
     fn create_checkpoint(&mut self) -> Result<Checkpoint, RSpaceError> {
-        // Span[F].withMarks("create-checkpoint") from Scala - works because this is NOT async
+        // Span[F].withMarks("create-checkpoint") from Scala - works because this is NOT
+        // async
         let _span = tracing::info_span!(target: "f1r3fly.rspace", "create-checkpoint").entered();
         event!(Level::DEBUG, mark = "started-create-checkpoint", "create_checkpoint");
+        let mem_profile_enabled = block_creator_phase_substep_profile_enabled();
+        let read_rss_kb = || -> Option<u64> {
+            let status = std::fs::read_to_string("/proc/self/status").ok()?;
+            let line = status.lines().find(|l| l.starts_with("VmRSS:"))?;
+            let mut parts = line.split_whitespace();
+            let _ = parts.next();
+            parts.next()?.parse::<u64>().ok()
+        };
+        let mut mem_prev_kb = if mem_profile_enabled {
+            read_rss_kb()
+        } else {
+            None
+        };
+        let mem_base_kb = mem_prev_kb;
+        let mut log_mem_step = |step: &str| {
+            if !mem_profile_enabled {
+                return;
+            }
+            if let Some(curr_kb) = read_rss_kb() {
+                let prev_kb = mem_prev_kb.unwrap_or(curr_kb);
+                let base_kb = mem_base_kb.unwrap_or(curr_kb);
+                let delta_prev_kb = curr_kb as i64 - prev_kb as i64;
+                let delta_total_kb = curr_kb as i64 - base_kb as i64;
+                eprintln!(
+                    "create_checkpoint.mem step={} rss_kb={} delta_prev_kb={} delta_total_kb={}",
+                    step, curr_kb, delta_prev_kb, delta_total_kb
+                );
+                mem_prev_kb = Some(curr_kb);
+            }
+        };
+        log_mem_step("start");
 
         // Get changes with span
         let changes = {
-            let _changes_span = tracing::info_span!(target: "f1r3fly.rspace", CHANGES_SPAN).entered();
+            let _changes_span =
+                tracing::info_span!(target: "f1r3fly.rspace", CHANGES_SPAN).entered();
             self.store.changes()
         };
+        log_mem_step("after_store_changes");
 
         // Create history checkpoint with span
         let next_history = {
-            let _history_span = tracing::info_span!(target: "f1r3fly.rspace", HISTORY_CHECKPOINT_SPAN).entered();
-            self.history_repository.checkpoint(&changes)
+            let _history_span =
+                tracing::info_span!(target: "f1r3fly.rspace", HISTORY_CHECKPOINT_SPAN).entered();
+            self.history_repository.checkpoint(changes)
         };
+        log_mem_step("after_history_checkpoint");
         self.history_repository = Arc::new(next_history);
+        log_mem_step("after_set_history_repository");
 
-        let log = self.event_log.clone();
-        self.event_log = Vec::new();
-        self.produce_counter = BTreeMap::new();
+        let log = std::mem::take(&mut self.event_log);
+        log_mem_step("after_take_event_log");
+        let _ = std::mem::take(&mut self.produce_counter);
+        log_mem_step("after_take_produce_counter");
 
         let history_reader = self
             .history_repository
             .get_history_reader(&self.history_repository.root())?;
+        log_mem_step("after_get_history_reader");
 
         self.create_new_hot_store(history_reader);
+        log_mem_step("after_create_new_hot_store");
         self.restore_installs();
+        log_mem_step("after_restore_installs");
 
         // Mark the completion of create-checkpoint
         event!(Level::DEBUG, mark = "finished-create-checkpoint", "create_checkpoint");
+        log_mem_step("finish");
 
         Ok(Checkpoint {
             root: self.history_repository.root(),
@@ -144,36 +191,29 @@ where
         panic!("\nERROR: RSpace consume_result should not be called here");
     }
 
-    fn get_data(&self, channel: &C) -> Vec<Datum<A>> {
-        self.store.get_data(channel)
-    }
+    fn get_data(&self, channel: &C) -> Vec<Datum<A>> { self.store.get_data(channel) }
 
     fn get_waiting_continuations(&self, channels: Vec<C>) -> Vec<WaitingContinuation<P, K>> {
         self.store.get_continuations(&channels)
     }
 
-    fn get_joins(&self, channel: C) -> Vec<Vec<C>> {
-        self.store.get_joins(&channel)
-    }
+    fn get_joins(&self, channel: C) -> Vec<Vec<C>> { self.store.get_joins(&channel) }
 
     fn clear(&mut self) -> Result<(), RSpaceError> {
         self.reset(&RadixHistory::empty_root_node_hash())
     }
 
-    fn to_map(&self) -> HashMap<Vec<C>, Row<P, A, K>> {
-        self.store.to_map()
-    }
+    fn get_root(&self) -> Blake2b256Hash { self.history_repository.root() }
+
+    fn to_map(&self) -> HashMap<Vec<C>, Row<P, A, K>> { self.store.to_map() }
 
     fn create_soft_checkpoint(&mut self) -> SoftCheckpoint<C, P, A, K> {
         // println!("\nhit rspace++ create_soft_checkpoint");
         // println!("current hot_store state: {:?}", self.store.snapshot());
 
         let cache_snapshot = self.store.snapshot();
-        let curr_event_log = self.event_log.clone();
-        let curr_produce_counter = self.produce_counter.clone();
-
-        self.event_log = Vec::new();
-        self.produce_counter = BTreeMap::new();
+        let curr_event_log = std::mem::take(&mut self.event_log);
+        let curr_produce_counter = std::mem::take(&mut self.produce_counter);
 
         SoftCheckpoint {
             cache_snapshot,
@@ -182,11 +222,18 @@ where
         }
     }
 
+    fn take_event_log(&mut self) -> Log {
+        let curr_event_log = std::mem::take(&mut self.event_log);
+        let _ = std::mem::take(&mut self.produce_counter);
+        curr_event_log
+    }
+
     fn revert_to_soft_checkpoint(
         &mut self,
         checkpoint: SoftCheckpoint<C, P, A, K>,
     ) -> Result<(), RSpaceError> {
-        let _span = tracing::info_span!(target: "f1r3fly.rspace", REVERT_SOFT_CHECKPOINT_SPAN).entered();
+        let _span =
+            tracing::info_span!(target: "f1r3fly.rspace", REVERT_SOFT_CHECKPOINT_SPAN).entered();
         let history = &self.history_repository;
         let history_reader = history.get_history_reader(&history.root())?;
         let hot_store = HotStoreInstances::create_from_mhs_and_hr(
@@ -267,7 +314,7 @@ where
         continuation: K,
     ) -> Result<Option<(K, Vec<A>)>, RSpaceError> {
         let start = Instant::now();
-        let result = self.locked_install(channels, patterns, continuation);
+        let result = self.locked_install_internal(channels, patterns, continuation, true);
         let duration = start.elapsed();
         metrics::histogram!("install_time_seconds", "source" => RSPACE_METRICS_SOURCE)
             .record(duration.as_secs_f64());
@@ -286,9 +333,7 @@ where
         panic!("\nERROR: RSpace check_replay_data should not be called here");
     }
 
-    fn is_replay(&self) -> bool {
-        false
-    }
+    fn is_replay(&self) -> bool { false }
 
     fn update_produce(&mut self, produce_ref: Produce) -> () {
         for event in self.event_log.iter_mut() {
@@ -470,9 +515,10 @@ where
         Ok((history_repo, hot_store))
     }
 
-    fn produce_counters(&self, produce_refs: Vec<Produce>) -> BTreeMap<Produce, i32> {
+    fn produce_counters(&self, produce_refs: &[Produce]) -> BTreeMap<Produce, i32> {
         produce_refs
-            .into_iter()
+            .iter()
+            .cloned()
             .map(|p| (p.clone(), self.produce_counter.get(&p).unwrap_or(&0).clone()))
             .collect()
     }
@@ -492,8 +538,8 @@ where
 
         // println!("\nHit locked_consume");
         // println!(
-        //     "consume: searching for data matching <patterns: {:?}> at <channels: {:?}>",
-        //     patterns, channels
+        //     "consume: searching for data matching <patterns: {:?}> at <channels:
+        // {:?}>",     patterns, channels
         // );
 
         self.log_consume(consume_ref, channels, patterns, continuation, persist, peeks);
@@ -523,14 +569,13 @@ where
         match options {
             Some(data_candidates) => {
                 let produce_counters_closure =
-                    |produces: Vec<Produce>| self.produce_counters(produces);
+                    |produces: &[Produce]| self.produce_counters(produces);
 
                 self.log_comm(
-                    &data_candidates,
                     channels,
                     &wk,
                     COMM::new(
-                        data_candidates.clone(),
+                        &data_candidates,
                         consume_ref.clone(),
                         peeks.clone(),
                         produce_counters_closure,
@@ -554,12 +599,13 @@ where
     }
 
     /*
-     * Here, we create a cache of the data at each channel as `channelToIndexedData`
-     * which is used for finding matches.  When a speculative match is found, we can
-     * remove the matching datum from the remaining data candidates in the cache.
+     * Here, we create a cache of the data at each channel as
+     * `channelToIndexedData` which is used for finding matches.  When a
+     * speculative match is found, we can remove the matching datum from the
+     * remaining data candidates in the cache.
      *
-     * Put another way, this allows us to speculatively remove matching data without
-     * affecting the actual store contents.
+     * Put another way, this allows us to speculatively remove matching data
+     * without affecting the actual store contents.
      */
     fn fetch_channel_to_index_data(&self, channels: &[C]) -> DashMap<C, Vec<(Datum<A>, i32)>> {
         let map = DashMap::with_capacity(channels.len());
@@ -586,19 +632,15 @@ where
         let grouped_channels = self.store.get_joins(&channel);
         // println!("\ngrouped_channels: {:?}", grouped_channels);
         // println!(
-        //     "produce: searching for matching continuations at <grouped_channels: {:?}>",
-        //     grouped_channels
+        //     "produce: searching for matching continuations at <grouped_channels:
+        // {:?}>",     grouped_channels
         // );
         self.log_produce(produce_ref, &channel, &data, persist);
-        let extracted = self.extract_produce_candidate(
-            grouped_channels,
-            channel.clone(),
-            Datum {
-                a: data.clone(),
-                persist,
-                source: produce_ref.clone(),
-            },
-        );
+        let extracted = self.extract_produce_candidate(grouped_channels, channel.clone(), Datum {
+            a: data.clone(),
+            persist,
+            source: produce_ref.clone(),
+        });
 
         // println!("extracted in lockedProduce: {:?}", extracted);
 
@@ -621,8 +663,9 @@ where
     /*
      * Find produce candidate
      *
-     * NOTE: On Rust side, we are NOT passing functions through. Instead just the data.
-     * And then in 'run_matcher_for_channels' we call the functions defined below
+     * NOTE: On Rust side, we are NOT passing functions through. Instead just the
+     * data. And then in 'run_matcher_for_channels' we call the functions
+     * defined below
      */
     fn extract_produce_candidate(
         &self,
@@ -639,12 +682,13 @@ where
             };
 
         /*
-         * Here, we create a cache of the data at each channel as `channelToIndexedData`
-         * which is used for finding matches.  When a speculative match is found, we can
-         * remove the matching datum from the remaining data candidates in the cache.
+         * Here, we create a cache of the data at each channel as
+         * `channelToIndexedData` which is used for finding matches.  When a
+         * speculative match is found, we can remove the matching datum from
+         * the remaining data candidates in the cache.
          *
-         * Put another way, this allows us to speculatively remove matching data without
-         * affecting the actual store contents.
+         * Put another way, this allows us to speculatively remove matching data
+         * without affecting the actual store contents.
          *
          * In this version, we also add the produced data directly to this cache.
          */
@@ -683,13 +727,12 @@ where
             source: consume_ref,
         } = &continuation;
 
-        let produce_counters_closure = |produces: Vec<Produce>| self.produce_counters(produces);
+        let produce_counters_closure = |produces: &[Produce]| self.produce_counters(produces);
         self.log_comm(
-            &data_candidates,
             &channels,
             &continuation,
             COMM::new(
-                data_candidates.clone(),
+                &data_candidates,
                 consume_ref.clone(),
                 peeks.clone(),
                 produce_counters_closure,
@@ -702,7 +745,7 @@ where
                 .remove_continuation(&channels, continuation_index);
         }
 
-        self.remove_matched_datum_and_join(channels.clone(), data_candidates.clone());
+        self.remove_matched_datum_and_join(&channels, &data_candidates);
 
         // println!(
         //     "produce: matching continuation found at <channels: {:?}>",
@@ -714,14 +757,14 @@ where
 
     fn log_comm(
         &mut self,
-        _data_candidates: &Vec<ConsumeCandidate<C, A>>,
         _channels: &[C],
         _wk: &WaitingContinuation<P, K>,
         comm: COMM,
         label: &str,
     ) {
-        // Increment counter FIRST (matching Scala) using constants to avoid memory leaks
-        // Labels are always "comm.consume" or "comm.produce" based on the RSpace implementation
+        // Increment counter FIRST (matching Scala) using constants to avoid memory
+        // leaks Labels are always "comm.consume" or "comm.produce" based on the
+        // RSpace implementation
         match label {
             "comm.consume" => {
                 metrics::counter!(CONSUME_COMM_LABEL, "source" => RSPACE_METRICS_SOURCE)
@@ -800,7 +843,7 @@ where
         wc: WaitingContinuation<P, K>,
     ) -> MaybeConsumeResult<C, P, A, K> {
         // println!("\nHit store_waiting_continuation");
-        self.store.put_continuation(&channels, wc);
+        let _ = self.store.put_continuation(&channels, wc);
         for channel in channels.iter() {
             self.store.put_join(channel, &channels);
             // println!("consume: no data found, storing <(patterns, continuation): ({:?}, {:?})> at <channels: {:?}>", wc.patterns, wc.continuation, channels)
@@ -817,14 +860,11 @@ where
     ) -> MaybeProduceResult<C, P, A, K> {
         // println!("\nHit store_data");
         // println!("\nHit store_data, data: {:?}", data);
-        self.store.put_datum(
-            &channel,
-            Datum {
-                a: data,
-                persist,
-                source: produce_ref,
-            },
-        );
+        self.store.put_datum(&channel, Datum {
+            a: data,
+            persist,
+            source: produce_ref,
+        });
         // println!(
         //     "produce: persisted <data: {:?}> at <channel: {:?}>",
         //     data, channel
@@ -867,36 +907,35 @@ where
     }
 
     fn restore_installs(&mut self) -> () {
-        let installs = self.installs.lock().unwrap().clone();
-        // println!("\ninstalls: {:?}", installs);
+        // Move out the install map to avoid cloning the whole structure on each
+        // restore.
+        let installs = {
+            let mut installs_lock = self.installs.lock().unwrap();
+            std::mem::take(&mut *installs_lock)
+        };
+        {
+            let mut installs_lock = self.installs.lock().unwrap();
+            installs_lock.reserve(installs.len());
+        }
+
         for (channels, install) in installs {
-            self.install(channels, install.patterns, install.continuation)
+            self.locked_install_internal(channels, install.patterns, install.continuation, true)
                 .unwrap();
         }
     }
 
-    fn locked_install(
+    fn locked_install_internal(
         &mut self,
-        // &self,
         channels: Vec<C>,
         patterns: Vec<P>,
         continuation: K,
+        record_install: bool,
     ) -> Result<Option<(K, Vec<A>)>, RSpaceError> {
-        // println!("\nhit locked_install");
-        // println!("channels: {:?}", channels);
-        // println!("patterns: {:?}", patterns);
-        // println!("continuation: {:?}", continuation);
         if channels.len() != patterns.len() {
             panic!("RUST ERROR: channels.length must equal patterns.length");
         } else {
-            // println!(
-            //     "install: searching for data matching <patterns: {:?}> at <channels: {:?}>",
-            //     patterns, channels
-            // );
-
             let consume_ref = Consume::create(&channels, &patterns, &continuation, true);
             let channel_to_indexed_data = self.fetch_channel_to_index_data(&channels);
-            // println!("channel_to_indexed_data in locked_install: {:?}", channel_to_indexed_data);
             let zipped: Vec<(C, P)> = channels
                 .iter()
                 .cloned()
@@ -907,37 +946,30 @@ where
                 .into_iter()
                 .collect();
 
-            // println!("options in locked_install: {:?}", options);
-
             match options {
                 None => {
-                    self.installs.lock().unwrap().insert(
-                        channels.clone(),
-                        Install {
-                            patterns: patterns.clone(),
-                            continuation: continuation.clone(),
-                        },
-                    );
+                    if record_install {
+                        self.installs
+                            .lock()
+                            .unwrap()
+                            .insert(channels.clone(), Install {
+                                patterns: patterns.clone(),
+                                continuation: continuation.clone(),
+                            });
+                    }
 
-                    self.store.install_continuation(
-                        &channels,
-                        WaitingContinuation {
+                    self.store
+                        .install_continuation(&channels, WaitingContinuation {
                             patterns,
                             continuation,
                             persist: true,
                             peeks: BTreeSet::default(),
                             source: consume_ref,
-                        },
-                    );
+                        });
 
                     for channel in channels.iter() {
                         self.store.install_join(channel, &channels);
                     }
-                    // println!(
-                    //     "storing <(patterns, continuation): ({:?}, {:?})> at <channels: {:?}>",
-                    //     patterns, continuation, channels
-                    // );
-                    // println!("store length after install: {:?}\n", self.store.to_map().len());
                     Ok(None)
                 }
                 Some(_) => Err(RSpaceError::BugFoundError(
@@ -987,11 +1019,12 @@ where
 
     fn remove_matched_datum_and_join(
         &self,
-        channels: Vec<C>,
-        mut data_candidates: Vec<ConsumeCandidate<C, A>>,
+        channels: &[C],
+        data_candidates: &[ConsumeCandidate<C, A>],
     ) -> Option<Vec<()>> {
-        data_candidates.sort_by(|a, b| b.datum_index.cmp(&a.datum_index));
-        let results: Vec<_> = data_candidates
+        let mut sorted_candidates: Vec<_> = data_candidates.iter().collect();
+        sorted_candidates.sort_by(|a, b| b.datum_index.cmp(&a.datum_index));
+        let results: Vec<_> = sorted_candidates
             .into_iter()
             .rev()
             .map(|consume_candidate| {
@@ -1002,8 +1035,8 @@ where
                     datum_index,
                 } = consume_candidate;
 
-                if datum_index >= 0 && !persist {
-                    self.store.remove_datum(&channel, datum_index);
+                if *datum_index >= 0 && !persist {
+                    self.store.remove_datum(&channel, *datum_index);
                 }
                 self.store.remove_join(&channel, &channels);
 

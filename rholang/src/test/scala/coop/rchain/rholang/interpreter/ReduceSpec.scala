@@ -10,6 +10,7 @@ import coop.rchain.models.Expr.ExprInstance._
 import coop.rchain.models.TaggedContinuation.TaggedCont.ParBody
 import coop.rchain.models.Var.VarInstance._
 import coop.rchain.models._
+import coop.rchain.models.GUnforgeable.UnfInstance.GDeployIdBody
 import coop.rchain.models.rholang.implicits._
 import coop.rchain.rholang.interpreter.accounting._
 import coop.rchain.rholang.interpreter.errors._
@@ -166,6 +167,54 @@ class ReduceSpec extends FlatSpec with Matchers with AppendedClues with Persiste
 
     val expected = Seq(Expr(GInt(2 * Int.MaxValue.toLong)))
     result.exprs should be(expected)
+  }
+
+  "evalExpr" should "handle simple division" in {
+    val result = withTestSpace {
+      case TestFixture(_, reducer) =>
+        val divExpr      = EDiv(GInt(15L), GInt(3L))
+        implicit val env = Env[Par]()
+        val resultTask   = reducer.evalExpr(divExpr)
+        Await.result(resultTask.runToFuture, 3.seconds)
+    }
+
+    val expected = Seq(Expr(GInt(5L)))
+    result.exprs should be(expected)
+  }
+
+  it should "return an error for division by zero" in {
+    val result = withTestSpace {
+      case TestFixture(_, reducer) =>
+        val divExpr      = EDiv(GInt(1L), GInt(0L))
+        implicit val env = Env[Par]()
+        val resultTask   = reducer.evalExpr(divExpr)
+        Await.ready(resultTask.runToFuture, 3.seconds)
+    }
+    result.value shouldBe Failure(ReduceError("Division by zero")).some
+  }
+
+  it should "handle simple modulo" in {
+    val result = withTestSpace {
+      case TestFixture(_, reducer) =>
+        val modExpr      = EMod(GInt(17L), GInt(5L))
+        implicit val env = Env[Par]()
+        val resultTask   = reducer.evalExpr(modExpr)
+        Await.result(resultTask.runToFuture, 3.seconds)
+    }
+
+    val expected = Seq(Expr(GInt(2L)))
+    result.exprs should be(expected)
+  }
+
+  it should "return an error for modulo by zero" in {
+    val result = withTestSpace {
+      case TestFixture(_, reducer) =>
+        val modExpr      = EMod(GInt(1L), GInt(0L))
+        implicit val env = Env[Par]()
+        val resultTask   = reducer.evalExpr(modExpr)
+        Await.ready(resultTask.runToFuture, 3.seconds)
+    }
+    result.value shouldBe Failure(ReduceError("Modulo by zero")).some
   }
 
   "evalExpr" should "leave ground values alone" in {
@@ -1273,6 +1322,23 @@ class ReduceSpec extends FlatSpec with Matchers with AppendedClues with Persiste
     }
 
     transformedResult.toIterable should contain theSameElementsAs transformedExpectedResult
+  }
+
+  "eval of `toString` method on deployId" should "return that id serialized" in {
+    val deployId = Par(
+      unforgeables =
+        Seq(GUnforgeable(GDeployIdBody(GDeployId(sig = ByteString.copyFromUtf8("deployId")))))
+    )
+
+    val result = runReducer(
+      EMethod(
+        "toString",
+        deployId,
+        List()
+      )
+    ).map(_.exprs)
+
+    result should be(Right(Seq(Expr(GString("6465706c6f794964")))))
   }
 
   it should "substitute before serialization" in {
@@ -2473,7 +2539,7 @@ class ReduceSpec extends FlatSpec with Matchers with AppendedClues with Persiste
       )
     ),
     (
-      """[("a",1), ("a",2)].toMap() => {"a":2)""",
+      """[("a",1), ("a",2)].toMap() => {"a":2}""",
       EMethod(
         "toMap",
         EListBody(

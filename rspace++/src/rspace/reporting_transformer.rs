@@ -1,12 +1,15 @@
 // See rspace/src/main/scala/coop/rchain/rspace/ReportingTransformer.scala
 
-use super::reporting_rspace::{ReportingComm, ReportingConsume, ReportingEvent, ReportingProduce};
-use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 
-/// The purpose of the reportingTransformer is to create transformer to transform reporting events like
-/// `ReportingProduce`, `ReportingConsume` and `ReportingComm`(see coop.rchain.rspace.ReportingRspace) into
-/// something else which is more readable or easier to interact.
+use serde::{Deserialize, Serialize};
+
+use super::reporting_rspace::{ReportingComm, ReportingConsume, ReportingEvent, ReportingProduce};
+
+/// The purpose of the reportingTransformer is to create transformer to
+/// transform reporting events like `ReportingProduce`, `ReportingConsume` and
+/// `ReportingComm`(see coop.rchain.rspace.ReportingRspace) into something else
+/// which is more readable or easier to interact.
 pub trait ReportingTransformer<C, P, A, K, E>
 where
     C: Clone + Debug,
@@ -29,9 +32,10 @@ where
     }
 }
 
-/// Specialized trait for string transformers that return concrete types instead of RhoEvent
-/// This matches the Scala pattern where ReportingEventStringTransformer methods return
-/// concrete types (RhoConsume, RhoProduce, RhoComm) instead of the generic RhoEvent
+/// Specialized trait for string transformers that return concrete types instead
+/// of RhoEvent This matches the Scala pattern where
+/// ReportingEventStringTransformer methods return concrete types (RhoConsume,
+/// RhoProduce, RhoComm) instead of the generic RhoEvent
 pub trait ReportingStringTransformer<C, P, A, K>
 where
     C: Clone + Debug,
@@ -88,7 +92,8 @@ where
     serialize_p: F2,
     serialize_a: F3,
     serialize_k: F4,
-    // PhantomData is REQUIRED - tells Rust compiler that this struct "conceptually owns" C,P,A,K types
+    // PhantomData is REQUIRED - tells Rust compiler that this struct "conceptually owns" C,P,A,K
+    // types
     _phantom: std::marker::PhantomData<(C, P, A, K)>,
 }
 

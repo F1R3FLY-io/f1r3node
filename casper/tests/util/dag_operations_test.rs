@@ -277,6 +277,22 @@ async fn lowest_common_universal_ancestor_should_be_computed_properly() {
             .unwrap();
         assert_eq!(result, b8);
 
+        let result = DagOperations::lowest_universal_common_ancestor_many(
+            &[b8.clone(), b9.clone(), b10.clone()],
+            &dag,
+        )
+        .await
+        .unwrap();
+        assert_eq!(result, b8);
+
+        let result = DagOperations::lowest_universal_common_ancestor_many(
+            &[b2.clone(), b3.clone(), b4.clone()],
+            &dag,
+        )
+        .await
+        .unwrap();
+        assert_eq!(result, b1);
+
         Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
     })
     .await

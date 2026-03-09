@@ -4,6 +4,7 @@ use std::fmt;
 use uuid::Uuid;
 
 use models::rust::casper::protocol::casper_message::BlockMessage;
+use prost::bytes::Bytes;
 
 use crate::rust::block_status::ValidBlock;
 
@@ -57,7 +58,10 @@ pub enum CheckProposeConstraintsFailure {
 #[derive(Debug, Clone)]
 pub enum BlockCreatorResult {
     NoNewDeploys,
-    Created(BlockMessage),
+    /// The created block together with the pre- and post-state hashes that were computed
+    /// during `compute_deploys_checkpoint`. Carrying these hashes avoids re-running the
+    /// expensive checkpoint replay during self-validation.
+    Created(BlockMessage, Bytes, Bytes),
 }
 
 impl CheckProposeConstraintsResult {
@@ -135,8 +139,8 @@ impl BlockCreatorResult {
         BlockCreatorResult::NoNewDeploys
     }
 
-    pub fn created(b: BlockMessage) -> Self {
-        BlockCreatorResult::Created(b)
+    pub fn created(b: BlockMessage, pre_state_hash: Bytes, post_state_hash: Bytes) -> Self {
+        BlockCreatorResult::Created(b, pre_state_hash, post_state_hash)
     }
 }
 

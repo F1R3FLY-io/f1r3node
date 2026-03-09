@@ -25,6 +25,7 @@ use models::rust::{
     casper::protocol::casper_message::{BlockMessage, DeployData},
     validator::Validator,
 };
+use prost::bytes::Bytes;
 use rspace_plus_plus::rspace::history::Either;
 
 pub struct NoOpsCasperEffect {
@@ -34,9 +35,8 @@ pub struct NoOpsCasperEffect {
     // Shared data for block store to ensure clones can access the same blocks
     shared_block_data: Arc<Mutex<HashMap<Vec<u8>, Vec<u8>>>>,
     shared_approved_block_data: Arc<Mutex<HashMap<Vec<u8>, Vec<u8>>>>,
-    // Wrapped in Arc<Mutex<>> so clones share the same mutable DAG state.
-    // block_dag() takes an O(1) imbl snapshot at call time.
-    block_dag_storage: Arc<Mutex<KeyValueDagRepresentation>>,
+    block_dag_storage: KeyValueDagRepresentation,
+    self_created_should_fail: bool,
 }
 
 unsafe impl Send for NoOpsCasperEffect {}
@@ -65,7 +65,8 @@ impl Clone for NoOpsCasperEffect {
             block_store: cloned_block_store,
             shared_block_data: self.shared_block_data.clone(),
             shared_approved_block_data: self.shared_approved_block_data.clone(),
-            block_dag_storage: self.block_dag_storage.clone(), // Arc clone — shares same Mutex
+            block_dag_storage: self.block_dag_storage.clone(),
+            self_created_should_fail: self.self_created_should_fail,
         }
     }
 }
@@ -100,7 +101,8 @@ impl NoOpsCasperEffect {
             block_store,
             shared_block_data,
             shared_approved_block_data,
-            block_dag_storage: Arc::new(Mutex::new(block_dag_storage)),
+            block_dag_storage,
+            self_created_should_fail: false,
         }
     }
 
@@ -126,8 +128,27 @@ impl NoOpsCasperEffect {
             block_store,
             shared_block_data: shared_kvm_data.clone(),
             shared_approved_block_data: shared_kvm_data.clone(),
-            block_dag_storage: Arc::new(Mutex::new(block_dag_storage)),
+            block_dag_storage,
+            self_created_should_fail: false,
         }
+    }
+
+    pub fn new_with_self_created_validation_failure(
+        _blocks: Option<HashMap<BlockHash, BlockMessage>>,
+        estimator_func: Option<Vec<BlockHash>>,
+        runtime_manager: Arc<tokio::sync::Mutex<RuntimeManager>>,
+        _block_store: KeyValueBlockStore,
+        block_dag_storage: KeyValueDagRepresentation,
+    ) -> Self {
+        let mut effect = Self::new(
+            None,
+            estimator_func,
+            runtime_manager,
+            _block_store,
+            block_dag_storage,
+        );
+        effect.self_created_should_fail = true;
+        effect
     }
 }
 
@@ -149,9 +170,7 @@ impl MultiParentCasper for NoOpsCasperEffect {
     }
 
     async fn block_dag(&self) -> Result<KeyValueDagRepresentation, CasperError> {
-        // Take an O(1) snapshot of the shared DAG via imbl structural sharing
-        let guard = self.block_dag_storage.lock().unwrap();
-        Ok(guard.clone())
+        Ok(self.block_dag_storage.clone())
     }
 
     fn block_store(&self) -> &KeyValueBlockStore {
@@ -217,19 +236,39 @@ impl Casper for NoOpsCasperEffect {
         1
     }
 
+    fn get_all_from_buffer(&self) -> Result<Vec<BlockMessage>, CasperError> {
+        Ok(Vec::new())
+    }
+
     async fn validate(
         &self,
         _block: &BlockMessage,
         _snapshot: &mut CasperSnapshot,
     ) -> Result<Either<BlockError, ValidBlock>, CasperError> {
-        todo!()
+        Ok(Either::Right(ValidBlock::Valid))
+    }
+
+    async fn validate_self_created(
+        &self,
+        _block: &BlockMessage,
+        _snapshot: &mut CasperSnapshot,
+        _pre_state_hash: Bytes,
+        _post_state_hash: Bytes,
+    ) -> Result<Either<BlockError, ValidBlock>, CasperError> {
+        if self.self_created_should_fail {
+            Ok(Either::Left(BlockError::Invalid(
+                InvalidBlock::InvalidFormat,
+            )))
+        } else {
+            Ok(Either::Right(ValidBlock::Valid))
+        }
     }
 
     async fn handle_valid_block(
         &self,
         _block: &BlockMessage,
     ) -> Result<KeyValueDagRepresentation, CasperError> {
-        todo!()
+        Ok(self.block_dag_storage.clone())
     }
 
     fn handle_invalid_block(
@@ -238,14 +277,16 @@ impl Casper for NoOpsCasperEffect {
         _status: &InvalidBlock,
         _dag: &KeyValueDagRepresentation,
     ) -> Result<KeyValueDagRepresentation, CasperError> {
-        todo!()
+        Ok(self.block_dag_storage.clone())
     }
 
     fn get_dependency_free_from_buffer(&self) -> Result<Vec<BlockMessage>, CasperError> {
-        todo!()
+        Ok(Vec::new())
     }
 
     fn get_approved_block(&self) -> Result<&BlockMessage, CasperError> {
+        // For test purposes, this is not used by our tests but we need to implement it
+        // In a real implementation, this would return the actual approved block from storage
         Err(CasperError::RuntimeError(
             "get_approved_block not implemented for NoOpsCasperEffect test helper".to_string(),
         ))
@@ -274,16 +315,12 @@ impl NoOpsCasperEffect {
 
         // Get the block from actual KeyValueBlockStore to add to DAG (preserving Scala test logic)
         if let Ok(Some(block)) = self.block_store.get(&block_hash) {
-            let mut dag = self.block_dag_storage.lock().unwrap();
-
             // Add to DAG set
-            dag.dag_set.insert(block_hash.clone());
-            // NOTE: This direct mutation is only safe because this is a test helper.
-            // In production, DAG state is mutated through BlockDagKeyValueStorage::insert().
+            self.block_dag_storage.dag_set.insert(block_hash.clone());
 
             // Add block metadata to the metadata store
             let block_metadata = BlockMetadata::from_block(&block, false, None, None);
-            let mut metadata_guard = dag.block_metadata_index.write().unwrap();
+            let mut metadata_guard = self.block_dag_storage.block_metadata_index.write().unwrap();
             match metadata_guard.add(block_metadata) {
                 Ok(_) => {
                     tracing::debug!(
@@ -306,7 +343,7 @@ impl NoOpsCasperEffect {
                 .into_iter()
                 .map(|deploy_id| (deploy_id, BlockHashSerde(block.block_hash.clone())))
                 .collect();
-            let deploy_index_guard = dag.deploy_index.write().unwrap();
+            let deploy_index_guard = self.block_dag_storage.deploy_index.write().unwrap();
             if let Err(e) = deploy_index_guard.put(deploy_entries) {
                 tracing::error!("Failed to add deploy mappings to DAG storage: {:?}", e);
             }
@@ -316,7 +353,8 @@ impl NoOpsCasperEffect {
 
             // 1. Update latest message for block sender (if not empty)
             if !block.sender.is_empty() {
-                dag.latest_messages_map
+                self.block_dag_storage
+                    .latest_messages_map
                     .insert(block.sender.clone().into(), block.block_hash.clone());
             }
 
@@ -341,8 +379,13 @@ impl NoOpsCasperEffect {
 
             // For newly bonded validators not already in latest messages, add current block
             for validator in newly_bonded {
-                if !dag.latest_messages_map.contains_key(validator) {
-                    dag.latest_messages_map
+                if !self
+                    .block_dag_storage
+                    .latest_messages_map
+                    .contains_key(validator)
+                {
+                    self.block_dag_storage
+                        .latest_messages_map
                         .insert(validator.clone(), block.block_hash.clone());
                 }
             }
@@ -367,8 +410,9 @@ impl NoOpsCasperEffect {
 
         // If approved, also add to finalized blocks set
         if approved {
-            let mut dag = self.block_dag_storage.lock().unwrap();
-            dag.finalized_blocks_set.insert(block.block_hash);
+            self.block_dag_storage
+                .finalized_blocks_set
+                .insert(block.block_hash);
         }
     }
 }

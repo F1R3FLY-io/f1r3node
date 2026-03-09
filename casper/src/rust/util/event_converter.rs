@@ -37,7 +37,12 @@ pub fn to_casper_event(event: RspaceEvent) -> Event {
                     persistent: p.persistent,
                     times_repeated: *times_repeated.get(&p).unwrap_or(&0),
                     is_deterministic: p.is_deterministic,
-                    output_value: p.output_value.clone().into_iter().map(|v| v.into()).collect(),
+                    output_value: p
+                        .output_value
+                        .clone()
+                        .into_iter()
+                        .map(|v| v.into())
+                        .collect(),
                     failed: p.failed,
                 })
                 .collect(),

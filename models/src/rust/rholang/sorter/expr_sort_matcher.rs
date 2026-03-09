@@ -3,8 +3,8 @@
 use crate::{
     rhoapi::{
         expr::ExprInstance, EAnd, EDiv, EEq, EGt, EGte, EList, ELt, ELte, EMatches, EMinus,
-        EMinusMinus, EMod, EMult, ENeg, ENeq, ENot, EOr, EPathMap, EPercentPercent, EPlus, EPlusPlus, EVar,
-        EZipper, Expr, Par, Var,
+        EMinusMinus, EMod, EMult, ENeg, ENeq, ENot, EOr, EPathMap, EPercentPercent, EPlus,
+        EPlusPlus, EVar, EZipper, Expr, Par, Var,
     },
     rust::{
         par_map::ParMap,

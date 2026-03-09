@@ -108,15 +108,24 @@ impl Sortable<Par> for ParSortMatcher {
             _unforgeables
         };
 
+        let (send_terms, send_scores) = split_scored_terms(sends);
+        let (receive_terms, receive_scores) = split_scored_terms(receives);
+        let (news_terms, news_scores) = split_scored_terms(news);
+        let (expr_terms, expr_scores) = split_scored_terms(exprs);
+        let (match_terms, match_scores) = split_scored_terms(matches);
+        let (bundle_terms, bundle_scores) = split_scored_terms(bundles);
+        let (connective_terms, connective_scores) = split_scored_terms(connectives);
+        let (unforgeable_terms, unforgeable_scores) = split_scored_terms(unforgeables);
+
         let sorted_par = Par {
-            sends: sends.clone().into_iter().map(|s| s.term).collect(),
-            receives: receives.clone().into_iter().map(|r| r.term).collect(),
-            news: news.clone().into_iter().map(|n| n.term).collect(),
-            exprs: exprs.clone().into_iter().map(|e| e.term).collect(),
-            matches: matches.clone().into_iter().map(|m| m.term).collect(),
-            unforgeables: unforgeables.clone().into_iter().map(|gu| gu.term).collect(),
-            bundles: bundles.clone().into_iter().map(|b| b.term).collect(),
-            connectives: connectives.clone().into_iter().map(|c| c.term).collect(),
+            sends: send_terms,
+            receives: receive_terms,
+            news: news_terms,
+            exprs: expr_terms,
+            matches: match_terms,
+            unforgeables: unforgeable_terms,
+            bundles: bundle_terms,
+            connectives: connective_terms,
             locally_free: par.locally_free.clone(),
             connective_used: par.connective_used,
         };
@@ -124,19 +133,19 @@ impl Sortable<Par> for ParSortMatcher {
         let connective_used_score: i64 = if par.connective_used { 1 } else { 0 };
         let par_score = Tree::<ScoreAtom>::create_node_from_i32(
             Score::PAR as i32,
-            sends
+            send_scores
                 .into_iter()
-                .map(|s| s.score)
+                .map(|s| s)
                 .chain(
-                    receives
+                    receive_scores
                         .into_iter()
-                        .map(|r| r.score)
-                        .chain(exprs.into_iter().map(|e| e.score))
-                        .chain(news.into_iter().map(|n| n.score))
-                        .chain(matches.into_iter().map(|m| m.score))
-                        .chain(bundles.into_iter().map(|b| b.score))
-                        .chain(connectives.into_iter().map(|c| c.score))
-                        .chain(unforgeables.into_iter().map(|gu| gu.score))
+                        .map(|s| s)
+                        .chain(expr_scores.into_iter().map(|s| s))
+                        .chain(news_scores.into_iter().map(|s| s))
+                        .chain(match_scores.into_iter().map(|s| s))
+                        .chain(bundle_scores.into_iter().map(|s| s))
+                        .chain(connective_scores.into_iter().map(|s| s))
+                        .chain(unforgeable_scores.into_iter().map(|s| s))
                         .chain(vec![Tree::<ScoreAtom>::create_leaf_from_i64(
                             connective_used_score,
                         )]),
@@ -149,4 +158,16 @@ impl Sortable<Par> for ParSortMatcher {
             score: par_score,
         }
     }
+}
+
+fn split_scored_terms<T>(scored_terms: Vec<ScoredTerm<T>>) -> (Vec<T>, Vec<Tree<ScoreAtom>>) {
+    let mut terms = Vec::with_capacity(scored_terms.len());
+    let mut scores = Vec::with_capacity(scored_terms.len());
+
+    for scored in scored_terms {
+        terms.push(scored.term);
+        scores.push(scored.score);
+    }
+
+    (terms, scores)
 }

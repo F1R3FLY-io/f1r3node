@@ -43,7 +43,7 @@ class DeployIdTest extends FlatSpec with Matchers {
   "Deploy id" should "be equal to deploy signature" in {
     val d = deploy(
       sk,
-      s"""new return, deployId(`rho:rchain:deployId`) in { return!(*deployId) }""",
+      s"""new return, deployId(`rho:system:deployId`) in { return!(*deployId) }""",
       shardId = genesisContext.genesisBlock.shardId
     )
     val result =
@@ -66,12 +66,12 @@ class DeployIdTest extends FlatSpec with Matchers {
   it should "be resolved during normalization" in effectTest {
     val contract = deploy(
       sk,
-      s"""contract @"check"(input, ret) = { new deployId(`rho:rchain:deployId`) in { ret!(*input == *deployId) }}""",
+      s"""contract @"check"(input, ret) = { new deployId(`rho:system:deployId`) in { ret!(*input == *deployId) }}""",
       shardId = genesisContext.genesisBlock.shardId
     )
     val contractCall = deploy(
       sk,
-      s"""new return, deployId(`rho:rchain:deployId`), ret in { @"check"!(*deployId, *return) }""",
+      s"""new return, deployId(`rho:system:deployId`), ret in { @"check"!(*deployId, *return) }""",
       shardId = genesisContext.genesisBlock.shardId
     )
 

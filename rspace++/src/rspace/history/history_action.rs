@@ -1,7 +1,8 @@
 // See rspace/src/main/scala/coop/rchain/rspace/history/HistoryAction.scala
 
-use crate::rspace::hashing::blake2b256_hash::Blake2b256Hash;
 use shared::rust::Byte;
+
+use crate::rspace::hashing::blake2b256_hash::Blake2b256Hash;
 
 pub type KeyPath = Vec<Byte>;
 
@@ -22,9 +23,7 @@ pub struct InsertAction {
 }
 
 impl HistoryActionTrait for InsertAction {
-    fn key(&self) -> KeyPath {
-        self.key.clone()
-    }
+    fn key(&self) -> KeyPath { self.key.clone() }
 }
 
 #[derive(Clone, Debug)]
@@ -33,9 +32,7 @@ pub struct DeleteAction {
 }
 
 impl HistoryActionTrait for DeleteAction {
-    fn key(&self) -> KeyPath {
-        self.key.clone()
-    }
+    fn key(&self) -> KeyPath { self.key.clone() }
 }
 
 impl HistoryActionTrait for HistoryAction {

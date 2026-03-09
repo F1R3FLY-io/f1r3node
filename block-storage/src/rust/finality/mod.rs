@@ -28,4 +28,3 @@ pub mod last_finalized_memory_storage;
 
 pub use last_finalized_key_value_storage::LastFinalizedKeyValueStorage;
 pub use last_finalized_memory_storage::LastFinalizedMemoryStorage;
-

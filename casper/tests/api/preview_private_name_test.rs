@@ -56,5 +56,3 @@ fn preview_private_names_should_work_for_more_than_one_name() {
         "cdaba23ba96f28c7f443a84086e260b839cc33068d0f685648ba2ae08fd7f9da"
     );
 }
-
-

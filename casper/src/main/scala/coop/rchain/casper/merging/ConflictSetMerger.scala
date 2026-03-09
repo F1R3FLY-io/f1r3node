@@ -18,10 +18,12 @@ import rspacePlusPlus.merger.RSpacePlusPlusStateChange
 
 object ConflictSetMerger {
 
-  /** R is a type for minimal rejection unit */
+  /** R is a type for minimal rejection unit.
+    * IMPORTANT: actualSeq and lateSeq must be passed in sorted order to ensure
+    * deterministic processing across all validators. */
   def merge[F[_]: Concurrent: Log, R: Ordering](
-      actualSet: Set[R],
-      lateSet: Set[R],
+      actualSeq: Seq[R],
+      lateSeq: Seq[R],
       depends: (R, R) => Boolean,
       conflicts: (Set[R], Set[R]) => Boolean,
       cost: R => Long,
@@ -37,6 +39,10 @@ object ConflictSetMerger {
       getData: Blake2b256Hash => F[Seq[Datum[ListParWithRandom]]]
   ): F[(Blake2b256Hash, Set[R])] = {
 
+    // Convert to Sets for set operations, but use Seq for ordered iteration
+    val actualSet = actualSeq.toSet
+    val lateSet   = lateSeq.toSet
+
     type Branch = Set[R]
 
     /** compute optimal rejection configuration */
@@ -51,8 +57,8 @@ object ConflictSetMerger {
       options.toList
       // reject set with min sum of target function output,
       // if equal value - min size of a branch,
-      // if equal size - sorted by head of rejection set option
-        .sortBy(b => (b.map(targetF).sum, b.size, b.head.head))
+      // if equal size - deterministic tiebreak by smallest element across all branches
+        .sortBy(b => (b.map(targetF).sum, b.size, b.flatten.min))
         .headOption
         .getOrElse(Set.empty)
     }
@@ -81,8 +87,29 @@ object ConflictSetMerger {
       }
     }
 
-    def foldRejection(baseBalance: Map[Blake2b256Hash, Long], branches: Set[Branch]) = {
-      val (_, rejected) = branches.foldLeft((baseBalance, Set.empty[Branch])) {
+    // Ordering for Branch (Set[R]) to ensure deterministic iteration
+    implicit val branchOrdering: Ordering[Branch] = (x: Branch, y: Branch) => {
+      // Compare by sorted elements
+      val xSorted = x.toVector.sorted
+      val ySorted = y.toVector.sorted
+      val lenCmp  = xSorted.length.compareTo(ySorted.length)
+      if (lenCmp != 0) lenCmp
+      else {
+        xSorted
+          .zip(ySorted)
+          .map { case (a, b) => Ordering[R].compare(a, b) }
+          .find(_ != 0)
+          .getOrElse(0)
+      }
+    }
+
+    def foldRejection(
+        baseBalance: Map[Blake2b256Hash, Long],
+        branches: Set[Branch]
+    ): Set[Branch] = {
+      // Sort branches to ensure deterministic processing order
+      val sortedBranches = branches.toVector.sorted
+      val (_, rejected) = sortedBranches.foldLeft((baseBalance, Set.empty[Branch])) {
         case ((balances, rejected), deploy) =>
           // TODO come up with a better algorithm to solve below case
           // currently we are accumulating result from some order and reject the deploy once negative result happens
@@ -132,10 +159,11 @@ object ConflictSetMerger {
     val rejectionTargetF = (dc: Branch) => dc.map(cost).sum
 
     for {
+      // Sort keys for deterministic ordering across JVM instances
       baseMergeableChRes <- branches.flatten
-                             .map(mergeableChannels)
-                             .flatMap(_.keys)
-                             .toList
+                             .flatMap(mergeableChannels(_).keys)
+                             .toVector
+                             .sorted
                              .traverse(
                                channelHash =>
                                  convertToReadNumber(getData)
@@ -151,13 +179,29 @@ object ConflictSetMerger {
       optimalRejection = getOptimalRejection(rejectionOptionsWithOverflow, rejectionTargetF)
       rejected         = lateSet ++ rejectedAsDependents ++ optimalRejection.flatten
       toMerge          = branches diff optimalRejection
-      r                <- Stopwatch.duration(toMerge.toList.flatten.traverse(stateChanges).map(_.combineAll))
+
+      // Detailed INFO logging for rejection breakdown (always visible)
+      _ <- Log[F].info(
+            s"ConflictSetMerger rejection breakdown: " +
+              s"lateSet=${lateSet.size}, " +
+              s"rejectedAsDependents=${rejectedAsDependents.size}, " +
+              s"optimalRejection=${optimalRejection.flatten.size}, " +
+              s"total rejected=${rejected.size}, " +
+              s"branches=${branches.size}, " +
+              s"toMerge=${toMerge.size}, " +
+              s"conflictMap entries with conflicts=${conflictMap.count(_._2.nonEmpty)}, " +
+              s"rejectionOptions=${rejectionOptions.size}, " +
+              s"rejectionOptionsWithOverflow=${rejectionOptionsWithOverflow.size}"
+          )
+      // Sort toMerge for deterministic processing order
+      toMergeSorted = toMerge.toVector.sorted.flatMap(_.toVector.sorted)
+      r             <- Stopwatch.duration(toMergeSorted.traverse(stateChanges).map(_.combineAll))
 
       (allChanges, combineAllChanges) = r
 
       // All number channels merged
       // TODO: Negative or overflow should be rejected before!
-      allMergeableChannels = toMerge.toList.flatten.map(mergeableChannels).combineAll
+      allMergeableChannels = toMergeSorted.map(mergeableChannels).combineAll
 
       r                                 <- Stopwatch.duration(computeTrieActions(allChanges, allMergeableChannels))
       (trieActions, computeActionsTime) = r

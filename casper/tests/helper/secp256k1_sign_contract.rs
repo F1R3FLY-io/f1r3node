@@ -1,8 +1,6 @@
 // See casper/src/test/scala/coop/rchain/casper/helper/Secp256k1SignContract.scala
 
-use k256::{
-    ecdsa::{signature::hazmat::PrehashSigner, Signature, SigningKey},
-};
+use k256::ecdsa::{signature::hazmat::PrehashSigner, Signature, SigningKey};
 use models::{
     rhoapi::{ListParWithRandom, Par},
     rust::utils::new_gbytearray_par,

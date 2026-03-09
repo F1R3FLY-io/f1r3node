@@ -235,7 +235,10 @@ pub struct OpenAIConf {
     pub validate_api_key: bool,
 
     /// Timeout for API key validation call in seconds
-    #[serde(rename = "validation-timeout-sec", default = "default_validation_timeout_sec")]
+    #[serde(
+        rename = "validation-timeout-sec",
+        default = "default_validation_timeout_sec"
+    )]
     pub validation_timeout_sec: u64,
 }
 
@@ -257,7 +260,6 @@ impl Default for OpenAIConf {
         }
     }
 }
-
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Profile {

@@ -108,6 +108,7 @@ rspacePlusPlus/
 
 # docker compose
 docker/data/
+docker/data.*/
 
 rholang/**/*.mdb
 rspace++/tests/*.proptest-regressions

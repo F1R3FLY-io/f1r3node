@@ -82,9 +82,9 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     chmod +x /build/node_binary
 
 # ============================================================================
-# Stage 2: Runtime - Minimal image with only runtime dependencies
+# Stage 2: Runtime base - Install runtime dependencies (cached independently)
 # ============================================================================
-FROM debian:bookworm-slim
+FROM debian:bookworm-slim AS runtime-base
 
 # Install runtime dependencies
 # Note: grpcurl and jq for healthcheck (matching build.sbt healthcheck)
@@ -92,6 +92,7 @@ RUN apt-get update && apt-get install -y \
     ca-certificates \
     libssl3 \
     libc6 \
+    libjemalloc2 \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
@@ -117,6 +118,11 @@ RUN GRPCURL_VERSION="1.8.9" && \
     esac && \
     curl -L "https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-${JQ_ARCH}" -o /usr/local/bin/jq && \
     chmod +x /usr/local/bin/jq || true
+
+# ============================================================================
+# Stage 3: Runtime - Final image, starts at WORKDIR with artifacts from builder
+# ============================================================================
+FROM runtime-base
 
 # Use existing daemon user (matching build.sbt: daemonUser in Docker := "daemon")
 # Note: daemon user already exists in debian:12-slim, so we just ensure it has the right UID
@@ -178,4 +184,3 @@ ENTRYPOINT ["/opt/docker/bin/docker-entrypoint.sh"]
 
 # Default command (matching build.sbt: ExecCmd("CMD", "run"))
 CMD ["run"]
-

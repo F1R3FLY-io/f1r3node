@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use prost::bytes::Bytes;
 use std::{
     collections::{HashMap, HashSet},
-    sync::{Arc, Mutex},
+    sync::{atomic::AtomicUsize, Arc, Mutex},
 };
 use tokio::sync::mpsc;
 
@@ -179,7 +179,7 @@ pub enum TestError {
 
 pub struct Mock {
     /// Channel sender to simulate receiving blocks from external source
-    block_receiver_tx: mpsc::UnboundedSender<BlockMessage>,
+    block_receiver_tx: mpsc::Sender<BlockMessage>,
 
     /// Channel receiver to observe outgoing block requests
     request_observer_rx: mpsc::UnboundedReceiver<BlockHash>,
@@ -197,6 +197,7 @@ impl Mock {
         for block in blocks {
             self.block_receiver_tx
                 .send(block.clone())
+                .await
                 .map_err(|_| TestError::ChannelClosed)?;
         }
         Ok(())
@@ -309,7 +310,7 @@ where
 
     let test_state = Arc::new(Mutex::new(TestST::with_blocks(saved_blocks)));
 
-    let (response_tx, response_rx) = mpsc::unbounded_channel();
+    let (response_tx, response_rx) = mpsc::channel(1024);
 
     let (request_tx, request_rx) = mpsc::unbounded_channel();
 
@@ -329,10 +330,12 @@ where
         let mut mock_ops = MockBlockRequesterOps::new(test_state, request_tx, save_tx);
 
         let empty_queue = std::collections::VecDeque::new();
+        let response_queue_pending = Arc::new(AtomicUsize::new(0));
         let lfs_stream = casper::rust::engine::lfs_block_requester::stream(
             &approved_block,
             &empty_queue,
             response_rx,
+            response_queue_pending.clone(),
             0,
             request_timeout,
             &mut mock_ops,

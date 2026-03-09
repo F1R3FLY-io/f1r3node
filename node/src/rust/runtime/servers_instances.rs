@@ -3,6 +3,7 @@
 use std::net::IpAddr;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::time::Duration;
 use std::{future::Future, net::SocketAddr};
 
 use crate::rust::{
@@ -29,7 +30,50 @@ use shared::rust::grpc::grpc_server::GrpcServer;
 use shared::rust::shared::f1r3fly_events::EventStream;
 use std::str::FromStr;
 use tokio::task::JoinHandle;
-use tracing::{error, info};
+use tracing::{error, info, warn};
+
+const HTTP_BIND_RETRY_ATTEMPTS: usize = 60;
+const HTTP_BIND_RETRY_DELAY: Duration = Duration::from_millis(500);
+
+async fn bind_tcp_listener_with_retry(
+    addr: SocketAddr,
+    server_name: &str,
+) -> eyre::Result<tokio::net::TcpListener> {
+    let mut attempt: usize = 1;
+    loop {
+        match tokio::net::TcpListener::bind(addr).await {
+            Ok(listener) => {
+                if attempt > 1 {
+                    info!(
+                        "{} server bound to {} after {} attempts",
+                        server_name, addr, attempt
+                    );
+                }
+                return Ok(listener);
+            }
+            Err(e)
+                if e.kind() == std::io::ErrorKind::AddrInUse
+                    && attempt < HTTP_BIND_RETRY_ATTEMPTS =>
+            {
+                warn!(
+                    "{} server bind attempt {}/{} failed at {}: {}. Retrying in {:?}",
+                    server_name, attempt, HTTP_BIND_RETRY_ATTEMPTS, addr, e, HTTP_BIND_RETRY_DELAY
+                );
+                attempt += 1;
+                tokio::time::sleep(HTTP_BIND_RETRY_DELAY).await;
+            }
+            Err(e) => {
+                return Err(eyre::eyre!(
+                    "Failed to bind {} server at {} after {} attempt(s): {}",
+                    server_name,
+                    addr,
+                    attempt,
+                    e
+                ));
+            }
+        }
+    }
+}
 
 /// Container for all servers Node provides
 pub struct ServersInstances {
@@ -226,16 +270,21 @@ impl ServersInstances {
 
         let http_addr = SocketAddr::from((ip_http_addr, node_conf.api_server.port_http));
 
-        let http_server_handle = tokio::spawn(async move {
-            let listener = tokio::net::TcpListener::bind(&http_addr)
-                .await
-                .map_err(|e| eyre::eyre!("Failed to bind HTTP server: {}", e))?;
+        let http_server_handle = tokio::task::spawn_blocking(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(|e| eyre::eyre!("Failed to build dedicated HTTP runtime: {}", e))?;
 
-            axum::serve(listener, http_router)
-                .await
-                .map_err(|e| eyre::eyre!("HTTP server error: {}", e))?;
+            rt.block_on(async move {
+                let listener = bind_tcp_listener_with_retry(http_addr, "HTTP").await?;
 
-            Ok(())
+                axum::serve(listener, http_router)
+                    .await
+                    .map_err(|e| eyre::eyre!("HTTP server error: {}", e))?;
+
+                Ok(())
+            })
         });
 
         info!(
@@ -252,16 +301,21 @@ impl ServersInstances {
         let admin_http_addr =
             SocketAddr::from((ip_admin_http, node_conf.api_server.port_admin_http));
 
-        let admin_http_server_handle = tokio::spawn(async move {
-            let listener = tokio::net::TcpListener::bind(&admin_http_addr)
-                .await
-                .map_err(|e| eyre::eyre!("Failed to bind admin HTTP server: {}", e))?;
+        let admin_http_server_handle = tokio::task::spawn_blocking(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(|e| eyre::eyre!("Failed to build dedicated admin HTTP runtime: {}", e))?;
 
-            axum::serve(listener, admin_http_router)
-                .await
-                .map_err(|e| eyre::eyre!("Admin HTTP server error: {}", e))?;
+            rt.block_on(async move {
+                let listener = bind_tcp_listener_with_retry(admin_http_addr, "Admin HTTP").await?;
 
-            Ok(())
+                axum::serve(listener, admin_http_router)
+                    .await
+                    .map_err(|e| eyre::eyre!("Admin HTTP server error: {}", e))?;
+
+                Ok(())
+            })
         });
 
         info!(

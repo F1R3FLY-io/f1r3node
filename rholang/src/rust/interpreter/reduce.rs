@@ -7,9 +7,9 @@ use models::rhoapi::tagged_continuation::TaggedCont;
 use models::rhoapi::var::VarInstance;
 use models::rhoapi::{
     BindPattern, Bundle, EAnd, EDiv, EEq, EGt, EGte, EList, ELt, ELte, EMatches, EMethod, EMinus,
-    EMinusMinus, EMod, EMult, ENeq, EOr, EPathMap, EPercentPercent, EPlus, EPlusPlus, EVar, EZipper,
-    Expr, GPrivate, GUnforgeable, KeyValuePair, Match, MatchCase, New, ParWithRandom, Receive,
-    ReceiveBind, Send, Var,
+    EMinusMinus, EMod, EMult, ENeq, EOr, EPathMap, EPercentPercent, EPlus, EPlusPlus, EVar,
+    EZipper, Expr, GPrivate, GUnforgeable, KeyValuePair, Match, MatchCase, New, ParWithRandom,
+    Receive, ReceiveBind, Send, Var,
 };
 use models::rhoapi::{ETuple, ListParWithRandom, Par, TaggedContinuation};
 use models::rust::par_map::ParMap;
@@ -30,7 +30,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, LazyLock, RwLock};
 use std::task::{Context, Poll};
 
 use crate::rust::interpreter::accounting::costs::{
@@ -68,6 +68,31 @@ const STACK_RED_ZONE: usize = 1024 * 1024; // 1 MB
 
 /// Size of each new stack segment allocated when the red zone is reached.
 const STACK_GROW_SIZE: usize = 2 * 1024 * 1024; // 2 MB
+
+fn parse_env_flag(value: &str) -> bool {
+    value == "1" || value.eq_ignore_ascii_case("true")
+}
+
+fn env_flag(name: &str) -> bool {
+    std::env::var(name)
+        .ok()
+        .map(|value| parse_env_flag(value.trim()))
+        .unwrap_or(false)
+}
+
+fn read_vm_rss_kb() -> Option<usize> {
+    let status = std::fs::read_to_string("/proc/self/status").ok()?;
+    status
+        .lines()
+        .find(|line| line.starts_with("VmRSS:"))
+        .and_then(|line| line.split_whitespace().nth(1))
+        .and_then(|value| value.parse::<usize>().ok())
+}
+
+static REDUCE_INNER_PROFILE_ENABLED: LazyLock<bool> =
+    LazyLock::new(|| env_flag("F1R3_REDUCE_INNER_PROFILE"));
+static REDUCE_OP_PROFILE_ENABLED: LazyLock<bool> =
+    LazyLock::new(|| env_flag("F1R3_REDUCE_OP_PROFILE"));
 
 /// A Future wrapper that dynamically grows the thread stack during polling.
 ///
@@ -136,8 +161,14 @@ impl DebruijnInterpreter {
         par: Par,
         env: &'a Env<Par>,
         rand: Blake2b512Random,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<(), InterpreterError>> + std::marker::Send + 'a>> {
-        Box::pin(StackGrowingFuture { inner: self.eval_inner(par, env, rand) })
+    ) -> Pin<
+        Box<
+            dyn std::future::Future<Output = Result<(), InterpreterError>> + std::marker::Send + 'a,
+        >,
+    > {
+        Box::pin(StackGrowingFuture {
+            inner: self.eval_inner(par, env, rand),
+        })
     }
 
     async fn eval_inner(
@@ -146,6 +177,50 @@ impl DebruijnInterpreter {
         env: &Env<Par>,
         rand: Blake2b512Random,
     ) -> Result<(), InterpreterError> {
+        let mem_profile_enabled = *REDUCE_INNER_PROFILE_ENABLED;
+        let env_level = env.level;
+        let mut rss_baseline = if mem_profile_enabled {
+            read_vm_rss_kb()
+        } else {
+            None
+        };
+        let mut rss_prev = rss_baseline;
+        let mut log_mem_step = |step: &str, terms_len: Option<usize>, errors_len: Option<usize>| {
+            if !mem_profile_enabled {
+                return;
+            }
+            if env_level != 0 {
+                return;
+            }
+            if let Some(curr) = read_vm_rss_kb() {
+                let prev = rss_prev.unwrap_or(curr);
+                let baseline = rss_baseline.unwrap_or(curr);
+                let delta_prev = curr as i64 - prev as i64;
+                if delta_prev == 0 {
+                    rss_prev = Some(curr);
+                    if rss_baseline.is_none() {
+                        rss_baseline = Some(curr);
+                    }
+                    return;
+                }
+                eprintln!(
+                    "reduce_eval_inner.mem step={} env_level={} terms_len={} errors_len={} rss_kb={} delta_prev_kb={} delta_total_kb={}",
+                    step,
+                    env_level,
+                    terms_len.map(|v| v as i64).unwrap_or(-1),
+                    errors_len.map(|v| v as i64).unwrap_or(-1),
+                    curr,
+                    delta_prev,
+                    curr as i64 - baseline as i64
+                );
+                rss_prev = Some(curr);
+                if rss_baseline.is_none() {
+                    rss_baseline = Some(curr);
+                }
+            }
+        };
+        log_mem_step("start", None, None);
+
         // println!("\neval");
         let terms: Vec<GeneratedMessage> = vec![
             par.sends
@@ -184,6 +259,7 @@ impl DebruijnInterpreter {
         .filter(|vec| !vec.is_empty())
         .flatten()
         .collect();
+        log_mem_step("after_collect_terms", Some(terms.len()), None);
 
         fn split(
             id: i32,
@@ -201,6 +277,7 @@ impl DebruijnInterpreter {
 
         let term_split_limit = i16::MAX;
         if terms.len() > term_split_limit.try_into().unwrap() {
+            log_mem_step("term_split_limit_exceeded", Some(terms.len()), None);
             Err(InterpreterError::ReduceError(format!(
                 "The number of terms in the Par is {}, which exceeds the limit of {}",
                 terms.len(),
@@ -209,30 +286,90 @@ impl DebruijnInterpreter {
         } else {
             // Collect errors from all parallel execution paths (pars)
             // parTraverseSafe
-            let futures: Vec<Pin<Box<dyn futures::Future<Output = Result<(), InterpreterError>> + std::marker::Send>>> =
-                terms
-                    .iter()
-                    .enumerate()
-                    .map(|(index, term)| {
-                        let self_clone = self.clone();
-                        let term_clone = term.clone();
-                        let rand_split = split(index.try_into().unwrap(), &terms, rand.clone());
-                        Box::pin(async move {
-                            self_clone.generated_message_eval(&term_clone, env, rand_split).await
-                        }) as Pin<Box<dyn futures::Future<Output = Result<(), InterpreterError>> + std::marker::Send>>
+            log_mem_step("before_build_futures", Some(terms.len()), None);
+            let futures: Vec<
+                Pin<
+                    Box<
+                        dyn futures::Future<Output = Result<(), InterpreterError>>
+                            + std::marker::Send,
+                    >,
+                >,
+            > = terms
+                .iter()
+                .enumerate()
+                .map(|(index, term)| {
+                    let self_clone = self.clone();
+                    let term_clone = term.clone();
+                    let rand_split = split(index.try_into().unwrap(), &terms, rand.clone());
+                    Box::pin(async move {
+                        self_clone
+                            .generated_message_eval(&term_clone, env, rand_split)
+                            .await
                     })
-                    .collect();
+                        as Pin<
+                            Box<
+                                dyn futures::Future<Output = Result<(), InterpreterError>>
+                                    + std::marker::Send,
+                            >,
+                        >
+                })
+                .collect();
+            log_mem_step("after_build_futures", Some(futures.len()), None);
+            log_mem_step("before_join_all", Some(terms.len()), None);
 
             let results: Vec<Result<(), InterpreterError>> =
                 futures::future::join_all(futures).await;
-            let flattened_results: Vec<InterpreterError> = results
-                .into_iter()
-                .filter_map(|result| result.err())
-                .collect();
+            log_mem_step("after_join_all", Some(terms.len()), None);
+            let (ok_count, err_count) =
+                results.iter().fold((0usize, 0usize), |(ok, err), result| {
+                    if result.is_ok() {
+                        (ok + 1, err)
+                    } else {
+                        (ok, err + 1)
+                    }
+                });
+            if mem_profile_enabled && env_level == 0 {
+                eprintln!(
+                    "reduce_eval_inner.meta step=after_join_all results_len={} results_cap={} ok_count={} err_count={}",
+                    results.len(),
+                    results.capacity(),
+                    ok_count,
+                    err_count
+                );
+            }
+            log_mem_step("after_scan_results", Some(terms.len()), Some(err_count));
+            log_mem_step("before_collect_errors", Some(terms.len()), Some(err_count));
+            let mut flattened_results: Vec<InterpreterError> = Vec::with_capacity(err_count);
+            for result in results {
+                if let Err(err) = result {
+                    flattened_results.push(err);
+                }
+            }
+            log_mem_step(
+                "after_collect_errors",
+                Some(terms.len()),
+                Some(flattened_results.len()),
+            );
+            log_mem_step(
+                "after_flatten_errors",
+                Some(terms.len()),
+                Some(flattened_results.len()),
+            );
+            log_mem_step(
+                "before_aggregate",
+                Some(terms.len()),
+                Some(flattened_results.len()),
+            );
 
             match self.aggregate_evaluator_errors(flattened_results) {
-                Ok(_) => Ok(()),
-                Err(e) => Err(e),
+                Ok(_) => {
+                    log_mem_step("after_aggregate_ok", Some(terms.len()), Some(0));
+                    Ok(())
+                }
+                Err(e) => {
+                    log_mem_step("after_aggregate_err", Some(terms.len()), None);
+                    Err(e)
+                }
             }
         }
     }
@@ -253,8 +390,16 @@ impl DebruijnInterpreter {
         chan: Par,
         data: ListParWithRandom,
         persistent: bool,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<DispatchType, InterpreterError>> + std::marker::Send + 'a>> {
-        Box::pin(StackGrowingFuture { inner: self.produce_inner(chan, data, persistent) })
+    ) -> Pin<
+        Box<
+            dyn std::future::Future<Output = Result<DispatchType, InterpreterError>>
+                + std::marker::Send
+                + 'a,
+        >,
+    > {
+        Box::pin(StackGrowingFuture {
+            inner: self.produce_inner(chan, data, persistent),
+        })
     }
 
     async fn produce_inner(
@@ -263,10 +408,39 @@ impl DebruijnInterpreter {
         data: ListParWithRandom,
         persistent: bool,
     ) -> Result<DispatchType, InterpreterError> {
+        let op_mem_profile_enabled = *REDUCE_OP_PROFILE_ENABLED;
+        let data_len = data.pars.len();
+        let mut op_rss_prev = if op_mem_profile_enabled {
+            read_vm_rss_kb()
+        } else {
+            None
+        };
+        let mut log_op_step = |step: &str| {
+            if !op_mem_profile_enabled {
+                return;
+            }
+            if let Some(curr) = read_vm_rss_kb() {
+                let prev = op_rss_prev.unwrap_or(curr);
+                let delta = curr as i64 - prev as i64;
+                if delta != 0 {
+                    eprintln!(
+                        "reduce_op.mem fn=produce_inner step={} persistent={} data_len={} rss_kb={} delta_prev_kb={}",
+                        step,
+                        persistent,
+                        data_len,
+                        curr,
+                        delta
+                    );
+                }
+                op_rss_prev = Some(curr);
+            }
+        };
+        log_op_step("start");
         // println!("\nreduce produce");
         // println!("chan in reduce produce: {:?}", chan);
         // println!("data in reduce produce: {:?}", data);
         self.update_mergeable_channels(&chan).await;
+        log_op_step("after_update_mergeable_channels");
 
         // println!("Attempting to lock space for produce");
         let mut space_locked = self.space.try_lock().unwrap();
@@ -274,6 +448,7 @@ impl DebruijnInterpreter {
         let produce_result = space_locked.produce(chan.clone(), data.clone(), persistent)?;
         let is_replay = space_locked.is_replay();
         drop(space_locked);
+        log_op_step("after_space_produce");
 
         match produce_result {
             Some((c, s, produce_event)) => {
@@ -288,6 +463,7 @@ impl DebruijnInterpreter {
                         produce_event.failed,
                     )
                     .await?;
+                log_op_step("after_continue_produce_process");
 
                 match dispatch_type {
                     DispatchType::NonDeterministicCall(ref output) => {
@@ -295,6 +471,7 @@ impl DebruijnInterpreter {
                         let mut space_locked = self.space.try_lock().unwrap();
                         space_locked.update_produce(produce1);
                         drop(space_locked);
+                        log_op_step("after_update_produce_nondeterministic");
                         Ok(dispatch_type)
                     }
 
@@ -304,6 +481,7 @@ impl DebruijnInterpreter {
                         let mut space_locked = self.space.try_lock().unwrap();
                         space_locked.update_produce(failed_produce);
                         drop(space_locked);
+                        log_op_step("after_update_produce_failed_nondeterministic");
                         // Wrap the original error in NonDeterministicProcessFailure
                         Err(InterpreterError::NonDeterministicProcessFailure {
                             cause: Box::new(error),
@@ -324,8 +502,16 @@ impl DebruijnInterpreter {
         body: ParWithRandom,
         persistent: bool,
         peek: bool,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<DispatchType, InterpreterError>> + std::marker::Send + 'a>> {
-        Box::pin(StackGrowingFuture { inner: self.consume_inner(binds, body, persistent, peek) })
+    ) -> Pin<
+        Box<
+            dyn std::future::Future<Output = Result<DispatchType, InterpreterError>>
+                + std::marker::Send
+                + 'a,
+        >,
+    > {
+        Box::pin(StackGrowingFuture {
+            inner: self.consume_inner(binds, body, persistent, peek),
+        })
     }
 
     async fn consume_inner(
@@ -335,15 +521,46 @@ impl DebruijnInterpreter {
         persistent: bool,
         peek: bool,
     ) -> Result<DispatchType, InterpreterError> {
+        let op_mem_profile_enabled = *REDUCE_OP_PROFILE_ENABLED;
+        let binds_len = binds.len();
+        let mut op_rss_prev = if op_mem_profile_enabled {
+            read_vm_rss_kb()
+        } else {
+            None
+        };
+        let mut log_op_step = |step: &str, sources_len: usize| {
+            if !op_mem_profile_enabled {
+                return;
+            }
+            if let Some(curr) = read_vm_rss_kb() {
+                let prev = op_rss_prev.unwrap_or(curr);
+                let delta = curr as i64 - prev as i64;
+                if delta != 0 {
+                    eprintln!(
+                        "reduce_op.mem fn=consume_inner step={} persistent={} peek={} binds_len={} sources_len={} rss_kb={} delta_prev_kb={}",
+                        step,
+                        persistent,
+                        peek,
+                        binds_len,
+                        sources_len,
+                        curr,
+                        delta
+                    );
+                }
+                op_rss_prev = Some(curr);
+            }
+        };
         // println!("\nreduce consume");
         // println!("binds in reduce consume: {:?}", binds);
         // println!("body in reduce consume: {:?}", body);
         let (patterns, sources): (Vec<BindPattern>, Vec<Par>) = binds.clone().into_iter().unzip();
+        log_op_step("after_split_binds", sources.len());
 
         // Update mergeable channels
         for source in &sources {
             self.update_mergeable_channels(source).await;
         }
+        log_op_step("after_update_mergeable_channels", sources.len());
 
         // println!("\nsources in reduce consume: {:?}", sources);
 
@@ -364,6 +581,7 @@ impl DebruijnInterpreter {
         )?;
         let is_replay = space_locked.is_replay();
         drop(space_locked);
+        log_op_step("after_space_consume", sources.len());
 
         // println!("space map in reduce consume: {:?}", self.space.lock().unwrap().to_map());
         // println!("\nconsume_result in reduce consume: {:?}", consume_result);
@@ -378,6 +596,10 @@ impl DebruijnInterpreter {
             Vec::new(),
         )
         .await
+        .map(|dispatch| {
+            log_op_step("after_continue_consume_process", sources.len());
+            dispatch
+        })
     }
 
     async fn continue_produce_process(
@@ -396,7 +618,7 @@ impl DebruijnInterpreter {
         if is_replay && trace_failed {
             return Err(InterpreterError::CanNotReplayFailedNonDeterministicProcess);
         }
-        
+
         let previous_output_as_par = previous_output
             .into_iter()
             .map(|bytes| {
@@ -417,22 +639,38 @@ impl DebruijnInterpreter {
                     let data_clone = data.clone();
                     let persistent_flag = persistent;
                     let is_replay_flag = is_replay;
-                    
+
                     let mut futures: Vec<
                         Pin<
                             Box<
-                                dyn futures::Future<
-                                    Output = Result<DispatchType, InterpreterError>,
-                                > + std::marker::Send,
+                                dyn futures::Future<Output = Result<DispatchType, InterpreterError>>
+                                    + std::marker::Send,
                             >,
                         >,
                     > = vec![];
-                    
-                    let dispatch_fut = self_clone1.dispatch(continuation_clone, data_list_clone, is_replay_flag, previous_output_clone);
-                    futures.push(Box::pin(dispatch_fut) as Pin<Box<dyn futures::Future<Output = Result<DispatchType, InterpreterError>> + std::marker::Send>>);
-                    
+
+                    let dispatch_fut = self_clone1.dispatch(
+                        continuation_clone,
+                        data_list_clone,
+                        is_replay_flag,
+                        previous_output_clone,
+                    );
+                    futures.push(Box::pin(dispatch_fut)
+                        as Pin<
+                            Box<
+                                dyn futures::Future<Output = Result<DispatchType, InterpreterError>>
+                                    + std::marker::Send,
+                            >,
+                        >);
+
                     let produce_fut = self_clone2.produce(chan_clone, data_clone, persistent_flag);
-                    futures.push(Box::pin(produce_fut) as Pin<Box<dyn futures::Future<Output = Result<DispatchType, InterpreterError>> + std::marker::Send>>);
+                    futures.push(Box::pin(produce_fut)
+                        as Pin<
+                            Box<
+                                dyn futures::Future<Output = Result<DispatchType, InterpreterError>>
+                                    + std::marker::Send,
+                            >,
+                        >);
 
                     // parTraverseSafe
                     let results: Vec<Result<DispatchType, InterpreterError>> =
@@ -449,17 +687,23 @@ impl DebruijnInterpreter {
                     let continuation_clone = continuation.clone();
                     let data_list_clone = data_list.clone();
                     let previous_output_clone = previous_output_as_par.clone();
-                    
+
                     let mut futures: Vec<
                         Pin<
                             Box<
-                                dyn futures::Future<
-                                    Output = Result<DispatchType, InterpreterError>,
-                                > + std::marker::Send,
+                                dyn futures::Future<Output = Result<DispatchType, InterpreterError>>
+                                    + std::marker::Send,
                             >,
                         >,
                     > = vec![Box::pin(async move {
-                        self_clone.dispatch(continuation_clone, data_list_clone, is_replay, previous_output_clone).await
+                        self_clone
+                            .dispatch(
+                                continuation_clone,
+                                data_list_clone,
+                                is_replay,
+                                previous_output_clone,
+                            )
+                            .await
                     })];
                     futures.extend(self.produce_peeks(data_list).await);
 
@@ -514,22 +758,39 @@ impl DebruijnInterpreter {
                     let persistent_flag = persistent;
                     let peek_flag = peek;
                     let is_replay_flag = is_replay;
-                    
+
                     let mut futures: Vec<
                         Pin<
                             Box<
-                                dyn futures::Future<
-                                    Output = Result<DispatchType, InterpreterError>,
-                                > + std::marker::Send,
+                                dyn futures::Future<Output = Result<DispatchType, InterpreterError>>
+                                    + std::marker::Send,
                             >,
                         >,
                     > = vec![];
-                    
-                    let dispatch_fut = self_clone1.dispatch(continuation_clone, data_list_clone, is_replay_flag, previous_output_clone);
-                    futures.push(Box::pin(dispatch_fut) as Pin<Box<dyn futures::Future<Output = Result<DispatchType, InterpreterError>> + std::marker::Send>>);
-                    
-                    let consume_fut = self_clone2.consume(binds_clone, body_clone, persistent_flag, peek_flag);
-                    futures.push(Box::pin(consume_fut) as Pin<Box<dyn futures::Future<Output = Result<DispatchType, InterpreterError>> + std::marker::Send>>);
+
+                    let dispatch_fut = self_clone1.dispatch(
+                        continuation_clone,
+                        data_list_clone,
+                        is_replay_flag,
+                        previous_output_clone,
+                    );
+                    futures.push(Box::pin(dispatch_fut)
+                        as Pin<
+                            Box<
+                                dyn futures::Future<Output = Result<DispatchType, InterpreterError>>
+                                    + std::marker::Send,
+                            >,
+                        >);
+
+                    let consume_fut =
+                        self_clone2.consume(binds_clone, body_clone, persistent_flag, peek_flag);
+                    futures.push(Box::pin(consume_fut)
+                        as Pin<
+                            Box<
+                                dyn futures::Future<Output = Result<DispatchType, InterpreterError>>
+                                    + std::marker::Send,
+                            >,
+                        >);
 
                     // parTraverseSafe
                     let results: Vec<Result<DispatchType, InterpreterError>> =
@@ -546,17 +807,23 @@ impl DebruijnInterpreter {
                     let continuation_clone = continuation.clone();
                     let data_list_clone = data_list.clone();
                     let previous_output_clone = previous_output_as_par.clone();
-                    
+
                     let mut futures: Vec<
                         Pin<
                             Box<
-                                dyn futures::Future<
-                                    Output = Result<DispatchType, InterpreterError>,
-                                > + std::marker::Send,
+                                dyn futures::Future<Output = Result<DispatchType, InterpreterError>>
+                                    + std::marker::Send,
                             >,
                         >,
                     > = vec![Box::pin(async move {
-                        self_clone.dispatch(continuation_clone, data_list_clone, is_replay, previous_output_clone).await
+                        self_clone
+                            .dispatch(
+                                continuation_clone,
+                                data_list_clone,
+                                is_replay,
+                                previous_output_clone,
+                            )
+                            .await
                     })];
                     futures.extend(self.produce_peeks(data_list).await);
 
@@ -584,8 +851,16 @@ impl DebruijnInterpreter {
         data_list: Vec<(Par, ListParWithRandom, ListParWithRandom, bool)>,
         is_replay: bool,
         previous_output: Vec<Par>,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<DispatchType, InterpreterError>> + std::marker::Send + 'a>> {
-        Box::pin(StackGrowingFuture { inner: self.dispatch_inner(continuation, data_list, is_replay, previous_output) })
+    ) -> Pin<
+        Box<
+            dyn std::future::Future<Output = Result<DispatchType, InterpreterError>>
+                + std::marker::Send
+                + 'a,
+        >,
+    > {
+        Box::pin(StackGrowingFuture {
+            inner: self.dispatch_inner(continuation, data_list, is_replay, previous_output),
+        })
     }
 
     async fn dispatch_inner(
@@ -595,33 +870,74 @@ impl DebruijnInterpreter {
         is_replay: bool,
         previous_output: Vec<Par>,
     ) -> Result<DispatchType, InterpreterError> {
+        let op_mem_profile_enabled = *REDUCE_OP_PROFILE_ENABLED;
+        let data_list_len = data_list.len();
+        let previous_output_len = previous_output.len();
+        let mut op_rss_prev = if op_mem_profile_enabled {
+            read_vm_rss_kb()
+        } else {
+            None
+        };
+        let mut log_op_step = |step: &str| {
+            if !op_mem_profile_enabled {
+                return;
+            }
+            if let Some(curr) = read_vm_rss_kb() {
+                let prev = op_rss_prev.unwrap_or(curr);
+                let delta = curr as i64 - prev as i64;
+                if delta != 0 {
+                    eprintln!(
+                        "reduce_op.mem fn=dispatch_inner step={} is_replay={} data_list_len={} prev_output_len={} rss_kb={} delta_prev_kb={}",
+                        step,
+                        is_replay,
+                        data_list_len,
+                        previous_output_len,
+                        curr,
+                        delta
+                    );
+                }
+                op_rss_prev = Some(curr);
+            }
+        };
+        log_op_step("start");
         // println!("\nreduce dispatch");
-        self.dispatcher
+        let result = self
+            .dispatcher
             .dispatch(
                 continuation,
                 data_list.into_iter().map(|tuple| tuple.1).collect(),
                 is_replay,
                 previous_output,
             )
-            .await
+            .await;
+        log_op_step("after_dispatch");
+        result
     }
 
     async fn produce_peeks(
         &self,
         data_list: Vec<(Par, ListParWithRandom, ListParWithRandom, bool)>,
-    ) -> Vec<Pin<Box<dyn futures::Future<Output = Result<DispatchType, InterpreterError>> + std::marker::Send>>>
-    {
+    ) -> Vec<
+        Pin<
+            Box<
+                dyn futures::Future<Output = Result<DispatchType, InterpreterError>>
+                    + std::marker::Send,
+            >,
+        >,
+    > {
         // println!("\nreduce produce_peeks");
         data_list
             .into_iter()
             .filter(|(_, _, _, persist)| !persist)
             .map(|(chan, _, removed_data, _)| {
                 let self_clone = self.clone();
-                Box::pin(async move {
-                    self_clone.produce(chan, removed_data, false).await
-                }) as Pin<
-                    Box<dyn futures::Future<Output = Result<DispatchType, InterpreterError>> + std::marker::Send>,
-                >
+                Box::pin(async move { self_clone.produce(chan, removed_data, false).await })
+                    as Pin<
+                        Box<
+                            dyn futures::Future<Output = Result<DispatchType, InterpreterError>>
+                                + std::marker::Send,
+                        >,
+                    >
             })
             .collect()
     }
@@ -670,11 +986,21 @@ impl DebruijnInterpreter {
             // - if one execution path hits these, the whole evaluation stops as well
             // UserAbortError takes precedence over OutOfPhlogistonsError
             // Use single-pass find() to avoid double iteration
-            err_list if err_list.iter().find(|e| matches!(e, InterpreterError::UserAbortError)).is_some() => {
+            err_list
+                if err_list
+                    .iter()
+                    .find(|e| matches!(e, InterpreterError::UserAbortError))
+                    .is_some() =>
+            {
                 Err(InterpreterError::UserAbortError)
             }
 
-            err_list if err_list.iter().find(|e| matches!(e, InterpreterError::OutOfPhlogistonsError)).is_some() => {
+            err_list
+                if err_list
+                    .iter()
+                    .find(|e| matches!(e, InterpreterError::OutOfPhlogistonsError))
+                    .is_some() =>
+            {
                 Err(InterpreterError::OutOfPhlogistonsError)
             }
 
@@ -746,10 +1072,40 @@ impl DebruijnInterpreter {
         env: &Env<Par>,
         rand: Blake2b512Random,
     ) -> Result<(), InterpreterError> {
+        let op_mem_profile_enabled = *REDUCE_OP_PROFILE_ENABLED;
+        let mut op_rss_prev = if op_mem_profile_enabled {
+            read_vm_rss_kb()
+        } else {
+            None
+        };
+        let mut log_op_step = |step: &str| {
+            if !op_mem_profile_enabled {
+                return;
+            }
+            if let Some(curr) = read_vm_rss_kb() {
+                let prev = op_rss_prev.unwrap_or(curr);
+                let delta = curr as i64 - prev as i64;
+                if delta != 0 {
+                    eprintln!(
+                        "reduce_op.mem fn=eval_send step={} env_level={} send_data_len={} persistent={} rss_kb={} delta_prev_kb={}",
+                        step,
+                        env.level,
+                        send.data.len(),
+                        send.persistent,
+                        curr,
+                        delta
+                    );
+                }
+                op_rss_prev = Some(curr);
+            }
+        };
+        log_op_step("start");
         // println!("\nenv in eval_send: {:?}", env);
         self.cost.charge(send_eval_cost())?;
         let eval_chan = self.eval_expr(&unwrap_option_safe(send.chan.clone())?, env)?;
+        log_op_step("after_eval_chan");
         let sub_chan = self.substitute.substitute_and_charge(&eval_chan, 0, env)?;
+        log_op_step("after_substitute_chan");
         let unbundled = match single_bundle(&sub_chan) {
             Some(value) => {
                 if !value.write_flag {
@@ -763,17 +1119,15 @@ impl DebruijnInterpreter {
             None => sub_chan,
         };
 
-        let data = send
+        let subst_data = send
             .data
             .iter()
-            .map(|expr| self.eval_expr(expr, env))
+            .map(|expr| {
+                let evaluated = self.eval_expr(expr, env)?;
+                self.substitute.substitute_and_charge(&evaluated, 0, env)
+            })
             .collect::<Result<Vec<_>, InterpreterError>>()?;
-
-        let subst_data = data
-            .clone()
-            .into_iter()
-            .map(|p| self.substitute.substitute_and_charge(&p, 0, env))
-            .collect::<Result<Vec<_>, InterpreterError>>()?;
+        log_op_step("after_substitute_data");
 
         // println!("\ndata in eval_send: {:?}", data);
         // println!("\nsubst_data in eval_send: {:?}", subst_data);
@@ -790,6 +1144,7 @@ impl DebruijnInterpreter {
             send.persistent,
         )
         .await?;
+        log_op_step("after_produce");
         Ok(())
     }
 
@@ -799,6 +1154,53 @@ impl DebruijnInterpreter {
         env: &Env<Par>,
         rand: Blake2b512Random,
     ) -> Result<(), InterpreterError> {
+        let op_mem_profile_enabled = *REDUCE_OP_PROFILE_ENABLED;
+        let body_locally_free = receive
+            .body
+            .as_ref()
+            .map(|b| b.locally_free.clone())
+            .unwrap_or_default();
+        let body_subst_shift = env.shift + receive.bind_count;
+        let body_needs_subst = if body_subst_shift <= 0 {
+            body_locally_free.iter().any(|bit| *bit == 1)
+        } else {
+            let s = body_subst_shift as usize;
+            body_locally_free
+                .iter()
+                .enumerate()
+                .any(|(idx, bit)| *bit == 1 && idx >= s)
+        };
+        let mut op_rss_prev = if op_mem_profile_enabled {
+            read_vm_rss_kb()
+        } else {
+            None
+        };
+        let mut log_op_step = |step: &str| {
+            if !op_mem_profile_enabled {
+                return;
+            }
+            if let Some(curr) = read_vm_rss_kb() {
+                let prev = op_rss_prev.unwrap_or(curr);
+                let delta = curr as i64 - prev as i64;
+                if delta != 0 {
+                    eprintln!(
+                        "reduce_op.mem fn=eval_receive step={} env_level={} binds_len={} bind_count={} body_subst_shift={} body_needs_subst={} persistent={} peek={} rss_kb={} delta_prev_kb={}",
+                        step,
+                        env.level,
+                        receive.binds.len(),
+                        receive.bind_count,
+                        body_subst_shift,
+                        body_needs_subst,
+                        receive.persistent,
+                        receive.peek,
+                        curr,
+                        delta
+                    );
+                }
+                op_rss_prev = Some(curr);
+            }
+        };
+        log_op_step("start");
         // println!("\nreceive in eval_receive: {:?}", receive);
         // println!("\nreceive binds length: {:?}", receive.binds.len());
         self.cost.charge(receive_eval_cost())?;
@@ -828,6 +1230,7 @@ impl DebruijnInterpreter {
                 ))
             })
             .collect::<Result<Vec<_>, InterpreterError>>()?;
+        log_op_step("after_build_binds");
 
         // TODO: Allow for the environment to be stored with the body in the Tuplespace - OLD
         let subst_body = self.substitute.substitute_no_sort_and_charge(
@@ -835,6 +1238,7 @@ impl DebruijnInterpreter {
             0,
             &env.shift(receive.bind_count),
         )?;
+        log_op_step("after_substitute_body");
 
         // println!("\nbinds in eval_receive: {:?}", binds);
         // println!("\nsubst_body in eval_receive: {:?}", subst_body);
@@ -852,6 +1256,7 @@ impl DebruijnInterpreter {
             receive.peek,
         )
         .await?;
+        log_op_step("after_consume");
         Ok(())
     }
 
@@ -977,6 +1382,34 @@ impl DebruijnInterpreter {
         env: Env<Par>,
         mut rand: Blake2b512Random,
     ) -> Result<(), InterpreterError> {
+        let op_mem_profile_enabled = *REDUCE_OP_PROFILE_ENABLED;
+        let mut op_rss_prev = if op_mem_profile_enabled {
+            read_vm_rss_kb()
+        } else {
+            None
+        };
+        let mut log_op_step = |step: &str| {
+            if !op_mem_profile_enabled {
+                return;
+            }
+            if let Some(curr) = read_vm_rss_kb() {
+                let prev = op_rss_prev.unwrap_or(curr);
+                let delta = curr as i64 - prev as i64;
+                if delta != 0 {
+                    eprintln!(
+                        "reduce_op.mem fn=eval_new step={} env_level={} bind_count={} uri_len={} rss_kb={} delta_prev_kb={}",
+                        step,
+                        env.level,
+                        new.bind_count,
+                        new.uri.len(),
+                        curr,
+                        delta
+                    );
+                }
+                op_rss_prev = Some(curr);
+            }
+        };
+        log_op_step("start");
         // println!("\nnew in eval_new: {:?}", new);
         // println!("\nrand in eval_new");
         // rand.debug_str();
@@ -1059,12 +1492,17 @@ impl DebruijnInterpreter {
 
         // println!("\nhit eval_new");
         self.cost.charge(new_bindings_cost(new.bind_count as i64))?;
+        log_op_step("after_charge_new_bindings");
         // println!("\nnew uri: {:?}", new.uri);
         match alloc(new.bind_count as usize, new.uri.clone()) {
             Ok(env) => {
+                log_op_step("after_alloc");
                 // println!("\nenv in eval_new: {:?}", env);
-                self.eval(unwrap_option_safe(new.p.clone())?, &env, rand)
-                    .await
+                let result = self
+                    .eval(unwrap_option_safe(new.p.clone())?, &env, rand)
+                    .await;
+                log_op_step("after_eval_new_body");
+                result
             }
             Err(e) => Err(e),
         }
@@ -1228,12 +1666,14 @@ impl DebruijnInterpreter {
                     let v1 = self.eval_to_i64(&p1.clone().unwrap(), env)?;
                     let v2 = self.eval_to_i64(&p2.clone().unwrap(), env)?;
                     if v2 == 0 {
-                      return Err(InterpreterError::ReduceError("Division by zero".to_string()));
+                        return Err(InterpreterError::ReduceError(
+                            "Division by zero".to_string(),
+                        ));
                     }
                     if v1 == i64::MIN && v2 == -1 {
-                      return Err(InterpreterError::ReduceError(
-                          "Arithmetic overflow in division".to_string(),
-                      ));
+                        return Err(InterpreterError::ReduceError(
+                            "Arithmetic overflow in division".to_string(),
+                        ));
                     }
                     self.cost.charge(division_cost())?;
                     Ok(Expr {
@@ -1245,7 +1685,7 @@ impl DebruijnInterpreter {
                     let v1 = self.eval_to_i64(&p1.clone().unwrap(), env)?;
                     let v2 = self.eval_to_i64(&p2.clone().unwrap(), env)?;
                     if v2 == 0 {
-                      return Err(InterpreterError::ReduceError("Modulo by zero".to_string()));
+                        return Err(InterpreterError::ReduceError("Modulo by zero".to_string()));
                     }
                     self.cost.charge(modulo_cost())?;
                     Ok(Expr {
@@ -2198,11 +2638,18 @@ impl DebruijnInterpreter {
                         })
                     }
 
-                    (ExprInstance::EPathmapBody(base_pathmap), ExprInstance::EPathmapBody(other_pathmap)) => {
-                        let base_rmap = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&base_pathmap);
-                        let other_rmap = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&other_pathmap);
+                    (
+                        ExprInstance::EPathmapBody(base_pathmap),
+                        ExprInstance::EPathmapBody(other_pathmap),
+                    ) => {
+                        let base_rmap =
+                            PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&base_pathmap);
+                        let other_rmap =
+                            PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&other_pathmap);
 
-                        self.outer.cost.charge(union_cost(other_pathmap.ps.len() as i64))?;
+                        self.outer
+                            .cost
+                            .charge(union_cost(other_pathmap.ps.len() as i64))?;
                         let result_map = base_rmap.map.join(&other_rmap.map);
 
                         Ok(Expr {
@@ -2211,7 +2658,7 @@ impl DebruijnInterpreter {
                                     &result_map,
                                     base_rmap.connective_used || other_rmap.connective_used,
                                     &union(base_rmap.locally_free, other_rmap.locally_free),
-                                    None
+                                    None,
                                 ),
                             )),
                         })
@@ -2315,11 +2762,18 @@ impl DebruijnInterpreter {
                         })
                     }
 
-                    (ExprInstance::EPathmapBody(base_pathmap), ExprInstance::EPathmapBody(other_pathmap)) => {
-                        let base_rmap = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&base_pathmap);
-                        let other_rmap = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&other_pathmap);
+                    (
+                        ExprInstance::EPathmapBody(base_pathmap),
+                        ExprInstance::EPathmapBody(other_pathmap),
+                    ) => {
+                        let base_rmap =
+                            PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&base_pathmap);
+                        let other_rmap =
+                            PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&other_pathmap);
 
-                        self.outer.cost.charge(diff_cost(other_pathmap.ps.len() as i64))?;
+                        self.outer
+                            .cost
+                            .charge(diff_cost(other_pathmap.ps.len() as i64))?;
                         let result_map = base_rmap.map.subtract(&other_rmap.map);
 
                         Ok(Expr {
@@ -2328,7 +2782,7 @@ impl DebruijnInterpreter {
                                     &result_map,
                                     base_rmap.connective_used,
                                     &base_rmap.locally_free,
-                                    None
+                                    None,
                                 ),
                             )),
                         })
@@ -2373,16 +2827,27 @@ impl DebruijnInterpreter {
         }
 
         impl<'a> IntersectionMethod<'a> {
-            fn intersection(&self, base_expr: &Expr, other_expr: &Expr) -> Result<Expr, InterpreterError> {
+            fn intersection(
+                &self,
+                base_expr: &Expr,
+                other_expr: &Expr,
+            ) -> Result<Expr, InterpreterError> {
                 match (
                     base_expr.expr_instance.clone().unwrap(),
                     other_expr.expr_instance.clone().unwrap(),
                 ) {
-                    (ExprInstance::EPathmapBody(base_pathmap), ExprInstance::EPathmapBody(other_pathmap)) => {
-                        let base_rmap = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&base_pathmap);
-                        let other_rmap = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&other_pathmap);
+                    (
+                        ExprInstance::EPathmapBody(base_pathmap),
+                        ExprInstance::EPathmapBody(other_pathmap),
+                    ) => {
+                        let base_rmap =
+                            PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&base_pathmap);
+                        let other_rmap =
+                            PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&other_pathmap);
 
-                        self.outer.cost.charge(union_cost(other_pathmap.ps.len() as i64))?;
+                        self.outer
+                            .cost
+                            .charge(union_cost(other_pathmap.ps.len() as i64))?;
                         let result_map = base_rmap.map.meet(&other_rmap.map);
 
                         Ok(Expr {
@@ -2391,7 +2856,7 @@ impl DebruijnInterpreter {
                                     &result_map,
                                     base_rmap.connective_used || other_rmap.connective_used,
                                     &union(base_rmap.locally_free, other_rmap.locally_free),
-                                    None
+                                    None,
                                 ),
                             )),
                         })
@@ -2437,16 +2902,27 @@ impl DebruijnInterpreter {
         }
 
         impl<'a> RestrictionMethod<'a> {
-            fn restriction(&self, base_expr: &Expr, other_expr: &Expr) -> Result<Expr, InterpreterError> {
+            fn restriction(
+                &self,
+                base_expr: &Expr,
+                other_expr: &Expr,
+            ) -> Result<Expr, InterpreterError> {
                 match (
                     base_expr.expr_instance.clone().unwrap(),
                     other_expr.expr_instance.clone().unwrap(),
                 ) {
-                    (ExprInstance::EPathmapBody(base_pathmap), ExprInstance::EPathmapBody(other_pathmap)) => {
-                        let base_rmap = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&base_pathmap);
-                        let other_rmap = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&other_pathmap);
+                    (
+                        ExprInstance::EPathmapBody(base_pathmap),
+                        ExprInstance::EPathmapBody(other_pathmap),
+                    ) => {
+                        let base_rmap =
+                            PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&base_pathmap);
+                        let other_rmap =
+                            PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&other_pathmap);
 
-                        self.outer.cost.charge(union_cost(other_pathmap.ps.len() as i64))?;
+                        self.outer
+                            .cost
+                            .charge(union_cost(other_pathmap.ps.len() as i64))?;
                         let result_map = base_rmap.map.restrict(&other_rmap.map);
 
                         Ok(Expr {
@@ -2455,7 +2931,7 @@ impl DebruijnInterpreter {
                                     &result_map,
                                     base_rmap.connective_used,
                                     &base_rmap.locally_free,
-                                    None
+                                    None,
                                 ),
                             )),
                         })
@@ -2504,19 +2980,25 @@ impl DebruijnInterpreter {
             fn drop_head(&self, base_expr: &Expr, n: i64) -> Result<Expr, InterpreterError> {
                 match base_expr.expr_instance.clone().unwrap() {
                     ExprInstance::EPathmapBody(base_pathmap) => {
-                        let base_rmap = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&base_pathmap);
+                        let base_rmap =
+                            PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&base_pathmap);
                         if n < 0 {
-                            return Err(InterpreterError::ReduceError(format!("dropHead argument must be non-negative, got: {}", n)));
+                            return Err(InterpreterError::ReduceError(format!(
+                                "dropHead argument must be non-negative, got: {}",
+                                n
+                            )));
                         }
                         self.outer.cost.charge(union_cost(n))?;
 
                         // For dropHead, we need to return a new EPathMap with modified path elements
                         // Instead of using PathMap, directly construct the result elements
                         let mut result_elements = Vec::new();
-                        
+
                         for par in &base_pathmap.ps {
                             // Check if this Par is a list
-                            if let Some(models::rhoapi::expr::ExprInstance::EListBody(list)) = par.exprs.first().and_then(|e| e.expr_instance.as_ref()) {
+                            if let Some(models::rhoapi::expr::ExprInstance::EListBody(list)) =
+                                par.exprs.first().and_then(|e| e.expr_instance.as_ref())
+                            {
                                 // It's a list - drop n elements from the beginning
                                 if list.ps.len() > n as usize {
                                     let remaining = list.ps[(n as usize)..].to_vec();
@@ -2528,7 +3010,11 @@ impl DebruijnInterpreter {
                                     };
                                     let new_par = Par {
                                         exprs: vec![models::rhoapi::Expr {
-                                            expr_instance: Some(models::rhoapi::expr::ExprInstance::EListBody(new_list)),
+                                            expr_instance: Some(
+                                                models::rhoapi::expr::ExprInstance::EListBody(
+                                                    new_list,
+                                                ),
+                                            ),
                                         }],
                                         ..par.clone()
                                     };
@@ -2550,7 +3036,7 @@ impl DebruijnInterpreter {
                                     locally_free: base_rmap.locally_free.clone(),
                                     connective_used: base_rmap.connective_used,
                                     remainder: None,
-                                }
+                                },
                             )),
                         })
                     }
@@ -2600,7 +3086,7 @@ impl DebruijnInterpreter {
                     ExprInstance::EPathmapBody(base_pathmap) => {
                         // For run method, we ignore the other parameter and return self
                         self.outer.cost.charge(union_cost(1))?;
-                        
+
                         // Simply return the base PathMap unchanged
                         Ok(Expr {
                             expr_instance: Some(ExprInstance::EPathmapBody(base_pathmap)),
@@ -2654,7 +3140,7 @@ impl DebruijnInterpreter {
                         // Create an EZipper from the PathMap
                         let ezipper = EZipper {
                             pathmap: Some(pathmap),
-                            current_path: vec![],  // Start at root
+                            current_path: vec![], // Start at root
                             is_write_zipper: false,
                             locally_free: vec![],
                             connective_used: false,
@@ -2701,19 +3187,23 @@ impl DebruijnInterpreter {
         }
 
         impl<'a> ReadZipperAtMethod<'a> {
-            fn create_read_zipper_at(&self, base_expr: &Expr, path_par: &Par) -> Result<Expr, InterpreterError> {
+            fn create_read_zipper_at(
+                &self,
+                base_expr: &Expr,
+                path_par: &Par,
+            ) -> Result<Expr, InterpreterError> {
                 match base_expr.expr_instance.clone().unwrap() {
                     ExprInstance::EPathmapBody(pathmap) => {
                         use models::rust::pathmap_integration::par_to_path;
-                        
+
                         // Convert the path argument to byte segments
                         let path_segments = par_to_path(path_par);
-                        
+
                         // Store the COMPLETE ORIGINAL PathMap for correct operations
                         // Display will show absolute paths, but operations will work correctly
                         // TODO: To show relative paths in display, we'd need to modify serialization/display code
                         let complete_pathmap = pathmap.clone();
-                        
+
                         // Create an EZipper with the complete PathMap
                         // current_path indicates the position within the complete tree
                         let ezipper = EZipper {
@@ -2723,7 +3213,7 @@ impl DebruijnInterpreter {
                             locally_free: pathmap.locally_free.clone(),
                             connective_used: pathmap.connective_used,
                         };
-                        
+
                         Ok(Expr {
                             expr_instance: Some(ExprInstance::EZipperBody(ezipper)),
                         })
@@ -2773,7 +3263,7 @@ impl DebruijnInterpreter {
                         // Create an EZipper for writing
                         let ezipper = EZipper {
                             pathmap: Some(pathmap),
-                            current_path: vec![],  // Start at root
+                            current_path: vec![], // Start at root
                             is_write_zipper: true,
                             locally_free: vec![],
                             connective_used: false,
@@ -2820,17 +3310,21 @@ impl DebruijnInterpreter {
         }
 
         impl<'a> WriteZipperAtMethod<'a> {
-            fn create_write_zipper_at(&self, base_expr: &Expr, path_par: &Par) -> Result<Expr, InterpreterError> {
+            fn create_write_zipper_at(
+                &self,
+                base_expr: &Expr,
+                path_par: &Par,
+            ) -> Result<Expr, InterpreterError> {
                 match base_expr.expr_instance.clone().unwrap() {
                     ExprInstance::EPathmapBody(pathmap) => {
                         use models::rust::pathmap_integration::par_to_path;
-                        
+
                         // Convert the path argument to byte segments
                         let path_segments = par_to_path(path_par);
-                        
+
                         // Store the COMPLETE ORIGINAL PathMap for correct operations
                         let complete_pathmap = pathmap.clone();
-                        
+
                         // Create an EZipper with the complete PathMap (write mode)
                         let ezipper = EZipper {
                             pathmap: Some(complete_pathmap),
@@ -2839,7 +3333,7 @@ impl DebruijnInterpreter {
                             locally_free: pathmap.locally_free.clone(),
                             connective_used: pathmap.connective_used,
                         };
-                        
+
                         Ok(Expr {
                             expr_instance: Some(ExprInstance::EZipperBody(ezipper)),
                         })
@@ -2883,18 +3377,22 @@ impl DebruijnInterpreter {
         }
 
         impl<'a> DescendToMethod<'a> {
-            fn descend_to(&self, base_expr: &Expr, path_par: &Par) -> Result<Expr, InterpreterError> {
+            fn descend_to(
+                &self,
+                base_expr: &Expr,
+                path_par: &Par,
+            ) -> Result<Expr, InterpreterError> {
                 match base_expr.expr_instance.clone().unwrap() {
                     ExprInstance::EZipperBody(mut zipper) => {
                         use models::rust::pathmap_integration::par_to_path;
-                        
+
                         // Convert the path argument to byte segments
                         let path_segments = par_to_path(path_par);
-                        
+
                         // Update the zipper's current_path to navigate to the new location
                         // Append the new path segments to the current path
                         zipper.current_path.extend(path_segments);
-                        
+
                         Ok(Expr {
                             expr_instance: Some(ExprInstance::EZipperBody(zipper)),
                         })
@@ -2943,17 +3441,22 @@ impl DebruijnInterpreter {
                     ExprInstance::EZipperBody(zipper) => {
                         // Get the pathmap from the zipper
                         let pathmap = zipper.pathmap.as_ref().expect("zipper pathmap was None");
-                        let pathmap_result = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(pathmap);
+                        let pathmap_result =
+                            PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(pathmap);
                         let rholang_pathmap = pathmap_result.map;
-                        
+
                         // Use the zipper's current_path to look up the value
                         // Build the key from current_path segments (same encoding as create_pathmap_from_elements)
-                        let key: Vec<u8> = zipper.current_path.iter().flat_map(|seg| {
-                            let mut s = seg.clone();
-                            s.push(0xFF); // separator
-                            s
-                        }).collect();
-                        
+                        let key: Vec<u8> = zipper
+                            .current_path
+                            .iter()
+                            .flat_map(|seg| {
+                                let mut s = seg.clone();
+                                s.push(0xFF); // separator
+                                s
+                            })
+                            .collect();
+
                         // Look up value at this path
                         if let Some(value) = rholang_pathmap.get(&key) {
                             Ok(value.clone())
@@ -2963,16 +3466,17 @@ impl DebruijnInterpreter {
                     }
                     ExprInstance::EPathmapBody(pathmap) => {
                         // Convert EPathMap to RholangPathMap
-                        let pathmap_result = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&pathmap);
+                        let pathmap_result =
+                            PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&pathmap);
                         let rholang_pathmap = pathmap_result.map;
-                        
+
                         // Create a read zipper and get the value at current position
                         let read_zipper = RholangReadZipper::new(
                             &rholang_pathmap,
                             pathmap_result.connective_used,
                             pathmap_result.locally_free,
                         );
-                        
+
                         // Get value at current position (root)
                         if let Some(value) = read_zipper.get_val() {
                             Ok(value.clone())
@@ -3022,16 +3526,21 @@ impl DebruijnInterpreter {
                     ExprInstance::EZipperBody(zipper) => {
                         // Get the pathmap from the zipper
                         let pathmap = zipper.pathmap.as_ref().expect("zipper pathmap was None");
-                        let pathmap_result = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(pathmap);
+                        let pathmap_result =
+                            PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(pathmap);
                         let rholang_pathmap = pathmap_result.map;
-                        
+
                         // Build prefix key from current_path
-                        let prefix_key: Vec<u8> = zipper.current_path.iter().flat_map(|seg| {
-                            let mut s = seg.clone();
-                            s.push(0xFF); // separator
-                            s
-                        }).collect();
-                        
+                        let prefix_key: Vec<u8> = zipper
+                            .current_path
+                            .iter()
+                            .flat_map(|seg| {
+                                let mut s = seg.clone();
+                                s.push(0xFF); // separator
+                                s
+                            })
+                            .collect();
+
                         // Collect all entries with this prefix
                         let mut subtrie_elements = Vec::new();
                         for (key, value) in rholang_pathmap.iter() {
@@ -3039,7 +3548,7 @@ impl DebruijnInterpreter {
                                 subtrie_elements.push(value.clone());
                             }
                         }
-                        
+
                         // Return as PathMap
                         Ok(Par::default().with_exprs(vec![Expr {
                             expr_instance: Some(ExprInstance::EPathmapBody(EPathMap {
@@ -3151,25 +3660,42 @@ impl DebruijnInterpreter {
         }
 
         impl<'a> SetSubtrieMethod<'a> {
-            fn set_subtrie(&self, base_expr: &Expr, source_par: &Par) -> Result<Expr, InterpreterError> {
-                match (base_expr.expr_instance.clone().unwrap(), 
-                       source_par.exprs.first().and_then(|e| e.expr_instance.clone())) {
-                    
+            fn set_subtrie(
+                &self,
+                base_expr: &Expr,
+                source_par: &Par,
+            ) -> Result<Expr, InterpreterError> {
+                match (
+                    base_expr.expr_instance.clone().unwrap(),
+                    source_par
+                        .exprs
+                        .first()
+                        .and_then(|e| e.expr_instance.clone()),
+                ) {
                     // Only works on write zippers
-                    (ExprInstance::EZipperBody(zipper), Some(ExprInstance::EPathmapBody(source))) 
-                        if zipper.is_write_zipper => {
-                        
+                    (
+                        ExprInstance::EZipperBody(zipper),
+                        Some(ExprInstance::EPathmapBody(source)),
+                    ) if zipper.is_write_zipper => {
                         // Step 1: Extract base PathMap and build prefix
                         let pathmap = zipper.pathmap.expect("zipper pathmap was None");
-                        let pathmap_result = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&pathmap);
+                        let pathmap_result =
+                            PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&pathmap);
                         let mut rholang_pathmap = pathmap_result.map;
-                        
-                        let prefix_key: Vec<u8> = zipper.current_path.iter()
-                            .flat_map(|seg| { let mut s = seg.clone(); s.push(0xFF); s })
+
+                        let prefix_key: Vec<u8> = zipper
+                            .current_path
+                            .iter()
+                            .flat_map(|seg| {
+                                let mut s = seg.clone();
+                                s.push(0xFF);
+                                s
+                            })
                             .collect();
-                        
+
                         // Step 2: Remove all entries with this prefix
-                        let keys_to_remove: Vec<Vec<u8>> = rholang_pathmap.iter()
+                        let keys_to_remove: Vec<Vec<u8>> = rholang_pathmap
+                            .iter()
                             .filter_map(|(key, _)| {
                                 if key.starts_with(&prefix_key) {
                                     Some(key.clone())
@@ -3178,52 +3704,67 @@ impl DebruijnInterpreter {
                                 }
                             })
                             .collect();
-                        
+
                         for key in keys_to_remove {
                             rholang_pathmap.remove(&key);
                         }
-                        
+
                         // Step 3: Add source entries with prepended prefix
                         for source_entry in source.ps.iter() {
                             use models::rust::pathmap_integration::par_to_path;
                             let source_segments = par_to_path(source_entry);
-                            
+
                             // Prepend current_path to make absolute
                             let mut absolute_segments = zipper.current_path.clone();
                             absolute_segments.extend(source_segments.clone());
-                            
+
                             // Encode as key
-                            let key: Vec<u8> = absolute_segments.iter()
-                                .flat_map(|seg| { let mut s = seg.clone(); s.push(0xFF); s })
+                            let key: Vec<u8> = absolute_segments
+                                .iter()
+                                .flat_map(|seg| {
+                                    let mut s = seg.clone();
+                                    s.push(0xFF);
+                                    s
+                                })
                                 .collect();
-                            
+
                             // Build the Par that represents the absolute path
                             // Extract elements from an existing entry to understand their structure
                             let mut absolute_elements = Vec::new();
-                            
+
                             // Find an existing entry that starts with current_path
-                            let found_existing = if let Some(existing_entry) = pathmap.ps.iter().find(|entry| {
-                                if let Some(ExprInstance::EListBody(existing_list)) = &entry.exprs.first().and_then(|e| e.expr_instance.as_ref()) {
-                                    if existing_list.ps.len() < zipper.current_path.len() {
-                                        return false;
+                            let found_existing = if let Some(existing_entry) =
+                                pathmap.ps.iter().find(|entry| {
+                                    if let Some(ExprInstance::EListBody(existing_list)) =
+                                        &entry.exprs.first().and_then(|e| e.expr_instance.as_ref())
+                                    {
+                                        if existing_list.ps.len() < zipper.current_path.len() {
+                                            return false;
+                                        }
+                                        // Check if the entry actually starts with current_path
+                                        use models::rust::pathmap_integration::par_to_path;
+                                        let entry_segments = par_to_path(entry);
+                                        entry_segments.starts_with(&zipper.current_path)
+                                    } else {
+                                        false
                                     }
-                                    // Check if the entry actually starts with current_path
-                                    use models::rust::pathmap_integration::par_to_path;
-                                    let entry_segments = par_to_path(entry);
-                                    entry_segments.starts_with(&zipper.current_path)
-                                } else {
-                                    false
-                                }
-                            }) {
-                                if let Some(ExprInstance::EListBody(existing_list)) = &existing_entry.exprs.first().and_then(|e| e.expr_instance.as_ref()) {
+                                }) {
+                                if let Some(ExprInstance::EListBody(existing_list)) =
+                                    &existing_entry
+                                        .exprs
+                                        .first()
+                                        .and_then(|e| e.expr_instance.as_ref())
+                                {
                                     // Take first N elements where N = current_path length
-                                    absolute_elements.extend(existing_list.ps[..zipper.current_path.len()].to_vec());
+                                    absolute_elements.extend(
+                                        existing_list.ps[..zipper.current_path.len()].to_vec(),
+                                    );
                                 }
                                 true
                             } else {
                                 false
                             };
-                            
+
                             // If no existing entry found, reconstruct Par elements from current_path bytes
                             if !found_existing {
                                 use models::rust::path_map_encoder::SExpr;
@@ -3232,66 +3773,95 @@ impl DebruijnInterpreter {
                                     if let Ok(sexpr) = SExpr::decode(segment_bytes) {
                                         if let SExpr::Symbol(mut s) = sexpr {
                                             // Strip quotes if present (S-expr includes them for string literals)
-                                            if s.starts_with('"') && s.ends_with('"') && s.len() >= 2 {
-                                                s = s[1..s.len()-1].to_string();
+                                            if s.starts_with('"')
+                                                && s.ends_with('"')
+                                                && s.len() >= 2
+                                            {
+                                                s = s[1..s.len() - 1].to_string();
                                             }
-                                            absolute_elements.push(new_gstring_par(s, vec![], false));
+                                            absolute_elements.push(new_gstring_par(
+                                                s,
+                                                vec![],
+                                                false,
+                                            ));
                                         }
                                     }
                                 }
                             }
-                            
+
                             // Add source_entry's elements
-                            if let Some(ExprInstance::EListBody(source_list)) = &source_entry.exprs.first().and_then(|e| e.expr_instance.as_ref()) {
+                            if let Some(ExprInstance::EListBody(source_list)) = &source_entry
+                                .exprs
+                                .first()
+                                .and_then(|e| e.expr_instance.as_ref())
+                            {
                                 absolute_elements.extend(source_list.ps.clone());
                             }
-                            
+
                             // Create the absolute path Par
                             let absolute_path_par = Par::default().with_exprs(vec![Expr {
-                                expr_instance: Some(ExprInstance::EListBody(models::rhoapi::EList {
-                                    ps: absolute_elements,
-                                    locally_free: vec![],
-                                    connective_used: false,
-                                    remainder: None,
-                                })),
+                                expr_instance: Some(ExprInstance::EListBody(
+                                    models::rhoapi::EList {
+                                        ps: absolute_elements,
+                                        locally_free: vec![],
+                                        connective_used: false,
+                                        remainder: None,
+                                    },
+                                )),
                             }]);
-                            
+
                             rholang_pathmap.insert(key, absolute_path_par);
                         }
-                        
+
                         // Step 3b: If source is empty, add current_path as entry
                         if source.ps.is_empty() && !zipper.current_path.is_empty() {
                             // Encode current_path as key
-                            let key: Vec<u8> = zipper.current_path.iter()
-                                .flat_map(|seg| { let mut s = seg.clone(); s.push(0xFF); s })
+                            let key: Vec<u8> = zipper
+                                .current_path
+                                .iter()
+                                .flat_map(|seg| {
+                                    let mut s = seg.clone();
+                                    s.push(0xFF);
+                                    s
+                                })
                                 .collect();
-                            
+
                             // Build the Par for current_path
                             let mut absolute_elements = Vec::new();
-                            
+
                             // Find an existing entry that starts with current_path
-                            let found_existing = if let Some(existing_entry) = pathmap.ps.iter().find(|entry| {
-                                if let Some(ExprInstance::EListBody(existing_list)) = &entry.exprs.first().and_then(|e| e.expr_instance.as_ref()) {
-                                    if existing_list.ps.len() < zipper.current_path.len() {
-                                        return false;
+                            let found_existing = if let Some(existing_entry) =
+                                pathmap.ps.iter().find(|entry| {
+                                    if let Some(ExprInstance::EListBody(existing_list)) =
+                                        &entry.exprs.first().and_then(|e| e.expr_instance.as_ref())
+                                    {
+                                        if existing_list.ps.len() < zipper.current_path.len() {
+                                            return false;
+                                        }
+                                        // Check if the entry actually starts with current_path
+                                        use models::rust::pathmap_integration::par_to_path;
+                                        let entry_segments = par_to_path(entry);
+                                        entry_segments.starts_with(&zipper.current_path)
+                                    } else {
+                                        false
                                     }
-                                    // Check if the entry actually starts with current_path
-                                    use models::rust::pathmap_integration::par_to_path;
-                                    let entry_segments = par_to_path(entry);
-                                    entry_segments.starts_with(&zipper.current_path)
-                                } else {
-                                    false
-                                }
-                            }) {
-                                if let Some(ExprInstance::EListBody(existing_list)) = &existing_entry.exprs.first().and_then(|e| e.expr_instance.as_ref()) {
+                                }) {
+                                if let Some(ExprInstance::EListBody(existing_list)) =
+                                    &existing_entry
+                                        .exprs
+                                        .first()
+                                        .and_then(|e| e.expr_instance.as_ref())
+                                {
                                     // Take first N elements where N = current_path length
-                                    absolute_elements.extend(existing_list.ps[..zipper.current_path.len()].to_vec());
+                                    absolute_elements.extend(
+                                        existing_list.ps[..zipper.current_path.len()].to_vec(),
+                                    );
                                 }
                                 true
                             } else {
                                 false
                             };
-                            
+
                             // If no existing entry found, reconstruct Par elements from current_path bytes
                             if !found_existing {
                                 use models::rust::path_map_encoder::SExpr;
@@ -3300,28 +3870,37 @@ impl DebruijnInterpreter {
                                     if let Ok(sexpr) = SExpr::decode(segment_bytes) {
                                         if let SExpr::Symbol(mut s) = sexpr {
                                             // Strip quotes if present (S-expr includes them for string literals)
-                                            if s.starts_with('"') && s.ends_with('"') && s.len() >= 2 {
-                                                s = s[1..s.len()-1].to_string();
+                                            if s.starts_with('"')
+                                                && s.ends_with('"')
+                                                && s.len() >= 2
+                                            {
+                                                s = s[1..s.len() - 1].to_string();
                                             }
-                                            absolute_elements.push(new_gstring_par(s, vec![], false));
+                                            absolute_elements.push(new_gstring_par(
+                                                s,
+                                                vec![],
+                                                false,
+                                            ));
                                         }
                                     }
                                 }
                             }
-                            
+
                             // Create the Par for current_path
                             let current_path_par = Par::default().with_exprs(vec![Expr {
-                                expr_instance: Some(ExprInstance::EListBody(models::rhoapi::EList {
-                                    ps: absolute_elements,
-                                    locally_free: vec![],
-                                    connective_used: false,
-                                    remainder: None,
-                                })),
+                                expr_instance: Some(ExprInstance::EListBody(
+                                    models::rhoapi::EList {
+                                        ps: absolute_elements,
+                                        locally_free: vec![],
+                                        connective_used: false,
+                                        remainder: None,
+                                    },
+                                )),
                             }]);
-                            
+
                             rholang_pathmap.insert(key, current_path_par);
                         }
-                        
+
                         // Step 4: Convert back to EPathMap
                         let result_pathmap = PathMapCrateTypeMapper::rholang_pathmap_to_e_pathmap(
                             &rholang_pathmap,
@@ -3329,12 +3908,12 @@ impl DebruijnInterpreter {
                             &pathmap_result.locally_free,
                             None,
                         );
-                        
+
                         Ok(Expr {
                             expr_instance: Some(ExprInstance::EPathmapBody(result_pathmap)),
                         })
                     }
-                    
+
                     // Error cases
                     (ExprInstance::EZipperBody(zipper), _) if !zipper.is_write_zipper => {
                         Err(InterpreterError::MethodNotDefined {
@@ -3345,13 +3924,18 @@ impl DebruijnInterpreter {
                     (other, _) => Err(InterpreterError::MethodNotDefined {
                         method: String::from("setSubtrie"),
                         other_type: get_type(other),
-                    })
+                    }),
                 }
             }
         }
 
         impl<'a> Method for SetSubtrieMethod<'a> {
-            fn apply(&self, p: Par, args: Vec<Par>, env: &Env<Par>) -> Result<Par, InterpreterError> {
+            fn apply(
+                &self,
+                p: Par,
+                args: Vec<Par>,
+                env: &Env<Par>,
+            ) -> Result<Par, InterpreterError> {
                 if args.len() != 1 {
                     return Err(InterpreterError::MethodArgumentNumberMismatch {
                         method: String::from("setSubtrie"),
@@ -3381,19 +3965,24 @@ impl DebruijnInterpreter {
                     ExprInstance::EZipperBody(zipper) => {
                         // Extract pathmap from zipper
                         let pathmap = zipper.pathmap.expect("zipper pathmap was None");
-                        let pathmap_result = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&pathmap);
+                        let pathmap_result =
+                            PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&pathmap);
                         let mut rholang_pathmap = pathmap_result.map;
-                        
+
                         // Build key from current_path
-                        let key: Vec<u8> = zipper.current_path.iter().flat_map(|seg| {
-                            let mut s = seg.clone();
-                            s.push(0xFF); // separator
-                            s
-                        }).collect();
-                        
+                        let key: Vec<u8> = zipper
+                            .current_path
+                            .iter()
+                            .flat_map(|seg| {
+                                let mut s = seg.clone();
+                                s.push(0xFF); // separator
+                                s
+                            })
+                            .collect();
+
                         // Remove value at this path
                         rholang_pathmap.remove(&key);
-                        
+
                         // Convert back to EPathMap
                         let result_pathmap = PathMapCrateTypeMapper::rholang_pathmap_to_e_pathmap(
                             &rholang_pathmap,
@@ -3401,7 +3990,7 @@ impl DebruijnInterpreter {
                             &pathmap_result.locally_free,
                             None,
                         );
-                        
+
                         Ok(Expr {
                             expr_instance: Some(ExprInstance::EPathmapBody(result_pathmap)),
                         })
@@ -3456,16 +4045,21 @@ impl DebruijnInterpreter {
                     ExprInstance::EZipperBody(zipper) => {
                         // Extract pathmap from zipper
                         let pathmap = zipper.pathmap.expect("zipper pathmap was None");
-                        let pathmap_result = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&pathmap);
+                        let pathmap_result =
+                            PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&pathmap);
                         let mut rholang_pathmap = pathmap_result.map;
-                        
+
                         // Build prefix key from current_path
-                        let prefix_key: Vec<u8> = zipper.current_path.iter().flat_map(|seg| {
-                            let mut s = seg.clone();
-                            s.push(0xFF); // separator
-                            s
-                        }).collect();
-                        
+                        let prefix_key: Vec<u8> = zipper
+                            .current_path
+                            .iter()
+                            .flat_map(|seg| {
+                                let mut s = seg.clone();
+                                s.push(0xFF); // separator
+                                s
+                            })
+                            .collect();
+
                         // Remove all branches with this prefix
                         // Collect keys to remove (can't modify while iterating)
                         let keys_to_remove: Vec<Vec<u8>> = rholang_pathmap
@@ -3478,12 +4072,12 @@ impl DebruijnInterpreter {
                                 }
                             })
                             .collect();
-                        
+
                         // Remove the collected keys
                         for key in keys_to_remove {
                             rholang_pathmap.remove(&key);
                         }
-                        
+
                         // Convert back to EPathMap
                         let result_pathmap = PathMapCrateTypeMapper::rholang_pathmap_to_e_pathmap(
                             &rholang_pathmap,
@@ -3491,7 +4085,7 @@ impl DebruijnInterpreter {
                             &pathmap_result.locally_free,
                             None,
                         );
-                        
+
                         Ok(Expr {
                             expr_instance: Some(ExprInstance::EPathmapBody(result_pathmap)),
                         })
@@ -3499,12 +4093,14 @@ impl DebruijnInterpreter {
                     ExprInstance::EPathmapBody(pathmap) => {
                         // Remove all branches below current position (root = remove everything)
                         Ok(Expr {
-                            expr_instance: Some(ExprInstance::EPathmapBody(models::rhoapi::EPathMap {
-                                ps: vec![],
-                                locally_free: pathmap.locally_free,
-                                connective_used: pathmap.connective_used,
-                                remainder: pathmap.remainder,
-                            })),
+                            expr_instance: Some(ExprInstance::EPathmapBody(
+                                models::rhoapi::EPathMap {
+                                    ps: vec![],
+                                    locally_free: pathmap.locally_free,
+                                    connective_used: pathmap.connective_used,
+                                    remainder: pathmap.remainder,
+                                },
+                            )),
                         })
                     }
                     other => Err(InterpreterError::MethodNotDefined {
@@ -3545,47 +4141,69 @@ impl DebruijnInterpreter {
         }
 
         impl<'a> GraftMethod<'a> {
-            fn graft(&self, base_expr: &Expr, source_expr: &Expr) -> Result<Expr, InterpreterError> {
+            fn graft(
+                &self,
+                base_expr: &Expr,
+                source_expr: &Expr,
+            ) -> Result<Expr, InterpreterError> {
                 match (
                     base_expr.expr_instance.clone().unwrap(),
                     source_expr.expr_instance.clone().unwrap(),
                 ) {
                     // Both are zippers
-                    (ExprInstance::EZipperBody(dest_zipper), ExprInstance::EZipperBody(source_zipper)) => {
-                        let mut dest_pathmap = dest_zipper.pathmap.expect("dest zipper pathmap was None");
-                        let source_pathmap = source_zipper.pathmap.expect("source zipper pathmap was None");
-                        
+                    (
+                        ExprInstance::EZipperBody(dest_zipper),
+                        ExprInstance::EZipperBody(source_zipper),
+                    ) => {
+                        let mut dest_pathmap =
+                            dest_zipper.pathmap.expect("dest zipper pathmap was None");
+                        let source_pathmap = source_zipper
+                            .pathmap
+                            .expect("source zipper pathmap was None");
+
                         // Graft: copy subtrie from source to destination
                         dest_pathmap.ps.extend(source_pathmap.ps);
-                        
+
                         Ok(Expr {
                             expr_instance: Some(ExprInstance::EPathmapBody(dest_pathmap)),
                         })
                     }
                     // Destination is zipper, source is PathMap
-                    (ExprInstance::EZipperBody(dest_zipper), ExprInstance::EPathmapBody(source_pathmap)) => {
-                        let mut dest_pathmap = dest_zipper.pathmap.expect("dest zipper pathmap was None");
-                        
+                    (
+                        ExprInstance::EZipperBody(dest_zipper),
+                        ExprInstance::EPathmapBody(source_pathmap),
+                    ) => {
+                        let mut dest_pathmap =
+                            dest_zipper.pathmap.expect("dest zipper pathmap was None");
+
                         // Graft: copy subtrie from source to destination
                         dest_pathmap.ps.extend(source_pathmap.ps);
-                        
+
                         Ok(Expr {
                             expr_instance: Some(ExprInstance::EPathmapBody(dest_pathmap)),
                         })
                     }
                     // Destination is PathMap, source is zipper
-                    (ExprInstance::EPathmapBody(mut dest_pathmap), ExprInstance::EZipperBody(source_zipper)) => {
-                        let source_pathmap = source_zipper.pathmap.expect("source zipper pathmap was None");
-                        
+                    (
+                        ExprInstance::EPathmapBody(mut dest_pathmap),
+                        ExprInstance::EZipperBody(source_zipper),
+                    ) => {
+                        let source_pathmap = source_zipper
+                            .pathmap
+                            .expect("source zipper pathmap was None");
+
                         // Graft: copy subtrie from source to destination
                         dest_pathmap.ps.extend(source_pathmap.ps);
-                        
+
                         Ok(Expr {
                             expr_instance: Some(ExprInstance::EPathmapBody(dest_pathmap)),
                         })
                     }
                     // Both are PathMaps (existing case)
-                    (ExprInstance::EPathmapBody(mut dest_pathmap), ExprInstance::EPathmapBody(source_pathmap)) => {
+                    (
+                        ExprInstance::EPathmapBody(mut dest_pathmap),
+                        ExprInstance::EPathmapBody(source_pathmap),
+                    ) => {
                         // Graft: copy subtrie from source to destination
                         dest_pathmap.ps.extend(source_pathmap.ps);
                         Ok(Expr {
@@ -3631,20 +4249,34 @@ impl DebruijnInterpreter {
         }
 
         impl<'a> JoinIntoMethod<'a> {
-            fn join_into(&self, base_expr: &Expr, source_expr: &Expr) -> Result<Expr, InterpreterError> {
+            fn join_into(
+                &self,
+                base_expr: &Expr,
+                source_expr: &Expr,
+            ) -> Result<Expr, InterpreterError> {
                 match (
                     base_expr.expr_instance.clone().unwrap(),
                     source_expr.expr_instance.clone().unwrap(),
                 ) {
                     // Both are zippers
-                    (ExprInstance::EZipperBody(base_zipper), ExprInstance::EZipperBody(source_zipper)) => {
-                        let base_pathmap = base_zipper.pathmap.expect("base zipper pathmap was None");
-                        let source_pathmap = source_zipper.pathmap.expect("source zipper pathmap was None");
-                        
-                        let base_rmap = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&base_pathmap);
-                        let source_rmap = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&source_pathmap);
+                    (
+                        ExprInstance::EZipperBody(base_zipper),
+                        ExprInstance::EZipperBody(source_zipper),
+                    ) => {
+                        let base_pathmap =
+                            base_zipper.pathmap.expect("base zipper pathmap was None");
+                        let source_pathmap = source_zipper
+                            .pathmap
+                            .expect("source zipper pathmap was None");
 
-                        self.outer.cost.charge(union_cost(source_pathmap.ps.len() as i64))?;
+                        let base_rmap =
+                            PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&base_pathmap);
+                        let source_rmap =
+                            PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&source_pathmap);
+
+                        self.outer
+                            .cost
+                            .charge(union_cost(source_pathmap.ps.len() as i64))?;
                         let result_map = base_rmap.map.join(&source_rmap.map);
 
                         Ok(Expr {
@@ -3653,19 +4285,27 @@ impl DebruijnInterpreter {
                                     &result_map,
                                     base_rmap.connective_used || source_rmap.connective_used,
                                     &union(base_rmap.locally_free, source_rmap.locally_free),
-                                    None
+                                    None,
                                 ),
                             )),
                         })
                     }
                     // Base is zipper, source is PathMap
-                    (ExprInstance::EZipperBody(base_zipper), ExprInstance::EPathmapBody(source_pathmap)) => {
-                        let base_pathmap = base_zipper.pathmap.expect("base zipper pathmap was None");
-                        
-                        let base_rmap = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&base_pathmap);
-                        let source_rmap = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&source_pathmap);
+                    (
+                        ExprInstance::EZipperBody(base_zipper),
+                        ExprInstance::EPathmapBody(source_pathmap),
+                    ) => {
+                        let base_pathmap =
+                            base_zipper.pathmap.expect("base zipper pathmap was None");
 
-                        self.outer.cost.charge(union_cost(source_pathmap.ps.len() as i64))?;
+                        let base_rmap =
+                            PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&base_pathmap);
+                        let source_rmap =
+                            PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&source_pathmap);
+
+                        self.outer
+                            .cost
+                            .charge(union_cost(source_pathmap.ps.len() as i64))?;
                         let result_map = base_rmap.map.join(&source_rmap.map);
 
                         Ok(Expr {
@@ -3674,19 +4314,28 @@ impl DebruijnInterpreter {
                                     &result_map,
                                     base_rmap.connective_used || source_rmap.connective_used,
                                     &union(base_rmap.locally_free, source_rmap.locally_free),
-                                    None
+                                    None,
                                 ),
                             )),
                         })
                     }
                     // Base is PathMap, source is zipper
-                    (ExprInstance::EPathmapBody(base_pathmap), ExprInstance::EZipperBody(source_zipper)) => {
-                        let source_pathmap = source_zipper.pathmap.expect("source zipper pathmap was None");
-                        
-                        let base_rmap = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&base_pathmap);
-                        let source_rmap = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&source_pathmap);
+                    (
+                        ExprInstance::EPathmapBody(base_pathmap),
+                        ExprInstance::EZipperBody(source_zipper),
+                    ) => {
+                        let source_pathmap = source_zipper
+                            .pathmap
+                            .expect("source zipper pathmap was None");
 
-                        self.outer.cost.charge(union_cost(source_pathmap.ps.len() as i64))?;
+                        let base_rmap =
+                            PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&base_pathmap);
+                        let source_rmap =
+                            PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&source_pathmap);
+
+                        self.outer
+                            .cost
+                            .charge(union_cost(source_pathmap.ps.len() as i64))?;
                         let result_map = base_rmap.map.join(&source_rmap.map);
 
                         Ok(Expr {
@@ -3695,18 +4344,25 @@ impl DebruijnInterpreter {
                                     &result_map,
                                     base_rmap.connective_used || source_rmap.connective_used,
                                     &union(base_rmap.locally_free, source_rmap.locally_free),
-                                    None
+                                    None,
                                 ),
                             )),
                         })
                     }
                     // Both are PathMaps (existing case)
-                    (ExprInstance::EPathmapBody(base_pathmap), ExprInstance::EPathmapBody(source_pathmap)) => {
+                    (
+                        ExprInstance::EPathmapBody(base_pathmap),
+                        ExprInstance::EPathmapBody(source_pathmap),
+                    ) => {
                         // JoinInto: union-merge subtries
-                        let base_rmap = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&base_pathmap);
-                        let source_rmap = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&source_pathmap);
+                        let base_rmap =
+                            PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&base_pathmap);
+                        let source_rmap =
+                            PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&source_pathmap);
 
-                        self.outer.cost.charge(union_cost(source_pathmap.ps.len() as i64))?;
+                        self.outer
+                            .cost
+                            .charge(union_cost(source_pathmap.ps.len() as i64))?;
                         let result_map = base_rmap.map.join(&source_rmap.map);
 
                         Ok(Expr {
@@ -3715,7 +4371,7 @@ impl DebruijnInterpreter {
                                     &result_map,
                                     base_rmap.connective_used || source_rmap.connective_used,
                                     &union(base_rmap.locally_free, source_rmap.locally_free),
-                                    None
+                                    None,
                                 ),
                             )),
                         })
@@ -3763,24 +4419,28 @@ impl DebruijnInterpreter {
                 match base_expr.expr_instance.clone().unwrap() {
                     ExprInstance::EZipperBody(zipper) => {
                         use models::rust::pathmap_integration::par_to_path;
-                        
+
                         // Get PathMap from zipper
                         let pathmap = zipper.pathmap.expect("zipper pathmap was None");
-                        let pathmap_result = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&pathmap);
+                        let pathmap_result =
+                            PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&pathmap);
                         let rholang_pathmap = pathmap_result.map;
-                        
+
                         // Combine current_path with requested path
                         let path_segments = par_to_path(path_par);
                         let mut full_path = zipper.current_path.clone();
                         full_path.extend(path_segments);
-                        
+
                         // Build key from full path
-                        let key: Vec<u8> = full_path.iter().flat_map(|seg| {
-                            let mut s = seg.clone();
-                            s.push(0xFF); // separator
-                            s
-                        }).collect();
-                        
+                        let key: Vec<u8> = full_path
+                            .iter()
+                            .flat_map(|seg| {
+                                let mut s = seg.clone();
+                                s.push(0xFF); // separator
+                                s
+                            })
+                            .collect();
+
                         // Get value at this path
                         match rholang_pathmap.get(&key) {
                             Some(val) => Ok(val.clone()),
@@ -3789,18 +4449,22 @@ impl DebruijnInterpreter {
                     }
                     ExprInstance::EPathmapBody(pathmap) => {
                         use models::rust::pathmap_integration::par_to_path;
-                        
+
                         // Get value at path from PathMap root
-                        let pathmap_result = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&pathmap);
+                        let pathmap_result =
+                            PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&pathmap);
                         let rholang_pathmap = pathmap_result.map;
-                        
+
                         let path_segments = par_to_path(path_par);
-                        let key: Vec<u8> = path_segments.iter().flat_map(|seg| {
-                            let mut s = seg.clone();
-                            s.push(0xFF); // separator
-                            s
-                        }).collect();
-                        
+                        let key: Vec<u8> = path_segments
+                            .iter()
+                            .flat_map(|seg| {
+                                let mut s = seg.clone();
+                                s.push(0xFF); // separator
+                                s
+                            })
+                            .collect();
+
                         match rholang_pathmap.get(&key) {
                             Some(val) => Ok(val.clone()),
                             None => Ok(Par::default()), // Return Nil if not found
@@ -3849,16 +4513,21 @@ impl DebruijnInterpreter {
                     ExprInstance::EZipperBody(zipper) => {
                         // Get PathMap from zipper
                         let pathmap = zipper.pathmap.as_ref().expect("zipper pathmap was None");
-                        let pathmap_result = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(pathmap);
+                        let pathmap_result =
+                            PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(pathmap);
                         let rholang_pathmap = pathmap_result.map;
-                        
+
                         // Build key from current_path
-                        let key: Vec<u8> = zipper.current_path.iter().flat_map(|seg| {
-                            let mut s = seg.clone();
-                            s.push(0xFF); // separator
-                            s
-                        }).collect();
-                        
+                        let key: Vec<u8> = zipper
+                            .current_path
+                            .iter()
+                            .flat_map(|seg| {
+                                let mut s = seg.clone();
+                                s.push(0xFF); // separator
+                                s
+                            })
+                            .collect();
+
                         // Check if path exists (either has value or has children)
                         if key.is_empty() {
                             // Root always exists if PathMap is not empty
@@ -3897,7 +4566,7 @@ impl DebruijnInterpreter {
                 let base_expr = self.outer.eval_single_expr(&p, env)?;
                 self.outer.cost.charge(union_cost(1))?;
                 let result = self.path_exists(&base_expr)?;
-                
+
                 // Return as GBool
                 Ok(Par::default().with_exprs(vec![Expr {
                     expr_instance: Some(ExprInstance::GBool(result)),
@@ -3914,39 +4583,41 @@ impl DebruijnInterpreter {
         }
 
         impl<'a> CreatePathMethod<'a> {
-            fn create_path(&self, base_expr: &Expr, path_par: &Par) -> Result<Expr, InterpreterError> {
+            fn create_path(
+                &self,
+                base_expr: &Expr,
+                path_par: &Par,
+            ) -> Result<Expr, InterpreterError> {
                 match base_expr.expr_instance.clone().unwrap() {
                     ExprInstance::EZipperBody(zipper) if zipper.is_write_zipper => {
                         use models::rust::pathmap_integration::par_to_path;
-                        
+
                         // Get PathMap from zipper
                         let pathmap = zipper.pathmap.expect("zipper pathmap was None");
-                        
+
                         // Parse requested path to validate format
                         let _path_segments = par_to_path(path_par);
-                        
+
                         // Combine with current path
                         let _ = zipper.current_path.clone(); // Use for future implementation
-                        
+
                         // Create path structure by ensuring intermediate nodes exist
                         // We don't set values, just ensure the path structure exists
                         // In a trie, paths are implicitly created when you add values
                         // Since we want to create structure without values, we'll just
                         // return the PathMap as-is (the structure will be created when needed)
                         // Alternatively, we could insert empty markers but that changes semantics
-                        
+
                         // For now, just return the PathMap unchanged
                         // This is a no-op but validates the path format
                         Ok(Expr {
                             expr_instance: Some(ExprInstance::EPathmapBody(pathmap)),
                         })
                     }
-                    ExprInstance::EZipperBody(_) => {
-                        Err(InterpreterError::MethodNotDefined {
-                            method: String::from("createPath (requires write zipper)"),
-                            other_type: "read zipper".to_string(),
-                        })
-                    }
+                    ExprInstance::EZipperBody(_) => Err(InterpreterError::MethodNotDefined {
+                        method: String::from("createPath (requires write zipper)"),
+                        other_type: "read zipper".to_string(),
+                    }),
                     other => Err(InterpreterError::MethodNotDefined {
                         method: String::from("createPath"),
                         other_type: get_type(other),
@@ -3991,16 +4662,21 @@ impl DebruijnInterpreter {
                     ExprInstance::EZipperBody(zipper) if zipper.is_write_zipper => {
                         // Get PathMap from zipper
                         let pathmap = zipper.pathmap.expect("zipper pathmap was None");
-                        let pathmap_result = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&pathmap);
+                        let pathmap_result =
+                            PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&pathmap);
                         let mut rholang_pathmap = pathmap_result.map;
-                        
+
                         // Build key from current_path
-                        let prefix_key: Vec<u8> = zipper.current_path.iter().flat_map(|seg| {
-                            let mut s = seg.clone();
-                            s.push(0xFF); // separator
-                            s
-                        }).collect();
-                        
+                        let prefix_key: Vec<u8> = zipper
+                            .current_path
+                            .iter()
+                            .flat_map(|seg| {
+                                let mut s = seg.clone();
+                                s.push(0xFF); // separator
+                                s
+                            })
+                            .collect();
+
                         // Remove all entries at and below this path
                         let keys_to_remove: Vec<Vec<u8>> = rholang_pathmap
                             .iter()
@@ -4012,11 +4688,11 @@ impl DebruijnInterpreter {
                                 }
                             })
                             .collect();
-                        
+
                         for key in keys_to_remove {
                             rholang_pathmap.remove(&key);
                         }
-                        
+
                         // Convert back to EPathMap
                         let result_pathmap = PathMapCrateTypeMapper::rholang_pathmap_to_e_pathmap(
                             &rholang_pathmap,
@@ -4024,17 +4700,15 @@ impl DebruijnInterpreter {
                             &pathmap_result.locally_free,
                             None,
                         );
-                        
+
                         Ok(Expr {
                             expr_instance: Some(ExprInstance::EPathmapBody(result_pathmap)),
                         })
                     }
-                    ExprInstance::EZipperBody(_) => {
-                        Err(InterpreterError::MethodNotDefined {
-                            method: String::from("prunePath (requires write zipper)"),
-                            other_type: "read zipper".to_string(),
-                        })
-                    }
+                    ExprInstance::EZipperBody(_) => Err(InterpreterError::MethodNotDefined {
+                        method: String::from("prunePath (requires write zipper)"),
+                        other_type: "read zipper".to_string(),
+                    }),
                     other => Err(InterpreterError::MethodNotDefined {
                         method: String::from("prunePath"),
                         other_type: get_type(other),
@@ -4078,7 +4752,7 @@ impl DebruijnInterpreter {
                     ExprInstance::EZipperBody(mut zipper) => {
                         // Reset to root by clearing current_path
                         zipper.current_path = vec![];
-                        
+
                         Ok(Expr {
                             expr_instance: Some(ExprInstance::EZipperBody(zipper)),
                         })
@@ -4129,10 +4803,10 @@ impl DebruijnInterpreter {
                             // At root, cannot ascend - return Nil
                             return Ok(Par::default());
                         }
-                        
+
                         // Remove last segment from current_path (ascend one level)
                         zipper.current_path.pop();
-                        
+
                         Ok(Par::default().with_exprs(vec![Expr {
                             expr_instance: Some(ExprInstance::EZipperBody(zipper)),
                         }]))
@@ -4176,32 +4850,38 @@ impl DebruijnInterpreter {
         impl<'a> AscendMethod<'a> {
             fn ascend(&self, base_expr: &Expr, steps_par: &Par) -> Result<Par, InterpreterError> {
                 // Extract integer from Par
-                let steps = match steps_par.exprs.first().and_then(|e| e.expr_instance.as_ref()) {
+                let steps = match steps_par
+                    .exprs
+                    .first()
+                    .and_then(|e| e.expr_instance.as_ref())
+                {
                     Some(ExprInstance::GInt(n)) => *n,
-                    _ => return Err(InterpreterError::MethodNotDefined {
-                        method: String::from("ascend (requires integer argument)"),
-                        other_type: "non-integer".to_string(),
-                    }),
+                    _ => {
+                        return Err(InterpreterError::MethodNotDefined {
+                            method: String::from("ascend (requires integer argument)"),
+                            other_type: "non-integer".to_string(),
+                        })
+                    }
                 };
-                
+
                 if steps < 0 {
                     return Err(InterpreterError::MethodNotDefined {
                         method: String::from("ascend (steps must be non-negative)"),
                         other_type: format!("negative: {}", steps),
                     });
                 }
-                
+
                 match base_expr.expr_instance.clone().unwrap() {
                     ExprInstance::EZipperBody(mut zipper) => {
                         // Remove up to 'steps' segments, cap at root
                         let depth = zipper.current_path.len();
                         let actual_steps = std::cmp::min(steps as usize, depth);
-                        
+
                         // Remove segments from end
                         for _ in 0..actual_steps {
                             zipper.current_path.pop();
                         }
-                        
+
                         Ok(Par::default().with_exprs(vec![Expr {
                             expr_instance: Some(ExprInstance::EZipperBody(zipper)),
                         }]))
@@ -4248,19 +4928,24 @@ impl DebruijnInterpreter {
                 match base_expr.expr_instance.clone().unwrap() {
                     ExprInstance::EZipperBody(zipper) => {
                         let pathmap = zipper.pathmap.as_ref().expect("zipper pathmap was None");
-                        let pathmap_result = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(pathmap);
+                        let pathmap_result =
+                            PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(pathmap);
                         let rholang_pathmap = pathmap_result.map;
-                        
+
                         // Build prefix from current_path
-                        let prefix_key: Vec<u8> = zipper.current_path.iter().flat_map(|seg| {
-                            let mut s = seg.clone();
-                            s.push(0xFF);
-                            s
-                        }).collect();
-                        
+                        let prefix_key: Vec<u8> = zipper
+                            .current_path
+                            .iter()
+                            .flat_map(|seg| {
+                                let mut s = seg.clone();
+                                s.push(0xFF);
+                                s
+                            })
+                            .collect();
+
                         // Find all unique immediate children
                         let mut children: Vec<Vec<u8>> = Vec::new();
-                        
+
                         for (key, _) in rholang_pathmap.iter() {
                             if key.starts_with(&prefix_key) && key.len() > prefix_key.len() {
                                 // Extract first segment after prefix
@@ -4271,20 +4956,21 @@ impl DebruijnInterpreter {
                                 }
                             }
                         }
-                        
+
                         // Deduplicate
                         children.sort();
                         children.dedup();
-                        
+
                         Ok(children.len() as i64)
                     }
                     ExprInstance::EPathmapBody(pathmap) => {
                         // For PathMap at root, count top-level paths
-                        let pathmap_result = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&pathmap);
+                        let pathmap_result =
+                            PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&pathmap);
                         let rholang_pathmap = pathmap_result.map;
-                        
+
                         let mut children: Vec<Vec<u8>> = Vec::new();
-                        
+
                         for (key, _) in rholang_pathmap.iter() {
                             // Extract first segment
                             if let Some(pos) = key.iter().position(|&b| b == 0xFF) {
@@ -4292,10 +4978,10 @@ impl DebruijnInterpreter {
                                 children.push(segment);
                             }
                         }
-                        
+
                         children.sort();
                         children.dedup();
-                        
+
                         Ok(children.len() as i64)
                     }
                     other => Err(InterpreterError::MethodNotDefined {
@@ -4323,7 +5009,7 @@ impl DebruijnInterpreter {
                 let base_expr = self.outer.eval_single_expr(&p, env)?;
                 self.outer.cost.charge(union_cost(1))?;
                 let count = self.child_count(&base_expr)?;
-                
+
                 Ok(Par::default().with_exprs(vec![Expr {
                     expr_instance: Some(ExprInstance::GInt(count)),
                 }]))
@@ -4343,19 +5029,24 @@ impl DebruijnInterpreter {
                 match base_expr.expr_instance.clone().unwrap() {
                     ExprInstance::EZipperBody(mut zipper) => {
                         let pathmap = zipper.pathmap.as_ref().expect("zipper pathmap was None");
-                        let pathmap_result = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(pathmap);
+                        let pathmap_result =
+                            PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(pathmap);
                         let rholang_pathmap = pathmap_result.map;
-                        
+
                         // Build prefix from current_path
-                        let prefix_key: Vec<u8> = zipper.current_path.iter().flat_map(|seg| {
-                            let mut s = seg.clone();
-                            s.push(0xFF);
-                            s
-                        }).collect();
-                        
+                        let prefix_key: Vec<u8> = zipper
+                            .current_path
+                            .iter()
+                            .flat_map(|seg| {
+                                let mut s = seg.clone();
+                                s.push(0xFF);
+                                s
+                            })
+                            .collect();
+
                         // Find all unique immediate children
                         let mut children: Vec<Vec<u8>> = Vec::new();
-                        
+
                         for (key, _) in rholang_pathmap.iter() {
                             if key.starts_with(&prefix_key) && key.len() > prefix_key.len() {
                                 // Extract first segment after prefix
@@ -4366,11 +5057,11 @@ impl DebruijnInterpreter {
                                 }
                             }
                         }
-                        
+
                         // Sort and deduplicate for deterministic ordering
                         children.sort();
                         children.dedup();
-                        
+
                         // Get first child
                         if let Some(first_child) = children.first() {
                             zipper.current_path.push(first_child.clone());
@@ -4419,37 +5110,50 @@ impl DebruijnInterpreter {
         }
 
         impl<'a> DescendIndexedBranchMethod<'a> {
-            fn descend_indexed(&self, base_expr: &Expr, idx_par: &Par) -> Result<Par, InterpreterError> {
+            fn descend_indexed(
+                &self,
+                base_expr: &Expr,
+                idx_par: &Par,
+            ) -> Result<Par, InterpreterError> {
                 // Extract integer index
                 let idx = match idx_par.exprs.first().and_then(|e| e.expr_instance.as_ref()) {
                     Some(ExprInstance::GInt(n)) => *n,
-                    _ => return Err(InterpreterError::MethodNotDefined {
-                        method: String::from("descendIndexedBranch (requires integer argument)"),
-                        other_type: "non-integer".to_string(),
-                    }),
+                    _ => {
+                        return Err(InterpreterError::MethodNotDefined {
+                            method: String::from(
+                                "descendIndexedBranch (requires integer argument)",
+                            ),
+                            other_type: "non-integer".to_string(),
+                        })
+                    }
                 };
-                
+
                 if idx < 0 {
                     // Negative index, return Nil
                     return Ok(Par::default());
                 }
-                
+
                 match base_expr.expr_instance.clone().unwrap() {
                     ExprInstance::EZipperBody(mut zipper) => {
                         let pathmap = zipper.pathmap.as_ref().expect("zipper pathmap was None");
-                        let pathmap_result = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(pathmap);
+                        let pathmap_result =
+                            PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(pathmap);
                         let rholang_pathmap = pathmap_result.map;
-                        
+
                         // Build prefix from current_path
-                        let prefix_key: Vec<u8> = zipper.current_path.iter().flat_map(|seg| {
-                            let mut s = seg.clone();
-                            s.push(0xFF);
-                            s
-                        }).collect();
-                        
+                        let prefix_key: Vec<u8> = zipper
+                            .current_path
+                            .iter()
+                            .flat_map(|seg| {
+                                let mut s = seg.clone();
+                                s.push(0xFF);
+                                s
+                            })
+                            .collect();
+
                         // Find all unique immediate children
                         let mut children: Vec<Vec<u8>> = Vec::new();
-                        
+
                         for (key, _) in rholang_pathmap.iter() {
                             if key.starts_with(&prefix_key) && key.len() > prefix_key.len() {
                                 // Extract first segment after prefix
@@ -4460,11 +5164,11 @@ impl DebruijnInterpreter {
                                 }
                             }
                         }
-                        
+
                         // Sort and deduplicate for deterministic ordering
                         children.sort();
                         children.dedup();
-                        
+
                         // Get child at index
                         if let Some(child) = children.get(idx as usize) {
                             zipper.current_path.push(child.clone());
@@ -4521,23 +5225,27 @@ impl DebruijnInterpreter {
                         if zipper.current_path.is_empty() {
                             return Ok(Par::default());
                         }
-                        
+
                         let pathmap = zipper.pathmap.as_ref().expect("zipper pathmap was None");
-                        let pathmap_result = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(pathmap);
+                        let pathmap_result =
+                            PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(pathmap);
                         let rholang_pathmap = pathmap_result.map;
-                        
+
                         // Get parent path and current segment
                         let current_segment = zipper.current_path.last().unwrap().clone();
-                        let parent_path = &zipper.current_path[..zipper.current_path.len()-1];
-                        let parent_key: Vec<u8> = parent_path.iter().flat_map(|seg| {
-                            let mut s = seg.clone();
-                            s.push(0xFF);
-                            s
-                        }).collect();
-                        
+                        let parent_path = &zipper.current_path[..zipper.current_path.len() - 1];
+                        let parent_key: Vec<u8> = parent_path
+                            .iter()
+                            .flat_map(|seg| {
+                                let mut s = seg.clone();
+                                s.push(0xFF);
+                                s
+                            })
+                            .collect();
+
                         // Find all siblings (children of parent)
                         let mut siblings: Vec<Vec<u8>> = Vec::new();
-                        
+
                         for (key, _) in rholang_pathmap.iter() {
                             if key.starts_with(&parent_key) && key.len() > parent_key.len() {
                                 let remaining = &key[parent_key.len()..];
@@ -4547,13 +5255,15 @@ impl DebruijnInterpreter {
                                 }
                             }
                         }
-                        
+
                         // Sort and deduplicate for deterministic ordering
                         siblings.sort();
                         siblings.dedup();
-                        
+
                         // Find current position and get next
-                        if let Some(current_idx) = siblings.iter().position(|s| s == &current_segment) {
+                        if let Some(current_idx) =
+                            siblings.iter().position(|s| s == &current_segment)
+                        {
                             if current_idx + 1 < siblings.len() {
                                 // Replace current segment with next sibling
                                 zipper.current_path.pop();
@@ -4614,23 +5324,27 @@ impl DebruijnInterpreter {
                         if zipper.current_path.is_empty() {
                             return Ok(Par::default());
                         }
-                        
+
                         let pathmap = zipper.pathmap.as_ref().expect("zipper pathmap was None");
-                        let pathmap_result = PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(pathmap);
+                        let pathmap_result =
+                            PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(pathmap);
                         let rholang_pathmap = pathmap_result.map;
-                        
+
                         // Get parent path and current segment
                         let current_segment = zipper.current_path.last().unwrap().clone();
-                        let parent_path = &zipper.current_path[..zipper.current_path.len()-1];
-                        let parent_key: Vec<u8> = parent_path.iter().flat_map(|seg| {
-                            let mut s = seg.clone();
-                            s.push(0xFF);
-                            s
-                        }).collect();
-                        
+                        let parent_path = &zipper.current_path[..zipper.current_path.len() - 1];
+                        let parent_key: Vec<u8> = parent_path
+                            .iter()
+                            .flat_map(|seg| {
+                                let mut s = seg.clone();
+                                s.push(0xFF);
+                                s
+                            })
+                            .collect();
+
                         // Find all siblings (children of parent)
                         let mut siblings: Vec<Vec<u8>> = Vec::new();
-                        
+
                         for (key, _) in rholang_pathmap.iter() {
                             if key.starts_with(&parent_key) && key.len() > parent_key.len() {
                                 let remaining = &key[parent_key.len()..];
@@ -4640,13 +5354,15 @@ impl DebruijnInterpreter {
                                 }
                             }
                         }
-                        
+
                         // Sort and deduplicate for deterministic ordering
                         siblings.sort();
                         siblings.dedup();
-                        
+
                         // Find current position and get previous
-                        if let Some(current_idx) = siblings.iter().position(|s| s == &current_segment) {
+                        if let Some(current_idx) =
+                            siblings.iter().position(|s| s == &current_segment)
+                        {
                             if current_idx > 0 {
                                 // Replace current segment with previous sibling
                                 zipper.current_path.pop();
@@ -5810,7 +6526,10 @@ impl DebruijnInterpreter {
         table.insert("toNextSibling".to_string(), self.to_next_sibling_method());
         table.insert("toPrevSibling".to_string(), self.to_prev_sibling_method());
         table.insert("descendFirst".to_string(), self.descend_first_method());
-        table.insert("descendIndexedBranch".to_string(), self.descend_indexed_branch_method());
+        table.insert(
+            "descendIndexedBranch".to_string(),
+            self.descend_indexed_branch_method(),
+        );
         table.insert("childCount".to_string(), self.child_count_method());
         table.insert("add".to_string(), self.add_method());
         table.insert("delete".to_string(), self.delete_method());
@@ -6086,14 +6805,14 @@ impl DebruijnInterpreter {
         merge_chs: Arc<RwLock<HashSet<Par>>>,
         mergeable_tag_name: Par,
         cost: _cost,
-    ) -> Self {
+    ) -> Arc<Self> {
         let reducer_cell = Arc::new(std::sync::OnceLock::new());
         let dispatcher = Arc::new(RholangAndScalaDispatcher {
             _dispatch_table: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             reducer: reducer_cell.clone(),
         });
 
-        let reducer = DebruijnInterpreter {
+        let reducer = Arc::new(DebruijnInterpreter {
             space,
             dispatcher: dispatcher.clone(),
             urn_map,
@@ -6101,9 +6820,9 @@ impl DebruijnInterpreter {
             mergeable_tag_name,
             cost: cost.clone(),
             substitute: Substitute { cost: cost.clone() },
-        };
+        });
 
-        reducer_cell.set(reducer.clone()).ok().unwrap();
+        reducer_cell.set(Arc::downgrade(&reducer)).ok().unwrap();
         reducer
     }
 }

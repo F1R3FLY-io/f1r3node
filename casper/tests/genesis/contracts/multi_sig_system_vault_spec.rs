@@ -23,4 +23,3 @@ async fn multi_sig_system_vault_spec() {
         .await
         .expect("MultiSigSystemVaultSpec tests failed");
 }
-

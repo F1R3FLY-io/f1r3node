@@ -141,7 +141,6 @@ impl OpenAIConfig {
     }
 }
 
-
 /// Parse boolean environment variable with Scala-compatible values
 /// Accepts: true/false, 1/0, yes/no, on/off (case insensitive)
 pub fn parse_bool_env(name: &str) -> Option<bool> {
@@ -156,30 +155,32 @@ pub fn parse_bool_env(name: &str) -> Option<bool> {
 
 /// Validate API key by calling a lightweight endpoint (models list).
 /// Matches Scala's OpenAIServiceImpl.validateApiKeyOrFail behavior.
-/// 
+///
 /// This function panics if validation fails, failing fast at startup
 /// rather than at first use.
 fn validate_api_key_or_fail_sync(api_key: &str, timeout_sec: u64) {
     use std::thread;
-    
+
     let api_key = api_key.to_string();
     let timeout = Duration::from_secs(timeout_sec);
-    
+
     // Run validation in blocking context since we're called during initialization
     let result = thread::spawn(move || {
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .expect("Failed to create tokio runtime for validation");
-        
-        rt.block_on(async {
-            tokio::time::timeout(timeout, validate_api_key_async(&api_key)).await
-        })
-    }).join();
-    
+
+        rt.block_on(async { tokio::time::timeout(timeout, validate_api_key_async(&api_key)).await })
+    })
+    .join();
+
     match result {
         Ok(Ok(Ok(model_count))) => {
-            tracing::info!("OpenAI API key validated ({} models available)", model_count);
+            tracing::info!(
+                "OpenAI API key validated ({} models available)",
+                model_count
+            );
         }
         Ok(Ok(Err(e))) => {
             tracing::error!("OpenAI API key validation failed: {}", e);
@@ -190,7 +191,10 @@ fn validate_api_key_or_fail_sync(api_key: &str, timeout_sec: u64) {
             );
         }
         Ok(Err(_)) => {
-            tracing::error!("OpenAI API key validation timed out after {} seconds", timeout_sec);
+            tracing::error!(
+                "OpenAI API key validation timed out after {} seconds",
+                timeout_sec
+            );
             panic!(
                 "OpenAI API key validation timed out after {} seconds. \
                  Check network connectivity or increase validation-timeout-sec.",
@@ -209,7 +213,7 @@ async fn validate_api_key_async(api_key: &str) -> Result<usize, String> {
         .with_api_key(api_key.to_string())
         .build()
         .map_err(|e| format!("Failed to build OpenAI client: {}", e))?;
-    
+
     // Use list_model to validate the API key (lightweight endpoint)
     // This matches Scala's service.listModels call
     match client.list_models().await {
@@ -301,12 +305,12 @@ impl OpenAIService {
         if config.enabled {
             if let Some(ref api_key) = config.api_key {
                 let service = Self::new_real(api_key);
-                
+
                 // Validate API key if configured (matches Scala validateApiKeyOrFail)
                 if config.validate_api_key {
                     validate_api_key_or_fail_sync(api_key, config.validation_timeout_sec);
                 }
-                
+
                 service
             } else {
                 Self::new_noop()
@@ -347,16 +351,16 @@ impl OpenAIService {
                 Ok(())
             }
             Self::NoOp => {
-                tracing::debug!("OpenAI service is disabled - ttsCreateAudioSpeech request ignored");
+                tracing::debug!(
+                    "OpenAI service is disabled - ttsCreateAudioSpeech request ignored"
+                );
                 Ok(())
             }
-            Self::Mock(config) => {
-                match &config.tts_response {
-                    Some(Ok(_)) => Ok(()),
-                    Some(Err(e)) => Err(InterpreterError::OpenAIError(e.clone())),
-                    None => Ok(()),
-                }
-            }
+            Self::Mock(config) => match &config.tts_response {
+                Some(Ok(_)) => Ok(()),
+                Some(Err(e)) => Err(InterpreterError::OpenAIError(e.clone())),
+                None => Ok(()),
+            },
         }
     }
 
@@ -382,13 +386,11 @@ impl OpenAIService {
                 tracing::debug!("OpenAI service is disabled - dalle3CreateImage request ignored");
                 Ok(String::new())
             }
-            Self::Mock(config) => {
-                match &config.dalle3_response {
-                    Some(Ok(url)) => Ok(url.clone()),
-                    Some(Err(e)) => Err(InterpreterError::OpenAIError(e.clone())),
-                    None => Ok(String::new()),
-                }
-            }
+            Self::Mock(config) => match &config.dalle3_response {
+                Some(Ok(url)) => Ok(url.clone()),
+                Some(Err(e)) => Err(InterpreterError::OpenAIError(e.clone())),
+                None => Ok(String::new()),
+            },
         }
     }
 
@@ -421,13 +423,11 @@ impl OpenAIService {
                 tracing::debug!("OpenAI service is disabled - gpt4TextCompletion request ignored");
                 Ok(String::new())
             }
-            Self::Mock(config) => {
-                match &config.gpt4_response {
-                    Some(Ok(text)) => Ok(text.clone()),
-                    Some(Err(e)) => Err(InterpreterError::OpenAIError(e.clone())),
-                    None => Ok(String::new()),
-                }
-            }
+            Self::Mock(config) => match &config.gpt4_response {
+                Some(Ok(text)) => Ok(text.clone()),
+                Some(Err(e)) => Err(InterpreterError::OpenAIError(e.clone())),
+                None => Ok(String::new()),
+            },
         }
     }
 }
@@ -471,7 +471,10 @@ mod tests {
     async fn test_noop_service_returns_empty() {
         let service = OpenAIService::new_noop();
 
-        assert!(service.create_audio_speech("test", "test.mp3").await.is_ok());
+        assert!(service
+            .create_audio_speech("test", "test.mp3")
+            .await
+            .is_ok());
         assert_eq!(service.dalle3_create_image("test").await.unwrap(), "");
         assert_eq!(service.gpt4_chat_completion("test").await.unwrap(), "");
     }

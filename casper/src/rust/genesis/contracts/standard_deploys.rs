@@ -14,7 +14,7 @@ use rholang::rust::build::compile_rholang_source::{
     CompiledRholangSource, CompiledRholangTemplate,
 };
 
-use super::{proof_of_stake::ProofOfStake, vaults_generator::VaultsGenerator, vault::Vault};
+use super::{proof_of_stake::ProofOfStake, vault::Vault, vaults_generator::VaultsGenerator};
 
 // Private keys used to sign blessed (standard) contracts
 pub const REGISTRY_PK: &str = "5a0bde2f5857124b1379c78535b07a278e3b9cefbcacc02e62ab3294c02765a1";
@@ -24,7 +24,8 @@ pub const NON_NEGATIVE_NUMBER_PK: &str =
     "e33c9f1e925819d04733db4ec8539a84507c9e9abd32822059349449fe03997d";
 pub const MAKE_MINT_PK: &str = "de19d53f28d4cdee74bad062342d8486a90a652055f3de4b2efa5eb2fccc9d53";
 pub const AUTH_KEY_PK: &str = "f450b26bac63e5dd9343cd46f5fae1986d367a893cd21eedd98a4cb3ac699abc";
-pub const SYSTEM_VAULT_PK: &str = "27e5718bf55dd673cc09f13c2bcf12ed7949b178aef5dcb6cd492ad422d05e9d";
+pub const SYSTEM_VAULT_PK: &str =
+    "27e5718bf55dd673cc09f13c2bcf12ed7949b178aef5dcb6cd492ad422d05e9d";
 pub const MULTI_SIG_SYSTEM_VAULT_PK: &str =
     "2a2eaa76d6fea9f502629e32b0f8eea19b9de8e2188ec0d589fcafa98fb1f031";
 pub const POS_GENERATOR_PK: &str =

@@ -6,6 +6,48 @@ x-rnode: &default-rnode
   environment:
     - OPENAI_ENABLED=${OPENAI_ENABLED}
     - OPENAI_SCALA_CLIENT_API_KEY=${OPENAI_SCALA_CLIENT_API_KEY}
+    # Limit glibc arena proliferation and return freed heap pages faster.
+    - MALLOC_ARENA_MAX=2
+    - MALLOC_TRIM_THRESHOLD_=131072
+    - MALLOC_MMAP_THRESHOLD_=131072
+    - F1R3_MALLOC_TRIM_EVERY_BLOCKS=${F1R3_MALLOC_TRIM_EVERY_BLOCKS:-8}
+    - F1R3_SYNCHRONY_RECOVERY_STALL_WINDOW_SECONDS=${F1R3_SYNCHRONY_RECOVERY_STALL_WINDOW_SECONDS:-8}
+    - F1R3_SYNCHRONY_RECOVERY_COOLDOWN_SECONDS=${F1R3_SYNCHRONY_RECOVERY_COOLDOWN_SECONDS:-20}
+    - F1R3_SYNCHRONY_RECOVERY_MAX_BYPASSES=${F1R3_SYNCHRONY_RECOVERY_MAX_BYPASSES:-0}
+    - F1R3_SYNCHRONY_CONSTRAINT_THRESHOLD=${F1R3_SYNCHRONY_CONSTRAINT_THRESHOLD:-0.67}
+    - F1R3_SYNCHRONY_FINALIZED_BASELINE_ENABLED=${F1R3_SYNCHRONY_FINALIZED_BASELINE_ENABLED:-1}
+    - F1R3_SYNCHRONY_FINALIZED_BASELINE_MAX_DISTANCE=${F1R3_SYNCHRONY_FINALIZED_BASELINE_MAX_DISTANCE:-8}
+    - F1R3_HEARTBEAT_FRONTIER_CHASE_MAX_LAG=${F1R3_HEARTBEAT_FRONTIER_CHASE_MAX_LAG:-0}
+    - F1R3_HEARTBEAT_SELF_PROPOSE_COOLDOWN_MS=${F1R3_HEARTBEAT_SELF_PROPOSE_COOLDOWN_MS:-15000}
+    - F1R3_BLOCK_RETRIEVER_DEDUP_QUERIED_PEERS=${F1R3_BLOCK_RETRIEVER_DEDUP_QUERIED_PEERS:-0}
+    - F1R3_BLOCK_RETRIEVER_PEER_REQUERY_COOLDOWN_MS=${F1R3_BLOCK_RETRIEVER_PEER_REQUERY_COOLDOWN_MS:-250}
+    - F1R3_BLOCK_RETRIEVER_BROADCAST_ONLY_COOLDOWN_MS=${F1R3_BLOCK_RETRIEVER_BROADCAST_ONLY_COOLDOWN_MS:-500}
+    - F1R3_BLOCK_RETRIEVER_DEPENDENCY_RECOVERY_COOLDOWN_MS=${F1R3_BLOCK_RETRIEVER_DEPENDENCY_RECOVERY_COOLDOWN_MS:-250}
+    - F1R3_FIND_DEPLOY_SCAN_DEPTH=${F1R3_FIND_DEPLOY_SCAN_DEPTH:-128}
+    - F1R3_BLOCK_RETRIEVER_MAX_RETRIES_PER_HASH=${F1R3_BLOCK_RETRIEVER_MAX_RETRIES_PER_HASH:-64}
+    - F1R3_MAIN_PARENT_NEAR_TIP_TOLERANCE=${F1R3_MAIN_PARENT_NEAR_TIP_TOLERANCE:-0}
+    - F1R3_BLOCK_RETRIEVER_KNOWN_PEER_REQUERY_SOFT_LIMIT=${F1R3_BLOCK_RETRIEVER_KNOWN_PEER_REQUERY_SOFT_LIMIT:-4}
+    - F1R3_BLOCK_RETRIEVER_STALE_REQUEST_LIFETIME_MULTIPLIER=${F1R3_BLOCK_RETRIEVER_STALE_REQUEST_LIFETIME_MULTIPLIER:-3}
+    - F1R3_BLOCK_RETRIEVER_MIN_REREQUEST_INTERVAL_MS=${F1R3_BLOCK_RETRIEVER_MIN_REREQUEST_INTERVAL_MS:-500}
+    - F1R3_MAX_BLOCKS_IN_PROCESSING=${F1R3_MAX_BLOCKS_IN_PROCESSING:-2048}
+    - F1R3_CASPER_BUFFER_MAX_APPROX_NODES=${F1R3_CASPER_BUFFER_MAX_APPROX_NODES:-16384}
+    - F1R3_CASPER_BUFFER_STALE_TTL_MS=${F1R3_CASPER_BUFFER_STALE_TTL_MS:-180000}
+    - F1R3_CASPER_BUFFER_MAX_PRUNE_BATCH=${F1R3_CASPER_BUFFER_MAX_PRUNE_BATCH:-512}
+    - F1R3_CASPER_BUFFER_PRUNE_INTERVAL_MS=${F1R3_CASPER_BUFFER_PRUNE_INTERVAL_MS:-5000}
+    - F1R3_BLOCK_RETRIEVER_RETRY_BUDGET_QUARANTINE_MS=${F1R3_BLOCK_RETRIEVER_RETRY_BUDGET_QUARANTINE_MS:-120000}
+    - F1R3_MISSING_DEPENDENCY_ATTEMPTS_MAX=${F1R3_MISSING_DEPENDENCY_ATTEMPTS_MAX:-8}
+    - F1R3_MISSING_DEPENDENCY_QUARANTINE_MS=${F1R3_MISSING_DEPENDENCY_QUARANTINE_MS:-16000}
+    - F1R3_REPLAY_CACHE_MAX_ENTRIES=${F1R3_REPLAY_CACHE_MAX_ENTRIES:-192}
+    - F1R3_REPLAY_CACHE_MAX_EVENT_LOG_ENTRIES=${F1R3_REPLAY_CACHE_MAX_EVENT_LOG_ENTRIES:-1536}
+    - F1R3_BLOCK_PROTO_DECODE_BUFFER_BYTES=${F1R3_BLOCK_PROTO_DECODE_BUFFER_BYTES:-65536}
+    - F1R3_FINALIZER_WORK_BUDGET_MS=${F1R3_FINALIZER_WORK_BUDGET_MS:-8000}
+    - F1R3_FINALIZER_STEP_TIMEOUT_MS=${F1R3_FINALIZER_STEP_TIMEOUT_MS:-2000}
+    - F1R3_FINALIZER_CATCHUP_WORK_BUDGET_MS=${F1R3_FINALIZER_CATCHUP_WORK_BUDGET_MS:-8000}
+    - F1R3_FINALIZER_CATCHUP_STEP_TIMEOUT_MS=${F1R3_FINALIZER_CATCHUP_STEP_TIMEOUT_MS:-2000}
+    - F1R3_BLOCK_STORE_DEPLOY_SIG_CACHE_MAX_ENTRIES=${F1R3_BLOCK_STORE_DEPLOY_SIG_CACHE_MAX_ENTRIES:-1024}
+    - F1R3_FINALIZER_MAX_CLIQUE_CANDIDATES=${F1R3_FINALIZER_MAX_CLIQUE_CANDIDATES:-128}
+    - F1R3_FINALIZER_CANDIDATE_RANKING=${F1R3_FINALIZER_CANDIDATE_RANKING:-recency_stake}
+    - F1R3_MAX_USER_DEPLOYS_PER_BLOCK=${F1R3_MAX_USER_DEPLOYS_PER_BLOCK:-32}
 
 services:
   boot:
@@ -18,7 +60,9 @@ services:
         "--host=$BOOTSTRAP_HOST",
         "--bootstrap=rnode://$BOOTSTRAP_NODE_ID@$BOOTSTRAP_HOST?protocol=40400&discovery=40404", # node will know it's bootstrap node
         "--allow-private-addresses",
-        "--validator-private-key=$BOOTSTRAP_PRIVATE_KEY"
+        "--autopropose",
+        "--validator-private-key=$BOOTSTRAP_PRIVATE_KEY",
+#        "--genesis-validator",
       ]
     ports:
       - "40400:40400"
@@ -28,13 +72,13 @@ services:
       - "40404:40404"
       - "40405:40405"
     volumes:
+      # Node-specific volumes
+      - ./data/$BOOTSTRAP_HOST:/var/lib/rnode/
       # Bootstrap-specific configuration (ceremony master)
       - ./conf/bootstrap-ceremony.conf:/var/lib/rnode/rnode.conf
       - ./genesis/wallets.txt:/var/lib/rnode/genesis/wallets.txt
       - ./genesis/bonds.txt:/var/lib/rnode/genesis/bonds.txt
       - ./conf/logback.xml:/var/lib/rnode/logback.xml
-      # Node-specific volumes
-      - ./data/$BOOTSTRAP_HOST:/var/lib/rnode/
       - ./certs/bootstrap/node.certificate.pem:/var/lib/rnode/node.certificate.pem:ro
       - ./certs/bootstrap/node.key.pem:/var/lib/rnode/node.key.pem:ro
 
@@ -50,7 +94,8 @@ services:
         "--bootstrap=rnode://$BOOTSTRAP_NODE_ID@$BOOTSTRAP_HOST?protocol=40400&discovery=40404",
         "--validator-public-key=$VALIDATOR1_PUBLIC_KEY",
         "--validator-private-key=$VALIDATOR1_PRIVATE_KEY",
-        "--genesis-validator"
+        "--genesis-validator",
+        "--autopropose",
       ]
     ports:
       - "40410:40400"
@@ -60,11 +105,11 @@ services:
       - "40414:40404"
       - "40415:40405"
     volumes:
-      - ./conf/shared-rnode.conf:/var/lib/rnode/rnode.conf
+      - ./data/$VALIDATOR1_HOST:/var/lib/rnode/
+      - ./conf/shared-rnode-runtime.conf:/var/lib/rnode/rnode.conf
       - ./genesis/wallets.txt:/var/lib/rnode/genesis/wallets.txt
       - ./genesis/bonds.txt:/var/lib/rnode/genesis/bonds.txt
       - ./conf/logback.xml:/var/lib/rnode/logback.xml
-      - ./data/$VALIDATOR1_HOST:/var/lib/rnode/
       - ./certs/validator1/node.certificate.pem:/var/lib/rnode/node.certificate.pem:ro
       - ./certs/validator1/node.key.pem:/var/lib/rnode/node.key.pem:ro
 
@@ -80,7 +125,8 @@ services:
         "--bootstrap=rnode://$BOOTSTRAP_NODE_ID@$BOOTSTRAP_HOST?protocol=40400&discovery=40404",
         "--validator-public-key=$VALIDATOR2_PUBLIC_KEY",
         "--validator-private-key=$VALIDATOR2_PRIVATE_KEY",
-        "--genesis-validator"
+        "--genesis-validator",
+        "--autopropose",
       ]
     ports:
       - "40420:40400"
@@ -90,11 +136,11 @@ services:
       - "40424:40404"
       - "40425:40405"
     volumes:
-      - ./conf/shared-rnode.conf:/var/lib/rnode/rnode.conf
+      - ./data/$VALIDATOR2_HOST:/var/lib/rnode/
+      - ./conf/shared-rnode-runtime.conf:/var/lib/rnode/rnode.conf
       - ./genesis/wallets.txt:/var/lib/rnode/genesis/wallets.txt
       - ./genesis/bonds.txt:/var/lib/rnode/genesis/bonds.txt
       - ./conf/logback.xml:/var/lib/rnode/logback.xml
-      - ./data/$VALIDATOR2_HOST:/var/lib/rnode/
       - ./certs/validator2/node.certificate.pem:/var/lib/rnode/node.certificate.pem:ro
       - ./certs/validator2/node.key.pem:/var/lib/rnode/node.key.pem:ro
 
@@ -110,7 +156,8 @@ services:
         "--bootstrap=rnode://$BOOTSTRAP_NODE_ID@$BOOTSTRAP_HOST?protocol=40400&discovery=40404",
         "--validator-public-key=$VALIDATOR3_PUBLIC_KEY",
         "--validator-private-key=$VALIDATOR3_PRIVATE_KEY",
-        "--genesis-validator"
+        "--genesis-validator",
+        "--autopropose",
       ]
     ports:
       - "40430:40400"
@@ -120,11 +167,11 @@ services:
       - "40434:40404"
       - "40435:40405"
     volumes:
-      - ./conf/shared-rnode.conf:/var/lib/rnode/rnode.conf
+      - ./data/$VALIDATOR3_HOST:/var/lib/rnode/
+      - ./conf/shared-rnode-runtime.conf:/var/lib/rnode/rnode.conf
       - ./genesis/wallets.txt:/var/lib/rnode/genesis/wallets.txt
       - ./genesis/bonds.txt:/var/lib/rnode/genesis/bonds.txt
       - ./conf/logback.xml:/var/lib/rnode/logback.xml
-      - ./data/$VALIDATOR3_HOST:/var/lib/rnode/
       - ./certs/validator3/node.certificate.pem:/var/lib/rnode/node.certificate.pem:ro
       - ./certs/validator3/node.key.pem:/var/lib/rnode/node.key.pem:ro
 

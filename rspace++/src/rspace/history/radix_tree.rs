@@ -1,22 +1,20 @@
 // See rspace/src/main/scala/coop/rchain/rspace/history/RadixTree.scala
 
-use crate::rspace::errors::RadixTreeError;
-use crate::rspace::hashing::blake2b256_hash::Blake2b256Hash;
-use crate::rspace::history::Either;
-use crate::rspace::history::history_action::HistoryActionTrait;
+use std::collections::BTreeMap;
+use std::sync::{Arc, OnceLock};
+
 use dashmap::DashMap;
 use itertools::Itertools;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
-use shared::rust::Byte;
-use shared::rust::ByteVector;
 use shared::rust::store::key_value_store::KeyValueStore;
-use std::collections::BTreeMap;
-use std::sync::Arc;
+use shared::rust::{Byte, ByteVector};
 
-use super::history_action::DeleteAction;
-use super::history_action::HistoryAction;
-use super::history_action::InsertAction;
+use super::history_action::{DeleteAction, HistoryAction, InsertAction};
+use crate::rspace::errors::RadixTreeError;
+use crate::rspace::hashing::blake2b256_hash::Blake2b256Hash;
+use crate::rspace::history::Either;
+use crate::rspace::history::history_action::HistoryActionTrait;
 
 #[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
 pub enum Item {
@@ -37,9 +35,7 @@ pub type Node = Vec<Item>;
 
 const NUM_ITEMS: usize = 256;
 
-pub fn empty_node() -> Node {
-    vec![Item::EmptyItem; NUM_ITEMS]
-}
+pub fn empty_node() -> Node { vec![Item::EmptyItem; NUM_ITEMS] }
 
 /**
 * Binary codecs for serializing/deserializing Node in Radix tree
@@ -69,6 +65,22 @@ pub fn empty_node() -> Node {
 const DEF_SIZE: usize = 32;
 // 2 bytes: first - item index, second - second byte
 const HEAD_SIZE: usize = 2;
+// Read cache bound to prevent unbounded memory growth during long reads.
+const READ_CACHE_MAX_ITEMS: usize = 4_096;
+const READ_CACHE_TRIM_TARGET: usize = 2_048;
+const BLOCK_CREATOR_PHASE_SUBSTEP_PROFILE_ENV: &str = "F1R3_BLOCK_CREATOR_PHASE_SUBSTEP_PROFILE";
+
+fn block_creator_phase_substep_profile_enabled() -> bool {
+    static VALUE: OnceLock<bool> = OnceLock::new();
+    *VALUE.get_or_init(|| {
+        std::env::var(BLOCK_CREATOR_PHASE_SUBSTEP_PROFILE_ENV)
+            .map(|value| {
+                let normalized = value.trim().to_ascii_lowercase();
+                normalized == "1" || normalized == "true" || normalized == "yes"
+            })
+            .unwrap_or(false)
+    })
+}
 
 /** Serialization [[Node]] to [[ByteVector]]
  */
@@ -112,12 +124,14 @@ pub fn encode(node: &Node) -> ByteVector {
 
     let buf = vec![0u8; calc_size]; //Allocation memory
 
-    // Leaf second byte: Leaf identifier (most significant bit = 0) and prefixSize (lower 7 bits = size)
+    // Leaf second byte: Leaf identifier (most significant bit = 0) and prefixSize
+    // (lower 7 bits = size)
     fn encode_leaf_second_byte(prefix_size: usize) -> u8 {
         (prefix_size & 0x7F) as u8 // (size & 01111111b)
     }
 
-    // NodePtr second byte: NodePtr identifier (most significant bit = 1) and prefixSize (lower 7 bits = size)
+    // NodePtr second byte: NodePtr identifier (most significant bit = 1) and
+    // prefixSize (lower 7 bits = size)
     fn encode_node_ptr_second_byte(prefix_size: usize) -> u8 {
         (0x80 | (prefix_size & 0x7F)) as u8 // 10000000b | (size & 01111111b)
     }
@@ -134,7 +148,7 @@ pub fn encode(node: &Node) -> ByteVector {
         } else {
             match &node[idx_item] {
                 // If current item is empty - just skip serialization of this item
-                Item::EmptyItem => put_item_into_array(idx_item + 1, pos0, arr, node, calc_size), // Loop to the next item.
+                Item::EmptyItem => put_item_into_array(idx_item + 1, pos0, arr, node, calc_size), /* Loop to the next item. */
 
                 Item::Leaf { prefix, value } => {
                     // Fill first byte - item index
@@ -167,7 +181,8 @@ pub fn encode(node: &Node) -> ByteVector {
                 Item::NodePtr { prefix, ptr } => {
                     // Fill first byte - item index
                     arr[pos0] = idx_item as u8;
-                    // Fill second byte - NodePtr identifier (most significant bit = 1) and prefixSize (lower 7 bits = size)
+                    // Fill second byte - NodePtr identifier (most significant bit = 1) and
+                    // prefixSize (lower 7 bits = size)
                     let pos_second_byte = pos0 + 1;
                     let prefix_size = prefix.len();
                     arr[pos_second_byte] = encode_node_ptr_second_byte(prefix_size);
@@ -204,61 +219,46 @@ pub fn decode(bv: ByteVector) -> Node {
     let max_size = bv.len();
 
     // If first bit 0 - return true, otherwise false.
-    fn is_leaf(second_byte: u8) -> bool {
-        (second_byte & 0x80) == 0x00
-    }
+    fn is_leaf(second_byte: u8) -> bool { (second_byte & 0x80) == 0x00 }
+    // Decode each non-empty item in-place to avoid cloning the whole node per step.
+    let mut node = empty_node();
+    let mut pos0 = 0;
+    while pos0 < max_size {
+        let idx_item = byte_to_int(bv[pos0]); // Take first byte - it's item's index
+        assert!(
+            node[idx_item] == Item::EmptyItem,
+            "Error during deserialization: wrong index of item."
+        );
+        let pos1 = pos0 + 1;
+        let second_byte = bv[pos1]; // Take second byte
 
-    // Each loop decodes one non-empty item.
-    fn decode_item(pos0: usize, node: Node, max_size: usize, arr: Vec<u8>) -> Node {
-        if pos0 == max_size {
-            node // End of deserialization
+        // Decoding prefix
+        let prefix_size = (second_byte & 0x7F) as usize; // Lower 7 bits - it's size of prefix (0..127).
+        let pos_prefix_start = pos1 + 1;
+        let prefix = bv[pos_prefix_start..pos_prefix_start + prefix_size].to_vec();
+
+        // Decoding leaf or nodePtr data
+        let pos_val_or_ptr_start = pos_prefix_start + prefix_size;
+        let val_or_ptr = bv[pos_val_or_ptr_start..pos_val_or_ptr_start + DEF_SIZE].to_vec();
+
+        // Decoding type of non-empty item
+        node[idx_item] = if is_leaf(second_byte) {
+            Item::Leaf {
+                prefix,
+                value: val_or_ptr,
+            }
         } else {
-            let idx_item = byte_to_int(arr[pos0]); // Take first byte - it's item's index
-            assert!(
-                node[idx_item] == Item::EmptyItem,
-                "Error during deserialization: wrong index of item."
-            );
-            let pos1 = pos0 + 1;
-            let second_byte = arr[pos1]; // Take second byte
-
-            // Decoding prefix
-            let prefix_size = (second_byte & 0x7F) as usize; // Lower 7 bits - it's size of prefix (0..127).
-            let mut prefix = vec![0u8; prefix_size];
-            let pos_prefix_start = pos1 + 1;
-            for i in 0..prefix_size {
-                prefix[i] = arr[pos_prefix_start + i]; // Take prefix
+            Item::NodePtr {
+                prefix,
+                ptr: val_or_ptr,
             }
+        };
 
-            // Decoding leaf or nodePtr data
-            let mut val_or_ptr = vec![0u8; DEF_SIZE];
-            let pos_val_or_ptr_start = pos_prefix_start + prefix_size;
-            for i in 0..DEF_SIZE {
-                val_or_ptr[i] = arr[pos_val_or_ptr_start + i]; // Take next 32 bytes - it's data
-            }
-
-            let pos0_next = pos_val_or_ptr_start + DEF_SIZE; // Calculating start position for next loop
-
-            // Decoding type of non-empty item
-            let item = if is_leaf(second_byte) {
-                Item::Leaf {
-                    prefix,
-                    value: val_or_ptr,
-                }
-            } else {
-                Item::NodePtr {
-                    prefix,
-                    ptr: val_or_ptr,
-                }
-            };
-
-            let mut node_next = node.clone();
-            node_next[idx_item] = item;
-
-            decode_item(pos0_next, node_next, max_size, arr) // Try to decode next item.
-        }
+        // Move to next encoded item.
+        pos0 = pos_val_or_ptr_start + DEF_SIZE;
     }
 
-    decode_item(0, empty_node(), max_size, bv)
+    node
 }
 
 fn common_prefix(b1: ByteVector, b2: ByteVector) -> (ByteVector, ByteVector, ByteVector) {
@@ -290,9 +290,7 @@ pub fn hash_node(node: &Node) -> (ByteVector, ByteVector) {
     (hash.bytes(), node_bytes)
 }
 
-fn byte_to_int(b: u8) -> usize {
-    b as usize & 0xff
-}
+fn byte_to_int(b: u8) -> usize { b as usize & 0xff }
 
 /**
  * Data returned after export
@@ -348,9 +346,9 @@ pub struct ExportDataSettings {
  * Sequential export algorithm
  *
  * @param rootHash Root node hash, starting point
- * @param lastPrefix Describes the path of root to last processed element (if None - start from root)
- * @param skipSize Describes how many elements to skip
- * @param takeSize Describes how many elements to take
+ * @param lastPrefix Describes the path of root to last processed element
+ * (if None - start from root) @param skipSize Describes how many elements
+ * to skip @param takeSize Describes how many elements to take
  * @param getNodeDataFromStore Function to get data from storage
  * @param settings [[ExportDataSettings]]
  *
@@ -487,9 +485,10 @@ pub fn sequential_export(
      * Find next non-empty item.
      *
      * @param node Node to look for
-     * @param lastIdxOpt Last found index (if this node was not searched - [[None]])
-     * @param settings ExportDataSettings from outer scope
-     * @return [[Some]](idxItem, [[Item]]) if item found, [[None]] if non-empty item not found
+     * @param lastIdxOpt Last found index (if this node was not searched -
+     * [[None]]) @param settings ExportDataSettings from outer scope
+     * @return [[Some]](idxItem, [[Item]]) if item found, [[None]] if non-empty
+     * item not found
      */
     fn find_next_non_empty_item(
         node: Node,
@@ -739,9 +738,7 @@ pub fn sequential_export(
         ExportData::new(Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new())
     }
 
-    fn empty_result() -> (ExportData, Option<ByteVector>) {
-        (empty_export_data(), None)
-    }
+    fn empty_result() -> (ExportData, Option<ByteVector>) { (empty_export_data(), None) }
 
     let do_export: Box<
         dyn Fn(ByteVector) -> Result<(ExportData, Option<ByteVector>), RadixTreeError>,
@@ -837,7 +834,7 @@ pub struct RadixTreeImpl {
      * Where hash - Blake2b256Hash of serializing nodes data,
      *       node - deserialized data of this node.
      */
-    pub cache_r: DashMap<ByteVector, Node>,
+    pub cache_r: DashMap<ByteVector, Arc<Node>>,
     /**
      * Cache for storing serializing nodes. For subsequent unloading in KVDB
      *
@@ -875,14 +872,41 @@ impl RadixTreeImpl {
     /**
      * Load one node from [[cacheR]].
      *
-     * If there is no such record in cache - load and decode from KVDB, then save to cacheR.
-     * If there is no such record in KVDB - execute assert (if set noAssert flag - return emptyNode).
+     * If there is no such record in cache - load and decode from KVDB, then
+     * save to cacheR. If there is no such record in KVDB - execute
+     * assert (if set noAssert flag - return emptyNode).
      */
     pub fn load_node(
         &self,
         node_ptr: ByteVector,
         no_assert: Option<bool>,
     ) -> Result<Node, RadixTreeError> {
+        self.load_node_arc(node_ptr, no_assert)
+            .map(|node| node.as_ref().clone())
+    }
+
+    fn enforce_read_cache_bounds(&self) {
+        if self.cache_r.len() <= READ_CACHE_MAX_ITEMS {
+            return;
+        }
+
+        let number_to_remove = self.cache_r.len().saturating_sub(READ_CACHE_TRIM_TARGET);
+        let keys = self
+            .cache_r
+            .iter()
+            .take(number_to_remove)
+            .map(|entry| entry.key().clone())
+            .collect::<Vec<_>>();
+        for key in keys {
+            self.cache_r.remove(&key);
+        }
+    }
+
+    pub fn load_node_arc(
+        &self,
+        node_ptr: ByteVector,
+        no_assert: Option<bool>,
+    ) -> Result<Arc<Node>, RadixTreeError> {
         let no_assert = no_assert.unwrap_or(false);
 
         let error_msg = |node_ptr: &[u8]| {
@@ -896,26 +920,27 @@ impl RadixTreeImpl {
             );
         };
 
-        let cache_miss: Box<dyn Fn(ByteVector) -> Result<Node, RadixTreeError>> =
+        let cache_miss: Box<dyn Fn(ByteVector) -> Result<Arc<Node>, RadixTreeError>> =
             Box::new(|node_ptr: ByteVector| {
                 let store_node_opt = self.load_node_from_store(&node_ptr)?;
 
                 match store_node_opt {
-                    Some(ref node) => {
-                        self.cache_r.insert(node_ptr.clone(), node.to_vec());
+                    Some(node) => {
+                        let node_arc = Arc::new(node);
+                        self.cache_r.insert(node_ptr.clone(), Arc::clone(&node_arc));
+                        self.enforce_read_cache_bounds();
+                        Ok(node_arc)
                     }
-                    None => error_msg(&node_ptr),
-                };
-
-                match store_node_opt {
-                    Some(node) => Ok(node),
-                    None => Ok(empty_node()),
+                    None => {
+                        error_msg(&node_ptr);
+                        Ok(Arc::new(empty_node()))
+                    }
                 }
             });
 
         let cache_node_opt = self.cache_r.get(&node_ptr);
         match cache_node_opt {
-            Some(node) => Ok(node.to_vec()),
+            Some(node) => Ok(Arc::clone(node.value())),
             None => cache_miss(node_ptr),
         }
     }
@@ -924,7 +949,8 @@ impl RadixTreeImpl {
      * Clear [[cacheR]] (cache for storing read nodes).
      */
     pub fn clear_read_cache(&self) -> () {
-        self.cache_r.clear()
+        self.cache_r.clear();
+        self.cache_r.shrink_to_fit();
     }
 
     /**
@@ -935,18 +961,20 @@ impl RadixTreeImpl {
      */
     pub fn save_node(&self, node: Node) -> ByteVector {
         let (node_bytes_hash, node_bytes) = hash_node(&node);
-        let check_collision = |v: Node| {
+        let check_collision = |v: &Node| {
             assert!(
-                v == node,
+                *v == node,
                 "Radix Tree - Collision in cache: record with key = ${} has already existed.",
                 hex::encode(node_bytes_hash.clone())
             )
         };
 
         match self.cache_r.get(&node_bytes_hash) {
-            Some(node) => check_collision(node.value().to_vec()),
+            Some(node) => check_collision(node.value().as_ref()),
             None => {
-                self.cache_r.insert(node_bytes_hash.clone(), node);
+                self.cache_r
+                    .insert(node_bytes_hash.clone(), Arc::new(node.clone()));
+                self.enforce_read_cache_bounds();
             }
         };
 
@@ -1028,58 +1056,77 @@ impl RadixTreeImpl {
      * Clear [[cacheW]] (cache for storing data to write in KVDB).
      */
     pub fn clear_write_cache(&self) -> () {
-        self.cache_w.clear()
+        self.cache_w.clear();
+        self.cache_w.shrink_to_fit();
     }
 
     /**
      * Read leaf data with prefix. If data not found, returned [[None]]
      */
+    fn read_at(
+        &self,
+        cur_node: &Node,
+        prefix: &[u8],
+    ) -> Result<Option<ByteVector>, RadixTreeError> {
+        self.read_at_cached(cur_node, prefix)
+    }
+
+    fn read_at_cached(
+        &self,
+        cur_node: &Node,
+        prefix: &[u8],
+    ) -> Result<Option<ByteVector>, RadixTreeError> {
+        if prefix.is_empty() {
+            return Ok(None);
+        }
+
+        match &cur_node[byte_to_int(prefix[0])] {
+            Item::EmptyItem => Ok(None),
+            Item::Leaf {
+                prefix: leaf_prefix,
+                value,
+            } => {
+                let prefix_tail = &prefix[1..];
+                if leaf_prefix.as_slice() == prefix_tail {
+                    Ok(Some(value.clone()))
+                } else {
+                    Ok(None)
+                }
+            }
+            Item::NodePtr {
+                prefix: ptr_prefix,
+                ptr,
+            } => {
+                let prefix_tail = &prefix[1..];
+                if !prefix_tail.starts_with(ptr_prefix.as_slice()) {
+                    return Ok(None);
+                }
+
+                let prefix_rest = &prefix_tail[ptr_prefix.len()..];
+                self.read_at_from_ptr(ptr, prefix_rest)
+            }
+        }
+    }
+
+    fn read_at_from_ptr(
+        &self,
+        node_ptr: &ByteVector,
+        prefix: &[u8],
+    ) -> Result<Option<ByteVector>, RadixTreeError> {
+        if prefix.is_empty() {
+            return Ok(None);
+        }
+
+        let node = self.load_node_arc(node_ptr.clone(), None)?;
+        self.read_at_cached(node.as_ref(), prefix)
+    }
+
     pub fn read(
         &self,
-        start_node: Node,
-        start_prefix: ByteVector,
+        start_node: &Node,
+        start_prefix: &[u8],
     ) -> Result<Option<ByteVector>, RadixTreeError> {
-        type Params = (Node, ByteVector);
-
-        let loops: Box<
-            dyn Fn(Params) -> Result<Either<Params, Option<ByteVector>>, RadixTreeError>,
-        > = Box::new(|params: Params| {
-            match params {
-                (_, ref prefix) if prefix.is_empty() => Ok(Either::Right(None)), // Not found
-                (cur_node, prefix) => match &cur_node[byte_to_int(*prefix.first().unwrap())] {
-                    Item::EmptyItem => Ok(Either::Right(None)), // Not found,
-                    Item::Leaf {
-                        prefix: leaf_prefix,
-                        value,
-                    } => {
-                        let (_, prefix_tail) = prefix.split_first().unwrap();
-                        if leaf_prefix == prefix_tail {
-                            Ok(Either::Right(Some(value.clone()))) // Happy end
-                        } else {
-                            Ok(Either::Right(None)) // Not found
-                        }
-                    }
-                    Item::NodePtr {
-                        prefix: ptr_prefix,
-                        ptr,
-                    } => {
-                        let (_, prefix_tail) = prefix.split_first().unwrap();
-                        let (_, prefix_rest, ptr_prefix_rest) =
-                            common_prefix(prefix_tail.to_vec(), ptr_prefix.to_vec());
-
-                        if ptr_prefix_rest.is_empty() {
-                            // Deeper
-                            self.load_node(ptr.to_vec(), None)
-                                .map(|n| Ok(Either::Left((n, prefix_rest))))?
-                        } else {
-                            Ok(Either::Right(None)) // Not found
-                        }
-                    }
-                },
-            }
-        });
-
-        tail_rec_m((start_node, start_prefix), loops)
+        self.read_at(start_node, start_prefix)
     }
 
     fn create_node_from_item(&self, item: Item) -> Node {
@@ -1131,10 +1178,12 @@ impl RadixTreeImpl {
      *
      * If item is NodePtr and prefix is empty - load child node
      */
-    fn construct_node_from_item(&self, item: Item) -> Result<Node, RadixTreeError> {
+    fn construct_node_from_item(&self, item: &Item) -> Result<Arc<Node>, RadixTreeError> {
         match item {
-            Item::NodePtr { prefix, ptr } if prefix.is_empty() => self.load_node(ptr, None),
-            _ => Ok(self.create_node_from_item(item)),
+            Item::NodePtr { prefix, ptr } if prefix.is_empty() => {
+                self.load_node_arc(ptr.clone(), None)
+            }
+            _ => Ok(Arc::new(self.create_node_from_item(item.clone()))),
         }
     }
 
@@ -1208,9 +1257,9 @@ impl RadixTreeImpl {
      * Save new leaf value to this part of tree (start from curItems).
      * Rehash and save all depend node to [[cacheW]].
      *
-     * If exist leaf with same prefix but different value - update leaf value.
-     * If exist leaf with same prefix and same value - return [[None]].
-     * @return Updated current item.
+     * If exist leaf with same prefix but different value - update leaf
+     * value. If exist leaf with same prefix and same value - return
+     * [[None]]. @return Updated current item.
      */
     fn update(
         &self,
@@ -1221,20 +1270,20 @@ impl RadixTreeImpl {
         let insert_new_node_to_child: Box<
             dyn Fn(ByteVector, ByteVector, ByteVector) -> Result<Option<Item>, RadixTreeError>,
         > = Box::new(|child_ptr: ByteVector, child_prefix: ByteVector, ins_prefix: ByteVector| {
-            let child_node = self.load_node(child_ptr, None)?;
+            let child_node = self.load_node_arc(child_ptr, None)?;
             let (ins_prefix_head, ins_prefix_tail) = ins_prefix.split_first().unwrap();
             let (child_item_idx, child_ins_prefix) =
                 (byte_to_int(*ins_prefix_head), ins_prefix_tail);
 
             let child_item_opt = self.update(
-                child_node.get(child_item_idx).unwrap().clone(),
+                child_node.as_ref().get(child_item_idx).unwrap().clone(),
                 child_ins_prefix.to_vec(),
                 ins_value.clone(),
             )?; // Deeper
 
             match child_item_opt {
                 Some(child_item) => {
-                    let mut updated_child_node = child_node.clone();
+                    let mut updated_child_node = child_node.as_ref().clone();
                     updated_child_node[child_item_idx] = child_item;
                     let returned_item =
                         self.save_node_and_create_item(updated_child_node, child_prefix, false);
@@ -1347,15 +1396,17 @@ impl RadixTreeImpl {
         let delete_from_child_node: Box<
             dyn Fn(ByteVector, ByteVector, ByteVector) -> Result<Option<Item>, RadixTreeError>,
         > = Box::new(|child_ptr: ByteVector, child_prefix: ByteVector, del_prefix: ByteVector| {
-            let child_node = self.load_node(child_ptr, None)?;
+            let child_node = self.load_node_arc(child_ptr, None)?;
             let (del_prefix_head, del_prefix_tail) = del_prefix.split_first().unwrap();
             let (del_item_idx, del_item_prefix) = (byte_to_int(*del_prefix_head), del_prefix_tail);
-            let child_item_opt = self
-                .delete(child_node.get(del_item_idx).unwrap().clone(), del_item_prefix.to_vec())?;
+            let child_item_opt = self.delete(
+                child_node.as_ref().get(del_item_idx).unwrap().clone(),
+                del_item_prefix.to_vec(),
+            )?;
 
             match child_item_opt {
                 Some(child_item) => {
-                    let mut child_node_updated = child_node.clone();
+                    let mut child_node_updated = child_node.as_ref().clone();
                     // child_node_updated.insert(del_item_idx, child_item);
                     child_node_updated[del_item_idx] = child_item;
                     Ok(Some(self.save_node_and_create_item(child_node_updated, child_prefix, true)))
@@ -1393,18 +1444,53 @@ impl RadixTreeImpl {
     }
 
     /**
-     * Parallel processing of [[HistoryAction]]s in this part of tree (start from curNode).
+     * Parallel processing of [[HistoryAction]]s in this part of tree (start
+     * from curNode).
      *
      * New data load to [[cacheW]].
      * @return Updated curNode. if no action was taken - return [[None]].
      */
     pub fn make_actions(
         &self,
-        curr_node: Node,
+        curr_node: &Node,
         actions: Vec<HistoryAction>,
     ) -> Result<Option<Node>, RadixTreeError> {
+        let mem_profile_enabled = block_creator_phase_substep_profile_enabled();
+        let read_rss_kb = || -> Option<u64> {
+            let status = std::fs::read_to_string("/proc/self/status").ok()?;
+            let line = status.lines().find(|l| l.starts_with("VmRSS:"))?;
+            let mut parts = line.split_whitespace();
+            let _ = parts.next();
+            parts.next()?.parse::<u64>().ok()
+        };
+        let mut mem_prev_kb = if mem_profile_enabled {
+            read_rss_kb()
+        } else {
+            None
+        };
+        let mem_base_kb = mem_prev_kb;
+        let mut log_mem_step = |step: &str| {
+            if !mem_profile_enabled {
+                return;
+            }
+            if let Some(curr_kb) = read_rss_kb() {
+                let prev_kb = mem_prev_kb.unwrap_or(curr_kb);
+                let base_kb = mem_base_kb.unwrap_or(curr_kb);
+                let delta_prev_kb = curr_kb as i64 - prev_kb as i64;
+                let delta_total_kb = curr_kb as i64 - base_kb as i64;
+                eprintln!(
+                    "radix_tree.make_actions.mem step={} rss_kb={} delta_prev_kb={} \
+                     delta_total_kb={}",
+                    step, curr_kb, delta_prev_kb, delta_total_kb
+                );
+                mem_prev_kb = Some(curr_kb);
+            }
+        };
+        log_mem_step("start");
+
         // If we have 1 action in group.
-        // We can't parallel next and we should use sequential traversing with help update() or delete().
+        // We can't parallel next and we should use sequential traversing with help
+        // update() or delete().
         let process_one_action: Box<
             dyn Fn(HistoryAction, Item, i32) -> Result<(i32, Option<Item>), RadixTreeError>
                 + Send
@@ -1475,12 +1561,12 @@ impl RadixTreeImpl {
             // println!("\ncurr_node: {:?}", curr_node);
 
             let created_node =
-                self.construct_node_from_item(curr_node.get(item_idx as usize).unwrap().clone())?;
+                self.construct_node_from_item(curr_node.get(item_idx as usize).unwrap())?;
 
             // println!("\ncreated_node in process_non_empty_actions: {:?}", created_node);
 
             let new_actions = trim_keys(actions);
-            let new_node_opt = self.make_actions(created_node, new_actions)?;
+            let new_node_opt = self.make_actions(created_node.as_ref(), new_actions)?;
 
             // println!(
             //     "\nnew_node_opt in process_non_empty_actions: {:?}",
@@ -1515,9 +1601,9 @@ impl RadixTreeImpl {
         let process_grouped_actions: Box<
             dyn Fn(
                 Vec<(Byte, Vec<HistoryAction>)>,
-                Node,
+                &Node,
             ) -> Vec<Result<(i32, Option<Item>), RadixTreeError>>,
-        > = Box::new(|grouped_actions: Vec<(Byte, Vec<HistoryAction>)>, curr_node: Node| {
+        > = Box::new(|grouped_actions: Vec<(Byte, Vec<HistoryAction>)>, curr_node: &Node| {
             grouped_actions
                 .par_iter()
                 .map(|grouped_action| match grouped_action {
@@ -1567,24 +1653,31 @@ impl RadixTreeImpl {
         }
 
         // Group the actions by the first byte of the prefix.
+        log_mem_step("before_grouping");
         let grouped_actions = grouping(actions)?;
+        log_mem_step("after_grouping");
 
         // println!("\ngrouped_actions: {:?}", grouped_actions);
         // println!("\ncurr_node: {:?}", curr_node);
 
         // Process actions within each group.
         // TODO: Update to handle parallel execution. See Scala side
-        let new_group_items_results = process_grouped_actions(grouped_actions, curr_node.clone());
+        log_mem_step("before_process_grouped_actions");
+        let new_group_items_results = process_grouped_actions(grouped_actions, curr_node);
+        log_mem_step("after_process_grouped_actions");
 
+        log_mem_step("before_collect_group_results");
         let mut new_group_items = Vec::with_capacity(new_group_items_results.len());
         for result in new_group_items_results {
             let value = result?;
             new_group_items.push(value);
         }
+        log_mem_step("after_collect_group_results");
 
         // println!("\nnew_group_items: {:?}", new_group_items);
 
         // Update all changed items in current node.
+        log_mem_step("before_update_current_node");
         let mut new_cur_node = curr_node.clone();
         for (index, new_item_opt) in new_group_items {
             new_cur_node = match new_item_opt {
@@ -1595,11 +1688,14 @@ impl RadixTreeImpl {
                 None => new_cur_node,
             };
         }
+        log_mem_step("after_update_current_node");
 
         // If current node changing return new node, otherwise return none.
-        if new_cur_node != curr_node {
+        if new_cur_node != *curr_node {
+            log_mem_step("changed_return_some");
             Ok(Some(new_cur_node))
         } else {
+            log_mem_step("unchanged_return_none");
             Ok(None)
         }
     }
@@ -1647,18 +1743,5 @@ impl RadixTreeImpl {
             }
         }
         Ok(output)
-    }
-}
-
-fn tail_rec_m<A, B, F>(initial_state: A, mut func: F) -> Result<B, RadixTreeError>
-where
-    F: FnMut(A) -> Result<Either<A, B>, RadixTreeError>,
-{
-    let mut state = initial_state;
-    loop {
-        match func(state)? {
-            Either::Left(new_state) => state = new_state,
-            Either::Right(final_state) => return Ok(final_state),
-        }
     }
 }

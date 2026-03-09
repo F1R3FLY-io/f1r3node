@@ -12,7 +12,7 @@ import coop.rchain.casper.protocol.BlockMessage
 import coop.rchain.casper.syntax._
 import coop.rchain.casper.util.comm.CommUtil
 import coop.rchain.casper.util.rholang.RuntimeManager
-import coop.rchain.casper.{Casper, _}
+import coop.rchain.casper._
 import coop.rchain.crypto.PrivateKey
 import coop.rchain.metrics.Metrics.Source
 import coop.rchain.metrics.implicits._
@@ -35,7 +35,7 @@ object ProposerResult {
   def started(seqNumber: Int): ProposerResult = ProposerStarted(seqNumber)
 }
 
-class Proposer[F[_]: Concurrent: Log: Span](
+class Proposer[F[_]: Concurrent: Log: Span: EventPublisher](
     // base state on top of which block will be created
     getCasperSnapshot: Casper[F] => F[CasperSnapshot[F]],
     // propose constraint checkers
@@ -76,17 +76,47 @@ class Proposer[F[_]: Concurrent: Log: Span](
                         case NoNewDeploys =>
                           (ProposeResult.failure(NoNewDeploys), none[BlockMessage]).pure[F]
                         case Created(b) =>
-                          validateBlock(casper, s, b).flatMap {
-                            case Right(v) =>
-                              proposeEffect(casper, b) >>
-                                (ProposeResult.success(v), b.some).pure[F]
-                            case Left(v) =>
-                              Concurrent[F].raiseError[(ProposeResult, Option[BlockMessage])](
-                                new Throwable(
-                                  s"Validation of self created block failed with reason: $v, cancelling propose."
-                                )
-                              )
-                          }
+                          // Publish BlockCreated event immediately after block is created
+                          EventPublisher[F].publish(MultiParentCasperImpl.createdEvent(b)) >>
+                            validateBlock(casper, s, b).flatMap {
+                              case Right(v) =>
+                                proposeEffect(casper, b) >>
+                                  (ProposeResult.success(v), b.some).pure[F]
+                              case Left(v) =>
+                                v match {
+                                  // Transient conditions: DAG/state changed between snapshot
+                                  // and block creation. These are expected in a concurrent
+                                  // multi-validator network and will resolve on the next
+                                  // heartbeat cycle with a fresh snapshot.
+                                  // InvalidTimestamp: a new parent block arrived between block
+                                  // creation and self-validation, making the timestamp stale
+                                  // relative to the updated parent set.
+                                  case InvalidBlock.InvalidParents |
+                                      InvalidBlock.InvalidBondsCache |
+                                      InvalidBlock.InvalidTransaction |
+                                      InvalidBlock.InvalidRejectedDeploy |
+                                      InvalidBlock.ContainsExpiredDeploy |
+                                      InvalidBlock.ContainsTimeExpiredDeploy |
+                                      InvalidBlock.InvalidTimestamp =>
+                                    Log[F].error(
+                                      s"Self-created block validation failed with transient reason: $v -- discarding block and will retry on next heartbeat"
+                                    ) >>
+                                      (
+                                        ProposeResult.failure(InternalDeployError),
+                                        none[BlockMessage]
+                                      ).pure[F]
+
+                                  // Structural errors: indicate a bug in block creation code.
+                                  // These will never self-heal on retry, so crash to make
+                                  // the problem immediately visible to the operator.
+                                  case _ =>
+                                    Concurrent[F].raiseError[(ProposeResult, Option[BlockMessage])](
+                                      new Throwable(
+                                        s"Self-created block validation failed with structural error: $v -- this indicates a bug in block creation"
+                                      )
+                                    )
+                                }
+                            }
                       }
                 } yield r
             }
@@ -124,7 +154,7 @@ class Proposer[F[_]: Concurrent: Log: Span](
       val valBytes = ByteString.copyFrom(validator.publicKey.bytes)
       cs.maxSeqNums.getOrElse(valBytes, 0) + 1
     }
-    for {
+    val work = for {
       // get snapshot to serve as a base for propose
       s <- Stopwatch.time(Log[F].info(_))(s"getCasperSnapshot")(getCasperSnapshot(c))
       result <- if (isAsync) for {
@@ -150,6 +180,18 @@ class Proposer[F[_]: Concurrent: Log: Span](
                  } yield r
 
     } yield result
+
+    work.handleErrorWith {
+      case _: FinalizationInProgressException =>
+        // Finalization is in progress -- the snapshot cannot be obtained right now.
+        // This is a transient condition that resolves within seconds once finalization
+        // completes. Skip this propose cycle; the heartbeat will trigger another attempt.
+        Log[F].info(
+          "Snapshot unavailable: finalization in progress, skipping propose cycle"
+        ) >>
+          proposeIdDef.complete(ProposerResult.empty).attempt.void >>
+          (ProposeResult.failure(InternalDeployError), none[BlockMessage]).pure[F]
+    }
   }
 }
 
@@ -164,12 +206,13 @@ object Proposer {
   ] // format: on
   (
       validatorIdentity: ValidatorIdentity,
-      dummyDeployOpt: Option[(PrivateKey, String)] = None
+      dummyDeployOpt: Option[(PrivateKey, String)] = None,
+      allowEmptyBlocks: Boolean = false
   )(implicit runtimeManager: RuntimeManager[F]): Proposer[F] = {
     val getCasperSnapshotSnapshot = (c: Casper[F]) => c.getSnapshot
 
     val createBlock = (s: CasperSnapshot[F], validatorIdentity: ValidatorIdentity) =>
-      BlockCreator.create(s, validatorIdentity, dummyDeployOpt)
+      BlockCreator.create(s, validatorIdentity, dummyDeployOpt, allowEmptyBlocks)
 
     val validateBlock = (casper: Casper[F], s: CasperSnapshot[F], b: BlockMessage) =>
       casper.validate(b, s)
@@ -198,14 +241,12 @@ object Proposer {
     val proposeEffect = (c: Casper[F], b: BlockMessage) =>
       // store block
       BlockStore[F].put(b) >>
-        // save changes to Casper
+        // save changes to Casper (publishes BlockAdded and BlockFinalised)
         c.handleValidBlock(b) >>
         // inform block retriever about block
         BlockRetriever[F].ackInCasper(b.blockHash) >>
         // broadcast hash to peers
-        CommUtil[F].sendBlockHash(b.blockHash, b.sender) >>
-        // Publish event
-        EventPublisher[F].publish(MultiParentCasperImpl.createdEvent(b))
+        CommUtil[F].sendBlockHash(b.blockHash, b.sender)
 
     new Proposer(
       getCasperSnapshotSnapshot,

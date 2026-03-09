@@ -98,8 +98,11 @@ pub fn normalize_p_let<'ast>(
             // LetBinding is now a struct, not an enum
             let lhs = &binding.lhs;
             let rhs = &binding.rhs;
-            
-            if binding.lhs.names.len() == 1 && binding.lhs.remainder.is_none() && binding.rhs.len() == 1 {
+
+            if binding.lhs.names.len() == 1
+                && binding.lhs.remainder.is_none()
+                && binding.rhs.len() == 1
+            {
                 // Single binding: one name, one rhs value
                 // Derive spans from actual rhs location (lhs no longer has span)
                 let lhs_span = rhs[0].span;
@@ -300,12 +303,14 @@ pub fn normalize_p_let<'ast>(
 
             // Create pattern elements from lhs names
             let lhs_name_span = SpanContext::synthetic_construct_span(lhs_span, 0);
-            let mut pattern_elements: Vec<AnnProc> = lhs.names.iter().map(|name| {
-                AnnProc {
+            let mut pattern_elements: Vec<AnnProc> = lhs
+                .names
+                .iter()
+                .map(|name| AnnProc {
                     proc: parser.ast_builder().alloc_eval(*name),
                     span: lhs_name_span,
-                }
-            }).collect();
+                })
+                .collect();
 
             // Add wildcards for remaining values if rhs has more than lhs names
             while pattern_elements.len() < rhs.len() {
@@ -424,14 +429,8 @@ mod tests {
         let rhs_2 = ParBuilderUtil::create_ast_long_literal(2, &parser);
 
         let bindings = smallvec::SmallVec::from_vec(vec![
-            LetBinding::single(
-                ParBuilderUtil::create_ast_name_var("x"),
-                rhs_1,
-            ),
-            LetBinding::single(
-                ParBuilderUtil::create_ast_name_var("y"),
-                rhs_2,
-            ),
+            LetBinding::single(ParBuilderUtil::create_ast_name_var("x"), rhs_1),
+            LetBinding::single(ParBuilderUtil::create_ast_name_var("y"), rhs_2),
         ]);
 
         let x_channel = ParBuilderUtil::create_ast_name_var("x");

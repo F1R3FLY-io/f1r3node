@@ -8,7 +8,7 @@ import coop.rchain.casper.syntax._
 import coop.rchain.casper.util.EventConverter
 import coop.rchain.casper.util.rholang.Resources
 import coop.rchain.crypto.hash.Blake2b512Random
-import coop.rchain.metrics.Span
+import coop.rchain.metrics.{Metrics, Span}
 import coop.rchain.models.{GPrivate, Par}
 import coop.rchain.p2p.EffectsTestInstances.LogicalTime
 import coop.rchain.rholang.interpreter.RhoType.Number
@@ -94,7 +94,7 @@ class MergeNumberChannelSpec extends FlatSpec {
     GPrivate(ByteString.copyFrom(baseRhoSeed.next()))
   }
 
-  def testCase[F[_]: Concurrent: ContextShift: Parallel: Span: Log](
+  def testCase[F[_]: Concurrent: ContextShift: Parallel: Span: Log: Metrics](
       baseTerms: Seq[String],
       leftTerms: Seq[DeployTestInfo],
       rightTerms: Seq[DeployTestInfo],
@@ -106,7 +106,10 @@ class MergeNumberChannelSpec extends FlatSpec {
       for {
         runtime <- rm.spawnRuntime
 
-        // Run Rholang terms / simulate deploys in a block
+        // Run Rholang terms / simulate deploys in a block.
+        // Uses deterministic seeds derived from deploy sigs so that unforgeable
+        // names (and therefore postStateHash) are reproducible across runs,
+        // matching production behavior where seeds come from deploy IDs.
         runRholang = (terms: Seq[DeployTestInfo], preState: Blake2b256Hash) =>
           for {
             _ <- runtime.reset(preState)
@@ -114,7 +117,12 @@ class MergeNumberChannelSpec extends FlatSpec {
             evalResults <- terms.toList.traverse {
                             case deploy =>
                               for {
-                                evalResult <- runtime.evaluate(deploy.term)
+                                evalResult <- {
+                                  implicit val rand: Blake2b512Random =
+                                    Blake2b512Random(makeSig(deploy.sig).toByteArray)
+                                  runtime
+                                    .evaluate(deploy.term, Cost.UNSAFE_MAX, Map.empty[String, Par])
+                                }
                                 _ = assert(
                                   evalResult.errors.isEmpty,
                                   s"${evalResult.errors}\n ${deploy.term}"
@@ -233,9 +241,11 @@ class MergeNumberChannelSpec extends FlatSpec {
         applyTrieActions = (actions: Seq[HotStoreTrieAction]) =>
           rm.getHistoryRepo.reset(baseCp.root).flatMap(_.doCheckpoint(actions).map(_.root))
 
+        // Combine and sort deploy chains for deterministic processing
+        allDeployChains = (leftDeployChains ++ rightDeployChains).sorted
         r <- ConflictSetMerger.merge[F, DeployChainIndex](
-              actualSet = leftDeployChains.toSet ++ rightDeployChains.toSet,
-              lateSet = Set(),
+              actualSeq = allDeployChains,
+              lateSeq = Seq(),
               depends = (target, source) =>
                 MergingLogic.depends(target.eventLogIndex, source.eventLogIndex),
               conflicts = branchesAreConflicting,
@@ -262,9 +272,11 @@ class MergeNumberChannelSpec extends FlatSpec {
       } yield ()
     }
   }
-  implicit val timeEff = new LogicalTime[Task]
-  implicit val logEff  = Log.log[Task]
-  implicit val spanEff = Span.noop[Task]
+
+  implicit val timeEff    = new LogicalTime[Task]
+  implicit val logEff     = Log.log[Task]
+  implicit val spanEff    = Span.noop[Task]
+  implicit val metricsEff = new Metrics.MetricsNOP[Task]
 
   // IGNORED: RSpace++ HistoryRepository.reset() and doCheckpoint() methods are not implemented.
   // These methods require a JNA function to apply HotStoreTrieAction to the history repository,
@@ -277,7 +289,7 @@ class MergeNumberChannelSpec extends FlatSpec {
         DeployTestInfo(rhoChange(-5), 10L, "0x11") //  -5
       ),
       rightTerms = Seq(
-        DeployTestInfo(rhoChange(-6), 10L, "0x22") // -20
+        DeployTestInfo(rhoChange(-6), 10L, "0x22") // -6
       ),
       expectedRejected = Set(makeSig("0x22")),
       expectedFinalResult = 5

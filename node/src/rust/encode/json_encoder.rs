@@ -1,8 +1,8 @@
 // Port of node/src/main/scala/coop/rchain/node/encode/JsonEncoder.scala
 
+use crypto::rust::hash::blake2b512_random::Blake2b512Random;
 use models::rhoapi::*;
 use models::rust::{par_map::ParMap, par_set::ParSet};
-use crypto::rust::hash::blake2b512_random::Blake2b512Random;
 use serde::{Deserialize, Serialize};
 use serde_json;
 
@@ -56,7 +56,9 @@ impl JsonEncoder {
     }
 
     /// Serialize Blake2b512Random to JSON as null (matches Scala encodeBlake2b512Random)
-    pub fn encode_blake2b512_random(_random: &Blake2b512Random) -> Result<String, serde_json::Error> {
+    pub fn encode_blake2b512_random(
+        _random: &Blake2b512Random,
+    ) -> Result<String, serde_json::Error> {
         Self::to_json(&())
     }
 
@@ -92,7 +94,7 @@ mod tests {
         let val1 = new_gstring_par("a".to_string(), Vec::new(), false);
         let key2 = new_gint_par(2, Vec::new(), false);
         let val2 = new_gstring_par("b".to_string(), Vec::new(), false);
-        
+
         let par_map = ParMap::create_from_vec(vec![(key1, val1), (key2, val2)]);
 
         let json = JsonEncoder::encode_par_map(&par_map).unwrap();

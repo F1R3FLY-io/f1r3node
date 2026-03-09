@@ -53,7 +53,7 @@ impl IndexedBlockDagStorage {
         // Lock the entire operation to match Scala's lock.withPermit
         // Use underlying's lock to ensure atomicity
         let _lock_guard = self.underlying.global_lock.lock().unwrap();
-        
+
         // Use internal methods to avoid re-acquiring lock
         self.underlying.insert_internal(genesis, false, true)?;
         let dag = self.underlying.get_representation_internal();
@@ -79,7 +79,8 @@ impl IndexedBlockDagStorage {
         modified_block.seq_num = next_creator_seq_num;
         modified_block.body.state = new_post_state;
 
-        self.underlying.insert_internal(&modified_block, invalid, false)?;
+        self.underlying
+            .insert_internal(&modified_block, invalid, false)?;
         self.id_to_blocks.insert(next_id, modified_block.clone());
         *current_id = next_id;
 

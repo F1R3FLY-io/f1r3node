@@ -1,5 +1,6 @@
 package coop.rchain.rspace
 
+import coop.rchain.rspace.trace.Produce
 import coop.rchain.shared.Serialize
 import scodec.bits.ByteVector
 
@@ -8,15 +9,33 @@ import scala.util.Try
 
 package object util {
 
+  def unpackProduceSeq[C, P, K, R](
+      v: Seq[Option[(ContResult[C, P, K], Seq[Result[C, R]], Produce)]]
+  ): Seq[Option[(K, Seq[R], Produce)]] =
+    v.map(unpackProduceOption)
+
   def unpackSeq[C, P, K, R](
       v: Seq[Option[(ContResult[C, P, K], Seq[Result[C, R]])]]
   ): Seq[Option[(K, Seq[R])]] =
     v.map(unpackOption)
 
+  def unpackProduceOption[C, P, K, R](
+      v: Option[(ContResult[C, P, K], Seq[Result[C, R]], Produce)]
+  ): Option[(K, Seq[R], Produce)] =
+    v.map(unpackProduceTuple)
+
   def unpackOption[C, P, K, R](
       v: Option[(ContResult[C, P, K], Seq[Result[C, R]])]
   ): Option[(K, Seq[R])] =
     v.map(unpackTuple)
+
+  def unpackProduceTuple[C, P, K, R](
+      v: (ContResult[C, P, K], Seq[Result[C, R]], Produce)
+  ): (K, Seq[R], Produce) =
+    v match {
+      case (ContResult(continuation, _, _, _, _), data, previous) =>
+        (continuation, data.map(_.matchedDatum), previous)
+    }
 
   def unpackTuple[C, P, K, R](
       v: (ContResult[C, P, K], Seq[Result[C, R]])
@@ -48,16 +67,22 @@ package object util {
     */
   def getK[A, K](t: Option[(K, A)]): K =
     t.map(_._1).get
+  def getProduceK[A, K](t: Option[(K, A, Produce)]): K =
+    t.map(_._1).get
 
   /** Runs a continuation with the accompanying data
     */
   def runK[T](e: Option[((T) => Unit, T)]): Unit =
     e.foreach { case (k, data) => k(data) }
+  def runProduceK[T](e: Option[((T) => Unit, T, Produce)]): Unit =
+    e.foreach { case (k, data, _) => k(data) }
 
   /** Runs a list of continuations with the accompanying data
     */
   def runKs[T](t: Seq[Option[((T) => Unit, T)]]): Unit =
     t.foreach { case Some((k, data)) => k(data); case None => () }
+  def runProduceKs[T](t: Seq[Option[((T) => Unit, T, Produce)]]): Unit =
+    t.foreach { case Some((k, data, _)) => k(data); case None => () }
 
   @SuppressWarnings(Array("org.wartremover.warts.Return"))
   def veccmp(a: ByteVector, b: ByteVector): Int = {

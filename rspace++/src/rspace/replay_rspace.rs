@@ -1,8 +1,21 @@
-// See /home/spreston/src/firefly/f1r3fly/rspace/src/main/scala/coop/rchain/rspace/ReplayRSpace.scala
+// See /home/spreston/src/firefly/f1r3fly/rspace/src/main/scala/coop/rchain/
+// rspace/ReplayRSpace.scala
 
 // NOTE: Manual marks are used instead of trace_i() because async functions
 // are not compatible with the current Span trait's FnOnce closure pattern.
 // This matches Scala's Span[F].traceI() semantics for async operations.
+
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::fmt::Debug;
+use std::hash::Hash;
+use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::{Arc, Mutex};
+
+use dashmap::DashMap;
+use rand::seq::SliceRandom;
+use rand::thread_rng;
+use serde::Serialize;
+use tracing::{Level, event};
 
 use super::checkpoint::SoftCheckpoint;
 use super::errors::RSpaceError;
@@ -13,35 +26,21 @@ use super::logging::{BasicLogger, RSpaceLogger};
 use super::r#match::Match;
 use super::metrics_constants::{
     CONSUME_COMM_LABEL, PRODUCE_COMM_LABEL, REPLAY_RSPACE_METRICS_SOURCE,
+    REPLAY_WAITING_CONTINUATIONS_CHANNEL_DEPTH_METRIC,
+    REPLAY_WAITING_CONTINUATIONS_ESTIMATE_METRIC,
+    REPLAY_WAITING_CONTINUATIONS_MATCHED_TOTAL_METRIC,
+    REPLAY_WAITING_CONTINUATIONS_STORED_TOTAL_METRIC,
 };
-use super::rspace_interface::ContResult;
-use super::rspace_interface::ISpace;
-use super::rspace_interface::MaybeConsumeResult;
-use super::rspace_interface::MaybeProduceCandidate;
-use super::rspace_interface::MaybeProduceResult;
-use super::rspace_interface::RSpaceResult;
+use super::rspace_interface::{
+    ContResult, ISpace, MaybeConsumeResult, MaybeProduceCandidate, MaybeProduceResult, RSpaceResult,
+};
 use super::trace::Log;
-use super::trace::event::COMM;
-use super::trace::event::Consume;
-use super::trace::event::Event;
-use super::trace::event::IOEvent;
-use super::trace::event::Produce;
+use super::trace::event::{COMM, Consume, Event, IOEvent, Produce};
 use crate::rspace::checkpoint::Checkpoint;
 use crate::rspace::history::history_repository::HistoryRepository;
 use crate::rspace::hot_store::{HotStore, HotStoreInstances};
 use crate::rspace::internal::*;
 use crate::rspace::space_matcher::SpaceMatcher;
-use dashmap::DashMap;
-use rand::seq::SliceRandom;
-use rand::thread_rng;
-use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::HashSet;
-use std::collections::{BTreeSet, HashMap};
-use std::fmt::Debug;
-use std::hash::Hash;
-use std::sync::{Arc, Mutex};
-use tracing::{Level, event};
 
 #[repr(C)]
 #[derive(Clone)]
@@ -55,6 +54,7 @@ pub struct ReplayRSpace<C, P, A, K> {
     // pub ops: RSpaceOps<C, P, A, K>,
     pub replay_data: MultisetMultiMap<IOEvent, COMM>,
     logger: Arc<Mutex<Box<dyn RSpaceLogger<C, P, A, K>>>>,
+    replay_waiting_continuations_estimate: Arc<AtomicI64>,
 }
 
 impl<C, P, A, K> SpaceMatcher<C, P, A, K> for ReplayRSpace<C, P, A, K>
@@ -79,7 +79,7 @@ where
         self.check_replay_data()?;
 
         let changes = self.store.changes();
-        let next_history = self.history_repository.checkpoint(&changes);
+        let next_history = self.history_repository.checkpoint(changes);
         self.history_repository = Arc::new(next_history);
 
         let history_reader = self
@@ -106,6 +106,13 @@ where
         let history_reader = self.history_repository.get_history_reader(root)?;
         self.create_new_hot_store(history_reader);
         self.restore_installs();
+        self.replay_waiting_continuations_estimate
+            .store(0, Ordering::Relaxed);
+        metrics::gauge!(
+            REPLAY_WAITING_CONTINUATIONS_ESTIMATE_METRIC,
+            "source" => REPLAY_RSPACE_METRICS_SOURCE
+        )
+        .set(0.0);
 
         Ok(())
     }
@@ -118,43 +125,42 @@ where
         panic!("\nERROR: ReplayRSpace consume_result should not be called here");
     }
 
-    fn get_data(&self, channel: &C) -> Vec<Datum<A>> {
-        self.store.get_data(channel)
-    }
+    fn get_data(&self, channel: &C) -> Vec<Datum<A>> { self.store.get_data(channel) }
 
     fn get_waiting_continuations(&self, channels: Vec<C>) -> Vec<WaitingContinuation<P, K>> {
         self.store.get_continuations(&channels)
     }
 
-    fn get_joins(&self, channel: C) -> Vec<Vec<C>> {
-        self.store.get_joins(&channel)
-    }
+    fn get_joins(&self, channel: C) -> Vec<Vec<C>> { self.store.get_joins(&channel) }
 
     fn clear(&mut self) -> Result<(), RSpaceError> {
         self.replay_data.clear();
         self.reset(&RadixHistory::empty_root_node_hash())
     }
 
-    fn to_map(&self) -> HashMap<Vec<C>, Row<P, A, K>> {
-        self.store.to_map()
-    }
+    fn get_root(&self) -> Blake2b256Hash { self.history_repository.root() }
+
+    fn to_map(&self) -> HashMap<Vec<C>, Row<P, A, K>> { self.store.to_map() }
 
     fn create_soft_checkpoint(&mut self) -> SoftCheckpoint<C, P, A, K> {
         // println!("\nhit rspace++ create_soft_checkpoint");
         // println!("current hot_store state: {:?}", self.store.snapshot());
 
         let cache_snapshot = self.store.snapshot();
-        let curr_event_log = self.event_log.clone();
-        let curr_produce_counter = self.produce_counter.clone();
-
-        self.event_log = Vec::new();
-        self.produce_counter = BTreeMap::new();
+        let curr_event_log = std::mem::take(&mut self.event_log);
+        let curr_produce_counter = std::mem::take(&mut self.produce_counter);
 
         SoftCheckpoint {
             cache_snapshot,
             log: curr_event_log,
             produce_counter: curr_produce_counter,
         }
+    }
+
+    fn take_event_log(&mut self) -> Log {
+        let curr_event_log = std::mem::take(&mut self.event_log);
+        let _ = std::mem::take(&mut self.produce_counter);
+        curr_event_log
     }
 
     fn revert_to_soft_checkpoint(
@@ -222,7 +228,7 @@ where
         patterns: Vec<P>,
         continuation: K,
     ) -> Result<Option<(K, Vec<A>)>, RSpaceError> {
-        self.locked_install(channels, patterns, continuation)
+        self.locked_install_internal(channels, patterns, continuation, true)
     }
 
     fn rig_and_reset(&mut self, start_root: Blake2b256Hash, log: Log) -> Result<(), RSpaceError> {
@@ -291,9 +297,7 @@ where
         }
     }
 
-    fn is_replay(&self) -> bool {
-        false
-    }
+    fn is_replay(&self) -> bool { false }
 
     fn update_produce(&mut self, produce_ref: Produce) -> () {
         for event in self.event_log.iter_mut() {
@@ -374,6 +378,7 @@ where
             produce_counter: BTreeMap::new(),
             replay_data: MultisetMultiMap::empty(),
             logger: Arc::new(Mutex::new(Box::new(BasicLogger::new()))),
+            replay_waiting_continuations_estimate: Arc::new(AtomicI64::new(0)),
         }
     }
 
@@ -398,12 +403,86 @@ where
             produce_counter: BTreeMap::new(),
             replay_data: MultisetMultiMap::empty(),
             logger: Arc::new(Mutex::new(logger)),
+            replay_waiting_continuations_estimate: Arc::new(AtomicI64::new(0)),
         }
     }
 
-    fn produce_counters(&self, produce_refs: Vec<Produce>) -> BTreeMap<Produce, i32> {
+    fn inc_replay_waiting_continuations(&self, channels: &[C]) {
+        metrics::counter!(
+            REPLAY_WAITING_CONTINUATIONS_STORED_TOTAL_METRIC,
+            "source" => REPLAY_RSPACE_METRICS_SOURCE
+        )
+        .increment(1);
+        let estimate = self
+            .replay_waiting_continuations_estimate
+            .fetch_add(1, Ordering::Relaxed) +
+            1;
+        metrics::gauge!(
+            REPLAY_WAITING_CONTINUATIONS_ESTIMATE_METRIC,
+            "source" => REPLAY_RSPACE_METRICS_SOURCE
+        )
+        .set(estimate as f64);
+        let channel_depth = self.store.get_continuations(channels).len();
+        metrics::histogram!(
+            REPLAY_WAITING_CONTINUATIONS_CHANNEL_DEPTH_METRIC,
+            "source" => REPLAY_RSPACE_METRICS_SOURCE
+        )
+        .record(channel_depth as f64);
+    }
+
+    fn dec_replay_waiting_continuations(&self) {
+        let mut current = self
+            .replay_waiting_continuations_estimate
+            .load(Ordering::Relaxed);
+        loop {
+            if current <= 0 {
+                metrics::gauge!(
+                    REPLAY_WAITING_CONTINUATIONS_ESTIMATE_METRIC,
+                    "source" => REPLAY_RSPACE_METRICS_SOURCE
+                )
+                .set(0.0);
+                return;
+            }
+            match self
+                .replay_waiting_continuations_estimate
+                .compare_exchange_weak(current, current - 1, Ordering::Relaxed, Ordering::Relaxed)
+            {
+                Ok(_) => {
+                    metrics::gauge!(
+                        REPLAY_WAITING_CONTINUATIONS_ESTIMATE_METRIC,
+                        "source" => REPLAY_RSPACE_METRICS_SOURCE
+                    )
+                    .set((current - 1) as f64);
+                    return;
+                }
+                Err(observed) => current = observed,
+            }
+        }
+    }
+
+    fn inc_replay_waiting_continuations_matched_total(&self) {
+        metrics::counter!(
+            REPLAY_WAITING_CONTINUATIONS_MATCHED_TOTAL_METRIC,
+            "source" => REPLAY_RSPACE_METRICS_SOURCE
+        )
+        .increment(1);
+    }
+
+    fn mark_replay_waiting_continuation_match(&self) {
+        if self
+            .replay_waiting_continuations_estimate
+            .load(Ordering::Relaxed) >
+            0
+        {
+            self.dec_replay_waiting_continuations();
+        }
+        self.inc_replay_waiting_continuations_matched_total();
+    }
+
+    fn produce_counters(&self, produce_refs: &[Produce]) -> BTreeMap<Produce, i32> {
         produce_refs
-            .into_iter()
+            .iter()
+            .cloned()
             .map(|p| (p.clone(), self.produce_counter.get(&p).unwrap_or(&0).clone()))
             .collect()
     }
@@ -427,8 +506,8 @@ where
         event!(Level::DEBUG, mark = "started-locked-consume", "locked_consume");
 
         // println!(
-        //     "consume: searching for data matching <patterns: {:?}> at <channels: {:?}>",
-        //     patterns, channels
+        //     "consume: searching for data matching <patterns: {:?}> at <channels:
+        // {:?}>",     patterns, channels
         // );
 
         self.log_consume(consume_ref.clone(), &channels, &patterns, &continuation, persist, &peeks);
@@ -441,7 +520,8 @@ where
             source: consume_ref.clone(),
         };
 
-        // println!("\nreplay_data len in replay_consume: {:?}", self.replay_data.map.len());
+        // println!("\nreplay_data len in replay_consume: {:?}",
+        // self.replay_data.map.len());
 
         let comms_option = self
             .replay_data
@@ -454,7 +534,8 @@ where
                     .collect::<Vec<_>>()
             });
 
-        // println!("\ncomms_options in replay_consume Some?: {:?}", comms_option.is_some());
+        // println!("\ncomms_options in replay_consume Some?: {:?}",
+        // comms_option.is_some());
 
         match comms_option {
             None => Ok(self.store_waiting_continuation(channels, wk)),
@@ -470,10 +551,10 @@ where
                     }
                     Some((_, data_candidates)) => {
                         let produce_counters_closure =
-                            |produces: Vec<Produce>| self.produce_counters(produces);
+                            |produces: &[Produce]| self.produce_counters(produces);
 
                         let comm_ref = COMM::new(
-                            data_candidates.clone(),
+                            &data_candidates,
                             consume_ref.clone(),
                             peeks.clone(),
                             produce_counters_closure,
@@ -510,12 +591,13 @@ where
     }
 
     /*
-     * Here, we create a cache of the data at each channel as `channelToIndexedData`
-     * which is used for finding matches.  When a speculative match is found, we can
-     * remove the matching datum from the remaining data candidates in the cache.
+     * Here, we create a cache of the data at each channel as
+     * `channelToIndexedData` which is used for finding matches.  When a
+     * speculative match is found, we can remove the matching datum from the
+     * remaining data candidates in the cache.
      *
-     * Put another way, this allows us to speculatively remove matching data without
-     * affecting the actual store contents.
+     * Put another way, this allows us to speculatively remove matching data
+     * without affecting the actual store contents.
      */
     fn fetch_channel_to_index_data(&self, channels: &[C]) -> DashMap<C, Vec<(Datum<A>, i32)>> {
         let map = DashMap::with_capacity(channels.len());
@@ -592,8 +674,8 @@ where
 
         let grouped_channels = self.store.get_joins(&channel);
         // println!(
-        //     "produce: searching for matching continuations at <grouped_channels: {:?}>",
-        //     grouped_channels
+        //     "produce: searching for matching continuations at <grouped_channels:
+        // {:?}>",     grouped_channels
         // );
         self.log_produce(produce_ref.clone(), &channel, &data, persist);
 
@@ -608,7 +690,8 @@ where
             });
 
         // println!("\nreplay_data in replay_produce: {:?}", self.replay_data);
-        // println!("\ncomms_options in replay_produce Some?: {:?}", comms_option.is_some());
+        // println!("\ncomms_options in replay_produce Some?: {:?}",
+        // comms_option.is_some());
 
         match io_event_and_comm {
             None => Ok(self.store_data(channel, data, persist, produce_ref)),
@@ -731,8 +814,8 @@ where
         // println!("\n\ndatum in was_repeated_enough_times: {:?}", datum);
         // println!("\nproduce_counter: {:?}", self.produce_counter);
         if !datum.persist {
-            let x = *comm.times_repeated.get(&datum.source).unwrap_or(&0)
-                == self.get_produce_count(&datum.source);
+            let x = *comm.times_repeated.get(&datum.source).unwrap_or(&0) ==
+                self.get_produce_count(&datum.source);
             // println!("\nwas_repeated_enough_times result: {:?}", x);
             x
         } else {
@@ -762,9 +845,9 @@ where
             source: consume_ref,
         } = &continuation;
 
-        let produce_counters_closure = |produces: Vec<Produce>| self.produce_counters(produces);
+        let produce_counters_closure = |produces: &[Produce]| self.produce_counters(produces);
         let comm_ref = COMM::new(
-            data_candidates.clone(),
+            &data_candidates,
             consume_ref.clone(),
             peeks.clone(),
             produce_counters_closure,
@@ -786,13 +869,16 @@ where
         );
 
         if !persist {
-            let _ = self
-                .store
+            self.store
                 .remove_continuation(&channels, continuation_index);
-        };
+            self.mark_replay_waiting_continuation_match();
+        } else {
+            self.mark_replay_waiting_continuation_match();
+        }
 
         let _ = self.remove_matched_datum_and_join(channels.clone(), data_candidates.clone());
-        // println!("produce: matching continuation found at <channels: {:?}>", channels);
+        // println!("produce: matching continuation found at <channels: {:?}>",
+        // channels);
         let _ = self.remove_bindings_for(comm_ref);
         self.wrap_result(channels, continuation.clone(), consume_ref.clone(), data_candidates)
     }
@@ -931,7 +1017,13 @@ where
         wc: WaitingContinuation<P, K>,
     ) -> MaybeConsumeResult<C, P, A, K> {
         // println!("\nHit store_waiting_continuation");
-        self.store.put_continuation(&channels, wc);
+        if self
+            .store
+            .put_continuation(&channels, wc.clone())
+            .unwrap_or(false)
+        {
+            self.inc_replay_waiting_continuations(&channels);
+        }
         for channel in channels.iter() {
             self.store.put_join(channel, &channels);
             // println!("consume: no data found, storing <(patterns, continuation): ({:?}, {:?})> at <channels: {:?}>", wc.patterns, wc.continuation, channels)
@@ -948,14 +1040,11 @@ where
     ) -> MaybeProduceResult<C, P, A, K> {
         // println!("\nHit store_data");
         // println!("\nHit store_data, data: {:?}", data);
-        self.store.put_datum(
-            &channel,
-            Datum {
-                a: data,
-                persist,
-                source: produce_ref,
-            },
-        );
+        self.store.put_datum(&channel, Datum {
+            a: data,
+            persist,
+            source: produce_ref,
+        });
         // println!(
         //     "produce: persisted <data: {:?}> at <channel: {:?}>",
         //     data, channel
@@ -997,38 +1086,37 @@ where
     }
 
     fn restore_installs(&mut self) -> () {
-        let installs = self.installs.lock().unwrap().clone();
-        // println!("\ninstalls: {:?}", installs);
+        // Move out the install map to avoid cloning the whole structure on each
+        // restore.
+        let installs = {
+            let mut installs_lock = self.installs.lock().unwrap();
+            std::mem::take(&mut *installs_lock)
+        };
+        {
+            let mut installs_lock = self.installs.lock().unwrap();
+            installs_lock.reserve(installs.len());
+        }
+
         for (channels, install) in installs {
-            self.install(channels, install.patterns, install.continuation)
+            self.locked_install_internal(channels, install.patterns, install.continuation, true)
                 .unwrap();
         }
     }
 
-    fn locked_install(
+    fn locked_install_internal(
         &mut self,
-        // &self,
         channels: Vec<C>,
         patterns: Vec<P>,
         continuation: K,
+        record_install: bool,
     ) -> Result<Option<(K, Vec<A>)>, RSpaceError> {
-        // println!("\nhit locked_install");
-        // println!("channels: {:?}", channels);
-        // println!("patterns: {:?}", patterns);
-        // println!("continuation: {:?}", continuation);
         if channels.len() != patterns.len() {
             Err(RSpaceError::BugFoundError(
                 "RUST ERROR: channels.length must equal patterns.length".to_string(),
             ))
         } else {
-            // println!(
-            //     "install: searching for data matching <patterns: {:?}> at <channels: {:?}>",
-            //     patterns, channels
-            // );
-
             let consume_ref = Consume::create(&channels, &patterns, &continuation, true);
             let channel_to_indexed_data = self.fetch_channel_to_index_data(&channels);
-            // println!("channel_to_indexed_data in locked_install: {:?}", channel_to_indexed_data);
             let zipped: Vec<(C, P)> = channels
                 .iter()
                 .cloned()
@@ -1039,28 +1127,26 @@ where
                 .into_iter()
                 .collect();
 
-            // println!("options in locked_install: {:?}", options);
-
             match options {
                 None => {
-                    self.installs.lock().unwrap().insert(
-                        channels.clone(),
-                        Install {
-                            patterns: patterns.clone(),
-                            continuation: continuation.clone(),
-                        },
-                    );
+                    if record_install {
+                        self.installs
+                            .lock()
+                            .unwrap()
+                            .insert(channels.clone(), Install {
+                                patterns: patterns.clone(),
+                                continuation: continuation.clone(),
+                            });
+                    }
 
-                    self.store.install_continuation(
-                        &channels,
-                        WaitingContinuation {
+                    self.store
+                        .install_continuation(&channels, WaitingContinuation {
                             patterns,
                             continuation,
                             persist: true,
                             peeks: BTreeSet::default(),
                             source: consume_ref,
-                        },
-                    );
+                        });
 
                     for channel in channels.iter() {
                         self.store.install_join(channel, &channels);
