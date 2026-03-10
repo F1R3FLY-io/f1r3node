@@ -2,7 +2,7 @@
 
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use std::{
-    collections::{BTreeSet, HashMap, HashSet},
+    collections::{BTreeSet, HashMap, HashSet, VecDeque},
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc, RwLock,
@@ -374,25 +374,30 @@ impl KeyValueDagRepresentation {
 
     pub fn non_finalized_blocks(&self) -> Result<HashSet<BlockHash>, KvStoreError> {
         let mut result = HashSet::new();
-        let mut tips = self
+        let mut visited = HashSet::new();
+        let mut tips: VecDeque<BlockHash> = self
             .latest_messages()?
             .values()
             .map(|metadata| metadata.block_hash.clone())
-            .collect::<Vec<_>>();
+            .collect::<VecDeque<_>>();
 
-        while !tips.is_empty() {
-            let mut next_level = Vec::new();
-
-            for hash in &tips {
-                if !self.is_finalized(hash) {
-                    result.insert(hash.clone());
-
-                    let metadata = self.lookup_unsafe(hash)?;
-                    next_level.extend(metadata.parents.clone());
-                }
+        while let Some(hash) = tips.pop_front() {
+            if !visited.insert(hash.clone()) {
+                continue;
             }
 
-            tips = next_level;
+            if self.is_finalized(&hash) {
+                continue;
+            }
+
+            result.insert(hash.clone());
+
+            let metadata = self.lookup_unsafe(&hash)?;
+            for parent in metadata.parents {
+                if !visited.contains(&parent) {
+                    tips.push_back(parent);
+                }
+            }
         }
 
         Ok(result)
@@ -791,40 +796,45 @@ impl BlockDagKeyValueStorage {
         F: FnMut(&HashSet<BlockHash>) -> Fut,
         Fut: std::future::Future<Output = Result<(), KvStoreError>>,
     {
-        // Compute finalized blocks under lock (must drop before .await)
-        let (indirectly_finalized, all_finalized) = {
-            let _lock_guard = self.global_lock.lock().unwrap();
+        // Close TOCTOU race by repeatedly applying effects for newly observed finalized
+        // hashes until the lock-protected snapshot is stable, then persist once.
+        let mut effect_applied: HashSet<BlockHash> = HashSet::new();
+        loop {
+            let pending_effect: HashSet<BlockHash> = {
+                let _lock_guard = self.global_lock.lock().unwrap();
 
-            let dag = self.get_representation_internal();
-            if !dag.contains(&directly_finalized_hash) {
-                return Err(KvStoreError::InvalidArgument(format!(
-                    "Attempting to finalize nonexistent hash {}",
-                    PrettyPrinter::build_string_bytes(&directly_finalized_hash)
-                )));
-            }
+                let dag = self.get_representation_internal();
+                if !dag.contains(&directly_finalized_hash) {
+                    return Err(KvStoreError::InvalidArgument(format!(
+                        "Attempting to finalize nonexistent hash {}",
+                        PrettyPrinter::build_string_bytes(&directly_finalized_hash)
+                    )));
+                }
 
-            let indirectly_finalized = dag.ancestors(directly_finalized_hash.clone(), |hash| {
-                !dag.is_finalized(&hash)
-            })?;
+                let indirectly_finalized = dag
+                    .ancestors(directly_finalized_hash.clone(), |hash| {
+                        !dag.is_finalized(&hash)
+                    })?;
 
-            let mut all_finalized = indirectly_finalized.clone();
-            all_finalized.insert(directly_finalized_hash.clone());
+                let mut all_finalized = indirectly_finalized.clone();
+                all_finalized.insert(directly_finalized_hash.clone());
 
-            (indirectly_finalized, all_finalized)
-            // Lock is dropped here before .await
-        };
+                let pending: HashSet<BlockHash> =
+                    all_finalized.difference(&effect_applied).cloned().collect();
 
-        // Execute async effect without holding lock
-        finalization_effect(&all_finalized).await?;
+                if pending.is_empty() {
+                    let mut block_metadata_index_guard = self.block_metadata_index.write().unwrap();
+                    block_metadata_index_guard
+                        .record_finalized(directly_finalized_hash.clone(), indirectly_finalized)?;
+                    return Ok(());
+                }
 
-        // Re-acquire lock to persist changes
-        {
-            let _lock_guard = self.global_lock.lock().unwrap();
-            let mut block_metadata_index_guard = self.block_metadata_index.write().unwrap();
-            block_metadata_index_guard
-                .record_finalized(directly_finalized_hash, indirectly_finalized)?;
+                pending
+            };
+
+            // Execute async effect without holding lock.
+            finalization_effect(&pending_effect).await?;
+            effect_applied.extend(pending_effect);
         }
-
-        Ok(())
     }
 }

@@ -77,6 +77,12 @@ type WeightMap = HashMap<Validator, i64>;
 type SharedWeightMap = Arc<WeightMap>;
 
 impl Finalizer {
+    fn checked_stake_sum(weight_map: &WeightMap) -> Option<i64> {
+        weight_map
+            .values()
+            .try_fold(0_i64, |acc, stake| acc.checked_add(*stake))
+    }
+
     fn finalizer_max_clique_candidates() -> usize {
         env::var_or_filtered(
             FINALIZER_MAX_CLIQUE_CANDIDATES_ENV,
@@ -130,25 +136,42 @@ impl Finalizer {
         message_weight_map: &WeightMap,
         agreeing_weight_map: &WeightMap,
     ) -> bool {
-        assert!(
-            !agreeing_weight_map.values().any(|&stake| stake <= 0),
-            "Agreeing map contains not bonded validators"
-        );
+        if agreeing_weight_map.values().any(|&stake| stake <= 0) {
+            tracing::warn!(
+                target: "f1r3fly.finalizer",
+                "cannot_be_orphaned skipped due to non-positive agreeing stake entries"
+            );
+            return false;
+        }
 
-        let active_stake_total: i64 = message_weight_map.values().sum();
-        let active_stake_agreeing: i64 = agreeing_weight_map.values().sum();
+        let Some(active_stake_total) = Self::checked_stake_sum(message_weight_map) else {
+            tracing::warn!(
+                target: "f1r3fly.finalizer",
+                "cannot_be_orphaned skipped due to total stake overflow"
+            );
+            return false;
+        };
 
-        // in theory if each stake is high enough, e.g. i64::MAX, sum of them might result in negative value
-        assert!(
-            active_stake_total > 0,
-            "Long overflow when computing total stake"
-        );
-        assert!(
-            active_stake_agreeing > 0,
-            "Long overflow when computing total stake"
-        );
+        let Some(active_stake_agreeing) = Self::checked_stake_sum(agreeing_weight_map) else {
+            tracing::warn!(
+                target: "f1r3fly.finalizer",
+                "cannot_be_orphaned skipped due to agreeing stake overflow"
+            );
+            return false;
+        };
 
-        active_stake_agreeing as f64 > (active_stake_total as f64) / 2.0
+        if active_stake_total <= 0 || active_stake_agreeing <= 0 {
+            tracing::warn!(
+                target: "f1r3fly.finalizer",
+                "cannot_be_orphaned skipped due to non-positive stake totals: total={}, agreeing={}",
+                active_stake_total,
+                active_stake_agreeing
+            );
+            return false;
+        }
+
+        // Compare in integer space to avoid fp precision/rounding edge cases.
+        (active_stake_agreeing as i128) * 2 > active_stake_total as i128
     }
 
     /// Cheap upper bound on FT without clique search.
@@ -267,8 +290,17 @@ impl Finalizer {
                     cached
                 } else {
                     message_weight_map_cache_miss += 1;
-                    let Ok(fetched) = Self::message_weight_map_f(&message, dag).await else {
-                        continue;
+                    let fetched = match Self::message_weight_map_f(&message, dag).await {
+                        Ok(fetched) => fetched,
+                        Err(err) => {
+                            tracing::warn!(
+                                target: "f1r3fly.finalizer",
+                                "Finalizer candidate skipped: unable to load message weight map for hash={:?}: {:?}",
+                                message.block_hash,
+                                err
+                            );
+                            continue;
+                        }
                     };
                     let fetched = Arc::new(fetched);
                     message_weight_map_cache.insert(message.block_hash.clone(), fetched.clone());
@@ -289,13 +321,17 @@ impl Finalizer {
                 if let Some((agreeing_validator, stake_agreed)) =
                     Self::record_agreement(&message_weight_map, &agreeing_validator)
                 {
-                    assert!(
-                        !agreeing_weight_map.contains_key(&agreeing_validator),
-                        "Logical error during finalization: message {:?} got duplicate agreement.",
-                        message.block_hash
-                    );
-                    agreeing_weight_map.insert(agreeing_validator, stake_agreed);
-                    agreements_count += 1;
+                    if agreeing_weight_map.contains_key(&agreeing_validator) {
+                        tracing::warn!(
+                            target: "f1r3fly.finalizer",
+                            "Duplicate agreement observed while aggregating finalizer candidate; keeping first value. message={:?}, validator={:?}",
+                            message.block_hash,
+                            agreeing_validator
+                        );
+                    } else {
+                        agreeing_weight_map.insert(agreeing_validator, stake_agreed);
+                        agreements_count += 1;
+                    }
                 }
                 agreement_record_phase_ns += phase_t.elapsed().as_nanos();
 
