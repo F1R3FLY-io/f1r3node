@@ -15,9 +15,7 @@ use casper::rust::{
     errors::CasperError,
     util::{
         construct_deploy, proto_util,
-        rholang::{
-            interpreter_util::compute_deploys_checkpoint, runtime_manager::RuntimeManager,
-        },
+        rholang::{interpreter_util::compute_deploys_checkpoint, runtime_manager::RuntimeManager},
     },
 };
 use models::rust::{
@@ -69,7 +67,7 @@ async fn compute_block_checkpoint(
         .map(|d| d.deploy)
         .collect();
 
-    let (_, post_state_hash, processed_deploys, _, _) = compute_deploys_checkpoint(
+    let (_, post_state_hash, processed_deploys, _, _, _) = compute_deploys_checkpoint(
         block_store,
         parents,
         deploys,

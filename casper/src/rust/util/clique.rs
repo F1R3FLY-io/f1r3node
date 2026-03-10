@@ -1,13 +1,13 @@
 // See casper/src/main/scala/coop/rchain/casper/util/Clique.scala
 
 use std::cmp::max;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
 
 pub struct Clique;
 
 impl Clique {
-    pub fn find_maximum_clique_by_weight<A>(edges: &[(A, A)], weights: &BTreeMap<A, i64>) -> i64
+    pub fn find_maximum_clique_by_weight<A>(edges: &[(A, A)], weights: &HashMap<A, i64>) -> i64
     where
         A: Eq + Hash + Clone + Ord,
     {

@@ -74,11 +74,12 @@ impl VaultParser {
                 .as_str();
 
             // Parse vault address
-            let vault_address =
-                VaultAddress::parse(vault_address_str).map_err(|err| VaultParserError::ParseError {
+            let vault_address = VaultAddress::parse(vault_address_str).map_err(|err| {
+                VaultParserError::ParseError {
                     line: trimmed_line.to_string(),
                     source: Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, err)),
-                })?;
+                }
+            })?;
 
             // Parse balance
             let initial_balance =

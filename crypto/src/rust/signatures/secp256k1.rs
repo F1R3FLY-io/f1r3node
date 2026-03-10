@@ -2,9 +2,7 @@ use super::signatures_alg::SignaturesAlg;
 use crate::rust::{private_key::PrivateKey, public_key::PublicKey};
 use ed25519_dalek::ed25519::signature::hazmat::PrehashVerifier;
 use k256::ecdsa::VerifyingKey;
-use k256::{
-    ecdsa::{signature::hazmat::PrehashSigner, Signature, SigningKey},
-};
+use k256::ecdsa::{signature::hazmat::PrehashSigner, Signature, SigningKey};
 
 use openssl::pkey::PKey;
 
@@ -478,8 +476,8 @@ mod tests {
         let (private_key, _public_key) = secp256k1.new_key_pair();
 
         // Create a PKCS#8 DER from our private key
-        let signing_key = SigningKey::from_slice(&private_key.bytes)
-            .expect("Failed to create signing key");
+        let signing_key =
+            SigningKey::from_slice(&private_key.bytes).expect("Failed to create signing key");
 
         let pkcs8_der = signing_key
             .to_pkcs8_der()

@@ -3,7 +3,6 @@ use std::collections::HashMap;
 use block_storage::rust::{
     dag::block_dag_key_value_storage::{BlockDagKeyValueStorage, KeyValueDagRepresentation},
     key_value_block_store::KeyValueBlockStore,
-    util::doubly_linked_dag_operations::BlockDependencyDag,
 };
 use models::rust::{
     block_hash::BlockHash,
@@ -25,7 +24,7 @@ pub struct EquivocationDetector;
 
 impl EquivocationDetector {
     pub async fn check_equivocations(
-        block_buffer_dependency_dag: &BlockDependencyDag,
+        requested_as_dependency: bool,
         block: &BlockMessage,
         dag: &KeyValueDagRepresentation,
     ) -> Result<ValidBlockProcessing, KvStoreError> {
@@ -38,7 +37,7 @@ impl EquivocationDetector {
 
         if is_not_equivocation {
             Ok(Either::Right(ValidBlock::Valid))
-        } else if Self::requested_as_dependency(block, block_buffer_dependency_dag) {
+        } else if requested_as_dependency {
             Ok(Either::Left(BlockError::Invalid(
                 InvalidBlock::AdmissibleEquivocation,
             )))
@@ -62,18 +61,6 @@ impl EquivocationDetector {
                 InvalidBlock::IgnorableEquivocation,
             )))
         }
-    }
-
-    pub fn requested_as_dependency(
-        block: &BlockMessage,
-        block_buffer_dependency_dag: &BlockDependencyDag,
-    ) -> bool {
-        use models::rust::block_hash::BlockHashSerde;
-
-        let block_hash_serde = BlockHashSerde(block.block_hash.clone());
-        block_buffer_dependency_dag
-            .parent_to_child_adjacency_list
-            .contains_key(&block_hash_serde)
     }
 
     pub fn creator_justification_hash(block: &BlockMessage) -> Option<BlockHash> {

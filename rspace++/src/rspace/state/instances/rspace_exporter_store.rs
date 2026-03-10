@@ -1,14 +1,16 @@
+use std::sync::Arc;
+
+use shared::rust::store::key_value_store::{KeyValueStore, KvStoreError};
+
 use crate::rspace::errors::RootError;
 use crate::rspace::hashing::blake2b256_hash::Blake2b256Hash;
 use crate::rspace::history::instances::radix_history::RadixHistory;
 use crate::rspace::history::roots_store::{RootsStore, RootsStoreInstances};
 use crate::rspace::shared::trie_exporter::{KeyHash, NodePath, TrieExporter, TrieNode, Value};
-use crate::rspace::state::rspace_exporter::RSpaceExporter;
-use crate::rspace::state::rspace_exporter::RSpaceExporterInstance;
-use shared::rust::store::key_value_store::{KeyValueStore, KvStoreError};
-use std::sync::Arc;
+use crate::rspace::state::rspace_exporter::{RSpaceExporter, RSpaceExporterInstance};
 
-// See rspace/src/main/scala/coop/rchain/rspace/state/instances/RSpaceExporterStore.scala
+// See rspace/src/main/scala/coop/rchain/rspace/state/instances/
+// RSpaceExporterStore.scala
 pub struct RSpaceExporterStore;
 
 impl RSpaceExporterStore {

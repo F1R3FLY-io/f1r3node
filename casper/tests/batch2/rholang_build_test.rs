@@ -75,19 +75,21 @@ in {
 #[tokio::test]
 #[ignore = "Scala ignore"]
 async fn our_build_system_should_execute_the_genesis_block() {
-    const VAULT_ADDRESS_COUNT: i32 = 16000;
+    const REV_ADDRESS_COUNT: i32 = 16000;
 
     let mut vaults = Vec::new();
     let secp256k1 = Secp256k1;
 
-    for i in 1..=VAULT_ADDRESS_COUNT {
+    for i in 1..=REV_ADDRESS_COUNT {
         let (_, public_key) = secp256k1.new_key_pair();
-        let vault_address =
-            rholang::rust::interpreter::util::vault_address::VaultAddress::from_public_key(&public_key)
-                .expect("Failed to create VaultAddress from public key");
+        let rev_address =
+            rholang::rust::interpreter::util::vault_address::VaultAddress::from_public_key(
+                &public_key,
+            )
+            .expect("Failed to create RevAddress from public key");
 
         vaults.push(Vault {
-            vault_address,
+            vault_address: rev_address,
             initial_balance: i as u64,
         });
     }

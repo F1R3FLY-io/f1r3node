@@ -21,7 +21,6 @@ pub enum CasperError {
     HistoryError(HistoryError),
     StreamError(String),
     LockError(String),
-    FinalizationInProgress,
     Other(String),
 }
 
@@ -38,7 +37,6 @@ impl fmt::Display for CasperError {
             CasperError::HistoryError(error) => write!(f, "History error: {}", error),
             CasperError::StreamError(error) => write!(f, "Stream error: {}", error),
             CasperError::LockError(error) => write!(f, "Lock error: {}", error),
-            CasperError::FinalizationInProgress => write!(f, "Finalization in progress"),
             CasperError::Other(error) => write!(f, "Other error: {}", error),
         }
     }

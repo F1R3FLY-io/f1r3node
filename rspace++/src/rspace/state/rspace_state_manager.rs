@@ -4,10 +4,9 @@
 
 use std::sync::Arc;
 
-use crate::rspace::{
-    errors::RootError,
-    state::{rspace_exporter::RSpaceExporter, rspace_importer::RSpaceImporter},
-};
+use crate::rspace::errors::RootError;
+use crate::rspace::state::rspace_exporter::RSpaceExporter;
+use crate::rspace::state::rspace_importer::RSpaceImporter;
 
 #[derive(Clone)]
 pub struct RSpaceStateManager {
@@ -21,11 +20,10 @@ impl RSpaceStateManager {
     }
 
     /// Returns true if the RSpace has no root (is empty), false otherwise.
-    pub fn is_empty(&self) -> bool {
-        self.has_root()
-    }
+    pub fn is_empty(&self) -> bool { self.has_root() }
 
-    /// Returns true if the exporter can successfully get a root, false if there's no root.
+    /// Returns true if the exporter can successfully get a root, false if
+    /// there's no root.
     pub fn has_root(&self) -> bool {
         match self.exporter.get_root() {
             Ok(_) => true,

@@ -23,6 +23,11 @@ pub(crate) struct DagState {
     pub(crate) dag_set: imbl::HashSet<BlockHash>,
     pub(crate) child_map: imbl::HashMap<BlockHash, imbl::HashSet<BlockHash>>,
     pub(crate) height_map: imbl::OrdMap<i64, imbl::HashSet<BlockHash>>,
+    // Lightweight per-block indices used by propose/finality hot paths to avoid
+    // repeated metadata deserialization from LMDB.
+    pub(crate) block_number_map: imbl::HashMap<BlockHash, i64>,
+    pub(crate) main_parent_map: imbl::HashMap<BlockHash, BlockHash>,
+    pub(crate) self_justification_map: imbl::HashMap<BlockHash, BlockHash>,
     // In general - at least genesis should be LFB.
     // But dagstate can be empty, as it is initialized before genesis is inserted.
     // Also lots of tests do not have genesis properly initialised, so fixing all this is pain.
@@ -31,12 +36,19 @@ pub(crate) struct DagState {
     pub(crate) finalized_block_set: imbl::HashSet<BlockHash>,
 }
 
+// Keep the in-memory finalized set bounded; finalized truth is persisted in block metadata.
+const FINALIZED_BLOCK_CACHE_MAX: usize = 50_000;
+const FINALIZED_BLOCK_CACHE_RETAIN: usize = 25_000;
+
 impl DagState {
     fn new() -> Self {
         Self {
             dag_set: imbl::HashSet::new(),
             child_map: imbl::HashMap::new(),
             height_map: imbl::OrdMap::new(),
+            block_number_map: imbl::HashMap::new(),
+            main_parent_map: imbl::HashMap::new(),
+            self_justification_map: imbl::HashMap::new(),
             last_finalized_block: Some((BlockHash::new(), 0)),
             finalized_block_set: imbl::HashSet::new(),
         }
@@ -46,6 +58,8 @@ impl DagState {
 struct BlockInfo {
     hash: BlockHash,
     parents: Vec<BlockHash>,
+    main_parent: Option<BlockHash>,
+    self_justification: Option<BlockHash>,
     block_num: i64,
     is_invalid: bool,
     is_directly_finalized: bool,
@@ -53,6 +67,24 @@ struct BlockInfo {
 }
 
 impl BlockMetadataStore {
+    fn prune_finalized_cache_if_needed(state: &mut DagState) {
+        let len = state.finalized_block_set.len();
+        if len <= FINALIZED_BLOCK_CACHE_MAX {
+            return;
+        }
+
+        let to_remove = len.saturating_sub(FINALIZED_BLOCK_CACHE_RETAIN);
+        let evict: Vec<BlockHash> = state
+            .finalized_block_set
+            .iter()
+            .take(to_remove)
+            .cloned()
+            .collect();
+        for hash in evict {
+            state.finalized_block_set.remove(&hash);
+        }
+    }
+
     pub fn new(
         block_metadata_store: KeyValueTypedStoreImpl<BlockHashSerde, BlockMetadata>,
     ) -> Self {
@@ -81,9 +113,18 @@ impl BlockMetadataStore {
     }
 
     fn block_metadata_to_info(hash: &BlockHash, block_metadata: &BlockMetadata) -> BlockInfo {
+        let main_parent = block_metadata.parents.first().cloned();
+        let self_justification = block_metadata
+            .justifications
+            .iter()
+            .find(|justification| justification.validator == block_metadata.sender)
+            .map(|justification| justification.latest_block_hash.clone());
+
         BlockInfo {
             hash: hash.clone(),
             parents: block_metadata.parents.clone(),
+            main_parent,
+            self_justification,
             block_num: block_metadata.block_number,
             is_invalid: block_metadata.invalid,
             is_directly_finalized: block_metadata.directly_finalized,
@@ -139,9 +180,7 @@ impl BlockMetadataStore {
         for hash in indirectly {
             dag_state_guard.finalized_block_set.insert(hash);
         }
-        dag_state_guard
-            .finalized_block_set
-            .insert(directly.clone());
+        dag_state_guard.finalized_block_set.insert(directly.clone());
 
         // update lastFinalizedBlock only when current one is lower
         if dag_state_guard.last_finalized_block.is_none()
@@ -151,6 +190,7 @@ impl BlockMetadataStore {
             dag_state_guard.last_finalized_block =
                 Some((directly.clone(), new_meta_for_df.block_number));
         }
+        Self::prune_finalized_cache_if_needed(&mut dag_state_guard);
         drop(dag_state_guard);
 
         // persist new values all at once
@@ -181,8 +221,36 @@ impl BlockMetadataStore {
         &self.dag_state
     }
 
+    pub fn dag_set(&self) -> imbl::HashSet<BlockHash> {
+        self.dag_state.read().unwrap().dag_set.clone()
+    }
+
     pub fn contains(&self, hash: &BlockHash) -> bool {
         self.dag_state.read().unwrap().dag_set.contains(hash)
+    }
+
+    pub fn child_map(&self) -> imbl::HashMap<BlockHash, imbl::HashSet<BlockHash>> {
+        self.dag_state.read().unwrap().child_map.clone()
+    }
+
+    pub fn height_map(&self) -> imbl::OrdMap<i64, imbl::HashSet<BlockHash>> {
+        self.dag_state.read().unwrap().height_map.clone()
+    }
+
+    pub fn block_number_map(&self) -> imbl::HashMap<BlockHash, i64> {
+        self.dag_state.read().unwrap().block_number_map.clone()
+    }
+
+    pub fn main_parent_map(&self) -> imbl::HashMap<BlockHash, BlockHash> {
+        self.dag_state.read().unwrap().main_parent_map.clone()
+    }
+
+    pub fn self_justification_map(&self) -> imbl::HashMap<BlockHash, BlockHash> {
+        self.dag_state
+            .read()
+            .unwrap()
+            .self_justification_map
+            .clone()
     }
 
     pub fn last_finalized_block(&self) -> BlockHash {
@@ -194,6 +262,10 @@ impl BlockMetadataStore {
             .expect("DagState does not contain lastFinalizedBlock. Are you calling this on empty BlockDagStorage? Otherwise there is a bug.")
             .0
             .clone()
+    }
+
+    pub fn finalized_block_set(&self) -> imbl::HashSet<BlockHash> {
+        self.dag_state.read().unwrap().finalized_block_set.clone()
     }
 
     fn add_block_to_dag_state(
@@ -216,26 +288,40 @@ impl BlockMetadataStore {
 
         // Add current block as child to all its parents
         for parent in block_info.parents.iter() {
-            let children = state_guard
+            let mut children = state_guard
                 .child_map
-                .remove(parent)
+                .get(parent)
+                .cloned()
                 .unwrap_or_else(imbl::HashSet::new);
-            let mut children = children;
             children.insert(hash.clone());
             state_guard.child_map.insert(parent.clone(), children);
         }
 
         // Update height map
         if !block_info.is_invalid {
-            let hashes = state_guard
+            let mut hashes = state_guard
                 .height_map
-                .remove(&block_info.block_num)
+                .get(&block_info.block_num)
+                .cloned()
                 .unwrap_or_else(imbl::HashSet::new);
-            let mut hashes = hashes;
             hashes.insert(hash.clone());
+            state_guard.height_map.insert(block_info.block_num, hashes);
+        }
+
+        state_guard
+            .block_number_map
+            .insert(hash.clone(), block_info.block_num);
+
+        if let Some(main_parent) = block_info.main_parent {
             state_guard
-                .height_map
-                .insert(block_info.block_num, hashes);
+                .main_parent_map
+                .insert(hash.clone(), main_parent);
+        }
+
+        if let Some(self_justification) = block_info.self_justification {
+            state_guard
+                .self_justification_map
+                .insert(hash.clone(), self_justification);
         }
 
         if block_info.is_directly_finalized

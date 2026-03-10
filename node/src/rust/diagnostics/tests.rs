@@ -380,7 +380,10 @@ mod tests {
 
         assert_eq!(config.default_buckets.len(), 3);
         assert_eq!(config.custom_buckets.len(), 1);
-        assert_eq!(config.custom_buckets.get("my_metric").unwrap(), &vec![1.0, 2.0, 3.0]);
+        assert_eq!(
+            config.custom_buckets.get("my_metric").unwrap(),
+            &vec![1.0, 2.0, 3.0]
+        );
     }
 
     #[test]
@@ -489,4 +492,3 @@ mod tests {
         assert!(result.is_ok());
     }
 }
-

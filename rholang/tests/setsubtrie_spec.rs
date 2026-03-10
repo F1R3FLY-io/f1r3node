@@ -125,4 +125,3 @@ async fn test_set_subtrie_multi_level_paths() {
     })
     .await
 }
-

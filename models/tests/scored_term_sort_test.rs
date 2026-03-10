@@ -1,8 +1,6 @@
 // See models/src/test/scala/coop/rchain/models/rholang/SortTest.scala - ScoredTermSpec
 
-use models::rhoapi::{
-    EList, EMethod, New, Par,
-};
+use models::rhoapi::{EList, EMethod, New, Par};
 use models::rust::par_map::ParMap;
 use models::rust::par_map_type_mapper::ParMapTypeMapper;
 use models::rust::rholang::sorter::bundle_sort_matcher::BundleSortMatcher;
@@ -14,8 +12,8 @@ use models::rust::rholang::sorter::receive_sort_matcher::ReceiveSortMatcher;
 use models::rust::rholang::sorter::send_sort_matcher::SendSortMatcher;
 use models::rust::rholang::sorter::var_sort_matcher::VarSortMatcher;
 use models::rust::test_utils::test_utils::{
-    generate_bundle, generate_connective, generate_expr, generate_match,
-    generate_new, generate_par, generate_receive, generate_send, generate_var,
+    generate_bundle, generate_connective, generate_expr, generate_match, generate_new,
+    generate_par, generate_receive, generate_send, generate_var,
 };
 use models::{
     rhoapi::{expr::ExprInstance, Expr, Var},

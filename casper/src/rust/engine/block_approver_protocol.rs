@@ -7,13 +7,13 @@ use comm::rust::peer_node::PeerNode;
 use comm::rust::rp::rp_conf::RPConf;
 use comm::rust::transport::transport_layer::{Blob, TransportLayer};
 use crypto::rust::hash::blake2b256::Blake2b256;
-use tracing::{info, warn};
 use models::rust::casper::protocol::casper_message::{
     ApprovedBlockCandidate, BlockApproval, ProcessedDeploy, ProcessedSystemDeploy, UnapprovedBlock,
 };
 use models::rust::casper::protocol::packet_type_tag::ToPacket;
 use prost::bytes::Bytes;
 use prost::Message;
+use tracing::{info, warn};
 
 use crate::rust::errors::CasperError;
 use crate::rust::genesis::contracts::{
@@ -63,6 +63,11 @@ impl<T: TransportLayer + Send + Sync + 'static> BlockApproverProtocol<T> {
         transport: Arc<T>,
         conf: Arc<RPConf>,
     ) -> Result<Self, CasperError> {
+        tracing::info!(
+            required_sigs = required_sigs,
+            "Validator configured required_sigs"
+        );
+
         if bonds.len() <= required_sigs as usize {
             return Err(CasperError::RuntimeError(format!(
                 "Required sigs ({}) must be smaller than the number of bonded validators ({})",
@@ -129,6 +134,7 @@ impl<T: TransportLayer + Send + Sync + 'static> BlockApproverProtocol<T> {
         runtime_manager: &mut RuntimeManager,
         candidate: &ApprovedBlockCandidate,
         required_sigs: i32,
+        _deploy_timestamp: i64,
         vaults: &Vec<Vault>,
         bonds: &HashMap<Bytes, i64>,
         minimum_bond: i64,
@@ -141,8 +147,11 @@ impl<T: TransportLayer + Send + Sync + 'static> BlockApproverProtocol<T> {
         pos_multi_sig_quorum: u32,
     ) -> Result<(), String> {
         // Basic checks – required sigs, absence of system deploys, bonds equality
-        if candidate.required_sigs != required_sigs {
-            return Err("Candidate didn't have required signatures number.".to_string());
+        if candidate.required_sigs < required_sigs {
+            return Err(format!(
+                "Candidate required_sigs mismatch: expected {}, got {}",
+                required_sigs, candidate.required_sigs
+            ));
         }
 
         let block = &candidate.block;
@@ -182,8 +191,17 @@ impl<T: TransportLayer + Send + Sync + 'static> BlockApproverProtocol<T> {
             pos_multi_sig_quorum,
         };
 
-        // Expected blessed contracts — must use hardcoded genesis timestamp
-        // so that all validators produce identical blessed contracts regardless of wall-clock time.
+        tracing::warn!("GENESIS DEBUG ---");
+        //        tracing::warn!("deploy_timestamp: {}", deploy_timestamp);
+        tracing::warn!("shard_id: {}", shard_id);
+        tracing::warn!("pos.minimum_bond: {}", pos_params.minimum_bond);
+        tracing::warn!("pos.maximum_bond: {}", pos_params.maximum_bond);
+        tracing::warn!("pos.epoch_length: {}", pos_params.epoch_length);
+        tracing::warn!("pos.quarantine_length: {}", pos_params.quarantine_length);
+        tracing::warn!("vaults: {:?}", vaults);
+        tracing::warn!("--------------------");
+
+        // Expected blessed contracts
         let genesis_blessed_contracts =
             crate::rust::genesis::genesis::Genesis::default_blessed_terms(
                 &pos_params,
@@ -271,6 +289,7 @@ impl<T: TransportLayer + Send + Sync + 'static> BlockApproverProtocol<T> {
             runtime_manager,
             candidate,
             self.required_sigs,
+            self.deploy_timestamp,
             &self.vaults,
             &self.bonds_bytes,
             self.minimum_bond,

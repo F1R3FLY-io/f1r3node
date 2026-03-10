@@ -14,16 +14,22 @@ import coop.rchain.casper.protocol.{BlockInfo, DataWithBlockInfo, DeployData, Li
 import coop.rchain.casper.util.rholang.RuntimeManager
 import coop.rchain.crypto.PublicKey
 import coop.rchain.crypto.signatures.{SignaturesAlg, Signed}
-import coop.rchain.metrics.Span
+import coop.rchain.metrics.{Metrics, Span}
 import coop.rchain.models.BlockHash.BlockHash
 import coop.rchain.models.GUnforgeable.UnfInstance.{GDeployIdBody, GDeployerIdBody, GPrivateBody}
 import coop.rchain.models._
 import coop.rchain.node.api.WebApi._
-import coop.rchain.node.web.{CacheTransactionAPI, TransactionResponse}
+import coop.rchain.node.web.{
+  BlockInfoEnricher,
+  CacheTransactionAPI,
+  Transaction,
+  TransactionResponse
+}
 import coop.rchain.comm.discovery.NodeDiscovery
 import coop.rchain.comm.rp.Connect.{ConnectionsCell, RPConfAsk}
 import coop.rchain.models.syntax._
 import coop.rchain.shared.{Base16, Log}
+import coop.rchain.shared.syntax._
 import coop.rchain.state.StateManager
 import fs2.concurrent.Queue
 
@@ -66,10 +72,11 @@ trait WebApi[F[_]] {
 
 object WebApi {
 
-  class WebApiImpl[F[_]: Sync: RPConfAsk: ConnectionsCell: NodeDiscovery: Concurrent: EngineCell: Log: Span: SafetyOracle: BlockStore](
+  class WebApiImpl[F[_]: Sync: RPConfAsk: ConnectionsCell: NodeDiscovery: Concurrent: EngineCell: Log: Span: SafetyOracle: BlockStore: Metrics](
       apiMaxBlocksLimit: Int,
       devMode: Boolean = false,
       cacheTransactionAPI: CacheTransactionAPI[F],
+      transactionStore: Transaction.TransactionStore[F],
       triggerProposeF: Option[ProposeFunction[F]],
       networkId: String,
       shardId: String,
@@ -112,11 +119,26 @@ object WebApi {
         .flatMap(_.liftToBlockApiErr)
         .map(toRhoDataResponse)
 
+    /**
+      * Enriches a BlockInfo with transfer data.
+      * If cached, uses cached data. If not cached, waits for extraction to complete.
+      */
+    private def enrichWithTransfers(blockInfo: BlockInfo): F[BlockInfo] = {
+      val blockHash = blockInfo.blockInfo.blockHash
+      for {
+        cachedOpt <- transactionStore.get1(blockHash)
+        txResponse <- cachedOpt match {
+                       case Some(cached) => cached.pure[F]
+                       case None         => cacheTransactionAPI.getTransaction(blockHash)
+                     }
+      } yield BlockInfoEnricher.enrichBlockInfo(blockInfo, txResponse)
+    }
+
     def lastFinalizedBlock: F[BlockInfo] =
-      BlockAPI.lastFinalizedBlock[F].flatMap(_.liftToBlockApiErr)
+      BlockAPI.lastFinalizedBlock[F].flatMap(_.liftToBlockApiErr).flatMap(enrichWithTransfers)
 
     def getBlock(hash: String): F[BlockInfo] =
-      BlockAPI.getBlock[F](hash).flatMap(_.liftToBlockApiErr)
+      BlockAPI.getBlock[F](hash).flatMap(_.liftToBlockApiErr).flatMap(enrichWithTransfers)
 
     def getBlocks(depth: Int): F[List[LightBlockInfo]] =
       BlockAPI.getBlocks[F](depth, apiMaxBlocksLimit).flatMap(_.liftToBlockApiErr)
@@ -141,15 +163,43 @@ object WebApi {
         address <- RPConfAsk[F].ask
         peers   <- ConnectionsCell[F].read
         nodes   <- NodeDiscovery[F].peers
-      } yield ApiStatus(
-        version = VersionInfo(api = 1.toString, node = coop.rchain.node.web.VersionInfo.get),
-        address.local.toAddress,
-        networkId,
-        shardId,
-        peers.length,
-        nodes.length,
-        minPhloPrice
-      )
+      } yield {
+        // Create a set of connected peer IDs for quick lookup
+        val connectedIds = peers.map(_.id.key).toSet
+
+        // Convert PeerNode to PeerInfoData
+        def peerNodeToInfo(
+            peerNode: coop.rchain.comm.PeerNode,
+            isConnected: Boolean
+        ): PeerInfoData =
+          PeerInfoData(
+            address = peerNode.toAddress,
+            nodeId = peerNode.id.toString,
+            host = peerNode.endpoint.host,
+            protocolPort = peerNode.endpoint.tcpPort,
+            discoveryPort = peerNode.endpoint.udpPort,
+            isConnected = isConnected
+          )
+
+        // Combine discovered peers and active connections
+        // Use a map by node ID to deduplicate, preferring connected status
+        val combinedPeers = nodes
+          .map(node => node.id.key -> peerNodeToInfo(node, connectedIds.contains(node.id.key)))
+          .toMap
+          .values
+          .toList
+
+        ApiStatus(
+          version = VersionInfo(api = 1.toString, node = coop.rchain.node.web.VersionInfo.get),
+          address.local.toAddress,
+          networkId,
+          shardId,
+          peers.length,
+          nodes.length,
+          minPhloPrice,
+          combinedPeers
+        )
+      }
 
     def getBlocksByHeights(startBlockNumber: Long, endBlockNumber: Long): F[List[LightBlockInfo]] =
       BlockAPI
@@ -173,6 +223,7 @@ object WebApi {
   final case class ExprSet(data: List[RhoExpr])        extends RhoExpr
   final case class ExprMap(data: Map[String, RhoExpr]) extends RhoExpr
   // Terminal expressions (here is the data)
+  final case class ExprNil()                extends RhoExpr
   final case class ExprBool(data: Boolean)  extends RhoExpr
   final case class ExprInt(data: Long)      extends RhoExpr
   final case class ExprString(data: String) extends RhoExpr
@@ -247,6 +298,15 @@ object WebApi {
       seqNumber: Int
   )
 
+  final case class PeerInfoData(
+      address: String,
+      nodeId: String,
+      host: String,
+      protocolPort: Int,
+      discoveryPort: Int,
+      isConnected: Boolean
+  )
+
   final case class ApiStatus(
       version: VersionInfo,
       address: String,
@@ -254,7 +314,8 @@ object WebApi {
       shardId: String,
       peers: Int,
       nodes: Int,
-      minPhloPrice: Long
+      minPhloPrice: Long,
+      peerList: List[PeerInfoData] = List.empty
   )
 
   final case class VersionInfo(api: String, node: String)
@@ -298,6 +359,7 @@ object WebApi {
         par.bundles.flatMap(exprFromBundleProto)
     // Implements semantic of Par with Unit: P | Nil ==> P
     if (exprs.size == 1) exprs.head.some
+    else if (exprs.isEmpty && par.equals(new Par())) ExprNil().some
     else if (exprs.isEmpty) none
     else ExprPar(exprs.toList).some
   }

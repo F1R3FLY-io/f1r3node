@@ -1,14 +1,14 @@
 //! Integration layer between Rholang Par types and the PathMap crate.
 
-use pathmap::PathMap;
 use crate::rhoapi::{Par, Var};
+use pathmap::PathMap;
 
 /// Type alias for our standard use case: PathMap from bytes to Rholang Par.
 pub type RholangPathMap = PathMap<Par>;
 
-use crate::rust::path_map_encoder::SExpr;
-use crate::rust::par_to_sexpr::ParToSExpr;
 use crate::rhoapi::expr::ExprInstance;
+use crate::rust::par_to_sexpr::ParToSExpr;
+use crate::rust::path_map_encoder::SExpr;
 
 /// Convert a Par element into a path consisting of byte segments.
 /// - Lists are interpreted as multi-segment paths.
@@ -27,11 +27,15 @@ pub fn par_to_path(par: &Par) -> Vec<Vec<u8>> {
 fn extract_list_path(par: &Par) -> Option<Vec<Vec<u8>>> {
     if par.exprs.len() == 1 {
         if let Some(ExprInstance::EListBody(list)) = &par.exprs[0].expr_instance {
-            let segments: Vec<Vec<u8>> = list.ps.iter().map(|p| {
-                let sexpr_string = ParToSExpr::par_to_sexpr(p);
-                let sexpr = parse_sexpr(&sexpr_string);
-                sexpr.encode()
-            }).collect();
+            let segments: Vec<Vec<u8>> = list
+                .ps
+                .iter()
+                .map(|p| {
+                    let sexpr_string = ParToSExpr::par_to_sexpr(p);
+                    let sexpr = parse_sexpr(&sexpr_string);
+                    sexpr.encode()
+                })
+                .collect();
             return Some(segments);
         }
     }
@@ -46,7 +50,7 @@ pub fn parse_sexpr(s: &str) -> SExpr {
         return SExpr::Symbol(s.to_string());
     }
     if s.starts_with('(') && s.ends_with(')') {
-        let inner = &s[1..s.len()-1];
+        let inner = &s[1..s.len() - 1];
         let parts = split_sexpr(inner);
         let children: Vec<SExpr> = parts.iter().map(|p| parse_sexpr(p)).collect();
         return SExpr::List(children);
@@ -72,8 +76,14 @@ pub fn split_sexpr(s: &str) -> Vec<String> {
         match ch {
             '\\' if in_string => escape = true,
             '"' => in_string = !in_string,
-            '(' if !in_string => { depth += 1; current.push(ch); }
-            ')' if !in_string => { depth -= 1; current.push(ch); }
+            '(' if !in_string => {
+                depth += 1;
+                current.push(ch);
+            }
+            ')' if !in_string => {
+                depth -= 1;
+                current.push(ch);
+            }
             ' ' | '\t' | '\n' if !in_string && depth == 0 => {
                 if !current.is_empty() {
                     parts.push(current.clone());
@@ -98,23 +108,31 @@ pub struct PathMapCreationResult {
 
 /// Construct a RholangPathMap from a list of Par elements and an optional remainder.
 /// This mirrors what the normalizer does when producing EPathMap from parsed elements.
-pub fn create_pathmap_from_elements(elements: &[Par], remainder: Option<Var>) -> PathMapCreationResult {
+pub fn create_pathmap_from_elements(
+    elements: &[Par],
+    remainder: Option<Var>,
+) -> PathMapCreationResult {
     let mut map = RholangPathMap::new();
     let mut connective_used = false;
     let mut locally_free = Vec::new();
 
     for par in elements {
         // Update connective metadata
-        if par.connective_used { connective_used = true; }
+        if par.connective_used {
+            connective_used = true;
+        }
         locally_free = crate::rust::utils::union(locally_free.clone(), par.locally_free.clone());
 
         // Convert Par to path (Vec<Vec<u8>>)
         let segments = par_to_path(par);
         // To store in PathMap, flatten path segments into bytes (using a separator byte that can't appear in encoded input, e.g., 0xFF)
-        let key: Vec<u8> = segments.into_iter().flat_map(|mut seg| {
-            seg.push(0xFF); // separator
-            seg
-        }).collect();
+        let key: Vec<u8> = segments
+            .into_iter()
+            .flat_map(|mut seg| {
+                seg.push(0xFF); // separator
+                seg
+            })
+            .collect();
 
         map.insert(key, par.clone());
     }

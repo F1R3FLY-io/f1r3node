@@ -37,9 +37,7 @@ pub struct TrieInsertJoins<C: Clone> {
 }
 
 impl<C: Clone> TrieInsertJoins<C> {
-    pub fn new(hash: Blake2b256Hash, joins: Vec<Vec<C>>) -> Self {
-        TrieInsertJoins { hash, joins }
-    }
+    pub fn new(hash: Blake2b256Hash, joins: Vec<Vec<C>>) -> Self { TrieInsertJoins { hash, joins } }
 }
 
 #[derive(Debug, Clone)]
@@ -88,9 +86,7 @@ pub struct TrieDeleteProduce {
 }
 
 impl TrieDeleteProduce {
-    pub fn new(hash: Blake2b256Hash) -> Self {
-        TrieDeleteProduce { hash }
-    }
+    pub fn new(hash: Blake2b256Hash) -> Self { TrieDeleteProduce { hash } }
 }
 
 #[derive(Debug, Clone)]
@@ -99,9 +95,7 @@ pub struct TrieDeleteJoins {
 }
 
 impl TrieDeleteJoins {
-    pub fn new(hash: Blake2b256Hash) -> Self {
-        TrieDeleteJoins { hash }
-    }
+    pub fn new(hash: Blake2b256Hash) -> Self { TrieDeleteJoins { hash } }
 }
 
 #[derive(Debug, Clone)]
@@ -110,7 +104,5 @@ pub struct TrieDeleteConsume {
 }
 
 impl TrieDeleteConsume {
-    pub fn new(hash: Blake2b256Hash) -> Self {
-        TrieDeleteConsume { hash }
-    }
+    pub fn new(hash: Blake2b256Hash) -> Self { TrieDeleteConsume { hash } }
 }

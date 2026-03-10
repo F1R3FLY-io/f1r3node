@@ -2,8 +2,8 @@
 
 // use models::rhoapi::g_unforgeable::UnfInstance::GPrivateBody;
 // use models::rhoapi::{
-//     BindPattern, GPrivate, GUnforgeable, ListParWithRandom, Par, TaggedContinuation,
-// };
+//     BindPattern, GPrivate, GUnforgeable, ListParWithRandom, Par,
+// TaggedContinuation, };
 // use rholang::rust::interpreter::matcher::r#match::Matcher;
 // use rspace_plus_plus::rspace::rspace::{RSpace, RSpaceInstances};
 // use rspace_plus_plus::rspace::shared::key_value_store_manager::KeyValueStoreManager;
@@ -41,8 +41,8 @@
 //     //     .await;
 //     // assert!(install_opt.is_none());
 
-//     let produce = rspace.produce(channels[0].clone(), ListParWithRandom::default(), false);
-//     assert!(produce.is_none());
+//     let produce = rspace.produce(channels[0].clone(),
+// ListParWithRandom::default(), false);     assert!(produce.is_none());
 
 //     let install_opt2 = rspace.install(channels, patterns, continuation);
 //     assert!(install_opt2.is_none());
@@ -50,8 +50,8 @@
 //     teardown();
 // }
 
-// async fn create_rspace() -> RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation, Matcher>
-// {
+// async fn create_rspace() -> RSpace<Par, BindPattern, ListParWithRandom,
+// TaggedContinuation, Matcher> {
 //     let mut kvm = mk_rspace_store_manager("./install_test/".into(), 1 * GB);
 //     let store = kvm.r_space_stores().await.unwrap();
 

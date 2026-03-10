@@ -66,12 +66,9 @@ impl RPConfCell {
 
     /// Read the current RPConf
     pub fn read(&self) -> Result<RPConf, CommError> {
-        self.conf
-            .lock()
-            .map(|conf| conf.clone())
-            .map_err(|_| {
-                CommError::InternalCommunicationError("RPConfCell lock poisoned".to_string())
-            })
+        self.conf.lock().map(|conf| conf.clone()).map_err(|_| {
+            CommError::InternalCommunicationError("RPConfCell lock poisoned".to_string())
+        })
     }
 
     /// Update the local peer node

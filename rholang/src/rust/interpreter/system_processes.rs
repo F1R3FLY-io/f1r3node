@@ -2,13 +2,13 @@ use super::contract_call::ContractCall;
 use super::dispatch::RhoDispatch;
 use super::errors::{illegal_argument_error, InterpreterError};
 use super::grpc_client_service::GrpcClientService;
-use super::ollama_service::{SharedOllamaService, ChatMessage};
+use super::ollama_service::{ChatMessage, SharedOllamaService};
 use super::openai_service::SharedOpenAIService;
 use super::pretty_printer::PrettyPrinter;
 use super::registry::registry::Registry;
 use super::rho_runtime::RhoISpace;
 use super::rho_type::{
-    RhoBoolean, RhoByteArray, RhoDeployerId, RhoDeployId, RhoName, RhoNumber, RhoString,
+    RhoBoolean, RhoByteArray, RhoDeployId, RhoDeployerId, RhoName, RhoNumber, RhoString,
     RhoSysAuthToken, RhoUri,
 };
 use super::util::vault_address::VaultAddress;
@@ -25,30 +25,30 @@ use crypto::rust::public_key::PublicKey;
 use crypto::rust::signatures::ed25519::Ed25519;
 use crypto::rust::signatures::secp256k1::Secp256k1;
 use crypto::rust::signatures::signatures_alg::SignaturesAlg;
-use k256::{
-    ecdsa::{signature::hazmat::PrehashSigner, Signature, SigningKey},
-};
+use crypto::rust::signatures::signed::Signed;
+use k256::ecdsa::{signature::hazmat::PrehashSigner, Signature, SigningKey};
 use models::rhoapi::expr::ExprInstance;
 use models::rhoapi::g_unforgeable::UnfInstance::GPrivateBody;
-use models::rhoapi::{Bundle, GPrivate, GUnforgeable, ListParWithRandom, Par, Var, Expr};
+use models::rhoapi::{Bundle, Expr, GPrivate, GUnforgeable, ListParWithRandom, Par, Var};
+use models::rust::casper::protocol::casper_message;
 use models::rust::casper::protocol::casper_message::BlockMessage;
-use shared::rust::BitSet;
 use models::rust::rholang::implicits::single_expr;
 use models::rust::utils::{new_gbool_par, new_gbytearray_par, new_gsys_auth_token_par};
+use shared::rust::BitSet;
 use shared::rust::Byte;
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
-use crypto::rust::signatures::signed::Signed;
-use models::rust::casper::protocol::casper_message;
 
 // See rholang/src/main/scala/coop/rchain/rholang/interpreter/SystemProcesses.scala
 // NOTE: Not implementing Logger
 pub type RhoSysFunction = Box<
     dyn Fn(
-        (Vec<ListParWithRandom>, bool, Vec<Par>),
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<Par>, InterpreterError>> + Send>> + Send + Sync,
+            (Vec<ListParWithRandom>, bool, Vec<Par>),
+        ) -> Pin<Box<dyn Future<Output = Result<Vec<Par>, InterpreterError>> + Send>>
+        + Send
+        + Sync,
 >;
 pub type RhoDispatchMap = Arc<tokio::sync::RwLock<HashMap<i64, RhoSysFunction>>>;
 pub type Name = Par;
@@ -294,13 +294,15 @@ pub struct Definition {
     pub body_ref: BodyRef,
     pub handler: Box<
         dyn FnMut(
-            ProcessContext,
-        ) -> Box<
-            dyn Fn(
-                (Vec<ListParWithRandom>, bool, Vec<Par>),
-            )
-                -> Pin<Box<dyn Future<Output = Result<Vec<Par>, InterpreterError>> + Send>> + Send + Sync,
-        > + Send,
+                ProcessContext,
+            ) -> Box<
+                dyn Fn(
+                        (Vec<ListParWithRandom>, bool, Vec<Par>),
+                    )
+                        -> Pin<Box<dyn Future<Output = Result<Vec<Par>, InterpreterError>> + Send>>
+                    + Send
+                    + Sync,
+            > + Send,
     >,
     pub remainder: Remainder,
 }
@@ -313,13 +315,15 @@ impl Definition {
         body_ref: BodyRef,
         handler: Box<
             dyn FnMut(
-                ProcessContext,
-            ) -> Box<
-                dyn Fn(
-                    (Vec<ListParWithRandom>, bool, Vec<Par>),
-                )
-                    -> Pin<Box<dyn Future<Output = Result<Vec<Par>, InterpreterError>> + Send>> + Send + Sync,
-            > + Send,
+                    ProcessContext,
+                ) -> Box<
+                    dyn Fn(
+                            (Vec<ListParWithRandom>, bool, Vec<Par>),
+                        ) -> Pin<
+                            Box<dyn Future<Output = Result<Vec<Par>, InterpreterError>> + Send>,
+                        > + Send
+                        + Sync,
+                > + Send,
         >,
         remainder: Remainder,
     ) -> Self {
@@ -340,9 +344,11 @@ impl Definition {
         BodyRef,
         Box<
             dyn Fn(
-                (Vec<ListParWithRandom>, bool, Vec<Par>),
-            )
-                -> Pin<Box<dyn Future<Output = Result<Vec<Par>, InterpreterError>> + Send>> + Send + Sync,
+                    (Vec<ListParWithRandom>, bool, Vec<Par>),
+                )
+                    -> Pin<Box<dyn Future<Output = Result<Vec<Par>, InterpreterError>> + Send>>
+                + Send
+                + Sync,
         >,
     ) {
         (self.body_ref, (self.handler)(context))
@@ -629,9 +635,9 @@ impl SystemProcesses {
                 }
             }
 
-            "fromPublicKey" => match RhoByteArray::unapply(second_par)
-                .map(|public_key| VaultAddress::from_public_key(&PublicKey::from_bytes(&public_key)))
-            {
+            "fromPublicKey" => match RhoByteArray::unapply(second_par).map(|public_key| {
+                VaultAddress::from_public_key(&PublicKey::from_bytes(&public_key))
+            }) {
                 Some(Some(ra)) => RhoString::create_par(ra.to_base58()),
                 _ => Par::default(),
             },
@@ -797,11 +803,15 @@ impl SystemProcesses {
         deploy_data: Arc<tokio::sync::RwLock<DeployData>>,
     ) -> Result<Vec<Par>, InterpreterError> {
         let Some((produce, _, _, args)) = self.is_contract_call().unapply(contract_args) else {
-            return Err(illegal_argument_error("get_deploy_data: invalid contract call pattern"));
+            return Err(illegal_argument_error(
+                "get_deploy_data: invalid contract call pattern",
+            ));
         };
 
         let [ack] = args.as_slice() else {
-            return Err(illegal_argument_error("get_deploy_data expects exactly 1 argument (ack channel)"));
+            return Err(illegal_argument_error(
+                "get_deploy_data expects exactly 1 argument (ack channel)",
+            ));
         };
 
         let data = deploy_data.read().await;
@@ -856,7 +866,10 @@ impl SystemProcesses {
             return Ok(previous_output);
         }
 
-        let openai_service = self.openai_service.lock().await;
+        let openai_service = {
+            let service_guard = self.openai_service.lock().await;
+            service_guard.clone()
+        };
         let response = match openai_service.gpt4_chat_completion(&prompt).await {
             Ok(response) => response,
             Err(e) => {
@@ -895,7 +908,10 @@ impl SystemProcesses {
             return Ok(previous_output);
         }
 
-        let openai_service = self.openai_service.lock().await;
+        let openai_service = {
+            let service_guard = self.openai_service.lock().await;
+            service_guard.clone()
+        };
         let response = match openai_service.dalle3_create_image(&prompt).await {
             Ok(response) => response,
             Err(e) => {
@@ -934,7 +950,10 @@ impl SystemProcesses {
             return Ok(previous_output);
         }
 
-        let openai_service = self.openai_service.lock().await;
+        let openai_service = {
+            let service_guard = self.openai_service.lock().await;
+            service_guard.clone()
+        };
         match openai_service
             .create_audio_speech(&input, "audio.mp3")
             .await
@@ -969,11 +988,15 @@ impl SystemProcesses {
         }
 
         let Some(model) = RhoString::unapply(model_par) else {
-            return Err(illegal_argument_error("ollama_chat: model must be a string"));
+            return Err(illegal_argument_error(
+                "ollama_chat: model must be a string",
+            ));
         };
 
         let Some(prompt) = RhoString::unapply(prompt_par) else {
-            return Err(illegal_argument_error("ollama_chat: prompt must be a string"));
+            return Err(illegal_argument_error(
+                "ollama_chat: prompt must be a string",
+            ));
         };
 
         let messages = vec![ChatMessage {
@@ -981,7 +1004,10 @@ impl SystemProcesses {
             content: prompt,
         }];
 
-        let ollama_service = self.ollama_service.lock().await;
+        let ollama_service = {
+            let service_guard = self.ollama_service.lock().await;
+            service_guard.clone()
+        };
         let response = match ollama_service.chat(Some(&model), messages).await {
             Ok(response) => response,
             Err(e) => {
@@ -1018,14 +1044,21 @@ impl SystemProcesses {
         }
 
         let Some(model) = RhoString::unapply(model_par) else {
-            return Err(illegal_argument_error("ollama_generate: model must be a string"));
+            return Err(illegal_argument_error(
+                "ollama_generate: model must be a string",
+            ));
         };
 
         let Some(prompt) = RhoString::unapply(prompt_par) else {
-            return Err(illegal_argument_error("ollama_generate: prompt must be a string"));
+            return Err(illegal_argument_error(
+                "ollama_generate: prompt must be a string",
+            ));
         };
 
-        let ollama_service = self.ollama_service.lock().await;
+        let ollama_service = {
+            let service_guard = self.ollama_service.lock().await;
+            service_guard.clone()
+        };
         let response = match ollama_service.generate(Some(&model), &prompt).await {
             Ok(response) => response,
             Err(e) => {
@@ -1051,7 +1084,7 @@ impl SystemProcesses {
         else {
             return Err(illegal_argument_error("ollama_models"));
         };
-        
+
         let [ack] = args.as_slice() else {
             return Err(illegal_argument_error("ollama_models"));
         };
@@ -1061,7 +1094,10 @@ impl SystemProcesses {
             return Ok(previous_output);
         }
 
-        let ollama_service = self.ollama_service.lock().await;
+        let ollama_service = {
+            let service_guard = self.ollama_service.lock().await;
+            service_guard.clone()
+        };
         let models = match ollama_service.list_models().await {
             Ok(models) => models,
             Err(e) => {
@@ -1124,15 +1160,26 @@ impl SystemProcesses {
                         };
 
                         // Use GrpcClientService abstraction for proper NoOp handling on observer nodes
-                        match self.grpc_client_service.tell(&client_host, port, &notification_payload).await {
+                        match self
+                            .grpc_client_service
+                            .tell(&client_host, port, &notification_payload)
+                            .await
+                        {
                             Ok(_) => {
-                                tracing::debug!("grpcTell: successfully sent to {}:{}", client_host, port);
+                                tracing::debug!(
+                                    "grpcTell: successfully sent to {}:{}",
+                                    client_host,
+                                    port
+                                );
                                 Ok(vec![Par::default()])
                             }
                             Err(e) => {
                                 tracing::warn!("GrpcClient error: {}", e);
                                 Err(InterpreterError::NonDeterministicProcessFailure {
-                                    cause: Box::new(InterpreterError::BugFoundError(format!("gRPC client error: {}", e))),
+                                    cause: Box::new(InterpreterError::BugFoundError(format!(
+                                        "gRPC client error: {}",
+                                        e
+                                    ))),
                                     output_not_produced: vec![],
                                 })
                             }
@@ -1147,13 +1194,13 @@ impl SystemProcesses {
             _ => {
                 tracing::warn!(
                     "grpcTell: isReplay {} invalid arguments (expected 3): {:?}",
-                    is_replay, args
+                    is_replay,
+                    args
                 );
                 Err(illegal_argument_error("grpc_tell"))
             }
         }
     }
-
 
     pub async fn dev_null(
         &self,
@@ -1697,7 +1744,9 @@ pub fn test_framework_contracts() -> Vec<Definition> {
                 Box::new(move |args| {
                     let sp = sp.clone();
                     let invalid_blocks = invalid_blocks.clone();
-                    Box::pin(async move { sp.casper_invalid_blocks_set(args, &invalid_blocks).await })
+                    Box::pin(
+                        async move { sp.casper_invalid_blocks_set(args, &invalid_blocks).await },
+                    )
                 })
             }),
             remainder: None,

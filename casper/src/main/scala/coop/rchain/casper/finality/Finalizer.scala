@@ -177,6 +177,8 @@ object Finalizer {
         .filter { case (_, faultTolerance) => faultTolerance > faultToleranceThreshold }
         .head
         .map { case (lfb, _) => lfb.blockHash }
+        // only process blocks that aren't already finalized
+        .evalFilter(blockHash => dag.isFinalized(blockHash).map(!_))
         // execute finalization effect
         .evalTap(newLfbFoundEffect)
         .compile

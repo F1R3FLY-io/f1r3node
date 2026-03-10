@@ -66,11 +66,7 @@ object StateChange {
           ).flatMap { change =>
             datumsDiffRef.update(s => {
               val curVal = s.getOrElse(historyPointer, ChannelChange.empty)
-              val newVal = curVal.copy(
-                added = curVal.added ++ change.added,
-                removed = curVal.removed ++ change.removed
-              )
-              s.updated(historyPointer, newVal)
+              s.updated(historyPointer, ChannelChange.combine(curVal, change))
             })
           }
         }
@@ -85,11 +81,7 @@ object StateChange {
           ).flatMap { change =>
             kontsDiffRef.update(s => {
               val curVal = s.getOrElse(consumeChannels, ChannelChange.empty)
-              val newVal = curVal.copy(
-                added = curVal.added ++ change.added,
-                removed = curVal.removed ++ change.removed
-              )
-              s.updated(consumeChannels, newVal)
+              s.updated(consumeChannels, ChannelChange.combine(curVal, change))
             })
           }
         }

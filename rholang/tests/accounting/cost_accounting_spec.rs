@@ -7,10 +7,10 @@ use rholang::rust::interpreter::system_processes::Definition;
 use rholang::rust::interpreter::test_utils::resources::create_runtimes;
 use rholang::rust::interpreter::{
     accounting::costs::Cost,
+    external_services::ExternalServices,
     interpreter::EvaluateResult,
     matcher::r#match::Matcher,
     rho_runtime::{create_rho_runtime, RhoRuntime},
-    external_services::ExternalServices,
 };
 use rspace_plus_plus::rspace::history::history_repository::HistoryRepository;
 use rspace_plus_plus::rspace::rspace::RSpaceStore;
@@ -31,6 +31,10 @@ async fn evaluate_with_cost_log(
     initial_phlo: i64,
     contract: String,
 ) -> (EvaluateResult, Vec<Cost>) {
+    // Cost logging is disabled by default unless F1R3_COST_LOG_MAX_ENTRIES > 0.
+    // Integration tests compile the library without cfg(test), so enable logging explicitly.
+    std::env::set_var("F1R3_COST_LOG_MAX_ENTRIES", "100000");
+
     let mut kvm = InMemoryStoreManager::new();
     let store = kvm.r_space_stores().await.unwrap();
     let (mut runtime, _, _) =
@@ -56,7 +60,14 @@ async fn create_runtimes_with_cost_log(
 ) -> (
     RhoRuntimeImpl,
     RhoRuntimeImpl,
-    Arc<Box<dyn HistoryRepository<Par, BindPattern, ListParWithRandom, TaggedContinuation> + Send + Sync + 'static>>,
+    Arc<
+        Box<
+            dyn HistoryRepository<Par, BindPattern, ListParWithRandom, TaggedContinuation>
+                + Send
+                + Sync
+                + 'static,
+        >,
+    >,
 ) {
     let init_registry = init_registry.unwrap_or(false);
 
@@ -101,7 +112,14 @@ async fn evaluate_and_replay(initial_phlo: Cost, term: String) -> (EvaluateResul
     let (mut runtime, mut replay_runtime, _): (
         RhoRuntimeImpl,
         RhoRuntimeImpl,
-        Arc<Box<dyn HistoryRepository<Par, BindPattern, ListParWithRandom, TaggedContinuation> + Send + Sync + 'static>>,
+        Arc<
+            Box<
+                dyn HistoryRepository<Par, BindPattern, ListParWithRandom, TaggedContinuation>
+                    + Send
+                    + Sync
+                    + 'static,
+            >,
+        >,
     ) = create_runtimes(store, false, &mut Vec::new()).await;
 
     let rand = Blake2b512Random::create_from_bytes(&[]);
@@ -118,7 +136,9 @@ async fn evaluate_and_replay(initial_phlo: Cost, term: String) -> (EvaluateResul
         let root = checkpoint.root;
         let log = checkpoint.log;
 
-        replay_runtime.reset(&root);
+        replay_runtime
+            .reset(&root)
+            .expect("Failed to reset replay runtime");
         replay_runtime.rig(log).expect("Rig failed");
 
         let result = replay_runtime

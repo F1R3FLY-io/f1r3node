@@ -44,5 +44,3 @@ pub fn generate_hash(prefix: Option<&str>) -> BlockHash {
     rand::rng().fill(&mut array);
     Bytes::copy_from_slice(&array)
 }
-
-

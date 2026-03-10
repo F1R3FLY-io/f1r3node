@@ -20,7 +20,10 @@ pub const SYSTEM_METRICS_SOURCE: &str = "f1r3fly.system";
 // Reference: kamon.metric.tick-interval
 pub(crate) const DEFAULT_METRICS_INTERVAL_SECS: u64 = 10;
 
-pub fn initialize_diagnostics(conf: &NodeConf, kamon_conf: &KamonConf) -> Result<Option<Arc<new_prometheus_reporter::NewPrometheusReporter>>> {
+pub fn initialize_diagnostics(
+    conf: &NodeConf,
+    kamon_conf: &KamonConf,
+) -> Result<Option<Arc<new_prometheus_reporter::NewPrometheusReporter>>> {
     // Get metrics interval from configuration, or use default
     let metrics_interval = kamon_conf
         .metric
@@ -47,18 +50,18 @@ pub fn initialize_diagnostics(conf: &NodeConf, kamon_conf: &KamonConf) -> Result
             let (username, password) = influx_conf
                 .authentication
                 .as_ref()
-                .map_or((None, None), |auth| (auth.user.clone(), auth.password.clone()));
-            if let Err(e) =
-                batch_influx_db_reporter::create_batch_influx_db_reporter(
-                    host,
-                    port,
-                    database,
-                    protocol,
-                    username,
-                    password,
-                    metrics_interval,
-                )
-            {
+                .map_or((None, None), |auth| {
+                    (auth.user.clone(), auth.password.clone())
+                });
+            if let Err(e) = batch_influx_db_reporter::create_batch_influx_db_reporter(
+                host,
+                port,
+                database,
+                protocol,
+                username,
+                password,
+                metrics_interval,
+            ) {
                 warn!("Failed to initialize InfluxDB HTTP reporter: {}", e);
             }
         }
@@ -68,11 +71,9 @@ pub fn initialize_diagnostics(conf: &NodeConf, kamon_conf: &KamonConf) -> Result
         if let Some(influx_conf) = &kamon_conf.influxdb {
             let host = influx_conf.hostname.clone().unwrap_or_default();
             let port = influx_conf.port.unwrap_or(8089);
-            if let Err(e) = udp_influx_db_reporter::create_udp_influx_db_reporter(
-                host,
-                port,
-                metrics_interval,
-            ) {
+            if let Err(e) =
+                udp_influx_db_reporter::create_udp_influx_db_reporter(host, port, metrics_interval)
+            {
                 warn!("Failed to initialize InfluxDB UDP reporter: {}", e);
             }
         }
@@ -87,7 +88,10 @@ pub fn initialize_diagnostics(conf: &NodeConf, kamon_conf: &KamonConf) -> Result
 
     if conf.metrics.sigar {
         sigar_reporter::start_sigar_reporter(metrics_interval);
-        info!("Sigar (system metrics) reporter started with interval {:?}.", metrics_interval);
+        info!(
+            "Sigar (system metrics) reporter started with interval {:?}.",
+            metrics_interval
+        );
     }
 
     Ok(prometheus_reporter)

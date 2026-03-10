@@ -134,8 +134,8 @@ impl Drop for MetricsSemaphorePermit {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::metrics_constants::SHARED_METRICS_SOURCE;
+    use super::*;
 
     #[tokio::test]
     async fn test_metrics_semaphore_single() {

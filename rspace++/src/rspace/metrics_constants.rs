@@ -18,6 +18,38 @@ pub const LOCK_ACQUIRE_TIME_METRIC: &str = "lock.acquire";
 
 // RSpace gauge metrics
 pub const LOCK_QUEUE_METRIC: &str = "lock.queue";
+pub const HOT_STORE_HISTORY_CONT_CACHE_SIZE_METRIC: &str =
+    "hot-store.history.continuations-cache.size";
+pub const HOT_STORE_HISTORY_DATA_CACHE_SIZE_METRIC: &str = "hot-store.history.data-cache.size";
+pub const HOT_STORE_HISTORY_JOINS_CACHE_SIZE_METRIC: &str = "hot-store.history.joins-cache.size";
+pub const HOT_STORE_HISTORY_CONT_CACHE_ITEMS_METRIC: &str =
+    "hot-store.history.continuations-cache.items";
+pub const HOT_STORE_HISTORY_DATA_CACHE_ITEMS_METRIC: &str = "hot-store.history.data-cache.items";
+pub const HOT_STORE_HISTORY_JOINS_CACHE_ITEMS_METRIC: &str = "hot-store.history.joins-cache.items";
+pub const HOT_STORE_STATE_CONT_SIZE_METRIC: &str = "hot-store.state.continuations.size";
+pub const HOT_STORE_STATE_DATA_SIZE_METRIC: &str = "hot-store.state.data.size";
+pub const HOT_STORE_STATE_JOINS_SIZE_METRIC: &str = "hot-store.state.joins.size";
+pub const HOT_STORE_STATE_INSTALLED_CONT_SIZE_METRIC: &str =
+    "hot-store.state.installed-continuations.size";
+pub const HOT_STORE_STATE_INSTALLED_JOINS_SIZE_METRIC: &str =
+    "hot-store.state.installed-joins.size";
+pub const HOT_STORE_STATE_CONT_ITEMS_METRIC: &str = "hot-store.state.continuations.items";
+pub const HOT_STORE_STATE_DATA_ITEMS_METRIC: &str = "hot-store.state.data.items";
+pub const HOT_STORE_STATE_JOINS_ITEMS_METRIC: &str = "hot-store.state.joins.items";
+pub const HOT_STORE_STATE_INSTALLED_CONT_ITEMS_METRIC: &str =
+    "hot-store.state.installed-continuations.items";
+pub const HOT_STORE_STATE_INSTALLED_JOINS_ITEMS_METRIC: &str =
+    "hot-store.state.installed-joins.items";
+
+// Replay waiting-continuation observability metrics
+pub const REPLAY_WAITING_CONTINUATIONS_STORED_TOTAL_METRIC: &str =
+    "replay.waiting-continuations.stored-total";
+pub const REPLAY_WAITING_CONTINUATIONS_MATCHED_TOTAL_METRIC: &str =
+    "replay.waiting-continuations.matched-total";
+pub const REPLAY_WAITING_CONTINUATIONS_ESTIMATE_METRIC: &str =
+    "replay.waiting-continuations.estimate";
+pub const REPLAY_WAITING_CONTINUATIONS_CHANNEL_DEPTH_METRIC: &str =
+    "replay.waiting-continuations.channel-depth";
 
 // RSpace tracing span names
 pub const LOCKED_CONSUME_SPAN: &str = "locked-consume";

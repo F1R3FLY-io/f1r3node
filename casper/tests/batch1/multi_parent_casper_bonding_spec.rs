@@ -6,4 +6,3 @@
 async fn multi_parent_casper_should_allow_bonding() {
     // Test body intentionally empty, to be implemented when new PoS is ready
 }
-

@@ -73,8 +73,10 @@ object BlockRetriever {
   )
 
   final case class RequestState(
-      // Last time block was requested
+      // Last time block was requested (used for retry timing)
       timestamp: Long,
+      // Initial time when block hash was first received (used for end-to-end metrics)
+      initialTimestamp: Long,
       // Peers that were queried for this block
       peers: Set[PeerNode] = Set.empty,
       // If block has been received
@@ -102,7 +104,10 @@ object BlockRetriever {
   def apply[F[_]](implicit ev: BlockRetriever[F]): BlockRetriever[F] = ev
 
   def of[F[_]: Monad: RequestedBlocks: Log: Time: RPConfAsk: TransportLayer: CommUtil: Metrics]
-      : BlockRetriever[F] =
+      : BlockRetriever[F] = {
+
+    implicit val metricsSource: Source = Metrics.Source(CasperMetricsSource, "block-retriever")
+
     new BlockRetriever[F] {
 
       private def addSourcePeerToRequest(
@@ -131,6 +136,7 @@ object BlockRetriever {
           initState +
             (hash -> RequestState(
               timestamp = now,
+              initialTimestamp = now,
               waitingList = if (sourcePeer.isEmpty) None.toList else List(sourcePeer.get),
               received = markAsReceived
             ))
@@ -204,10 +210,11 @@ object BlockRetriever {
                         s"Reason: $admitHashReason"
                     )
                 case NewRequestAdded =>
-                  Log[F].info(
-                    s"Adding ${PrettyPrinter.buildString(hash)} hash to RequestedBlocks because" +
-                      s" of $admitHashReason."
-                  )
+                  Metrics[F].incrementCounter("block.requests.total") >>
+                    Log[F].info(
+                      s"Adding ${PrettyPrinter.buildString(hash)} hash to RequestedBlocks because" +
+                        s" of $admitHashReason."
+                    )
                 case Ignore => ().pure[F]
               }
           _ <- if (result.broadcastRequest) CommUtil[F].broadcastHasBlockRequest(hash)
@@ -227,18 +234,32 @@ object BlockRetriever {
       ): F[Unit] =
         for {
           now <- Time[F].currentMillis
-          result <- RequestedBlocks[F].modify[AckReceiveResult] { state =>
+          result <- RequestedBlocks[F].modify[(AckReceiveResult, Option[Long])] { state =>
                      state.get(bh) match {
                        // There might be blocks that are not maintained by RequestedBlocks, e.g. fork-choice tips
                        case None =>
-                         (addNewRequest(state, bh, now, markAsReceived = true), AddedAsReceived)
+                         (
+                           addNewRequest(state, bh, now, markAsReceived = true),
+                           (AddedAsReceived, None)
+                         )
                        case Some(requested) => {
+                         // Calculate download time from initial request (not reset on retries)
+                         val downloadTime = now - requested.initialTimestamp
                          // Make Casper loop aware that the block has been received
-                         (state + (bh -> requested.copy(received = true)), MarkedAsReceived)
+                         (
+                           state + (bh -> requested.copy(received = true)),
+                           (MarkedAsReceived, Some(downloadTime))
+                         )
                        }
                      }
                    }
-          _ <- result match {
+          (ackResult, downloadTime) = result
+          _ <- downloadTime match {
+                case Some(timeMs) =>
+                  Metrics[F].record("block.download.end-to-end-time", timeMs)
+                case None => ().pure[F]
+              }
+          _ <- ackResult match {
                 case AddedAsReceived =>
                   Log[F].info(
                     s"Block ${PrettyPrinter.buildString(bh)} is not in RequestedBlocks. " +
@@ -278,6 +299,10 @@ object BlockRetriever {
                       s"Trying ${nextPeer.endpoint.host} to query for ${PrettyPrinter.buildString(hash)} block. " +
                         s"Remain waiting: ${waitingListTail.map(_.endpoint.host).mkString(", ")}."
                     )
+                // Increment retry counter if this is not the first peer (peers set is not empty)
+                _ <- if (requested.peers.nonEmpty)
+                      Metrics[F].incrementCounter("block.requests.retries")
+                    else ().pure[F]
                 _  <- CommUtil[F].requestForBlock(nextPeer, hash)
                 ts <- Time[F].currentMillis
                 _ <- RequestedBlocks.put(
@@ -332,4 +357,5 @@ object BlockRetriever {
         } yield ()
       }
     }
+  }
 }

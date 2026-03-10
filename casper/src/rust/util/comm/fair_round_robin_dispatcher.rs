@@ -1,12 +1,12 @@
 // See casper/src/main/scala/coop/rchain/casper/util/comm/FairRoundRobinDispatcher.scala
 
+use shared::rust::metrics_semaphore::MetricsSemaphore;
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Display;
 use std::future::Future;
 use std::hash::Hash;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
-use shared::rust::metrics_semaphore::MetricsSemaphore;
 
 use crate::rust::errors::CasperError;
 
@@ -368,6 +368,8 @@ where
                 .lock()
                 .map_err(|e| CasperError::LockError(format!("Failed to lock state: {}", e)))?;
 
+            state.skipped = 0;
+
             let queue = state
                 .messages
                 .get_mut(source)
@@ -376,8 +378,6 @@ where
             let message = queue.pop_front().ok_or_else(|| {
                 CasperError::RuntimeError(format!("No message in queue for {}", source))
             })?;
-
-            state.skipped = 0;
 
             message
         };

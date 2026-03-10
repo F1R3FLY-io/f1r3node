@@ -104,161 +104,122 @@ impl PartialOrd for DeployChainIndex {
 
 impl Ord for DeployChainIndex {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        // Total ordering for deterministic processing across validators.
-        // Primary sort by postStateHash, with tiebreakers by preStateHash and then
-        // lexicographic comparison of sorted deploy IDs. This prevents ambiguity
-        // when two deploy chains produce the same post-state hash.
+        // 1. PRIMARY: Highest total cost first (economic incentive)
+        //    Higher-paying transactions get priority in conflict resolution
+        let self_total_cost: u64 = self.deploys_with_cost.0.iter().map(|d| d.cost).sum();
+        let other_total_cost: u64 = other.deploys_with_cost.0.iter().map(|d| d.cost).sum();
 
-        // 1. PRIMARY: post_state_hash
-        let post_cmp = self.post_state_hash.cmp(&other.post_state_hash);
-        if post_cmp != std::cmp::Ordering::Equal {
-            return post_cmp;
+        let cost_cmp = self_total_cost.cmp(&other_total_cost).reverse(); // Higher cost first
+        if cost_cmp != std::cmp::Ordering::Equal {
+            return cost_cmp;
         }
 
-        // 2. SECONDARY: pre_state_hash
-        let pre_cmp = self.pre_state_hash.cmp(&other.pre_state_hash);
-        if pre_cmp != std::cmp::Ordering::Equal {
-            return pre_cmp;
-        }
-
-        // 3. TERTIARY: Lexicographic comparison of sorted deploy IDs
-        let mut a_ids: Vec<_> = self
+        // 2. SECONDARY: Highest single deploy cost (prioritize high-value individual transactions)
+        let self_max_cost = self
             .deploys_with_cost
             .0
             .iter()
-            .map(|d| &d.deploy_id)
-            .collect();
-        let mut b_ids: Vec<_> = other
+            .map(|d| d.cost)
+            .max()
+            .unwrap_or(0);
+        let other_max_cost = other
             .deploys_with_cost
             .0
             .iter()
-            .map(|d| &d.deploy_id)
-            .collect();
-        a_ids.sort();
-        b_ids.sort();
+            .map(|d| d.cost)
+            .max()
+            .unwrap_or(0);
 
-        let len_cmp = a_ids.len().cmp(&b_ids.len());
-        if len_cmp != std::cmp::Ordering::Equal {
-            return len_cmp;
+        let max_cost_cmp = self_max_cost.cmp(&other_max_cost).reverse(); // Higher max cost first
+        if max_cost_cmp != std::cmp::Ordering::Equal {
+            return max_cost_cmp;
         }
 
-        for (ai, bi) in a_ids.iter().zip(b_ids.iter()) {
-            let id_cmp = ai.cmp(bi);
-            if id_cmp != std::cmp::Ordering::Equal {
-                return id_cmp;
+        // 3. TERTIARY: Lexicographically smallest deploy signature (deterministic)
+        //    This ensures consistent ordering across all nodes when costs are equal
+        let self_min_deploy = self
+            .deploys_with_cost
+            .0
+            .iter()
+            .min_by(|a, b| a.deploy_id.cmp(&b.deploy_id));
+        let other_min_deploy = other
+            .deploys_with_cost
+            .0
+            .iter()
+            .min_by(|a, b| a.deploy_id.cmp(&b.deploy_id));
+
+        let signature_cmp = match (self_min_deploy, other_min_deploy) {
+            (Some(self_deploy), Some(other_deploy)) => {
+                self_deploy.deploy_id.cmp(&other_deploy.deploy_id)
             }
+            (Some(_), None) => std::cmp::Ordering::Greater,
+            (None, Some(_)) => std::cmp::Ordering::Less,
+            (None, None) => std::cmp::Ordering::Equal,
+        };
+
+        if signature_cmp != std::cmp::Ordering::Equal {
+            return signature_cmp;
         }
 
-        std::cmp::Ordering::Equal
+        // 4. QUATERNARY: Post-state hash as final fallback
+        //    Ensures total ordering even for identical deploys (should be rare)
+        self.post_state_hash.cmp(&other.post_state_hash)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rspace_plus_plus::rspace::{
-        hashing::blake2b256_hash::Blake2b256Hash,
-        merger::{event_log_index::EventLogIndex, state_change::StateChange},
-    };
-    use shared::rust::hashable_set::HashableSet;
+    use rspace_plus_plus::rspace::hashing::blake2b256_hash::Blake2b256Hash;
     use std::collections::HashSet;
 
-    fn mk_hash(byte: u8) -> Blake2b256Hash {
-        Blake2b256Hash::from_bytes(vec![byte; 32])
-    }
-
-    fn mk_deploy_id(byte: u8) -> Bytes {
-        Bytes::from(vec![byte; 64])
-    }
-
-    fn mk_index(post_state: u8, pre_state: u8, deploy_ids: &[u8]) -> DeployChainIndex {
-        let deploys_with_cost: HashSet<DeployIdWithCost> = deploy_ids
+    fn mk_index(deploys: &[(u8, u64)], post_state_seed: u8) -> DeployChainIndex {
+        let deploys_with_cost: HashSet<DeployIdWithCost> = deploys
             .iter()
-            .map(|&b| DeployIdWithCost {
-                deploy_id: mk_deploy_id(b),
-                cost: 0,
+            .map(|(id, cost)| DeployIdWithCost {
+                deploy_id: Bytes::from(vec![*id]),
+                cost: *cost,
             })
             .collect();
 
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        for d in &deploys_with_cost {
-            std::hash::Hash::hash(&d.deploy_id, &mut hasher);
-        }
-        let hash_code = std::hash::Hasher::finish(&hasher) as i32;
-
         DeployChainIndex {
             deploys_with_cost: HashableSet(deploys_with_cost),
-            pre_state_hash: mk_hash(pre_state),
-            post_state_hash: mk_hash(post_state),
+            pre_state_hash: Blake2b256Hash::from_bytes(vec![0u8; 32]),
+            post_state_hash: Blake2b256Hash::from_bytes(vec![post_state_seed; 32]),
             event_log_index: EventLogIndex::empty(),
             state_changes: StateChange::empty(),
-            hash_code,
+            hash_code: 0,
         }
     }
 
     #[test]
-    fn ordering_by_post_state_hash_primarily() {
-        let a = mk_index(1, 0, &[10]);
-        let b = mk_index(2, 0, &[10]);
-        assert!(
-            a.cmp(&b) == std::cmp::Ordering::Less,
-            "lower postStateHash should sort before higher"
-        );
+    fn ordering_prefers_higher_total_cost() {
+        let high_total = mk_index(&[(1, 10), (2, 1)], 1); // total = 11
+        let low_total = mk_index(&[(1, 9), (2, 1)], 2); // total = 10
+
+        assert_eq!(high_total.cmp(&low_total), std::cmp::Ordering::Less);
+        assert_eq!(low_total.cmp(&high_total), std::cmp::Ordering::Greater);
     }
 
     #[test]
-    fn ordering_uses_pre_state_hash_as_tiebreaker() {
-        let a = mk_index(1, 1, &[10]);
-        let b = mk_index(1, 2, &[10]);
-        assert_ne!(a.cmp(&b), std::cmp::Ordering::Equal);
+    fn ordering_tie_breaks_on_max_cost_then_signature() {
+        // Same total (11), different max (7 vs 6)
+        let max_seven = mk_index(&[(1, 7), (2, 4)], 1);
+        let max_six = mk_index(&[(1, 6), (2, 5)], 2);
+        assert_eq!(max_seven.cmp(&max_six), std::cmp::Ordering::Less);
+
+        // Same total/max, tie-break by smallest deploy signature (2 < 3)
+        let min_sig_two = mk_index(&[(2, 5), (9, 5)], 1);
+        let min_sig_three = mk_index(&[(3, 5), (9, 5)], 2);
+        assert_eq!(min_sig_two.cmp(&min_sig_three), std::cmp::Ordering::Less);
     }
 
     #[test]
-    fn ordering_uses_deploy_ids_as_final_tiebreaker() {
-        let a = mk_index(1, 1, &[10]);
-        let b = mk_index(1, 1, &[20]);
-        assert_ne!(a.cmp(&b), std::cmp::Ordering::Equal);
-    }
+    fn ordering_final_tie_breaks_on_post_state_hash() {
+        let a = mk_index(&[(1, 5)], 0x01);
+        let b = mk_index(&[(1, 5)], 0x02);
 
-    #[test]
-    fn ordering_compares_equal_for_identical_instances() {
-        let a = mk_index(1, 1, &[10, 20]);
-        let b = mk_index(1, 1, &[10, 20]);
-        assert_eq!(a.cmp(&b), std::cmp::Ordering::Equal);
-    }
-
-    #[test]
-    fn ordering_is_antisymmetric() {
-        let a = mk_index(1, 1, &[10]);
-        let b = mk_index(1, 1, &[20]);
-        let cmp = a.cmp(&b);
-        assert_eq!(b.cmp(&a), cmp.reverse());
-    }
-
-    #[test]
-    fn ordering_produces_consistent_sorted_order() {
-        let items = vec![
-            mk_index(3, 1, &[10]),
-            mk_index(1, 2, &[20]),
-            mk_index(2, 1, &[30]),
-            mk_index(1, 1, &[40]),
-            mk_index(1, 1, &[10]),
-        ];
-
-        let mut sorted1 = items.clone();
-        sorted1.sort();
-
-        let mut sorted2 = items.clone();
-        sorted2.reverse();
-        sorted2.sort();
-
-        // Both sort orders must produce the same sequence
-        for (a, b) in sorted1.iter().zip(sorted2.iter()) {
-            assert_eq!(
-                a.cmp(b),
-                std::cmp::Ordering::Equal,
-                "sorted order must be identical regardless of input order"
-            );
-        }
+        assert_eq!(a.cmp(&b), std::cmp::Ordering::Less);
+        assert_eq!(b.cmp(&a), std::cmp::Ordering::Greater);
     }
 }

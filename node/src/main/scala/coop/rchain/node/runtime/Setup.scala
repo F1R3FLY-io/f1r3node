@@ -54,6 +54,14 @@ import monix.execution.Scheduler
 import java.nio.file.Files
 
 object Setup {
+  private def queueSize(name: String, defaultValue: Int): Int =
+    sys
+      .env
+      .get(name)
+      .flatMap(v => scala.util.Try(v.toInt).toOption)
+      .filter(_ > 0)
+      .getOrElse(defaultValue)
+
   def setupNodeProgram[F[_]: Monixable: Concurrent: Parallel: ContextShift: Time: Timer: TransportLayer: LocalEnvironment: Log: EventLog: Metrics: NodeDiscovery](
       rpConnections: ConnectionsCell[F],
       rpConfAsk: ApplicativeAsk[F, RPConf],

@@ -22,6 +22,7 @@ tonic = { workspace = true }
 prost = { workspace = true }
 tonic-prost = { workspace = true }
 utoipa = "5"
+tracing = { workspace = true }
 
 [[test]]
 name = "models_tests"

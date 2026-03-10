@@ -14,6 +14,7 @@ use rholang::rust::interpreter::{
     test_utils::persistent_store_tester::create_test_space,
 };
 use rspace_plus_plus::rspace::rspace::RSpace;
+use std::sync::Arc;
 
 #[cfg(test)]
 mod pathmap_method_dispatch_tests {
@@ -39,7 +40,7 @@ mod pathmap_method_dispatch_tests {
         new_emethod_expr(method_name.to_string(), target, args, Vec::new())
     }
 
-    async fn make_reducer() -> DebruijnInterpreter {
+    async fn make_reducer() -> Arc<DebruijnInterpreter> {
         let (_, reducer) =
             create_test_space::<RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>()
                 .await;

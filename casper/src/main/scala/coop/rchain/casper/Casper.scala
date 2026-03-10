@@ -25,6 +25,15 @@ import coop.rchain.models.BlockMetadata
 import coop.rchain.models.Validator.Validator
 import coop.rchain.shared._
 
+/**
+  * Thrown by [[MultiParentCasperImpl.getSnapshot]] when finalization is in progress.
+  *
+  * This is a transient condition: finalization will complete within a few seconds
+  * and the snapshot will become available. Callers (e.g. the Proposer) should catch
+  * this exception and skip the current cycle rather than crashing the node.
+  */
+final class FinalizationInProgressException extends Exception("Finalization in progress")
+
 sealed trait DeployError
 final case class ParsingError(details: String)          extends DeployError
 final case object MissingUser                           extends DeployError
@@ -77,6 +86,8 @@ trait MultiParentCasper[F[_]] extends Casper[F] {
   def normalizedInitialFault(weights: Map[Validator, Long]): F[Float]
   def lastFinalizedBlock: F[BlockMessage]
   def getRuntimeManager: F[RuntimeManager[F]]
+  // Check if pending deploys exist in storage (not yet included in blocks)
+  def hasPendingDeploysInStorage: F[Boolean]
 }
 
 object MultiParentCasper extends MultiParentCasperInstances {
@@ -128,7 +139,11 @@ final case class CasperShardConf(
     bondMaximum: Long,
     epochLength: Int,
     quarantineLength: Int,
-    minPhloPrice: Long
+    minPhloPrice: Long,
+    enableMergeableChannelGC: Boolean,
+    mergeableChannelsGCDepthBuffer: Int,
+    disableLateBlockFiltering: Boolean,
+    disableValidatorProgressCheck: Boolean
 )
 
 sealed abstract class MultiParentCasperInstances {
@@ -138,15 +153,22 @@ sealed abstract class MultiParentCasperInstances {
   def hashSetCasper[F[_]: Sync: Metrics: Concurrent: CommUtil: Log: Time: Timer: SafetyOracle: BlockStore: BlockDagStorage: Span: EventPublisher: SynchronyConstraintChecker: LastFinalizedHeightConstraintChecker: Estimator: DeployStorage: CasperBufferStorage: BlockRetriever](
       validatorId: Option[ValidatorIdentity],
       casperShardConf: CasperShardConf,
-      approvedBlock: BlockMessage
+      approvedBlock: BlockMessage,
+      heartbeatSignalRef: cats.effect.concurrent.Ref[F, Option[HeartbeatSignal[F]]],
+      onBlockFinalized: String => F[Unit]
   )(implicit runtimeManager: RuntimeManager[F]): F[MultiParentCasper[F]] =
     for {
-      _ <- ().pure
+      // Create flag to track finalization status - block proposals fail fast if finalization is running
+      // This prevents validators from creating blocks with stale snapshots during finalization
+      finalizationInProgress <- cats.effect.concurrent.Ref[F].of(false)
     } yield {
       new MultiParentCasperImpl(
         validatorId,
         casperShardConf,
-        approvedBlock
+        approvedBlock,
+        finalizationInProgress,
+        heartbeatSignalRef,
+        onBlockFinalized
       )
     }
 }

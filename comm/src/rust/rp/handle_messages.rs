@@ -5,12 +5,12 @@ use std::sync::Arc;
 use models::routing::{Packet, Protocol};
 
 use crate::rust::{
-    errors::CommError, 
+    errors::CommError,
     metrics_constants::{DISCONNECT_METRIC, RP_HANDLE_METRICS_SOURCE},
-    p2p::packet_handler::PacketHandler, 
-    peer_node::PeerNode, 
-    rp::{connect::ConnectionsCell, protocol_helper, rp_conf::RPConf}, 
-    transport::{communication_response::CommunicationResponse, transport_layer::TransportLayer}
+    p2p::packet_handler::PacketHandler,
+    peer_node::PeerNode,
+    rp::{connect::ConnectionsCell, protocol_helper, rp_conf::RPConf},
+    transport::{communication_response::CommunicationResponse, transport_layer::TransportLayer},
 };
 
 pub async fn handle(

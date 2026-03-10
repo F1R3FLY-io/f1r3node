@@ -10,7 +10,9 @@ use block_storage::rust::{
 };
 use models::{
     rhoapi::{BindPattern, ListParWithRandom, Par, TaggedContinuation},
-    rust::casper::protocol::casper_message::{BlockMessage, ProcessedDeploy, ProcessedSystemDeploy, SystemDeployData},
+    rust::casper::protocol::casper_message::{
+        BlockMessage, ProcessedDeploy, ProcessedSystemDeploy, SystemDeployData,
+    },
 };
 use rholang::rust::interpreter::{
     rho_runtime::RhoRuntime,
@@ -118,10 +120,18 @@ impl ReportingCasper for RhoReporterCasper {
         let unseen_blocks_set = proto_util::unseen_block_hashes(&mut dag, block)
             .map_err(|e| format!("Failed to get unseen block hashes: {}", e))?;
 
-        let seen_invalid_blocks: HashMap<models::rust::block_hash::BlockHash, models::rust::validator::Validator> = invalid_blocks_set
+        let seen_invalid_blocks: HashMap<
+            models::rust::block_hash::BlockHash,
+            models::rust::validator::Validator,
+        > = invalid_blocks_set
             .iter()
             .filter(|block_metadata| !unseen_blocks_set.contains(&block_metadata.block_hash))
-            .map(|block_metadata| (block_metadata.block_hash.clone(), block_metadata.sender.clone()))
+            .map(|block_metadata| {
+                (
+                    block_metadata.block_hash.clone(),
+                    block_metadata.sender.clone(),
+                )
+            })
             .collect();
 
         Self::replay_deploys(
@@ -146,9 +156,14 @@ impl RhoReporterCasper {
         system_deploys: &[ProcessedSystemDeploy],
         with_cost_accounting: bool,
         block_data: &BlockData,
-        invalid_blocks: HashMap<models::rust::block_hash::BlockHash, models::rust::validator::Validator>,
+        invalid_blocks: HashMap<
+            models::rust::block_hash::BlockHash,
+            models::rust::validator::Validator,
+        >,
     ) -> Result<ReplayResult, String> {
-        runtime.reset(start_hash);
+        runtime
+            .reset(start_hash)
+            .map_err(|error| format!("Failed to reset reporting runtime: {}", error))?;
 
         runtime.set_block_data(block_data.clone()).await;
         runtime.set_invalid_blocks(invalid_blocks).await;
@@ -162,9 +177,7 @@ impl RhoReporterCasper {
                 "Replaying deploy for report"
             );
 
-            let replay_result = runtime
-                .replay_deploy_e(with_cost_accounting, term)
-                .await;
+            let replay_result = runtime.replay_deploy_e(with_cost_accounting, term).await;
 
             let events = match replay_result {
                 Ok(_) => runtime.get_report().unwrap_or_default(),
@@ -261,13 +274,21 @@ pub struct ReportingRuntime {
 
 impl ReportingRuntime {
     /// Get reporting events from the space
-    pub fn get_report(&self) -> Result<Vec<Vec<ReportingEvent<Par, BindPattern, ListParWithRandom, TaggedContinuation>>>, RSpaceError> {
+    pub fn get_report(
+        &self,
+    ) -> Result<
+        Vec<Vec<ReportingEvent<Par, BindPattern, ListParWithRandom, TaggedContinuation>>>,
+        RSpaceError,
+    > {
         self.space.get_report()
     }
 
     /// Reset the runtime to a specific state hash
-    pub fn reset(&mut self, root: &Blake2b256Hash) {
-        self.runtime.reset(root);
+    pub fn reset(
+        &mut self,
+        root: &Blake2b256Hash,
+    ) -> Result<(), rholang::rust::interpreter::errors::InterpreterError> {
+        self.runtime.reset(root)
     }
 
     /// Set block data for the runtime
@@ -276,7 +297,13 @@ impl ReportingRuntime {
     }
 
     /// Set invalid blocks for the runtime
-    pub async fn set_invalid_blocks(&self, invalid_blocks: std::collections::HashMap<models::rust::block_hash::BlockHash, models::rust::validator::Validator>) {
+    pub async fn set_invalid_blocks(
+        &self,
+        invalid_blocks: std::collections::HashMap<
+            models::rust::block_hash::BlockHash,
+            models::rust::validator::Validator,
+        >,
+    ) {
         RhoRuntime::set_invalid_blocks(&self.runtime, invalid_blocks).await;
     }
 
@@ -295,7 +322,9 @@ impl ReportingRuntime {
 
         let mut replay_ops = ReplayRuntimeOps::new_from_runtime(self.runtime.clone());
 
-        replay_ops.replay_deploy_e(with_cost_accounting, processed_deploy).await?;
+        replay_ops
+            .replay_deploy_e(with_cost_accounting, processed_deploy)
+            .await?;
 
         self.runtime = replay_ops.runtime_ops.runtime;
 
@@ -314,7 +343,9 @@ impl ReportingRuntime {
         let mut replay_ops = ReplayRuntimeOps::new_from_runtime(self.runtime.clone());
 
         // Replay the system deploy
-        replay_ops.replay_block_system_deploy(block_data, processed_system_deploy).await?;
+        replay_ops
+            .replay_block_system_deploy(block_data, processed_system_deploy)
+            .await?;
 
         // Update the runtime from replay_ops
         self.runtime = replay_ops.runtime_ops.runtime;
@@ -326,9 +357,7 @@ impl ReportingRuntime {
 /// Factory functions for creating ReportingRuntime
 impl ReportingRuntime {
     /// Create a ReportingRspace from RSpaceStore
-    pub fn create_reporting_rspace(
-        store: RSpaceStore,
-    ) -> Result<RhoReportingRspace, RSpaceError> {
+    pub fn create_reporting_rspace(store: RSpaceStore) -> Result<RhoReportingRspace, RSpaceError> {
         use rholang::rust::interpreter::matcher::r#match::Matcher;
         use rspace_plus_plus::rspace::r#match::Match;
 

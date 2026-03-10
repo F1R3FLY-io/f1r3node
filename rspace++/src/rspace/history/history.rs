@@ -1,9 +1,11 @@
+use std::sync::Arc;
+
+use shared::rust::store::key_value_store::KeyValueStore;
+
 use crate::rspace::errors::HistoryError;
 use crate::rspace::hashing::blake2b256_hash::Blake2b256Hash;
 use crate::rspace::history::history_action::HistoryAction;
 use crate::rspace::history::instances::radix_history::RadixHistory;
-use shared::rust::store::key_value_store::KeyValueStore;
-use std::sync::Arc;
 
 // See rspace/src/main/scala/coop/rchain/rspace/history/History.scala
 pub trait History: Send + Sync {

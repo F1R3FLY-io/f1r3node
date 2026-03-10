@@ -1,0 +1,32 @@
+new step1, step2, step3, step4, step5,
+    ollamaChat(`rho:ollama:chat`),
+    ollamaGenerate(`rho:ollama:generate`),
+    ollamaModels(`rho:ollama:models`),
+    stdout(`rho:io:stdout`) in {
+
+  // Sequential execution instead of concurrent
+  ollamaModels!(*step1) |
+  for(@models <- step1) {
+    stdout!(["Step 1 - Available Models:", models]) |
+
+    ollamaChat!("llama4:latest", "What is blockchain technology in one sentence?", *step2) |
+    for(@answer1 <- step2) {
+      stdout!(["Step 2 - Chat Response:", answer1]) |
+
+      ollamaChat!("llama4:latest", "Explain smart contracts briefly", *step3) |
+      for(@answer2 <- step3) {
+        stdout!(["Step 3 - Default Model Response:", answer2]) |
+
+        ollamaGenerate!("llama4:latest", "Write a haiku about decentralized computing:\n", *step4) |
+        for(@haiku <- step4) {
+          stdout!(["Step 4 - Generated Haiku:", haiku]) |
+
+          ollamaGenerate!("llama4:latest", "Complete this: The future of blockchain is", *step5) |
+          for(@completion <- step5) {
+            stdout!(["Step 5 - Text Completion:", completion])
+          }
+        }
+      }
+    }
+  }
+}

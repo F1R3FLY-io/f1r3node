@@ -1,17 +1,15 @@
 use std::sync::Arc;
 
-use shared::rust::{ByteVector, store::key_value_store::KeyValueStore};
+use shared::rust::ByteVector;
+use shared::rust::store::key_value_store::KeyValueStore;
 
-use crate::rspace::{
-    history::roots_store::{RootsStore, RootsStoreInstances},
-    shared::{
-        trie_exporter::{KeyHash, Value},
-        trie_importer::TrieImporter,
-    },
-    state::rspace_importer::RSpaceImporter,
-};
+use crate::rspace::history::roots_store::{RootsStore, RootsStoreInstances};
+use crate::rspace::shared::trie_exporter::{KeyHash, Value};
+use crate::rspace::shared::trie_importer::TrieImporter;
+use crate::rspace::state::rspace_importer::RSpaceImporter;
 
-// See rspace/src/main/scala/coop/rchain/rspace/state/instances/RSpaceImporterStore.scala
+// See rspace/src/main/scala/coop/rchain/rspace/state/instances/
+// RSpaceImporterStore.scala
 pub struct RSpaceImporterStore;
 
 impl RSpaceImporterStore {

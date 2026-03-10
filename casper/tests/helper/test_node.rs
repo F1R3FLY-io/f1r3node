@@ -64,6 +64,7 @@ use casper::rust::{
     engine::{engine_cell::EngineCell, running::Running},
     util::comm::casper_packet_handler::CasperPacketHandler,
 };
+use dashmap::DashSet;
 
 pub struct TestNode {
     pub name: String,
@@ -144,7 +145,7 @@ impl TestNode {
         let result = self.create_block(deploy_datums).await?;
 
         match result {
-            BlockCreatorResult::Created(block) => Ok(block),
+            BlockCreatorResult::Created(block, ..) => Ok(block),
             _ => Err(CasperError::RuntimeError(format!(
                 "Failed creating block: {:?}",
                 result
@@ -253,7 +254,7 @@ impl TestNode {
 
         // Extract block
         let block = match result {
-            BlockCreatorResult::Created(b) => b,
+            BlockCreatorResult::Created(b, ..) => b,
             other => {
                 return Err(CasperError::RuntimeError(format!(
                     "Expected Created block, got: {:?}",
@@ -977,7 +978,7 @@ impl TestNode {
         // - Sender: Non-blocking, cloneable, used to enqueue blocks for processing
         // - Receiver: Thread-safe (Arc<Mutex>), used to dequeue blocks from processing pipeline
         let (block_processor_queue_tx, block_processor_queue_rx) =
-            mpsc::unbounded_channel::<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>();
+            mpsc::channel::<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>(1024);
         let block_processor_queue = (
             block_processor_queue_tx,
             Arc::new(Mutex::new(block_processor_queue_rx)),
@@ -1017,7 +1018,7 @@ impl TestNode {
             min_phlo_price: 1,
             disable_late_block_filtering: true, // Disabled to prevent deploy loss
             disable_validator_progress_check: false,
-            enable_mergeable_channel_gc: false, // Use legacy deletion for tests
+            enable_mergeable_channel_gc: false, // Keep mergeable data unless GC is explicitly enabled
             mergeable_channels_gc_depth_buffer: 10,
         };
 
@@ -1036,7 +1037,15 @@ impl TestNode {
             finalization_in_progress: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(
                 false,
             )),
+            finalizer_task_in_progress: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(
+                false,
+            )),
+            finalizer_task_queued: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             heartbeat_signal_ref: casper::rust::heartbeat_signal::new_heartbeat_signal_ref(),
+            deploys_in_scope_cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            active_validators_cache: std::sync::Arc::new(tokio::sync::Mutex::new(
+                std::collections::HashMap::new(),
+            )),
         };
 
         let casper = Arc::new(casper_impl);
@@ -1052,15 +1061,15 @@ impl TestNode {
         > = Arc::new(|| Box::pin(async { Ok(()) }));
 
         let running_engine = Running::new(
-            block_processor_queue.0.clone(),      // block_processing_queue_tx
-            Arc::new(Mutex::new(HashSet::new())), // blocks_in_processing (converted from block_processor_state)
+            block_processor_queue.0.clone(), // block_processing_queue_tx
+            Arc::new(DashSet::new()),        // blocks_in_processing
             casper.clone() as Arc<dyn MultiParentCasper + Send + Sync>, // casper
-            _approved_block.clone(),              // approved_block
-            the_init,                             // the_init
-            true,                                 // disable_state_exporter
-            tle.clone(),                          // transport
-            rp_conf.clone(),                      // conf
-            block_retriever.clone(),              // block_retriever
+            _approved_block.clone(),         // approved_block
+            the_init,                        // the_init
+            true,                            // disable_state_exporter
+            tle.clone(),                     // transport
+            rp_conf.clone(),                 // conf
+            block_retriever.clone(),         // block_retriever
         );
 
         // Create EngineCell

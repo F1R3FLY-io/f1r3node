@@ -3,9 +3,9 @@
 //! This module provides wrapper types that bridge PathMap's zipper API with Rholang's process-oriented
 //! data model. Operations work on Par values as the unit of operation rather than raw bytes.
 
-use pathmap::zipper::{ReadZipperUntracked, WriteZipperUntracked, ZipperHead};
-use crate::rhoapi::{Par, EPathMap};
 use super::pathmap_integration::{par_to_path, RholangPathMap};
+use crate::rhoapi::{EPathMap, Par};
+use pathmap::zipper::{ReadZipperUntracked, WriteZipperUntracked, ZipperHead};
 
 /// Wrapper for PathMap ReadZipper that maintains Rholang context
 pub struct RholangReadZipper<'a, 'path> {
@@ -44,7 +44,7 @@ impl<'a, 'path> RholangReadZipper<'a, 'path> {
     /// Descend to a path specified as a Par (list of segments)
     pub fn descend_to(&mut self, path: &Par) -> Result<(), String> {
         use pathmap::zipper::ZipperMoving;
-        
+
         let segments = par_to_path(path);
         let key = flatten_segments(&segments);
         self.zipper.descend_to(&key);
@@ -82,11 +82,13 @@ impl<'a, 'path> RholangReadZipper<'a, 'path> {
             connective_used: self.connective_used,
             remainder: None,
         };
-        
+
         // Create a special Par that represents a read zipper
         // We'll use a special marker to identify it as a zipper
         Par::default().with_exprs(vec![crate::rhoapi::Expr {
-            expr_instance: Some(crate::rhoapi::expr::ExprInstance::EPathmapBody(empty_pathmap)),
+            expr_instance: Some(crate::rhoapi::expr::ExprInstance::EPathmapBody(
+                empty_pathmap,
+            )),
         }])
     }
 }
@@ -118,7 +120,7 @@ impl<'a, 'path> RholangWriteZipper<'a, 'path> {
         locally_free: Vec<u8>,
     ) -> Result<Self, String> {
         use pathmap::zipper::ZipperMoving;
-        
+
         let segments = par_to_path(path);
         let key = flatten_segments(&segments);
         // Create a write zipper at the constructed path
@@ -134,7 +136,7 @@ impl<'a, 'path> RholangWriteZipper<'a, 'path> {
     /// Descend to a path specified as a Par (list of segments)
     pub fn descend_to(&mut self, path: &Par) -> Result<(), String> {
         use pathmap::zipper::ZipperMoving;
-        
+
         let segments = par_to_path(path);
         let key = flatten_segments(&segments);
         self.zipper.descend_to(&key);
@@ -237,4 +239,3 @@ pub fn unflatten_segments(flattened: &[u8]) -> Vec<Vec<u8>> {
         .map(|seg| seg.to_vec())
         .collect()
 }
-

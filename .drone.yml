@@ -136,6 +136,37 @@ pipeline:
       - /tmp:/tmp
       - /var/tmp/rchain-it:/var/tmp/rchain-it
 
+  run-casper-init-smoke:
+    <<: *branch_build_conditions
+    <<: *buildenv
+    environment:
+      - CASPER_INIT_SLA_SECONDS=240
+    commands:
+      - |
+        if docker compose version >/dev/null 2>&1; then
+          DC="docker compose -f docker/shard-with-autopropose.yml"
+        elif docker-compose --version >/dev/null 2>&1; then
+          DC="docker-compose -f docker/shard-with-autopropose.yml"
+        else
+          echo "Neither 'docker compose' nor 'docker-compose' is available." >&2
+          exit 1
+        fi
+      - $DC down --remove-orphans || true
+      - docker run --rm -v "$PWD/docker/data:/data" alpine sh -c 'rm -rf /data/*'
+      - $DC up -d
+      - |
+        if ! ./scripts/ci/check-casper-init-sla.sh docker/shard-with-autopropose.yml "$CASPER_INIT_SLA_SECONDS"; then
+          ./scripts/ci/collect-casper-init-artifacts.sh docker/shard-with-autopropose.yml /tmp/casper-init-artifacts || true
+          ls -lah /tmp/casper-init-artifacts || true
+          tail -n 200 /tmp/casper-init-artifacts/compose.log || true
+          $DC down --remove-orphans || true
+          exit 1
+        fi
+      - $DC down --remove-orphans || true
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /tmp:/tmp
+
   package:
     <<: *branch_build_conditions
     group: parallel
