@@ -852,4 +852,179 @@ mod pathmap_e2e_type_decomposition_tests {
         let elements = pm.ps.clone();
         assert_exact_match(elements.clone(), elements);
     }
+
+    // =========================================================================
+    // Category 9: Compiled Rest Syntax (6 tests)
+    // =========================================================================
+
+    /// Compile a Rholang pattern containing free variables or wildcards.
+    /// Wraps in a match context since top-level free vars/wildcards are not allowed.
+    fn compile_pattern(pattern_src: &str) -> Par {
+        let source = format!("match 0 {{ {} => Nil }}", pattern_src);
+        let compiled = compile(&source);
+        compiled.matches[0]
+            .cases[0]
+            .pattern
+            .clone()
+            .expect("MatchCase should have a pattern")
+    }
+
+    #[test]
+    fn test_e2e_compiled_rest_produces_remainder() {
+        let pattern_par = compile_pattern("{| 1, 2 ...rest |}");
+        let pm = extract_pathmap(&pattern_par);
+        assert_eq!(pm.ps.len(), 2, "PathMap should have 2 elements");
+        assert_eq!(
+            pm.remainder,
+            Some(new_freevar_var(0)),
+            "Remainder should be FreeVar(0)"
+        );
+        assert!(
+            pm.connective_used,
+            "connective_used should be true when remainder is present"
+        );
+    }
+
+    #[test]
+    fn test_e2e_compiled_rest_pattern_matches_target() {
+        let target_compiled = compile("{| 1, 2, 3 |}");
+        let pattern_par = compile_pattern("{| 1 ...rest |}");
+
+        let target = extract_pathmap_expr(&target_compiled);
+        let pattern = extract_pathmap_expr(&pattern_par);
+        let (result, ctx) = match_exprs(target, pattern);
+        assert!(result.is_some(), "Compiled rest pattern should match target");
+
+        let bound = ctx
+            .free_map
+            .get(&0)
+            .expect("FreeVar(0) should be bound in free_map");
+        match &bound.exprs[0].expr_instance {
+            Some(ExprInstance::EPathmapBody(remainder)) => {
+                assert_eq!(
+                    remainder.ps.len(),
+                    2,
+                    "Remainder should contain 2 elements (2 and 3)"
+                );
+            }
+            other => panic!(
+                "Expected EPathmapBody for remainder binding, got: {:?}",
+                other
+            ),
+        }
+    }
+
+    #[test]
+    fn test_e2e_compiled_rest_exact_match() {
+        let target_compiled = compile("{| 42 |}");
+        let pattern_par = compile_pattern("{| 42 ...rest |}");
+
+        let target = extract_pathmap_expr(&target_compiled);
+        let pattern = extract_pathmap_expr(&pattern_par);
+        let (result, ctx) = match_exprs(target, pattern);
+        assert!(
+            result.is_some(),
+            "Pattern should match when all elements are fixed"
+        );
+
+        let bound = ctx
+            .free_map
+            .get(&0)
+            .expect("FreeVar(0) should be bound in free_map");
+        match &bound.exprs[0].expr_instance {
+            Some(ExprInstance::EPathmapBody(remainder)) => {
+                assert_eq!(
+                    remainder.ps.len(),
+                    0,
+                    "Remainder should be empty when all elements match"
+                );
+            }
+            other => panic!(
+                "Expected EPathmapBody for remainder binding, got: {:?}",
+                other
+            ),
+        }
+    }
+
+    #[test]
+    fn test_e2e_compiled_wildcard_rest_matches() {
+        let target_compiled = compile("{| 1, 2, 3 |}");
+        let pattern_par = compile_pattern("{| 1 ..._ |}");
+
+        let target = extract_pathmap_expr(&target_compiled);
+        let pattern = extract_pathmap_expr(&pattern_par);
+        let (result, ctx) = match_exprs(target, pattern);
+        assert!(
+            result.is_some(),
+            "Wildcard rest pattern should match target"
+        );
+        assert!(
+            ctx.free_map.get(&0).is_none(),
+            "Wildcard remainder should not bind a free variable"
+        );
+    }
+
+    #[test]
+    fn test_e2e_compiled_rest_with_mixed_types() {
+        let target_compiled = compile("{| true, [1, 2], @0!(1) |}");
+        let pattern_par = compile_pattern("{| true ...rest |}");
+
+        let target = extract_pathmap_expr(&target_compiled);
+        let pattern = extract_pathmap_expr(&pattern_par);
+        let (result, ctx) = match_exprs(target, pattern);
+        assert!(
+            result.is_some(),
+            "Rest pattern should match target with mixed types"
+        );
+
+        let bound = ctx
+            .free_map
+            .get(&0)
+            .expect("FreeVar(0) should be bound in free_map");
+        match &bound.exprs[0].expr_instance {
+            Some(ExprInstance::EPathmapBody(remainder)) => {
+                assert_eq!(
+                    remainder.ps.len(),
+                    2,
+                    "Remainder should contain 2 non-matched elements (list + send)"
+                );
+            }
+            other => panic!(
+                "Expected EPathmapBody for remainder binding, got: {:?}",
+                other
+            ),
+        }
+    }
+
+    #[test]
+    fn test_e2e_compiled_rest_no_fixed_elements() {
+        let target_compiled = compile("{| 1, 2, 3 |}");
+        let pattern_par = compile_pattern("{| ...rest |}");
+
+        let target = extract_pathmap_expr(&target_compiled);
+        let pattern = extract_pathmap_expr(&pattern_par);
+        let (result, ctx) = match_exprs(target, pattern);
+        assert!(
+            result.is_some(),
+            "Rest-only pattern should match any target"
+        );
+
+        let bound = ctx
+            .free_map
+            .get(&0)
+            .expect("FreeVar(0) should be bound in free_map");
+        match &bound.exprs[0].expr_instance {
+            Some(ExprInstance::EPathmapBody(remainder)) => {
+                assert_eq!(
+                    remainder.ps.len(),
+                    3,
+                    "Remainder should bind all 3 target elements"
+                );
+            }
+            other => panic!(
+                "Expected EPathmapBody for remainder binding, got: {:?}",
+                other
+            ),
+        }
+    }
 }
