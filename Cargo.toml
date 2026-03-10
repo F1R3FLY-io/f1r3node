@@ -43,8 +43,11 @@ imbl = "7"
 regex = "1.12"
 async-trait = "0.1"
 metrics = "0.24"
-pathmap = { git = "https://github.com/dylon/PathMap.git", branch = "feature/mettatron-fixes" }
+pathmap = "0.2.2"
 stacker = "0.1"
+
+[workspace.lints.rust]
+warnings = "deny"
 
 [profile.dev]
 debug = true

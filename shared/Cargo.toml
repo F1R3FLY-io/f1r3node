@@ -29,3 +29,6 @@ rand = { workspace = true }
 thiserror = { workspace = true }
 indexmap = "2.8.0"
 metrics = { workspace = true }
+
+[lints]
+workspace = true

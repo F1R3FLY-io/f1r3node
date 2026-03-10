@@ -54,6 +54,9 @@ features = [
 	"macro-diagnostics", # Enable better diagnostics for compile-time UUIDs
 ]
 
+[lints]
+workspace = true
+
 [dev-dependencies]
 test-env-helpers = "0.2.2"
 metrics-util = "0.17"

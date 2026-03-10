@@ -61,4 +61,7 @@ default = []
 # Guarded with #[cfg(feature = "test-utils")] so it is never compiled in production.
 test-utils = ["tempfile"]
 
+[lints]
+workspace = true
+
 [build-dependencies]

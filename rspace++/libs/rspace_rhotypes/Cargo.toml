@@ -19,3 +19,6 @@ rand = { workspace = true }
 serde = { workspace = true }
 bincode = { workspace = true }
 chrono = "0.4.38"
+
+[lints]
+workspace = true

@@ -21,6 +21,7 @@ RUN apt-get update && apt-get install -y \
     build-essential \
     protobuf-compiler \
     curl \
+    git \
     cmake \
     gcc-x86-64-linux-gnu \
     g++-x86-64-linux-gnu \
@@ -61,6 +62,15 @@ COPY comm/ ./comm/
 COPY rholang/ ./rholang/
 COPY node/ ./node/
 
+# Clone external dependencies required by [patch] sections and mettatron
+RUN git clone --depth 1 --branch feature/mettatron-fixes \
+      https://github.com/dylon/PathMap.git /PathMap && \
+    git clone --depth 1 --branch feature/arbitrary-space-value-types \
+      https://github.com/dylon/MORK.git /MORK && \
+    git clone --depth 1 --branch feature/pln-support \
+      https://github.com/F1R3FLY-io/MeTTa-Compiler.git /MeTTa-Compiler && \
+    ln -s /build /f1r3node
+
 # Configure pkg-config for cross-compilation to find target OpenSSL libraries
 # xx-apt installs target libs in the xx sysroot, we need to tell pkg-config where they are
 # Enable AES CPU features for gxhash dependency (required by PathMap crate).
@@ -76,7 +86,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
         aarch64*) export RUSTFLAGS="-C target-feature=+aes" ;; \
         *) export RUSTFLAGS="-C target-feature=+aes,+sse2" ;; \
     esac && \
-    xx-cargo build --release -p node --target-dir ./build && \
+    xx-cargo build --release -p node --features rholang/mettatron --target-dir ./build && \
     xx-verify ./build/${TARGET_TRIPLE}/release/node && \
     cp ./build/${TARGET_TRIPLE}/release/node /build/node_binary && \
     chmod +x /build/node_binary
