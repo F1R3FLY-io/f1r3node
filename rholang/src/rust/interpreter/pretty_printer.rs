@@ -144,22 +144,22 @@ fn is_metta_large_exprs_bytes(bs: &[u8]) -> bool {
 }
 
 #[cfg(feature = "mettatron")]
-/// Check if a Par represents a MeTTa environment tuple
-/// Environment structure: ETuple(ETuple("space", ...), ETuple("large_exprs", ...))
+/// Check if a Par represents a MeTTa environment list
+/// Environment structure: EList(EList("space", ...), EList("large_exprs", ...))
 fn is_metta_environment(par: &Par) -> bool {
-    // Check if this is an ETuple with exactly 2 elements: [space, large_exprs]
+    // Check if this is an EList with exactly 2 elements: [space, large_exprs]
     if par.exprs.len() != 1 {
         return false;
     }
 
-    if let Some(ExprInstance::ETupleBody(ref etuple)) = par.exprs[0].expr_instance {
-        if etuple.ps.len() != 2 {
+    if let Some(ExprInstance::EListBody(ref elist)) = par.exprs[0].expr_instance {
+        if elist.ps.len() != 2 {
             return false;
         }
 
-        // Check first element is ETuple("space", ...)
-        let first_is_space = if etuple.ps[0].exprs.len() == 1 {
-            if let Some(ExprInstance::ETupleBody(ref inner)) = etuple.ps[0].exprs[0].expr_instance {
+        // Check first element is EList("space", ...)
+        let first_is_space = if elist.ps[0].exprs.len() == 1 {
+            if let Some(ExprInstance::EListBody(ref inner)) = elist.ps[0].exprs[0].expr_instance {
                 if inner.ps.len() == 2 && inner.ps[0].exprs.len() == 1 {
                     if let Some(ExprInstance::GString(ref s)) = inner.ps[0].exprs[0].expr_instance {
                         s == "space"
@@ -176,9 +176,9 @@ fn is_metta_environment(par: &Par) -> bool {
             false
         };
 
-        // Check second element is ETuple("large_exprs", ...)
-        let second_is_large_exprs = if etuple.ps[1].exprs.len() == 1 {
-            if let Some(ExprInstance::ETupleBody(ref inner)) = etuple.ps[1].exprs[0].expr_instance {
+        // Check second element is EList("large_exprs", ...)
+        let second_is_large_exprs = if elist.ps[1].exprs.len() == 1 {
+            if let Some(ExprInstance::EListBody(ref inner)) = elist.ps[1].exprs[0].expr_instance {
                 if inner.ps.len() == 2 && inner.ps[0].exprs.len() == 1 {
                     if let Some(ExprInstance::GString(ref s)) = inner.ps[0].exprs[0].expr_instance {
                         s == "large_exprs"
