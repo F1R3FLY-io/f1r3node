@@ -1176,7 +1176,7 @@ impl TestNode {
             finalizer_task_queued: Arc::new(AtomicBool::new(false)),
             heartbeat_signal_ref: crate::rust::heartbeat_signal::new_heartbeat_signal_ref(),
             deploys_in_scope_cache: Arc::new(std::sync::Mutex::new(
-                None::<(u64, Arc<DashSet<Bytes>>)>,
+                None::<(u64, BlockHash, Arc<DashSet<Bytes>>)>,
             )),
             active_validators_cache: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         };

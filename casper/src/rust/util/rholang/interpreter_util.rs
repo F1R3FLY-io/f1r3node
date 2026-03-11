@@ -720,6 +720,7 @@ pub fn compute_parents_post_state(
                 .unwrap_or(s.on_chain_state.shard_conf.disable_late_block_filtering);
             let cache_key = super::runtime_manager::ParentsPostStateCacheKey {
                 sorted_parent_hashes: parent_hashes_for_key,
+                snapshot_lfb_hash: s.last_finalized_block.clone(),
                 disable_late_block_filtering,
             };
             if let Some((cached_state, cached_rejected)) =

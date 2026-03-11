@@ -6,10 +6,9 @@ use models::rust::{
     block_hash::BlockHash, block_metadata::BlockMetadata,
     casper::protocol::casper_message::BlockMessage, validator::Validator,
 };
-use shared::rust::dag::dag_ops;
 use shared::rust::shared::list_ops::ListOps;
 use shared::rust::store::key_value_store::KvStoreError;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::rust::util::dag_operations::DagOperations;
 use crate::rust::util::proto_util;
@@ -187,10 +186,21 @@ impl Estimator {
                 .lookup_unsafe(lowest_common_ancestor)?
                 .block_number;
 
-            let traversed_hashes: Vec<BlockHash> =
-                dag_ops::bf_traverse(vec![latest_block_hash.clone()], |hash| {
-                    hash_parents(hash, lca_block_num, block_dag).expect("Failed to get parents")
-                });
+            let mut traversed_hashes: Vec<BlockHash> = Vec::new();
+            let mut queue: VecDeque<BlockHash> = VecDeque::from(vec![latest_block_hash.clone()]);
+            let mut visited: HashSet<BlockHash> = HashSet::new();
+
+            while let Some(hash) = queue.pop_front() {
+                if !visited.insert(hash.clone()) {
+                    continue;
+                }
+                traversed_hashes.push(hash.clone());
+                for parent in hash_parents(&hash, lca_block_num, block_dag)? {
+                    if !visited.contains(&parent) {
+                        queue.push_back(parent);
+                    }
+                }
+            }
 
             let mut result = score_map;
             for hash in traversed_hashes {

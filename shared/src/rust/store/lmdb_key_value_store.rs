@@ -80,6 +80,28 @@ impl KeyValueStore for LmdbKeyValueStore {
         Ok(())
     }
 
+    fn iterate_while(
+        &self,
+        f: &mut dyn FnMut(ByteBuffer, ByteBuffer) -> Result<bool, KvStoreError>,
+    ) -> Result<(), KvStoreError> {
+        let db = self.db.lock().map_err(|_| {
+            KvStoreError::LockError(
+                "LMDB Key Value Store: Failed to acquire lock on db".to_string(),
+            )
+        })?;
+
+        let reader = self.env.read_txn()?;
+        let iter = db.iter(&reader)?;
+        for result in iter {
+            let (key, value) = result?;
+            if !f(key.to_vec(), value)? {
+                break;
+            }
+        }
+        reader.commit()?;
+        Ok(())
+    }
+
     fn clone_box(&self) -> Box<dyn KeyValueStore> {
         Box::new(self.clone())
     }

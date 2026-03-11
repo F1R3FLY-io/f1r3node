@@ -125,9 +125,10 @@ pub struct MultiParentCasperImpl<T: TransportLayer + Send + Sync> {
     pub finalizer_task_queued: Arc<AtomicBool>,
     /// Shared reference to heartbeat signal for triggering immediate wake on deploy
     pub heartbeat_signal_ref: crate::rust::heartbeat_signal::HeartbeatSignalRef,
-    /// Cache for deploys_in_scope BFS result keyed by DAG generation.
-    /// Avoids re-traversing the full block window on every snapshot when the DAG hasn't changed.
-    pub deploys_in_scope_cache: Arc<Mutex<Option<(u64, Arc<dashmap::DashSet<Bytes>>)>>>,
+    /// Cache for deploys_in_scope BFS result keyed by DAG generation and snapshot LFB.
+    /// Including LFB in the key avoids stale scope reuse across finalization advances.
+    pub deploys_in_scope_cache:
+        Arc<Mutex<Option<(u64, BlockHash, Arc<dashmap::DashSet<Bytes>>)>>>,
     /// Cache for get_active_validators results keyed by post_state_hash bytes.
     /// Avoids re-reading from RSpace when the main parent block hasn't changed.
     pub active_validators_cache: Arc<tokio::sync::Mutex<HashMap<Vec<u8>, Vec<Validator>>>>,
@@ -363,14 +364,15 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
 
         let deploys_in_scope = {
             let current_dag_generation = self.block_dag_storage.current_generation();
+            let snapshot_lfb_hash = dag.last_finalized_block();
 
             // Phase 1: check cache under a short-lived lock.
             let cached: Option<Arc<dashmap::DashSet<Bytes>>> = {
                 let cache_guard = self.deploys_in_scope_cache.lock().map_err(|_| {
                     CasperError::RuntimeError("deploys_in_scope_cache lock failed".to_string())
                 })?;
-                cache_guard.as_ref().and_then(|(gen, set)| {
-                    if *gen == current_dag_generation {
+                cache_guard.as_ref().and_then(|(gen, cached_lfb, set)| {
+                    if *gen == current_dag_generation && *cached_lfb == snapshot_lfb_hash {
                         Some(set.clone())
                     } else {
                         None
@@ -414,7 +416,11 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
                 let mut cache_guard = self.deploys_in_scope_cache.lock().map_err(|_| {
                     CasperError::RuntimeError("deploys_in_scope_cache lock failed".to_string())
                 })?;
-                *cache_guard = Some((current_dag_generation, all_deploys.clone()));
+                *cache_guard = Some((
+                    current_dag_generation,
+                    snapshot_lfb_hash,
+                    all_deploys.clone(),
+                ));
                 all_deploys
             }
         };
@@ -1047,14 +1053,12 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
         // for the next heartbeat timer tick.
         if let Some(validator_id) = &self.validator_id {
             if block.sender != validator_id.public_key.bytes {
-                if let Ok(signal_guard) = self.heartbeat_signal_ref.try_read() {
-                    if let Some(ref signal) = *signal_guard {
-                        tracing::debug!(
-                            "Triggering heartbeat wake for accepted peer block {}",
-                            PrettyPrinter::build_string_bytes(&block.block_hash)
-                        );
-                        signal.trigger_wake();
-                    }
+                if let Some(signal) = self.heartbeat_signal_ref.get() {
+                    tracing::debug!(
+                        "Triggering heartbeat wake for accepted peer block {}",
+                        PrettyPrinter::build_string_bytes(&block.block_hash)
+                    );
+                    signal.trigger_wake();
                 }
             }
         }
@@ -1191,8 +1195,8 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
         }
 
         let buffer_dag = self.casper_buffer_storage.to_doubly_linked_dag();
-        for child_entry in buffer_dag.child_to_parent_adjacency_list.iter() {
-            candidate_hashes.insert(BlockHash::from(child_entry.key().0.clone()));
+        for (child_hash, _) in buffer_dag.child_to_parent_adjacency_list.iter() {
+            candidate_hashes.insert(BlockHash::from(child_hash.0.clone()));
         }
 
         // Keep only candidates that exist in block store.
@@ -1237,7 +1241,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
         let all_hashes = dag
             .child_to_parent_adjacency_list
             .iter()
-            .map(|entry| BlockHash::from(entry.key().clone()));
+            .map(|(hash, _)| BlockHash::from(hash.clone()));
 
         let mut blocks = Vec::new();
         for hash in all_hashes {
@@ -1431,50 +1435,35 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasper for MultiParentCasperImp
             .map(|d| d.as_millis() as i64)
             .unwrap_or(0);
 
-        let mut storage = self.deploy_storage.lock().map_err(|_| {
+        let storage = self.deploy_storage.lock().map_err(|_| {
             CasperError::RuntimeError("Failed to acquire deploy_storage lock".to_string())
         })?;
-        let unfinalized = storage.read_all().map_err(|e| {
-            CasperError::RuntimeError(format!("Failed to read deploy storage: {:?}", e))
-        })?;
-
-        let mut expired_to_remove = Vec::new();
-        let mut has_eligible_pending = false;
-
-        for deploy in unfinalized.iter() {
-            let block_expired = deploy.data.valid_after_block_number <= earliest_block_number;
-            let time_expired = deploy.data.is_expired_at(current_time_millis);
-
-            if block_expired || time_expired {
-                expired_to_remove.push(deploy.clone());
-                continue;
-            }
-
-            // Align with BlockCreator::not_future_deploy(next_block_num):
-            // a deploy is eligible for the *next* block when valid_after < next_block_num,
-            // i.e. valid_after <= latest_block_number.
-            let is_future = pending_deploy_is_future_for_next_block(
-                latest_block_number,
-                deploy.data.valid_after_block_number,
-            );
-            let already_in_scope = snapshot.deploys_in_scope.contains(&deploy.sig);
-
-            if !is_future && !already_in_scope {
-                has_eligible_pending = true;
-                break;
-            }
+        if !storage
+            .non_empty()
+            .map_err(|e| CasperError::RuntimeError(format!("Failed to query deploy storage: {:?}", e)))?
+        {
+            return Ok(false);
         }
 
-        if !expired_to_remove.is_empty() {
-            storage.remove(expired_to_remove).map_err(|e| {
-                CasperError::RuntimeError(format!(
-                    "Failed to prune expired deploys from storage: {:?}",
-                    e
-                ))
-            })?;
-        }
+        storage
+            .any(|deploy| {
+                let block_expired = deploy.data.valid_after_block_number <= earliest_block_number;
+                let time_expired = deploy.data.is_expired_at(current_time_millis);
+                if block_expired || time_expired {
+                    return Ok(false);
+                }
 
-        Ok(has_eligible_pending)
+                // Align with BlockCreator::not_future_deploy(next_block_num):
+                // a deploy is eligible for the *next* block when valid_after < next_block_num,
+                // i.e. valid_after <= latest_block_number.
+                let is_future = pending_deploy_is_future_for_next_block(
+                    latest_block_number,
+                    deploy.data.valid_after_block_number,
+                );
+                let already_in_scope = snapshot.deploys_in_scope.contains(&deploy.sig);
+                Ok(!is_future && !already_in_scope)
+            })
+            .map_err(|e| CasperError::RuntimeError(format!("Failed to scan deploy storage: {:?}", e)))
     }
 }
 
@@ -1780,16 +1769,14 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasperImpl<T> {
         // Deploy API already triggers propose asynchronously. Keep heartbeat wake opt-in to
         // avoid duplicate propose races that inflate inclusion latency.
         if deploy_heartbeat_wake_enabled() {
-            if let Ok(signal_guard) = self.heartbeat_signal_ref.try_read() {
-                if let Some(ref signal) = *signal_guard {
-                    tracing::debug!(
-                        "Triggering heartbeat wake for immediate block proposal via {}",
-                        DEPLOY_HEARTBEAT_WAKE_ENV
-                    );
-                    signal.trigger_wake();
-                } else {
-                    tracing::debug!("No heartbeat signal available (heartbeat may be disabled)");
-                }
+            if let Some(signal) = self.heartbeat_signal_ref.get() {
+                tracing::debug!(
+                    "Triggering heartbeat wake for immediate block proposal via {}",
+                    DEPLOY_HEARTBEAT_WAKE_ENV
+                );
+                signal.trigger_wake();
+            } else {
+                tracing::debug!("No heartbeat signal available (heartbeat may be disabled)");
             }
         }
 

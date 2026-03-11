@@ -179,13 +179,17 @@ impl Finalizer {
     fn fault_tolerance_upper_bound(
         message_weight_map: &WeightMap,
         agreeing_weight_map: &WeightMap,
-    ) -> f32 {
-        let total_stake = message_weight_map.values().sum::<i64>() as f32;
-        let agreeing_stake = agreeing_weight_map.values().sum::<i64>() as f32;
-        if total_stake <= 0.0 {
-            return f32::MIN;
+    ) -> f64 {
+        let Some(total_stake) = Self::checked_stake_sum(message_weight_map) else {
+            return f64::MIN;
+        };
+        let Some(agreeing_stake) = Self::checked_stake_sum(agreeing_weight_map) else {
+            return f64::MIN;
+        };
+        if total_stake <= 0 {
+            return f64::MIN;
         }
-        (agreeing_stake * 2.0 - total_stake) / total_stake
+        (((agreeing_stake as i128) * 2 - (total_stake as i128)) as f64) / (total_stake as f64)
     }
 
     /// Create an agreement given validator that agrees on a message and weight map of a message.
@@ -258,6 +262,7 @@ impl Finalizer {
         let mut main_parent_cache: HashMap<BlockHash, Option<BlockMetadata>> = HashMap::new();
         let mut message_weight_map_cache_hit: usize = 0;
         let mut message_weight_map_cache_miss: usize = 0;
+        let mut message_weight_map_error_count: usize = 0;
         let mut main_parent_cache_hit: usize = 0;
         let mut main_parent_cache_miss: usize = 0;
         let mut current_layer = sorted_latest_messages;
@@ -293,6 +298,7 @@ impl Finalizer {
                     let fetched = match Self::message_weight_map_f(&message, dag).await {
                         Ok(fetched) => fetched,
                         Err(err) => {
+                            message_weight_map_error_count += 1;
                             tracing::warn!(
                                 target: "f1r3fly.finalizer",
                                 "Finalizer candidate skipped: unable to load message weight map for hash={:?}: {:?}",
@@ -437,7 +443,7 @@ impl Finalizer {
         let mut clique_eval_count: usize = 0;
         let mut upper_bound_pruned_count: usize = 0;
         let mut upper_bound_passed_count: usize = 0;
-        let mut max_ft_upper_bound: f32 = f32::MIN;
+        let mut max_ft_upper_bound: f64 = f64::MIN;
         let mut lfb_result: Option<BlockHash> = None;
         for (message, message_weight_map, agreeing_weight_map) in capped_agreements {
             if total_started.elapsed() >= work_budget {
@@ -447,7 +453,7 @@ impl Finalizer {
             let ft_upper_bound =
                 Self::fault_tolerance_upper_bound(&message_weight_map, &agreeing_weight_map);
             max_ft_upper_bound = max_ft_upper_bound.max(ft_upper_bound);
-            if ft_upper_bound <= fault_tolerance_threshold {
+            if ft_upper_bound <= f64::from(fault_tolerance_threshold) {
                 upper_bound_pruned_count += 1;
                 continue;
             }
@@ -506,7 +512,7 @@ impl Finalizer {
         }
         tracing::debug!(
             target: "f1r3fly.finalizer.timing",
-            "Finalizer timing: latest_messages={}, layers_visited={}, agreements={}, filtered_agreements={}, deduped_filtered_agreements={}, message_weight_map_cache_hit={}, message_weight_map_cache_miss={}, main_parent_cache_hit={}, main_parent_cache_miss={}, candidate_cap={}, ranking_strategy={}, candidate_capped={}, upper_bound_pruned={}, upper_bound_passed={}, max_ft_upper_bound={:.6}, clique_evals={}, clique_ms={}, total_ms={}, budget_ms={}, step_timeout_ms={}, budget_exhausted={}, lfb_lag={}, catchup_mode={}, found_new_lfb={}, weight_map_ns={}, agreement_ns={}, parent_ns={}, next_push_ns={}",
+            "Finalizer timing: latest_messages={}, layers_visited={}, agreements={}, filtered_agreements={}, deduped_filtered_agreements={}, message_weight_map_cache_hit={}, message_weight_map_cache_miss={}, message_weight_map_errors={}, main_parent_cache_hit={}, main_parent_cache_miss={}, candidate_cap={}, ranking_strategy={}, candidate_capped={}, upper_bound_pruned={}, upper_bound_passed={}, max_ft_upper_bound={:.6}, clique_evals={}, clique_ms={}, total_ms={}, budget_ms={}, step_timeout_ms={}, budget_exhausted={}, lfb_lag={}, catchup_mode={}, found_new_lfb={}, weight_map_ns={}, agreement_ns={}, parent_ns={}, next_push_ns={}",
             latest_messages_count,
             layers_visited,
             agreements_count,
@@ -514,6 +520,7 @@ impl Finalizer {
             deduped_filtered_agreements_count,
             message_weight_map_cache_hit,
             message_weight_map_cache_miss,
+            message_weight_map_error_count,
             main_parent_cache_hit,
             main_parent_cache_miss,
             max_clique_candidates,

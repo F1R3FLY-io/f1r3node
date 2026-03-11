@@ -1,11 +1,10 @@
 // See block-storage/src/main/scala/coop/rchain/blockstorage/casperbuffer/CasperBufferKeyValueStorage.scala
 // See block-storage/src/test/scala/coop/rchain/blockstorage/casperbuffer/CasperBufferStorageTest.scala
 
-use dashmap::DashSet;
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::sync::{Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use models::rust::block_hash::BlockHashSerde;
@@ -24,7 +23,7 @@ use crate::rust::util::doubly_linked_dag_operations::BlockDependencyDag;
 #[derive(Clone)]
 pub struct CasperBufferKeyValueStorage {
     parents_store: KeyValueTypedStoreImpl<BlockHashSerde, HashSet<BlockHashSerde>>,
-    block_dependency_dag: Arc<BlockDependencyDag>,
+    block_dependency_dag: Arc<Mutex<BlockDependencyDag>>,
     first_seen_ms: Arc<dashmap::DashMap<BlockHashSerde, u64>>,
     last_prune_ms: Arc<AtomicU64>,
     state_lock: Arc<RwLock<()>>,
@@ -47,7 +46,7 @@ impl CasperBufferKeyValueStorage {
             parents_map
                 .into_iter()
                 .fold(BlockDependencyDag::empty(), |bdd, (key, parents)| {
-                    parents.iter().cloned().fold(bdd, |bdd, p| {
+                    parents.iter().cloned().fold(bdd, |mut bdd, p| {
                         bdd.add(p, key.clone());
                         bdd
                     })
@@ -56,7 +55,7 @@ impl CasperBufferKeyValueStorage {
 
         Ok(Self {
             parents_store: kv_store,
-            block_dependency_dag: Arc::new(in_mem_store),
+            block_dependency_dag: Arc::new(Mutex::new(in_mem_store)),
             first_seen_ms: Arc::new(dashmap::DashMap::new()),
             last_prune_ms: Arc::new(AtomicU64::new(0)),
             state_lock: Arc::new(RwLock::new(())),
@@ -81,30 +80,39 @@ impl CasperBufferKeyValueStorage {
         let mut parents = self.parents_store.get_one(&child)?.unwrap_or_default();
         parents.insert(parent.clone());
         self.parents_store.put_one(child.clone(), parents)?;
-        self.block_dependency_dag.add(parent, child);
+        let mut dag = self
+            .block_dependency_dag
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        dag.add(parent, child);
         Ok(())
     }
 
     fn remove_unlocked(&self, hash: BlockHashSerde) -> Result<(), KvStoreError> {
-        let (hashes_affected, hashes_removed, orphaned_hashes) =
-            self.block_dependency_dag.remove(hash.clone())?;
+        let (_hashes_affected, hashes_removed, orphaned_hashes, affected_parent_maps) = {
+            let mut dag = self
+                .block_dependency_dag
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            let (affected, removed, orphaned) = dag.remove(hash.clone())?;
+            let affected_maps: Vec<(BlockHashSerde, HashSet<BlockHashSerde>)> = affected
+                .iter()
+                .map(|h| {
+                    (
+                        h.clone(),
+                        dag.child_to_parent_adjacency_list
+                            .get(h)
+                            .cloned()
+                            .unwrap_or_default(),
+                    )
+                })
+                .collect();
+            (affected, removed, orphaned, affected_maps)
+        };
         self.first_seen_ms.remove(&hash);
 
         // Process each affected hash
-        let mut changes = Vec::new();
-        for h in &hashes_affected {
-            let mut parents = HashSet::new();
-            if let Some(dash_parents) = self
-                .block_dependency_dag
-                .child_to_parent_adjacency_list
-                .get(h)
-            {
-                for parent in dash_parents.iter() {
-                    parents.insert(parent.clone());
-                }
-            }
-            changes.push((h.clone(), parents));
-        }
+        let changes = affected_parent_maps;
 
         self.parents_store.put(changes)?;
         let hashes_to_delete: Vec<BlockHashSerde> = hashes_removed.into_iter().collect();
@@ -141,83 +149,101 @@ impl CasperBufferKeyValueStorage {
         self.remove_unlocked(hash)
     }
 
-    pub fn get_parents(&self, block_hash: &BlockHashSerde) -> Option<DashSet<BlockHashSerde>> {
+    pub fn get_parents(&self, block_hash: &BlockHashSerde) -> Option<HashSet<BlockHashSerde>> {
         let _guard = self.read_guard();
-        self.block_dependency_dag
-            .child_to_parent_adjacency_list
-            .get(&block_hash)
-            .map(|kv_ref| kv_ref.value().clone())
+        let dag = self
+            .block_dependency_dag
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        dag.child_to_parent_adjacency_list.get(block_hash).cloned()
     }
 
-    pub fn get_children(&self, block_hash: &BlockHashSerde) -> Option<DashSet<BlockHashSerde>> {
+    pub fn get_children(&self, block_hash: &BlockHashSerde) -> Option<HashSet<BlockHashSerde>> {
         let _guard = self.read_guard();
-        self.block_dependency_dag
-            .parent_to_child_adjacency_list
-            .get(&block_hash)
-            .map(|kv_ref| kv_ref.value().clone())
+        let dag = self
+            .block_dependency_dag
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        dag.parent_to_child_adjacency_list.get(block_hash).cloned()
     }
 
-    pub fn get_pendants(&self) -> DashSet<BlockHashSerde> {
+    pub fn get_pendants(&self) -> HashSet<BlockHashSerde> {
         let _guard = self.read_guard();
-        self.block_dependency_dag.dependency_free.clone()
+        let dag = self
+            .block_dependency_dag
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        dag.dependency_free.clone()
     }
 
     // Block is considered to be in CasperBuffer when there is a records about its parents
     pub fn contains(&self, block_hash: &BlockHashSerde) -> bool {
         let _guard = self.read_guard();
-        self.block_dependency_dag
-            .child_to_parent_adjacency_list
-            .get(block_hash)
-            .is_some()
+        let dag = self
+            .block_dependency_dag
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        dag.child_to_parent_adjacency_list.contains_key(block_hash)
     }
 
     pub fn to_doubly_linked_dag(&self) -> BlockDependencyDag {
         let _guard = self.read_guard();
-        self.block_dependency_dag.as_ref().clone()
+        self.block_dependency_dag
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     pub fn requested_as_dependency(&self, block_hash: &BlockHashSerde) -> bool {
         let _guard = self.read_guard();
-        self.block_dependency_dag
-            .parent_to_child_adjacency_list
-            .contains_key(block_hash)
+        let dag = self
+            .block_dependency_dag
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        dag.parent_to_child_adjacency_list.contains_key(block_hash)
     }
 
     pub fn size(&self) -> usize {
         let _guard = self.read_guard();
         self.block_dependency_dag
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
             .child_to_parent_adjacency_list
             .len()
     }
 
     pub fn approx_node_count(&self) -> usize {
         let _guard = self.read_guard();
-        self.block_dependency_dag
-            .child_to_parent_adjacency_list
-            .len()
-            + self
-                .block_dependency_dag
-                .parent_to_child_adjacency_list
-                .len()
+        let dag = self
+            .block_dependency_dag
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        dag.child_to_parent_adjacency_list.len() + dag.parent_to_child_adjacency_list.len()
     }
 
     pub fn is_pendant(&self, block_hash: &BlockHashSerde) -> bool {
         let _guard = self.read_guard();
-        self.block_dependency_dag
-            .dependency_free
-            .contains(block_hash)
+        let dag = self
+            .block_dependency_dag
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        dag.dependency_free.contains(block_hash)
     }
 
     fn dependency_free_nodes_with_age_ms(&self, now_ms: u64) -> Vec<(u64, BlockHashSerde)> {
         let mut nodes = Vec::new();
 
-        for hash in self.block_dependency_dag.dependency_free.iter() {
+        let dag = self
+            .block_dependency_dag
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        for hash in dag.dependency_free.iter() {
             let seen_ms = self
                 .first_seen_ms
-                .get(hash.key())
+                .get(hash)
                 .map(|seen| *seen)
                 .unwrap_or(now_ms);
-            nodes.push((now_ms.saturating_sub(seen_ms), hash.key().clone()));
+            nodes.push((now_ms.saturating_sub(seen_ms), hash.clone()));
         }
 
         nodes
@@ -401,8 +427,11 @@ mod tests {
         casper_buffer.add_relation(valid_parent.clone(), block.clone())?;
 
         {
-            let parents = casper_buffer
+            let mut dag = casper_buffer
                 .block_dependency_dag
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            let parents = dag
                 .child_to_parent_adjacency_list
                 .get_mut(&block)
                 .expect("expected block to have parent links");
