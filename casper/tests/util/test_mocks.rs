@@ -81,6 +81,19 @@ impl KeyValueStore for MockKeyValueStore {
         Ok(())
     }
 
+    fn iterate_while(
+        &self,
+        f: &mut dyn FnMut(Vec<u8>, Vec<u8>) -> Result<bool, KvStoreError>,
+    ) -> Result<(), KvStoreError> {
+        let data = self.data.lock().unwrap();
+        for (k, v) in data.iter() {
+            if !f(k.clone(), v.clone())? {
+                break;
+            }
+        }
+        Ok(())
+    }
+
     fn clone_box(&self) -> Box<dyn KeyValueStore> {
         Box::new(self.clone())
     }
@@ -135,6 +148,13 @@ impl KeyValueStore for EmptyKeyValueStore {
     }
 
     fn iterate(&self, _f: fn(Vec<u8>, Vec<u8>)) -> Result<(), KvStoreError> {
+        Ok(()) // Nothing to iterate over
+    }
+
+    fn iterate_while(
+        &self,
+        _f: &mut dyn FnMut(Vec<u8>, Vec<u8>) -> Result<bool, KvStoreError>,
+    ) -> Result<(), KvStoreError> {
         Ok(()) // Nothing to iterate over
     }
 

@@ -39,6 +39,18 @@ impl KeyValueStore for InMemoryKeyValueStore {
 
     fn iterate(&self, _f: fn(ByteBuffer, ByteBuffer)) -> Result<(), KvStoreError> { todo!() }
 
+    fn iterate_while(
+        &self,
+        f: &mut dyn FnMut(ByteBuffer, ByteBuffer) -> Result<bool, KvStoreError>,
+    ) -> Result<(), KvStoreError> {
+        for entry in self.state.iter() {
+            if !f(entry.key().to_vec(), entry.value().to_vec())? {
+                break;
+            }
+        }
+        Ok(())
+    }
+
     fn clone_box(&self) -> Box<dyn KeyValueStore> { Box::new(self.clone()) }
 
     fn to_map(&self) -> Result<BTreeMap<ByteBuffer, ByteBuffer>, KvStoreError> {
