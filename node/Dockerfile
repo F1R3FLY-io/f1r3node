@@ -70,24 +70,36 @@ RUN git clone --depth 1 --branch feature/mettatron-fixes \
     git clone --depth 1 --branch feature/pln-support \
       https://github.com/F1R3FLY-io/MeTTa-Compiler.git /MeTTa-Compiler
 
-# Configure pkg-config for cross-compilation to find target OpenSSL libraries
-# xx-apt installs target libs in the xx sysroot, we need to tell pkg-config where they are
-# Enable AES CPU features for gxhash dependency (required by PathMap crate).
-# +sse2 is x86-only; on aarch64 only +aes is valid (avoids warning spam on ARM hosts).
+# Build the node binary.
+# Native builds (build arch == target arch) use cargo directly — xx-cargo's
+# clang wrappers break jemalloc's autoconf (strerror_r detection fails because
+# the xx sysroot is incomplete for configure compile-and-run tests).
+# Cross-compilation falls back to xx-cargo for proper sysroot/pkg-config setup.
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     --mount=type=cache,target=/f1r3node/build \
-    export TARGET_TRIPLE=$(xx-cargo --print-target-triple) && \
-    export PKG_CONFIG_SYSROOT_DIR=$(xx-info sysroot) && \
-    export PKG_CONFIG_PATH=$(xx-info sysroot)/usr/lib/$(xx-info triple)/pkgconfig:$(xx-info sysroot)/usr/share/pkgconfig && \
-    export PKG_CONFIG_ALLOW_CROSS=1 && \
-    case "${TARGET_TRIPLE}" in \
-        aarch64*) export RUSTFLAGS="-C target-feature=+aes" ;; \
+    BUILD_ARCH=$(uname -m) && \
+    case "$TARGETARCH" in \
+        amd64) TARGET_UNAME="x86_64" ;; \
+        arm64) TARGET_UNAME="aarch64" ;; \
+        *) TARGET_UNAME="$TARGETARCH" ;; \
+    esac && \
+    case "${TARGET_UNAME}" in \
+        aarch64) export RUSTFLAGS="-C target-feature=+aes" ;; \
         *) export RUSTFLAGS="-C target-feature=+aes,+sse2" ;; \
     esac && \
-    xx-cargo build --release -p node --features rholang/mettatron --target-dir ./build && \
-    xx-verify ./build/${TARGET_TRIPLE}/release/node && \
-    cp ./build/${TARGET_TRIPLE}/release/node /f1r3node/node_binary && \
+    if [ "$BUILD_ARCH" = "$TARGET_UNAME" ]; then \
+        cargo build --release -p node --features rholang/mettatron --target-dir ./build && \
+        cp ./build/release/node /f1r3node/node_binary; \
+    else \
+        export TARGET_TRIPLE=$(xx-cargo --print-target-triple) && \
+        export PKG_CONFIG_SYSROOT_DIR=$(xx-info sysroot) && \
+        export PKG_CONFIG_PATH="$(xx-info sysroot)/usr/lib/$(xx-info triple)/pkgconfig:$(xx-info sysroot)/usr/share/pkgconfig" && \
+        export PKG_CONFIG_ALLOW_CROSS=1 && \
+        xx-cargo build --release -p node --features rholang/mettatron --target-dir ./build && \
+        xx-verify ./build/${TARGET_TRIPLE}/release/node && \
+        cp ./build/${TARGET_TRIPLE}/release/node /f1r3node/node_binary; \
+    fi && \
     chmod +x /f1r3node/node_binary
 
 # ============================================================================
