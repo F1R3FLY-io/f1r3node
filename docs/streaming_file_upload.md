@@ -468,9 +468,9 @@ in {
 
 ### 3.4 gRPC Download
 
-The `downloadFile` gRPC endpoint streams file bytes directly to the client. Any file present on disk is downloadable — the node does not enforce access control. The client application is responsible for any permission layer.
+The `downloadFile` gRPC endpoint streams file bytes directly to the client. Downloads are **gated by a finalization check**: the file must be registered in the `FileRegistry` contract at the Last Finalized Block's (LFB) post-state. This prevents downloading files from unfinalized, orphaned, or unpaid uploads.
 
-> **Observer-only**: `downloadFile` may only be called on a read-only (observer) node. Calls to a bonded validator node are immediately rejected with `"File download can only be executed on a read-only RNode."` This mirrors the `exploratoryDeploy` guard: inside `BlockAPI.downloadFile`, the handler checks `casper.getValidator.map(_.isEmpty)` and short-circuits if the node has a validator key.
+> **Observer-only**: `downloadFile` may only be called on a read-only (observer) node. Calls to a bonded validator node are immediately rejected with `"File download can only be executed on a read-only f1r3node."` In dev mode (`devMode = true`), validator nodes are also allowed to serve downloads, but the finalization check is **still enforced**.
 
 #### Protobuf Definition
 
@@ -505,54 +505,50 @@ message FileDownloadMetadata {
 
 #### Download Logic
 
-The handler in `DeployGrpcServiceV1.scala` mirrors `exploratoryDeploy` — it delegates to `BlockAPI.downloadFile[F]` which enforces the observer gate:
+The handler in `DeployGrpcServiceV1.scala` delegates to `FileDownloadAPI.streamFile` with a **finalization checker** callback. Before streaming, the finalization checker executes an `exploratoryDeploy` against the LFB post-state to verify that the file hash is registered in the `FileRegistry` contract. This check is **always enforced** — `devMode` only opens the API to validator nodes but does not bypass finalization:
 
 ```scala
-// In BlockAPI.scala
-def downloadFile[F[_]: Sync: EngineCell: Log](
-    fileHash: String,
-    offset: Long,
-    fileReplicationDir: Path
-): F[ApiErr[Observable[FileDownloadChunk]]] =
-  EngineCell[F].read >>= (
-    _.withCasper(
-      implicit casper =>
-        for {
-          isReadOnly <- casper.getValidator.map(_.isEmpty)
-          result <- if (isReadOnly) {
-                     val filePath = fileReplicationDir.resolve(fileHash)
-                     if (!filePath.toFile.exists)
-                       "File not found".asLeft[Observable[FileDownloadChunk]].pure[F]
-                     else
-                       streamFile(filePath, offset).asRight.pure[F]
-                   } else {
-                     "File download can only be executed on a read-only RNode."
-                       .asLeft[Observable[FileDownloadChunk]]
-                       .pure[F]
-                   }
-        } yield result,
-      Log[F].warn(errorMessage).as(s"Error: $errorMessage".asLeft)
-    )
-  )
+// In DeployGrpcServiceV1.scala — finalization checker (always active)
+val finalizationChecker: String => Task[Boolean] = { fileHash: String =>
+  BlockAPI.exploratoryDeploy[F](
+    s"""new return, rl(`rho:registry:lookup`), fileRegistryCh in {
+       |  rl!(`rho:id:m6rqma7yas7o6ieos45ai4dskmc6zugs9rmsp6i3zan8qe5hsfqsdt`, *fileRegistryCh) |
+       |  for(@(_, FileRegistry) <- fileRegistryCh) {
+       |    @FileRegistry!("lookup", "$fileHash", *return)
+       |  }
+       |}""".stripMargin,
+    none[String],  // Use LFB (no specific block hash)
+    false,         // Use post-state
+    devMode
+  ).toTask.map {
+    case Right((pars, _)) => pars.nonEmpty && pars.exists(_ != Par())
+    case Left(_)          => false
+  }
+}
 ```
 
 ```
 downloadFile(request) {
   // Observer gate: reject if node has a validator key
-  if (!isReadOnly) → PERMISSION_DENIED
+  if (!isReadOnly && !devMode) → PERMISSION_DENIED
 
   // Path traversal prevention: strictly validate fileHash format
   if (!request.fileHash.matches("^[a-f0-9]{64}$"))
     → INVALID_ARGUMENT ("Invalid fileHash format")
 
-  filePath = fileReplicationDir / request.fileHash
+  filePath = uploadDir / request.fileHash
 
   if (!filePath.exists)
     → NOT_FOUND
 
+  // Finalization gate: query FileRegistry at LFB post-state
+  if (!finalizationChecker(fileHash)) → NOT_FOUND ("file not found")
+
   → stream file from offset
 }
 ```
+
+The finalization check adds ~5-50ms of latency per download request (Rholang VM evaluation), which is negligible relative to the file transfer time (e.g., ~80 seconds for a 10GB file at 1Gbps).
 
 #### Resume Support
 
@@ -561,7 +557,7 @@ The `offset` field enables interrupted download resumption. Client tracks bytes 
 #### Rate Limiting
 
 - `max-concurrent-downloads-per-ip` (default: 4) — prevents resource exhaustion
-- Only files present on the local filesystem are served
+- Only files present on the local filesystem and registered in a finalized block are served
 - Only available on observer (read-only) nodes
 
 ### 3.5 File Deletion
@@ -645,14 +641,16 @@ Casper Merge Resolution:
   - fileY deletion (Alice):     ⚠️ resolved by Casper cost-optimal ordering
 ```
 
-### 3.7 When Can the Client Read the File?
+### 3.7 When Can the Client Download the File?
 
-The file is readable **as soon as the block containing the `register` deploy is executed and added to the DAG**:
+The file is downloadable **only after the block containing the `register` deploy is finalized**. The `downloadFile` endpoint enforces this by querying the `FileRegistry` contract at the Last Finalized Block's post-state via an `exploratoryDeploy`. If the file hash is not registered in the finalized state, the download is rejected with `PERMISSION_DENIED`.
+
+Client workflow:
 
 1. `uploadFile()` → receive `(fileHash, deployId)`
-2. Call `findDeploy(deployId)` — if it returns a `LightBlockInfo`, the deploy is in a block (executed)
-3. Call `isFinalized(blockHash)` — once `true`, the file is permanently available
-4. Call `downloadFile(fileHash)` via gRPC to stream the file securely.
+2. Poll `findDeploy(deployId)` — when it returns a `LightBlockInfo`, the deploy is in a block
+3. Poll `isFinalized(blockHash)` — once `true`, the file is permanently available for download
+4. Call `downloadFile(fileHash)` via gRPC to stream the file
 
 ### 3.8 Module Changes for Layer 3
 
