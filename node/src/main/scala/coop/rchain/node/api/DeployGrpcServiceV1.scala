@@ -496,7 +496,51 @@ object DeployGrpcServiceV1 {
           chunkSize = fileUploadConf.chunkSize.toInt,
           maxConcurrentPerIp = fileUploadConf.maxConcurrentDownloadsPerIp,
           devMode = devMode,
-          maxCacheEntries = fileUploadConf.maxDownloadCacheEntries
+          maxCacheEntries = fileUploadConf.maxDownloadCacheEntries,
+          finalizationChecker = checkFileFinalized(devMode)
         )
+
+      /**
+        * Build a finalization checker that queries
+        * `FileRegistry!("lookup", hash)` on the Last Finalized Block's
+        * post-state via `exploratoryDeploy`.
+        * A non-Nil result means the file is registered in a finalized block.
+        *
+        * Defense-in-depth: the hash is re-validated here even though
+        * `FileDownloadAPI.streamFile` already checks format, to prevent
+        * Rholang code injection if this method is ever called from a
+        * different context.
+        */
+      private def checkFileFinalized(devMode: Boolean): String => Task[Boolean] = {
+        val log = org.slf4j.LoggerFactory.getLogger("FileDownloadAPI")
+        fileHash: String =>
+          require(
+            fileHash.matches("^[a-f0-9]{64}$"),
+            s"Invalid hash for finalization check: $fileHash"
+          )
+          BlockAPI
+            .exploratoryDeploy[F](
+              s"""new return, rl(`rho:registry:lookup`), fileRegistryCh in {
+                 |  rl!(`rho:id:m6rqma7yas7o6ieos45ai4dskmc6zugs9rmsp6i3zan8qe5hsfqsdt`, *fileRegistryCh) |
+                 |  for(@(_, FileRegistry) <- fileRegistryCh) {
+                 |    @FileRegistry!("lookup", "$fileHash", *return)
+                 |  }
+                 |}""".stripMargin,
+              none[String], // Use LFB (no specific block hash)
+              false,        // Use post-state
+              devMode
+            )
+            .toTask
+            .map {
+              case Right((pars, _)) =>
+                // If the result is non-empty and not Nil, the file is registered
+                pars.nonEmpty && pars.exists(p => p != coop.rchain.models.Par())
+              case Left(err) =>
+                log.error(
+                  s"[FileDownloadAPI] Finalization check failed for hash=${fileHash.take(16)}...: $err"
+                )
+                false
+            }
+      }
     }
 }

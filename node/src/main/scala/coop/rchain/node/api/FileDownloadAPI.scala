@@ -31,13 +31,28 @@ object FileDownloadAPI {
   /**
     * Stream a file to the client as `FileDownloadChunk` messages.
     *
+    * The download is gated by a finalization check: the file must be registered
+    * in the `FileRegistry` contract at the Last Finalized Block's post-state.
+    * The finalization checker is mandatory and called on every download request.
+    *
+    * Guard order: observer gate → hash validation → path traversal → file exists
+    *   → finalization check → rate limit → stream.
+    * The finalization check runs before the rate-limit semaphore is acquired so
+    * that the lightweight VM evaluation (~5-50 ms) does not consume a scarce
+    * concurrency permit.
+    *
     * @param request            The download request containing `fileHash` and optional `offset`.
     * @param isNodeReadOnly     Whether this node is a read-only observer.
     * @param uploadDir          Directory where content-addressed files are stored.
     * @param ipAddress          Client IP address for rate limiting.
     * @param chunkSize          Chunk size for streaming (from config).
     * @param maxConcurrentPerIp Maximum concurrent downloads from one IP (from config).
+    * @param devMode            If true, allow downloads on validator nodes (not just observers).
     * @param maxCacheEntries    Maximum entries in the per-IP rate-limiter LRU cache (from config).
+    * @param finalizationChecker A function that, given a file hash, returns `Task[Boolean]`
+    *                            indicating whether the file is registered in a finalized block.
+    *                            In production this executes an `exploratoryDeploy` against the
+    *                            LFB post-state.
     * @return An `Observable` starting with a metadata chunk, followed by data chunks.
     */
   def streamFile(
@@ -48,7 +63,8 @@ object FileDownloadAPI {
       chunkSize: Int = 4 * 1024 * 1024,
       maxConcurrentPerIp: Int = 4,
       devMode: Boolean = false,
-      maxCacheEntries: Int = 10000
+      maxCacheEntries: Int = 10000,
+      finalizationChecker: String => Task[Boolean]
   ): Observable[FileDownloadChunk] = {
     _maxIpEntries = maxCacheEntries
     val hash = request.fileHash
@@ -60,7 +76,7 @@ object FileDownloadAPI {
       devMode.toString
     )
 
-    // Observer gate — in dev mode, allow downloads from any node
+    // Observer gate — in dev mode, allow downloads from any node (including validators)
     if (!isNodeReadOnly && !devMode) {
       logger.warn("[FileDownloadAPI] Rejected: not read-only, hash={}...", hash.take(16))
       Observable.raiseError(
@@ -91,21 +107,42 @@ object FileDownloadAPI {
           new IllegalArgumentException(s"NOT_FOUND: file ${hash} not found")
         )
       } else {
-        val fileSize = Files.size(filePath)
-        logger.info(
-          "[FileDownloadAPI] File found: hash={}..., size={} bytes ({} MB)",
-          hash.take(16),
-          fileSize.toString,
-          (fileSize / (1024 * 1024)).toString
-        )
-        acquireAndStream(filePath, request, ipAddress, chunkSize, maxConcurrentPerIp)
+        // ---- Finalization gate ------------------------------------------------
+        // Always verify the file hash is registered in a finalized block.
+        // The finalization check runs BEFORE the rate-limit semaphore is acquired
+        // so the lightweight VM evaluation (~5-50 ms) does not hold a scarce permit.
+        Observable
+          .fromTask(finalizationChecker(hash))
+          .flatMap { isFinalized =>
+            if (isFinalized) {
+              val fileSize = Files.size(filePath)
+              logger.info(
+                "[FileDownloadAPI] File found and finalized: hash={}..., size={} bytes ({} MB)",
+                hash.take(16),
+                fileSize.toString,
+                (fileSize / (1024 * 1024)).toString
+              )
+              acquireAndStream(filePath, request, ipAddress, chunkSize, maxConcurrentPerIp)
+            } else {
+              logger.warn(
+                "[FileDownloadAPI] Rejected: file not in finalized registry, hash={}...",
+                hash.take(16)
+              )
+              Observable.raiseError(
+                new IllegalArgumentException(
+                  s"NOT_FOUND: file ${hash} not found"
+                )
+              )
+            }
+          }
       }
     }
   }
 
   /**
     * Acquire a rate-limiting semaphore permit, then stream the file.
-    * The permit is released when the Observable terminates (complete or error).
+    * The permit is released when the Observable terminates (complete or error)
+    * via the outermost `.guarantee`.
     */
   private def acquireAndStream(
       filePath: Path,
