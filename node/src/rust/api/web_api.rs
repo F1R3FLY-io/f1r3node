@@ -2,6 +2,7 @@
 
 use crate::rust::api::serde_types::block_info::BlockInfoSerde;
 use crate::rust::api::serde_types::light_block_info::LightBlockInfoSerde;
+use crate::rust::web::block_info_enricher::BlockEnricher;
 use crate::rust::web::transaction::{CacheTransactionAPI, TransactionAPI, TransactionResponse};
 use crate::rust::web::version_info::get_version_info_str;
 use casper::rust::api::block_api::{BlockAPI, DeployNotFoundError};
@@ -117,6 +118,7 @@ where
     min_phlo_price: i64,
     is_node_read_only: bool,
     engine_cell: Arc<EngineCell>,
+    block_enricher: Arc<dyn BlockEnricher>,
     cache_transaction_api: CacheTransactionAPI<TA, TS>,
     rp_conf_cell: comm::rust::rp::rp_conf::RPConfCell,
     connections_cell: ConnectionsCell,
@@ -129,31 +131,6 @@ where
     TA: TransactionAPI + Send + Sync + 'static,
     TS: KeyValueTypedStore<String, TransactionResponse> + Send + Sync + 'static,
 {
-    /// Enrich a BlockInfo with transfer data from the transaction API.
-    /// On failure, logs a warning and returns the block unchanged (empty transfers).
-    async fn enrich_with_transfers(&self, block_info: models::casper::BlockInfo) -> models::casper::BlockInfo {
-        let block_hash = block_info.block_info.as_ref()
-            .map(|bi| bi.block_hash.clone())
-            .unwrap_or_default();
-
-        if block_hash.is_empty() {
-            return block_info;
-        }
-
-        match self.cache_transaction_api.get_transaction(block_hash.clone()).await {
-            Ok(response) => crate::rust::web::block_info_enricher::enrich_block_info(block_info, &response),
-            Err(e) => {
-                tracing::warn!(
-                    target: "f1r3fly.api",
-                    block_hash = %block_hash,
-                    error = %e,
-                    "Failed to extract transfers for block, returning empty transfers"
-                );
-                block_info
-            }
-        }
-    }
-
     pub fn new(
         api_max_blocks_limit: i32,
         dev_mode: bool,
@@ -161,6 +138,7 @@ where
         shard_id: String,
         min_phlo_price: i64,
         is_node_read_only: bool,
+        block_enricher: Arc<dyn BlockEnricher>,
         cache_transaction_api: CacheTransactionAPI<TA, TS>,
         engine_cell: Arc<EngineCell>,
         rp_conf_cell: comm::rust::rp::rp_conf::RPConfCell,
@@ -176,6 +154,7 @@ where
             min_phlo_price,
             is_node_read_only,
             engine_cell,
+            block_enricher,
             cache_transaction_api,
             rp_conf_cell,
             connections_cell,
@@ -323,13 +302,13 @@ where
 
     async fn last_finalized_block(&self) -> Result<BlockInfoSerde> {
         let block_info = BlockAPI::last_finalized_block(&self.engine_cell).await?;
-        let enriched = self.enrich_with_transfers(block_info).await;
+        let enriched = self.block_enricher.enrich(block_info).await;
         Ok(BlockInfoSerde::from(enriched))
     }
 
     async fn get_block(&self, hash: String) -> Result<BlockInfoSerde> {
         let block_info = BlockAPI::get_block(&self.engine_cell, &hash).await?;
-        let enriched = self.enrich_with_transfers(block_info).await;
+        let enriched = self.block_enricher.enrich(block_info).await;
         Ok(BlockInfoSerde::from(enriched))
     }
 

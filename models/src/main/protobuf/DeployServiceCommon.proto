@@ -104,11 +104,11 @@ message JustificationInfo{
 }
 
 message TransferInfo {
-  string fromAddr   = 1;
-  string toAddr     = 2;
-  int64 amount      = 3;
-  bool success      = 4;
-  string failReason = 5;
+  string fromAddr   = 1; // Sender address
+  string toAddr     = 2; // Recipient address
+  int64 amount      = 3; // Amount in dust (smallest unit)
+  bool success      = 4; // Whether the transfer succeeded
+  string failReason = 5; // Error message if success is false, empty otherwise
 }
 
 message DeployInfo{

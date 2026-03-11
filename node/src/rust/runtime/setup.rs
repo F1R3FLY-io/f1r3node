@@ -584,19 +584,29 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
     // Proactive transfer extraction: subscribe to BlockFinalised events and trigger
     // cache_transaction_api.get_transaction() in the background so transfer data is
     // pre-cached before clients request it.
+    //
+    // Note: This event-driven approach has a small race window where a client could
+    // call get_block for a just-finalized block before transfers are cached.
+    // CacheTransactionAPI handles this gracefully by computing on demand.
     {
         use futures::StreamExt;
         use shared::rust::shared::f1r3fly_event::F1r3flyEvent;
 
         let cache_tx_api = cache_transaction_api.clone();
         let mut event_stream = event_publisher.consume();
+        let concurrency_limit = Arc::new(tokio::sync::Semaphore::new(8));
 
         tokio::spawn(async move {
             while let Some(event) = event_stream.next().await {
                 if let F1r3flyEvent::BlockFinalised(finalized) = event {
                     let api = cache_tx_api.clone();
                     let block_hash = finalized.block_hash.clone();
+                    let permit = match concurrency_limit.clone().acquire_owned().await {
+                        Ok(permit) => permit,
+                        Err(_) => break,
+                    };
                     tokio::spawn(async move {
+                        let _permit = permit;
                         if let Err(e) = api.get_transaction(block_hash.clone()).await {
                             tracing::warn!(
                                 target: "f1r3fly.transaction",
@@ -637,7 +647,7 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
         rp_conf_cell.clone(),
         rp_connections.clone(),
         node_discovery.clone(),
-        Some(block_enricher),
+        Some(block_enricher.clone()),
     );
 
     // Reporting HTTP Routes - REST API for block reporting and tracing
@@ -785,6 +795,7 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
             conf.casper.shard_name.clone(),
             conf.casper.min_phlo_price,
             is_node_read_only,
+            block_enricher.clone(),
             cache_transaction_api,
             Arc::new(engine_cell.clone()),
             rp_conf_cell.clone(),
