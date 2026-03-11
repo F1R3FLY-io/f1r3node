@@ -59,7 +59,7 @@ fn with_ancestors_capped(
         if !visited.insert(current_hash.clone()) {
             continue;
         }
-        if visited.len() > max_nodes {
+        if visited.len() >= max_nodes {
             return Ok(None);
         }
 

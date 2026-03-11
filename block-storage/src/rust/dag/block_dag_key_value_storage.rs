@@ -796,10 +796,31 @@ impl BlockDagKeyValueStorage {
         F: FnMut(&HashSet<BlockHash>) -> Fut,
         Fut: std::future::Future<Output = Result<(), KvStoreError>>,
     {
+        const MAX_FINALIZATION_RECONCILE_LOOPS: usize = 128;
+
         // Close TOCTOU race by repeatedly applying effects for newly observed finalized
-        // hashes until the lock-protected snapshot is stable, then persist once.
+        // hashes until the lock-protected snapshot is stable. Keep metadata persistence
+        // aligned with already-applied effects when exiting due to errors or retry cap.
+        let persist_effect_applied =
+            |force_direct: bool, effect_applied: &HashSet<BlockHash>| -> Result<(), KvStoreError> {
+                if !force_direct && effect_applied.is_empty() {
+                    return Ok(());
+                }
+
+                let indirectly_finalized: HashSet<BlockHash> = effect_applied
+                    .iter()
+                    .filter(|hash| *hash != &directly_finalized_hash)
+                    .cloned()
+                    .collect();
+
+                let _lock_guard = self.global_lock.lock().unwrap();
+                let mut block_metadata_index_guard = self.block_metadata_index.write().unwrap();
+                block_metadata_index_guard
+                    .record_finalized(directly_finalized_hash.clone(), indirectly_finalized)
+            };
+
         let mut effect_applied: HashSet<BlockHash> = HashSet::new();
-        loop {
+        for _attempt in 0..MAX_FINALIZATION_RECONCILE_LOOPS {
             let pending_effect: HashSet<BlockHash> = {
                 let _lock_guard = self.global_lock.lock().unwrap();
 
@@ -822,19 +843,26 @@ impl BlockDagKeyValueStorage {
                 let pending: HashSet<BlockHash> =
                     all_finalized.difference(&effect_applied).cloned().collect();
 
-                if pending.is_empty() {
-                    let mut block_metadata_index_guard = self.block_metadata_index.write().unwrap();
-                    block_metadata_index_guard
-                        .record_finalized(directly_finalized_hash.clone(), indirectly_finalized)?;
-                    return Ok(());
-                }
-
                 pending
             };
 
+            if pending_effect.is_empty() {
+                return persist_effect_applied(true, &effect_applied);
+            }
+
             // Execute async effect without holding lock.
-            finalization_effect(&pending_effect).await?;
+            if let Err(err) = finalization_effect(&pending_effect).await {
+                persist_effect_applied(false, &effect_applied)?;
+                return Err(err);
+            }
             effect_applied.extend(pending_effect);
         }
+
+        persist_effect_applied(false, &effect_applied)?;
+        Err(KvStoreError::IoError(format!(
+            "record_directly_finalized exceeded {} reconcile loops for {}",
+            MAX_FINALIZATION_RECONCILE_LOOPS,
+            PrettyPrinter::build_string_bytes(&directly_finalized_hash)
+        )))
     }
 }

@@ -137,7 +137,7 @@ impl Finalizer {
         agreeing_weight_map: &WeightMap,
     ) -> bool {
         if agreeing_weight_map.values().any(|&stake| stake <= 0) {
-            tracing::warn!(
+            tracing::error!(
                 target: "f1r3fly.finalizer",
                 "cannot_be_orphaned skipped due to non-positive agreeing stake entries"
             );

@@ -25,7 +25,7 @@ impl KeyValueStore for LmdbKeyValueStore {
             .into_iter()
             .map(|key| db.get(&reader, &key).map_err(|e| e.into()))
             .collect();
-        reader.commit()?;
+        drop(reader);
         results
     }
 
@@ -76,7 +76,7 @@ impl KeyValueStore for LmdbKeyValueStore {
             let (key, value) = result?;
             f(key.to_vec(), value);
         }
-        reader.commit()?;
+        drop(reader);
         Ok(())
     }
 
@@ -98,7 +98,7 @@ impl KeyValueStore for LmdbKeyValueStore {
                 break;
             }
         }
-        reader.commit()?;
+        drop(reader);
         Ok(())
     }
 
@@ -120,7 +120,7 @@ impl KeyValueStore for LmdbKeyValueStore {
             let (key, value) = result?;
             map.insert(key.to_vec(), value);
         }
-        reader.commit()?;
+        drop(reader);
         Ok(map)
     }
 
@@ -155,7 +155,7 @@ impl KeyValueStore for LmdbKeyValueStore {
             let mut iter = db.iter(&reader)?;
             iter.next().is_some()
         };
-        reader.commit()?;
+        drop(reader);
         Ok(has_first)
     }
 }

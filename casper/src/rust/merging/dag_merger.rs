@@ -82,11 +82,12 @@ pub fn merge(
 
     // Log the block sets for debugging
     tracing::info!(
-        "DagMerger.merge: LFB={}, scope={}, actualBlocks (above LFB)={}, lfbAncestors={}, lateBlocks={}",
+        "DagMerger.merge: LFB={}, scope={}, actualBlocks (above LFB)={}, lateBlocks={}",
         hex::encode(&lfb[..std::cmp::min(8, lfb.len())]),
-        scope.as_ref().map_or("ALL".to_string(), |s| format!("{} blocks", s.len())),
+        scope
+            .as_ref()
+            .map_or("ALL".to_string(), |s| format!("{} blocks", s.len())),
         actual_blocks.len(),
-        if scope.is_some() { 0 } else { 1 },
         late_blocks.len()
     );
 

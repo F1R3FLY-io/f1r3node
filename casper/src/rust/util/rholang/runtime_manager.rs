@@ -289,6 +289,9 @@ impl RuntimeManager {
     where
         K: Eq + Clone,
     {
+        // LRU touch is O(n) due VecDeque::position/remove. This is intentional for now:
+        // these caches are tightly bounded (64-256 entries by default), so linear touch
+        // remains cheaper than introducing additional synchronized index maps.
         if let Ok(mut guard) = order.lock() {
             if let Some(pos) = guard.iter().position(|existing| existing == key) {
                 guard.remove(pos);
