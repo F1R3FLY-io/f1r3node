@@ -29,7 +29,7 @@ RUN apt-get update && apt-get install -y \
     g++-aarch64-linux-gnu \
     && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /build
+WORKDIR /f1r3node
 
 COPY --from=xx / /
 
@@ -68,8 +68,7 @@ RUN git clone --depth 1 --branch feature/mettatron-fixes \
     git clone --depth 1 --branch feature/arbitrary-space-value-types \
       https://github.com/dylon/MORK.git /MORK && \
     git clone --depth 1 --branch feature/pln-support \
-      https://github.com/F1R3FLY-io/MeTTa-Compiler.git /MeTTa-Compiler && \
-    ln -s /build /f1r3node
+      https://github.com/F1R3FLY-io/MeTTa-Compiler.git /MeTTa-Compiler
 
 # Configure pkg-config for cross-compilation to find target OpenSSL libraries
 # xx-apt installs target libs in the xx sysroot, we need to tell pkg-config where they are
@@ -77,7 +76,7 @@ RUN git clone --depth 1 --branch feature/mettatron-fixes \
 # +sse2 is x86-only; on aarch64 only +aes is valid (avoids warning spam on ARM hosts).
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
-    --mount=type=cache,target=/build/build \
+    --mount=type=cache,target=/f1r3node/build \
     export TARGET_TRIPLE=$(xx-cargo --print-target-triple) && \
     export PKG_CONFIG_SYSROOT_DIR=$(xx-info sysroot) && \
     export PKG_CONFIG_PATH=$(xx-info sysroot)/usr/lib/$(xx-info triple)/pkgconfig:$(xx-info sysroot)/usr/share/pkgconfig && \
@@ -88,8 +87,8 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     esac && \
     xx-cargo build --release -p node --features rholang/mettatron --target-dir ./build && \
     xx-verify ./build/${TARGET_TRIPLE}/release/node && \
-    cp ./build/${TARGET_TRIPLE}/release/node /build/node_binary && \
-    chmod +x /build/node_binary
+    cp ./build/${TARGET_TRIPLE}/release/node /f1r3node/node_binary && \
+    chmod +x /f1r3node/node_binary
 
 # ============================================================================
 # Stage 2: Runtime base - Install runtime dependencies (cached independently)
@@ -146,18 +145,18 @@ RUN mkdir -p /opt/docker/bin
 
 # Copy node binary (using node_binary from builder to avoid conflict with node/ directory)
 # Verify it's a file before copying
-COPY --from=builder --chmod=755 /build/node_binary /opt/docker/bin/node
+COPY --from=builder --chmod=755 /f1r3node/node_binary /opt/docker/bin/node
 
 # Copy node resources (defaults.conf, kamon.conf, logback.xml, etc.)
 # The node executable expects these at node/src/main/resources relative to current directory
-COPY --from=builder /build/node/src/main/resources ./node/src/main/resources
+COPY --from=builder /f1r3node/node/src/main/resources ./node/src/main/resources
 
 # Copy casper resources (Registry.rho, ListOps.rho, etc.)
 # The node executable needs these at runtime to create genesis blocks
-COPY --from=builder /build/casper/src/main/resources ./casper/src/main/resources
+COPY --from=builder /f1r3node/casper/src/main/resources ./casper/src/main/resources
 
 # Copy rholang examples (matching build.sbt: directory((baseDirectory in rholang).value / "examples"))
-COPY --from=builder /build/rholang/examples ./examples
+COPY --from=builder /f1r3node/rholang/examples ./examples
 
 # Create entrypoint script for Rust (adapted from docker-entrypoint.sh)
 # Copy the Rust-specific entrypoint script from node directory
