@@ -14,7 +14,7 @@ use models::{
 };
 use shared::rust::shared::{printer::Printer, string_ops::wrap_with_braces};
 #[cfg(feature = "mettatron")]
-use mettatron::pathmap_par_integration::par_to_environment;
+use mettatron::pathmap_par_integration::{par_to_environment, metta_value_to_par};
 
 use super::errors::InterpreterError;
 
@@ -202,30 +202,24 @@ fn is_metta_environment(par: &Par) -> bool {
 }
 
 #[cfg(feature = "mettatron")]
-/// Format MeTTa environment tuple by deserializing and displaying its contents
-/// Returns a formatted string showing space facts with inline multiplicities
-/// and large expressions (arity >= 64) if present
+/// Format MeTTa environment tuple by deserializing and displaying its contents.
+/// Decodes atoms from MTTS/MTTL byte arrays into readable s-expressions.
 fn format_metta_environment(env_par: &Par) -> String {
-    // Try to deserialize the environment using MeTTaTron's utilities
     match par_to_environment(env_par) {
         Ok(env) => {
-            // Get multiplicities (rule definitions with counts, inline from space)
-            let multiplicities = env.get_multiplicities();
+            // Decode all atoms to MeTTa values and convert to Pars for display
+            let atoms = env.get_all_atoms();
+            let pp = PrettyPrinter::new();
 
-            // Format space with inline multiplicities
-            let space_str = if multiplicities.is_empty() {
+            let space_str = if atoms.is_empty() {
                 "{||}".to_string()
             } else {
-                let mut entries: Vec<_> = multiplicities.iter().collect();
-                entries.sort_by_key(|(k, _)| k.as_str());
-                let formatted: Vec<String> = entries
+                let mut pp = pp;
+                let formatted: Vec<String> = atoms
                     .iter()
-                    .map(|(key, count)| {
-                        if **count > 1 {
-                            format!("\"{}\" x{}", key, count)
-                        } else {
-                            format!("\"{}\"", key)
-                        }
+                    .map(|atom| {
+                        let par = metta_value_to_par(atom);
+                        pp.build_string_from_message(&par)
                     })
                     .collect();
                 format!("{{|{}|}}", formatted.join(", "))
@@ -237,18 +231,15 @@ fn format_metta_environment(env_par: &Par) -> String {
 
             if has_large_exprs {
                 let large_exprs_str = format!("{{count: {}}}", wide_atom_count);
-                // Return 2-tuple: (("space", ...), ("large_exprs", ...))
                 format!(
                     "((\"space\", {}), (\"large_exprs\", {}))",
                     space_str, large_exprs_str
                 )
             } else {
-                // Return 1-tuple showing just space (large_exprs is empty)
                 format!("((\"space\", {}))", space_str)
             }
         }
         Err(e) => {
-            // Fallback to showing error
             format!("{{<deserialization error: {}>}}", e)
         }
     }

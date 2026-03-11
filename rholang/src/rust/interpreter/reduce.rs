@@ -61,8 +61,9 @@ use models::rust::pathmap_crate_type_mapper::PathMapCrateTypeMapper;
 #[cfg(feature = "mettatron")]
 use mettatron::{
     decode_large_exprs_bytes_to_pars,
-    decode_space_bytes_to_pars, metta_state_to_pathmap_par, pathmap_par_to_metta_state,
-    run_state_async, MettaState,
+    decode_space_bytes_to_pars, metta_run_error_expr,
+    metta_state_to_pathmap_par, pathmap_par_to_metta_state,
+    pathmap_par_to_metta_state_lenient, run_state_async, MettaState,
 };
 
 /// Minimum remaining stack space (in bytes) before growing.
@@ -3108,32 +3109,47 @@ impl DebruijnInterpreter {
                         }]);
 
                         // Deserialize accumulated state (handle empty PathMap case)
+                        // Uses lenient deserialization for the accumulated state to handle
+                        // user-reconstructed PathMaps with missing multiplicity bytes.
                         let accumulated_state = if is_empty {
                             // Empty PathMap {||} means empty MettaState
                             MettaState::new_empty()
                         } else {
-                            pathmap_par_to_metta_state(&accumulated_par).map_err(|e| {
-                                InterpreterError::ReduceError(format!("Failed to deserialize accumulated state: {}", e))
-                            })?
+                            match pathmap_par_to_metta_state_lenient(&accumulated_par) {
+                                Ok(state) => state,
+                                Err(e) => return Ok(metta_run_error_expr(
+                                    "invalid_accumulated_state",
+                                    &format!("Failed to deserialize accumulated state: {}", e),
+                                )),
+                            }
                         };
 
-                        // Deserialize compiled state
-                        let compiled_state = pathmap_par_to_metta_state(&compiled_par).map_err(|e| {
-                            InterpreterError::ReduceError(format!("Failed to deserialize compiled state: {}", e))
-                        })?;
+                        // Deserialize compiled state (strict — compiled state should always
+                        // come from metta_compile and be well-formed)
+                        let compiled_state = match pathmap_par_to_metta_state(&compiled_par) {
+                            Ok(state) => state,
+                            Err(e) => return Ok(metta_run_error_expr(
+                                "invalid_compiled_state",
+                                &format!("Failed to deserialize compiled state: {}", e),
+                            )),
+                        };
 
                         // Run MeTTa evaluation with parallel execution using run_state_async.
                         // Uses block_in_place to move off the async executor thread, then block_on
                         // to execute the async evaluation synchronously within a blocking context.
                         // This enables parallel evaluation of independent MeTTa expressions while
                         // preserving the synchronous interface required by Rholang.
-                        let result_state = tokio::task::block_in_place(|| {
+                        let result_state = match tokio::task::block_in_place(|| {
                             tokio::runtime::Handle::current().block_on(async {
                                 run_state_async(accumulated_state, &compiled_state).await
                             })
-                        }).map_err(|e| {
-                            InterpreterError::ReduceError(format!("MeTTa evaluation failed: {}", e))
-                        })?;
+                        }) {
+                            Ok(state) => state,
+                            Err(e) => return Ok(metta_run_error_expr(
+                                "evaluation_failed",
+                                &format!("MeTTa evaluation failed: {}", e),
+                            )),
+                        };
 
                         // Convert result back to PathMap Par
                         let result_par = metta_state_to_pathmap_par(&result_state);
@@ -3144,7 +3160,10 @@ impl DebruijnInterpreter {
                                 expr_instance: Some(ExprInstance::EPathmapBody(result_pathmap.clone())),
                             })
                         } else {
-                            Err(InterpreterError::ReduceError("Failed to extract PathMap from result".to_string()))
+                            Ok(metta_run_error_expr(
+                                "extraction_failed",
+                                "Failed to extract PathMap from result",
+                            ))
                         }
                     }
 
