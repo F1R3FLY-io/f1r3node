@@ -12,14 +12,18 @@ path = "src/rholang_cli.rs"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[features]
+mettatron = ["dep:mettatron"]
+
 [dependencies]
 crypto = { path = "../crypto" }
 models = { path = "../models" }
 shared = { path = "../shared" }
 rspace_plus_plus = { path = "../rspace++" }
+mettatron = { path = "../../MeTTa-Compiler", optional = true }
 itertools = { workspace = true }
 serde = { workspace = true }
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
 tree-sitter = "0.25.8"
 tree-sitter-rust = "0.24"
 cc = { version = "1.1.12", features = [] }
@@ -56,6 +60,12 @@ metrics = { workspace = true }
 stacker = { workspace = true }
 reqwest = { version = "0.11", features = ["json"] }
 serde_json = { workspace = true }
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+proptest = "1.4.0"
 
 [build-dependencies]
 cc = "1.0"

@@ -48,6 +48,8 @@ use rspace_plus_plus::rspace::{
     trace::event::{Event, IOEvent},
 };
 use rust::interpreter::env::Env;
+#[cfg(feature = "mettatron")]
+use rust::interpreter::system_processes::metta_contracts;
 use rust::interpreter::external_services::ExternalServices;
 use rust::interpreter::ollama_service::OllamaConfig;
 use rust::interpreter::openai_service::OpenAIConfig;
@@ -1354,6 +1356,8 @@ extern "C" fn create_runtime_with_test_framework(
     } else {
         Vec::new()
     };
+    #[cfg(feature = "mettatron")]
+    extra_system_processes.extend(metta_contracts());
 
     let tokio_runtime = tokio::runtime::Runtime::new().unwrap();
     let rho_runtime = tokio_runtime.block_on(async {

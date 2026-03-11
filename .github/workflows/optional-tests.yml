@@ -28,6 +28,9 @@ jobs:
           - rholang/src/main/tree_sitter
           - rspace++/libs/rspace_rhotypes
           - casper
+        include:
+          - tests: rholang/src/main/tree_sitter
+            cargo_features: "--features mettatron"
     steps:
       - name: Clone Repository
         uses: actions/checkout@v4
@@ -57,19 +60,34 @@ jobs:
       - name: Load Working Tree
         uses: actions/download-artifact@v4
         with:
-          name: rchain-worktree
+          name: f1r3fly-worktree
           path: /tmp
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Restore Working Tree
         shell: bash -ex {0}
-        run: tar -H posix -xzf /tmp/rchain-worktree.tar.gz
+        run: tar -H posix -xzf /tmp/f1r3fly-worktree.tar.gz
+
+      - name: Clone External Dependencies
+        shell: bash -ex {0}
+        run: |
+          git clone --depth 1 --branch feature/mettatron-fixes \
+            https://github.com/dylon/PathMap.git \
+            "$GITHUB_WORKSPACE/../PathMap"
+          git clone --depth 1 --branch feature/arbitrary-space-value-types \
+            https://github.com/dylon/MORK.git \
+            "$GITHUB_WORKSPACE/../MORK"
+          git clone --depth 1 --branch feature/pln-support \
+            https://github.com/F1R3FLY-io/MeTTa-Compiler.git \
+            "$GITHUB_WORKSPACE/../MeTTa-Compiler"
 
       - name: Run Unit Tests
         # continue-on-error: true
         shell: bash -ex {0}
         run: |
           pushd ${{ matrix.tests }}
-          cargo test
+          cargo test ${{ matrix.cargo_features }}
           popd
 
 
@@ -127,12 +145,14 @@ jobs:
       - name: Load Working Tree
         uses: actions/download-artifact@v4
         with:
-          name: rchain-worktree
+          name: f1r3fly-worktree
           path: /tmp
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Restore Working Tree
         shell: bash -ex {0}
-        run: tar -H posix -xzf /tmp/rchain-worktree.tar.gz
+        run: tar -H posix -xzf /tmp/f1r3fly-worktree.tar.gz
 
       - name: Run Unit Tests
         # continue-on-error: true
@@ -224,12 +244,14 @@ jobs:
       - name: Load Docker Image
         uses: actions/download-artifact@v4
         with:
-          name: artifacts-docker
+          name: artifacts-docker-amd64
           path: /tmp
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Import Docker Image
         shell: bash -ex {0}
-        run: zcat /tmp/rnode-docker.tar.gz | docker image load
+        run: zcat /tmp/rust-node-docker.tar.gz | docker image load
 
       - name: Run Integration Test
         env:

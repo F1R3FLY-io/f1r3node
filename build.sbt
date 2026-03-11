@@ -493,6 +493,14 @@ lazy val node = (project in file("node"))
     // Note: Compile / fork removed - stack size set via SBT_OPTS (-Xss8m) in CI workflow
     // This avoids cold JVM startup penalty for circe-generic-extras macro expansion
     Test / fork := true,
+    // Enable forking for run task to apply javaOptions
+    run / fork := true,
+    run / javaOptions ++= List(
+      s"-Djna.library.path=../$releaseJnaLibraryPath"
+    ) ++ javaOpens,
+    run / envVars := Map(
+      "LD_PRELOAD" -> s"${baseDirectory.value}/../rust_libraries/release/librspace_plus_plus_rhotypes.so:${baseDirectory.value}/../rust_libraries/release/librholang.so"
+    ),
     // Replace unsupported character `+`
     version in Docker := { version.value.replace("+", "__") },
     mappings in Docker ++= {

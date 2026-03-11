@@ -220,7 +220,7 @@ impl<'a> RholangZipperHead<'a> {
 }
 
 /// Helper function to flatten path segments with 0xFF separator
-pub(crate) fn flatten_segments(segments: &[Vec<u8>]) -> Vec<u8> {
+pub fn flatten_segments(segments: &[Vec<u8>]) -> Vec<u8> {
     segments
         .iter()
         .flat_map(|seg| {
@@ -232,8 +232,7 @@ pub(crate) fn flatten_segments(segments: &[Vec<u8>]) -> Vec<u8> {
 }
 
 /// Helper function to unflatten path segments (split by 0xFF separator)
-#[allow(dead_code)]
-pub(crate) fn unflatten_segments(flattened: &[u8]) -> Vec<Vec<u8>> {
+pub fn unflatten_segments(flattened: &[u8]) -> Vec<Vec<u8>> {
     flattened
         .split(|&b| b == 0xFF)
         .filter(|seg| !seg.is_empty())

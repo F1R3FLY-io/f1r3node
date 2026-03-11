@@ -43,7 +43,21 @@ imbl = "7"
 regex = "1.12"
 async-trait = "0.1"
 metrics = "0.24"
+pathmap = "0.2.2"
 stacker = "0.1"
+
+[workspace.lints.rust]
+warnings = "deny"
 
 [profile.dev]
 debug = true
+
+# Unify all pathmap sources to the single local clone.
+# MORK and f1r3node use a git dep; liblevenshtein uses crates.io 0.2.2.
+# Without these patches, three different pathmap instances cause
+# global_allocator conflicts and trait/type mismatches (44 errors).
+[patch."https://github.com/dylon/PathMap.git"]
+pathmap = { path = "../PathMap" }
+
+[patch.crates-io]
+pathmap = { path = "../PathMap" }

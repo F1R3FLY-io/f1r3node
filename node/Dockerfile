@@ -21,6 +21,7 @@ RUN apt-get update && apt-get install -y \
     build-essential \
     protobuf-compiler \
     curl \
+    git \
     cmake \
     gcc-x86-64-linux-gnu \
     g++-x86-64-linux-gnu \
@@ -28,7 +29,7 @@ RUN apt-get update && apt-get install -y \
     g++-aarch64-linux-gnu \
     && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /build
+WORKDIR /f1r3node
 
 COPY --from=xx / /
 
@@ -61,25 +62,45 @@ COPY comm/ ./comm/
 COPY rholang/ ./rholang/
 COPY node/ ./node/
 
-# Configure pkg-config for cross-compilation to find target OpenSSL libraries
-# xx-apt installs target libs in the xx sysroot, we need to tell pkg-config where they are
-# Enable AES CPU features for gxhash dependency (required by PathMap crate).
-# +sse2 is x86-only; on aarch64 only +aes is valid (avoids warning spam on ARM hosts).
+# Clone external dependencies required by [patch] sections and mettatron
+RUN git clone --depth 1 --branch feature/mettatron-fixes \
+      https://github.com/dylon/PathMap.git /PathMap && \
+    git clone --depth 1 --branch feature/arbitrary-space-value-types \
+      https://github.com/dylon/MORK.git /MORK && \
+    git clone --depth 1 --branch feature/pln-support \
+      https://github.com/F1R3FLY-io/MeTTa-Compiler.git /MeTTa-Compiler
+
+# Build the node binary.
+# Native builds (build arch == target arch) use cargo directly — xx-cargo's
+# clang wrappers break jemalloc's autoconf (strerror_r detection fails because
+# the xx sysroot is incomplete for configure compile-and-run tests).
+# Cross-compilation falls back to xx-cargo for proper sysroot/pkg-config setup.
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
-    --mount=type=cache,target=/build/build \
-    export TARGET_TRIPLE=$(xx-cargo --print-target-triple) && \
-    export PKG_CONFIG_SYSROOT_DIR=$(xx-info sysroot) && \
-    export PKG_CONFIG_PATH=$(xx-info sysroot)/usr/lib/$(xx-info triple)/pkgconfig:$(xx-info sysroot)/usr/share/pkgconfig && \
-    export PKG_CONFIG_ALLOW_CROSS=1 && \
-    case "${TARGET_TRIPLE}" in \
-        aarch64*) export RUSTFLAGS="-C target-feature=+aes" ;; \
+    --mount=type=cache,target=/f1r3node/build \
+    BUILD_ARCH=$(uname -m) && \
+    case "$TARGETARCH" in \
+        amd64) TARGET_UNAME="x86_64" ;; \
+        arm64) TARGET_UNAME="aarch64" ;; \
+        *) TARGET_UNAME="$TARGETARCH" ;; \
+    esac && \
+    case "${TARGET_UNAME}" in \
+        aarch64) export RUSTFLAGS="-C target-feature=+aes" ;; \
         *) export RUSTFLAGS="-C target-feature=+aes,+sse2" ;; \
     esac && \
-    xx-cargo build --release -p node --target-dir ./build && \
-    xx-verify ./build/${TARGET_TRIPLE}/release/node && \
-    cp ./build/${TARGET_TRIPLE}/release/node /build/node_binary && \
-    chmod +x /build/node_binary
+    if [ "$BUILD_ARCH" = "$TARGET_UNAME" ]; then \
+        cargo build --release -p node --features rholang/mettatron --target-dir ./build && \
+        cp ./build/release/node /f1r3node/node_binary; \
+    else \
+        export TARGET_TRIPLE=$(xx-cargo --print-target-triple) && \
+        export PKG_CONFIG_SYSROOT_DIR=$(xx-info sysroot) && \
+        export PKG_CONFIG_PATH="$(xx-info sysroot)/usr/lib/$(xx-info triple)/pkgconfig:$(xx-info sysroot)/usr/share/pkgconfig" && \
+        export PKG_CONFIG_ALLOW_CROSS=1 && \
+        xx-cargo build --release -p node --features rholang/mettatron --target-dir ./build && \
+        xx-verify ./build/${TARGET_TRIPLE}/release/node && \
+        cp ./build/${TARGET_TRIPLE}/release/node /f1r3node/node_binary; \
+    fi && \
+    chmod +x /f1r3node/node_binary
 
 # ============================================================================
 # Stage 2: Runtime base - Install runtime dependencies (cached independently)
@@ -136,18 +157,18 @@ RUN mkdir -p /opt/docker/bin
 
 # Copy node binary (using node_binary from builder to avoid conflict with node/ directory)
 # Verify it's a file before copying
-COPY --from=builder --chmod=755 /build/node_binary /opt/docker/bin/node
+COPY --from=builder --chmod=755 /f1r3node/node_binary /opt/docker/bin/node
 
 # Copy node resources (defaults.conf, kamon.conf, logback.xml, etc.)
 # The node executable expects these at node/src/main/resources relative to current directory
-COPY --from=builder /build/node/src/main/resources ./node/src/main/resources
+COPY --from=builder /f1r3node/node/src/main/resources ./node/src/main/resources
 
 # Copy casper resources (Registry.rho, ListOps.rho, etc.)
 # The node executable needs these at runtime to create genesis blocks
-COPY --from=builder /build/casper/src/main/resources ./casper/src/main/resources
+COPY --from=builder /f1r3node/casper/src/main/resources ./casper/src/main/resources
 
 # Copy rholang examples (matching build.sbt: directory((baseDirectory in rholang).value / "examples"))
-COPY --from=builder /build/rholang/examples ./examples
+COPY --from=builder /f1r3node/rholang/examples ./examples
 
 # Create entrypoint script for Rust (adapted from docker-entrypoint.sh)
 # Copy the Rust-specific entrypoint script from node directory

@@ -42,8 +42,9 @@ fn extract_list_path(par: &Par) -> Option<Vec<Vec<u8>>> {
     None
 }
 
-// Basic SExpr parser for structure encoding (copy your existing logic if complex)
-fn parse_sexpr(s: &str) -> SExpr {
+/// Parse an S-expression string into an SExpr tree.
+/// Public so that `sexpr_to_par` and other modules can reuse it.
+pub fn parse_sexpr(s: &str) -> SExpr {
     let s = s.trim();
     if !s.starts_with('(') {
         return SExpr::Symbol(s.to_string());
@@ -57,7 +58,10 @@ fn parse_sexpr(s: &str) -> SExpr {
     SExpr::Symbol(s.to_string())
 }
 
-fn split_sexpr(s: &str) -> Vec<String> {
+/// Split an S-expression string at top-level whitespace boundaries,
+/// respecting nested parentheses and string literals.
+/// Public so that `sexpr_to_par` and other modules can reuse it.
+pub fn split_sexpr(s: &str) -> Vec<String> {
     let mut parts = Vec::new();
     let mut current = String::new();
     let mut depth = 0;
