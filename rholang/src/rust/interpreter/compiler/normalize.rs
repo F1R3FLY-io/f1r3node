@@ -148,6 +148,12 @@ pub fn normalize_ann_proc<'ast>(
         Proc::Unit
         | Proc::BoolLiteral(_)
         | Proc::LongLiteral(_)
+        | Proc::SignedIntLiteral { .. }
+        | Proc::UnsignedIntLiteral { .. }
+        | Proc::BigIntLiteral(_)
+        | Proc::BigRatLiteral(_)
+        | Proc::FloatLiteral { .. }
+        | Proc::FixedPointLiteral { .. }
         | Proc::StringLiteral(_)
         | Proc::UriLiteral(_) => normalize_p_ground(&proc.proc, input),
 
