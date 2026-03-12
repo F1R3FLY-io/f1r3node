@@ -132,4 +132,3 @@ async fn estimator_should_obey_absent_parent_depth_limitation() {
         "Expected b6 to have b5 as a parent"
     );
 }
-

@@ -1,4 +1,5 @@
 pub mod approve_block_protocol_test;
+pub mod block_approver_protocol_test;
 pub mod engine_cell_test;
 pub mod genesis_ceremony_master_spec;
 pub mod genesis_validator_spec;
@@ -7,8 +8,7 @@ pub mod lfs_block_requester_effects_spec;
 pub mod lfs_block_requester_state_spec;
 pub mod lfs_state_requester_effects_spec;
 pub mod lfs_state_requester_state_spec;
-pub mod running_spec;
-pub mod setup;
-pub mod block_approver_protocol_test;
 pub mod running_handle_has_block_request_spec;
 pub mod running_handle_has_block_spec;
+pub mod running_spec;
+pub mod setup;

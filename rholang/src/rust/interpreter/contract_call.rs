@@ -35,10 +35,11 @@ pub struct ContractCall {
 
 pub type Producer = Box<
     dyn FnOnce(
-        &[Par],
-        &Par,
-    ) -> Pin<Box<dyn futures::Future<Output = Result<Vec<Par>, InterpreterError>> + Send>>
-    + Send,
+            &[Par],
+            &Par,
+        )
+            -> Pin<Box<dyn futures::Future<Output = Result<Vec<Par>, InterpreterError>> + Send>>
+        + Send,
 >;
 
 impl ContractCall {
@@ -119,7 +120,11 @@ impl ContractCall {
                         Err(e) => Err(e),
                     }
                 })
-                    as Pin<Box<dyn futures::Future<Output = Result<Vec<Par>, InterpreterError>> + Send>>
+                    as Pin<
+                        Box<
+                            dyn futures::Future<Output = Result<Vec<Par>, InterpreterError>> + Send,
+                        >,
+                    >
             });
 
             Some((produce, is_replay, previous, args))

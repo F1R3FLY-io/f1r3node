@@ -2,9 +2,7 @@
 
 use crate::helper::test_node::TestNode;
 use crate::util::genesis_builder::GenesisBuilder;
-use casper::rust::util::{
-    construct_deploy, proto_util, rholang::tools::Tools, rspace_util,
-};
+use casper::rust::util::{construct_deploy, proto_util, rholang::tools::Tools, rspace_util};
 use crypto::rust::signatures::{secp256k1::Secp256k1, signatures_alg::SignaturesAlg};
 
 // Scala comments:

@@ -374,7 +374,8 @@
                     "validAfterBlockNumber": 420136,
                     "cost": 23,
                     "errored": false,
-                    "systemDeployError": ""
+                    "systemDeployError": "",
+                    "transfers": []
                   }
                 ]
               }
@@ -1287,9 +1288,45 @@
         "validAfterBlockNumber": {
           "type": "integer",
           "format": "int64"
+        },
+        "transfers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/TransferInfo"
+          },
+          "description": "Native token transfers executed by this deploy. Empty array if no transfers or data not yet extracted."
         }
       },
       "description": "DeployInfo"
+    },
+    "TransferInfo": {
+      "type": "object",
+      "properties": {
+        "fromAddr": {
+          "type": "string",
+          "format": "rev-address",
+          "description": "Sender address"
+        },
+        "toAddr": {
+          "type": "string",
+          "format": "rev-address",
+          "description": "Recipient address"
+        },
+        "amount": {
+          "type": "integer",
+          "format": "int64",
+          "description": "Transfer amount in smallest units (dust)"
+        },
+        "success": {
+          "type": "boolean",
+          "description": "Whether the transfer succeeded"
+        },
+        "failReason": {
+          "type": "string",
+          "description": "Error message if success is false, empty string otherwise"
+        }
+      },
+      "description": "Native token transfer details extracted from deploy execution"
     },
     "JustificationInfo": {
       "type": "object",

@@ -33,6 +33,65 @@ class InitializingSpec extends WordSpec with BeforeAndAfterEach {
     transportLayer.reset()
 
   "Initializing state" should {
+    // This test verifies the fix for the race condition where a slow validator
+    // misses the ApprovedBlock during genesis ceremony. The fix is to proactively
+    // request the ApprovedBlock when entering Initializing state, rather than
+    // waiting for it to arrive (which may never happen if it was already broadcast
+    // and dropped while the node was still in GenesisValidator state).
+    "proactively request ApprovedBlock on init" in {
+      implicit val engineCell = Cell.unsafe[Task, Engine[Task]](Engine.noop)
+
+      val blockResponseQueue = Queue.unbounded[Task, BlockMessage].runSyncUnsafe()
+      val stateResponseQueue = Queue.unbounded[Task, StoreItemsMessage].runSyncUnsafe()
+
+      val initializingEngine =
+        new Initializing[Task](
+          fixture.blockProcessingQueue,
+          fixture.blockProcessingState,
+          fixture.casperShardConf,
+          Some(validatorId),
+          Task.unit, // theInit
+          blockResponseQueue,
+          stateResponseQueue,
+          trimState = true,
+          disableStateExporter = false,
+          onBlockFinalized = (_: String) => Task.unit
+        )
+
+      // Clear any previous transport requests and set up responses
+      transportLayer.reset()
+      transportLayer.setResponses(_ => _ => Right(()))
+
+      val expectedContent = ApprovedBlockRequest("", trimState = true).toProto.toByteString
+
+      // Poll until the request appears (sendWithRetry spawns a fiber)
+      def pollForRequest(maxAttempts: Int, interval: FiniteDuration): Task[Unit] =
+        Task.defer {
+          val requests = transportLayer.requests
+          if (requests.exists(_.msg.message.packet.exists(_.content == expectedContent))) {
+            Task.unit
+          } else if (maxAttempts <= 0) {
+            Task.raiseError(
+              new AssertionError(
+                s"Initializing.init should send ApprovedBlockRequest within timeout. Requests sent: ${requests
+                  .map(_.msg)}"
+              )
+            )
+          } else {
+            Task.sleep(interval) >> pollForRequest(maxAttempts - 1, interval)
+          }
+        }
+
+      val test = for {
+        // Call init - this should proactively request ApprovedBlock
+        _ <- initializingEngine.init
+        // Poll for the request with timeout (50 attempts * 10ms = 500ms max)
+        _ <- pollForRequest(maxAttempts = 50, interval = 10.millis)
+      } yield ()
+
+      test.unsafeRunSync
+    }
+
     "make a transition to Running once ApprovedBlock has been received" in {
       val theInit = Task.unit
 
@@ -52,7 +111,8 @@ class InitializingSpec extends WordSpec with BeforeAndAfterEach {
           blockResponseQueue,
           stateResponseQueue,
           trimState = true,
-          disableStateExporter = false
+          disableStateExporter = false,
+          onBlockFinalized = (_: String) => Task.unit
         )
 
       val approvedBlockCandidate = ApprovedBlockCandidate(block = genesis, requiredSigs = 0)
@@ -141,11 +201,13 @@ class InitializingSpec extends WordSpec with BeforeAndAfterEach {
         handlerInternal <- EngineCell[Task].read
         _               = assert(handlerInternal.isInstanceOf[Running[Task]])
 
-        // Assert requested messages for the state and fork choice tip
-        _        = assert(transportLayer.requests.size == expectedRequests.size)
-        messages = transportLayer.requests.map(_.msg)
-        _        = assert(messages.toSet == expectedRequests.toSet)
-        _        = transportLayer.reset()
+        // Assert all expected messages were requested (may include retries due to backoff)
+        messages = transportLayer.requests.map(_.msg).toSet
+        _ = assert(
+          expectedRequests.forall(messages.contains),
+          s"Missing expected requests. Got: $messages"
+        )
+        _ = transportLayer.reset()
 
         // assert that we really serve last approved block
         lastApprovedBlockO <- LastApprovedBlock[Task].get

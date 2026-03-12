@@ -23,7 +23,7 @@ impl SystemDeployTrait for CheckBalance {
     type Output = RhoNumber;
     type Result = i64;
 
-    fn source() -> String {
+    fn source() -> &'static str {
         r#"
         new deployerId(`sys:casper:deployerId`),
         return(`sys:casper:return`),
@@ -43,7 +43,6 @@ impl SystemDeployTrait for CheckBalance {
             }
           }
       "#
-        .to_string()
     }
 
     fn as_any(&self) -> &dyn std::any::Any {

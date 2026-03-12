@@ -91,7 +91,10 @@ new
 
         // 2. Reset runtime to this empty state
         let empty_hash_b2 = Blake2b256Hash::from_bytes_prost(&hash1);
-        runtime_ops.runtime.reset(&empty_hash_b2);
+        runtime_ops
+            .runtime
+            .reset(&empty_hash_b2)
+            .expect("Failed to reset runtime to empty state");
 
         // Bootstrap registry directly (avoids heavy Registry.rho deploy which overflows stack)
         runtime_ops
@@ -101,7 +104,10 @@ new
 
         // 4. Create a checkpoint and reset to it – aligns with Scala test
         let check = runtime_ops.runtime.create_checkpoint();
-        runtime_ops.runtime.reset(&check.root);
+        runtime_ops
+            .runtime
+            .reset(&check.root)
+            .expect("Failed to reset runtime to first checkpoint");
 
         // 5. Create deploy that initializes the TreeHashMap
         let initial_trie_deploy = construct_deploy::source_deploy(
@@ -141,7 +147,10 @@ new
         );
 
         // 8. Reset to checkpoint2 – discarding exploratory deploy changes
-        runtime_ops.runtime.reset(&check2.root);
+        runtime_ops
+            .runtime
+            .reset(&check2.root)
+            .expect("Failed to reset runtime to second checkpoint");
 
         // 9. Retrieve trie map handle (first element)
         let trie_map_handle = &trie_map_handle_r[0];

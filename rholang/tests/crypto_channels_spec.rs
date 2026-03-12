@@ -20,11 +20,11 @@ mod tests {
     use rholang::rust::interpreter::{
         accounting::costs::Cost,
         env::Env,
+        external_services::ExternalServices,
         matcher::r#match::Matcher,
         rho_runtime::{create_rho_runtime, RhoRuntime, RhoRuntimeImpl},
         rho_type::RhoByteArray,
         system_processes::FixedChannels,
-        external_services::ExternalServices,
     };
     use rspace_plus_plus::rspace::{
         rspace::RSpace,

@@ -19,7 +19,13 @@ impl VaultsGenerator {
     ) -> Self {
         let vault_balance_list = user_vaults
             .iter()
-            .map(|v| format!("(\"{}\", {})", v.vault_address.to_base58(), v.initial_balance))
+            .map(|v| {
+                format!(
+                    "(\"{}\", {})",
+                    v.vault_address.to_base58(),
+                    v.initial_balance
+                )
+            })
             .collect::<Vec<String>>()
             .join(", ");
 

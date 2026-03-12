@@ -27,7 +27,6 @@ pub mod system_processes;
 pub mod test_utils;
 pub mod util;
 
-
 pub fn unwrap_option_safe<A: Clone + std::fmt::Debug>(
     opt: Option<A>,
 ) -> Result<A, InterpreterError> {

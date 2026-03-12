@@ -18,9 +18,7 @@ use shared::rust::{
 
 pub type ReportStore = CompressedBlockEventInfoStore;
 
-pub async fn report_store(
-    kvm: &mut impl KeyValueStoreManager,
-) -> Result<ReportStore, KvStoreError> {
+pub async fn report_store(kvm: &mut dyn KeyValueStoreManager) -> Result<ReportStore, KvStoreError> {
     let store = kvm.store("reporting-cache".to_string()).await?;
     Ok(CompressedBlockEventInfoStore::new(store))
 }
@@ -155,10 +153,10 @@ impl KeyValueTypedStore<ByteString, BlockEventInfo> for CompressedBlockEventInfo
 /// Compress bytes using LZ4 with varint length prefix (compatible with Java LZ4CompressorWithLength)
 fn compress_bytes(bytes: &[u8]) -> Vec<u8> {
     use prost::encoding::encode_varint;
-    
+
     let compressed = lz4_flex::compress(bytes);
     let mut result = Vec::new();
-    
+
     // Encode original (decompressed) length as varint to match Java format
     encode_varint(bytes.len() as u64, &mut result);
     result.extend_from_slice(&compressed);
@@ -169,15 +167,16 @@ fn compress_bytes(bytes: &[u8]) -> Vec<u8> {
 fn decompress_bytes(bytes: &[u8]) -> Result<Vec<u8>, KvStoreError> {
     use prost::encoding::decode_varint;
     use std::io::Cursor;
-    
+
     let mut cursor = Cursor::new(bytes);
-    
+
     // Decode varint length prefix (matching Java format)
-    let decompressed_length = decode_varint(&mut cursor)
-        .map_err(|e| KvStoreError::SerializationError(format!("Failed to decode varint length: {}", e)))? as usize;
-    
+    let decompressed_length = decode_varint(&mut cursor).map_err(|e| {
+        KvStoreError::SerializationError(format!("Failed to decode varint length: {}", e))
+    })? as usize;
+
     let compressed_data = &bytes[cursor.position() as usize..];
-    
+
     // Decompress with the decoded length
     lz4_flex::decompress(compressed_data, decompressed_length)
         .map_err(|e| KvStoreError::SerializationError(format!("LZ4 decompression failed: {}", e)))

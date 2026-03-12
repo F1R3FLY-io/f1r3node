@@ -29,3 +29,5 @@ pub const PACKETS_DROPPED_METRIC: &str = "packets.dropped";
 pub const STREAM_CHUNKS_RECEIVED_METRIC: &str = "stream.chunks.received";
 pub const STREAM_CHUNKS_ENQUEUED_METRIC: &str = "stream.chunks.enqueued";
 pub const STREAM_CHUNKS_DROPPED_METRIC: &str = "stream.chunks.dropped";
+pub const STREAM_CACHE_ENTRIES_METRIC: &str = "stream.cache.entries";
+pub const STREAM_CACHE_BYTES_METRIC: &str = "stream.cache.bytes";

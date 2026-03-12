@@ -1,7 +1,7 @@
-use std::{
-    collections::{BTreeSet, HashMap, HashSet, LinkedList},
-    sync::{Arc, Mutex},
-};
+use std::collections::{BTreeSet, HashMap, HashSet, LinkedList};
+use std::fmt::Debug;
+use std::hash::Hash;
+use std::sync::{Arc, Mutex};
 
 use dashmap::DashMap;
 use proptest::collection::vec;
@@ -9,19 +9,15 @@ use proptest::prelude::*;
 use proptest_derive::Arbitrary;
 use rand::prelude::SliceRandom;
 use rand::thread_rng;
-use rspace_plus_plus::rspace::{
-    history::history_reader::HistoryReaderBase,
-    hot_store::{HotStore, HotStoreInstances, HotStoreState},
-    hot_store_action::{
-        DeleteAction, DeleteContinuations, DeleteData, DeleteJoins, HotStoreAction, InsertAction,
-        InsertContinuations, InsertData, InsertJoins,
-    },
-    internal::{Datum, WaitingContinuation},
+use rspace_plus_plus::rspace::history::history_reader::HistoryReaderBase;
+use rspace_plus_plus::rspace::hot_store::{HotStore, HotStoreInstances, HotStoreState};
+use rspace_plus_plus::rspace::hot_store_action::{
+    DeleteAction, DeleteContinuations, DeleteData, DeleteJoins, HotStoreAction, InsertAction,
+    InsertContinuations, InsertData, InsertJoins,
 };
+use rspace_plus_plus::rspace::internal::{Datum, WaitingContinuation};
 use rstest::*;
 use serde::Serialize;
-use std::fmt::Debug;
-use std::hash::Hash;
 
 // See rspace/src/test/scala/coop/rchain/rspace/HotStoreSpec.scala
 
@@ -712,7 +708,16 @@ proptest! {
 
   #[test]
   fn snapshot_should_create_a_copy_of_the_cache(_cache in  any::<String>()) {
-      let cache: HotStoreState<String, Pattern, String, StringsCaptor> = HotStoreState::random_state();
+      let channels = vec!["ch1".to_string(), "ch2".to_string()];
+      let channel = channels[0].clone();
+      let continuation = WaitingContinuation::<Pattern, StringsCaptor>::default();
+      let cache = HotStoreState {
+          continuations: DashMap::from_iter(vec![(channels.clone(), vec![continuation.clone()])]),
+          installed_continuations: DashMap::from_iter(vec![(channels.clone(), continuation)]),
+          data: DashMap::from_iter(vec![(channel.clone(), vec![Datum::<String>::default()])]),
+          joins: DashMap::from_iter(vec![(channel.clone(), vec![channels.clone()])]),
+          installed_joins: DashMap::from_iter(vec![(channel, vec![channels.clone()])]),
+      };
       let (_, _, hot_store) = fixture_with_cache(cache.clone());
 
       let snapshot = hot_store.snapshot();
@@ -914,17 +919,11 @@ impl<C: Clone + Eq + Hash + Send, P: Clone + Send, A: Clone + Send, K: Clone + S
         joins
     }
 
-    fn get_data_proj(&self, _key: &C) -> Vec<Datum<A>> {
-        todo!()
-    }
+    fn get_data_proj(&self, _key: &C) -> Vec<Datum<A>> { todo!() }
 
-    fn get_continuations_proj(&self, _key: &Vec<C>) -> Vec<WaitingContinuation<P, K>> {
-        todo!()
-    }
+    fn get_continuations_proj(&self, _key: &Vec<C>) -> Vec<WaitingContinuation<P, K>> { todo!() }
 
-    fn get_joins_proj(&self, _key: &C) -> Vec<Vec<C>> {
-        todo!()
-    }
+    fn get_joins_proj(&self, _key: &C) -> Vec<Vec<C>> { todo!() }
 }
 
 impl<C: Eq + Hash, P: Clone, A: Clone, K: Clone> TestHistory<C, P, A, K> {

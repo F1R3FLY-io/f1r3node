@@ -2,8 +2,8 @@
 //
 // ## Race Condition Fix with Shared LMDB
 //
-// Unlike Scala tests where each test gets its own separate LMDB database, Rust tests use a 
-// SHARED_LMDB_ENV (see resources.rs) for performance optimization. This means all 300+ tests 
+// Unlike Scala tests where each test gets its own separate LMDB database, Rust tests use a
+// SHARED_LMDB_ENV (see resources.rs) for performance optimization. This means all 300+ tests
 // write to the same LMDB database concurrently.
 //
 // ### The Problem:
@@ -44,7 +44,7 @@ where
     // This prevents concurrent tests from interfering with each other when using shared LMDB.
     // The lock is held for the entire test duration to guarantee consistency.
     let _lock_guard = resources::SHARED_LMDB_LOCK.lock().unwrap();
-    
+
     async fn create(
         genesis_context: &GenesisContext,
     ) -> (KeyValueBlockStore, IndexedBlockDagStorage, RuntimeManager) {
@@ -87,7 +87,7 @@ where
     // Acquire global lock for shared LMDB to ensure test isolation.
     // Same reason as with_genesis - prevents race conditions with shared LMDB.
     let _lock_guard = resources::SHARED_LMDB_LOCK.lock().unwrap();
-    
+
     async fn create() -> (KeyValueBlockStore, IndexedBlockDagStorage) {
         let scope_id = resources::generate_scope_id();
         let mut kvm = resources::mk_test_rnode_store_manager_shared(scope_id);

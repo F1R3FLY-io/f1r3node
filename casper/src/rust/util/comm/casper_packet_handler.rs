@@ -18,7 +18,9 @@ use crate::rust::{
     },
 };
 
-use shared::rust::{metrics_constants::CASPER_PACKET_HANDLER_METRICS_SOURCE, metrics_semaphore::MetricsSemaphore};
+use shared::rust::{
+    metrics_constants::CASPER_PACKET_HANDLER_METRICS_SOURCE, metrics_semaphore::MetricsSemaphore,
+};
 
 #[derive(Clone)]
 pub struct CasperPacketHandler {
@@ -278,7 +280,9 @@ pub async fn fair_dispatcher(
     drop_peer_after_retries: usize,
 ) -> Result<FairDispatcherPacketHandler, CasperError> {
     // Create semaphore lock for dispatcher
-    let lock = Arc::new(MetricsSemaphore::single(CASPER_PACKET_HANDLER_METRICS_SOURCE));
+    let lock = Arc::new(MetricsSemaphore::single(
+        CASPER_PACKET_HANDLER_METRICS_SOURCE,
+    ));
 
     // Create filter closure that captures engine_cell
     let engine_cell_for_filter = engine_cell.clone();

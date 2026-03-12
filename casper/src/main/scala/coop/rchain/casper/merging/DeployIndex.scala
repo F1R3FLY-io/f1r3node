@@ -5,6 +5,7 @@ import cats.syntax.all._
 import com.google.protobuf.ByteString
 import coop.rchain.casper.protocol.Event
 import coop.rchain.rspace.merger.EventLogIndex
+import scodec.bits.ByteVector
 
 /** index of a single deploy */
 final case class DeployIndex(
@@ -14,6 +15,9 @@ final case class DeployIndex(
 )
 
 object DeployIndex {
+  // Ordering for deterministic iteration - sort by deployId bytes
+  implicit val ord: Ordering[DeployIndex] =
+    Ordering.by(d => ByteVector.view(d.deployId.toByteArray))
   // This cost is required because rejection option selection rule depends on how much branch costs.
   // For now system deploys do not have any weight, cost is 0.
   val SYS_SLASH_DEPLOY_COST       = 0L

@@ -1,11 +1,14 @@
 // See node/src/main/scala/coop/rchain/node/runtime/Setup.scala
+use tracing::{debug, info, trace, warn};
 
 // Imports needed for function signature and return type
 use std::{
-    collections::HashSet,
     future::Future,
     pin::Pin,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc, Mutex,
+    },
 };
 use tokio::sync::{mpsc, oneshot, RwLock};
 
@@ -14,6 +17,9 @@ use models::rust::{
     casper::protocol::casper_message::{ApprovedBlock, BlockMessage},
 };
 
+use casper::rust::metrics_constants::{
+    PROPOSER_QUEUE_PENDING_METRIC, PROPOSER_QUEUE_REJECTED_TOTAL_METRIC, VALIDATOR_METRICS_SOURCE,
+};
 use casper::rust::{
     blocks::{
         block_processor::BlockProcessor,
@@ -31,6 +37,7 @@ use comm::rust::{
     rp::connect::ConnectionsCell, transport::transport_layer::TransportLayer,
 };
 
+use shared::rust::env;
 use shared::rust::shared::f1r3fly_events::F1r3flyEvents;
 
 use crate::rust::{
@@ -42,6 +49,34 @@ use crate::rust::{
     },
     web::reporting_routes::{ReportingHttpRoutes, ReportingRoutes},
 };
+
+const PROPOSER_QUEUE_MAX_PENDING_DEFAULT: usize = 1024;
+const PROPOSER_QUEUE_MAX_PENDING_ENV: &str = "F1R3_PROPOSER_QUEUE_MAX_PENDING";
+const BLOCK_PROCESSOR_QUEUE_MAX_PENDING_DEFAULT: usize = 512;
+const BLOCK_PROCESSOR_QUEUE_MAX_PENDING_ENV: &str = "F1R3_MAX_BLOCKS_IN_PROCESSING";
+
+type ProposerQueueEntry = (
+    Arc<dyn Casper + Send + Sync>,
+    bool,
+    oneshot::Sender<ProposerResult>,
+    u8,
+);
+
+fn proposer_queue_max_pending() -> usize {
+    env::var_or_filtered(
+        PROPOSER_QUEUE_MAX_PENDING_ENV,
+        PROPOSER_QUEUE_MAX_PENDING_DEFAULT,
+        |v: &usize| *v > 0,
+    )
+}
+
+fn block_processor_queue_max_pending() -> usize {
+    env::var_or_filtered(
+        BLOCK_PROCESSOR_QUEUE_MAX_PENDING_ENV,
+        BLOCK_PROCESSOR_QUEUE_MAX_PENDING_DEFAULT,
+        |v: &usize| *v > 0,
+    )
+}
 
 pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'static>(
     rp_connections: ConnectionsCell,
@@ -64,21 +99,15 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
         Arc<dyn WebApi + Send + Sync + 'static>,
         Arc<dyn AdminWebApi + Send + Sync + 'static>,
         Option<ProductionProposer<T>>,
-        mpsc::UnboundedReceiver<(
-            Arc<dyn Casper + Send + Sync>,
-            bool,
-            oneshot::Sender<ProposerResult>,
-        )>,
-        mpsc::UnboundedSender<(
-            Arc<dyn Casper + Send + Sync>,
-            bool,
-            oneshot::Sender<ProposerResult>,
-        )>,
+        mpsc::Receiver<ProposerQueueEntry>,
+        mpsc::Sender<ProposerQueueEntry>,
+        Arc<AtomicUsize>,
+        usize,
         Option<Arc<RwLock<ProposerState>>>,
         BlockProcessor<T>,
-        Arc<Mutex<HashSet<BlockHash>>>,
-        mpsc::UnboundedSender<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
-        mpsc::UnboundedReceiver<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
+        Arc<dashmap::DashSet<BlockHash>>,
+        mpsc::Sender<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
+        mpsc::Receiver<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
         Option<Arc<ProposeFunction>>,
         Arc<casper::rust::api::block_report_api::BlockReportAPI>,
         block_storage::rust::key_value_block_store::KeyValueBlockStore,
@@ -93,6 +122,8 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
     ),
     CasperError,
 > {
+    info!(data_dir = ?conf.storage.data_dir, "Initializing key-value store manager");
+
     // RNode key-value store manager / manages LMDB databases
     let mut rnode_store_manager = {
         use casper::rust::storage::rnode_key_value_store_manager::new_key_value_store_manager;
@@ -124,6 +155,10 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
             .migrate_lfb(&mut rnode_store_manager, &block_store)
             .await?;
     }
+    info!(
+        lfb_migration = lfb_require_migration,
+        "LastFinalized storage checked"
+    );
 
     // Block DAG storage
     let block_dag_storage = {
@@ -167,6 +202,11 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
 
     // Determine if this node is a validator
     let is_validator = conf.casper.validator_private_key.is_some();
+    info!(
+        validator = is_validator,
+        autopropose = conf.autopropose,
+        "Node role determined"
+    );
 
     // Create external services based on node type
     // Load OpenAI config from HOCON with environment variable override
@@ -185,7 +225,6 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
         let ollama_config = OllamaConfig::from_env();
         ExternalServices::for_node_type(is_validator, &config, &ollama_config)
     };
-
 
     // Runtime for `rnode eval`
     let eval_runtime = {
@@ -243,7 +282,12 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
                 .r_space_stores()
                 .await
                 .map_err(|e| CasperError::Other(format!("Failed to get rspace stores: {}", e)))?;
-            reporting_casper::rho_reporter(&rspace_stores, &block_store, &block_dag_storage)
+            reporting_casper::rho_reporter(
+                &rspace_stores,
+                &block_store,
+                &block_dag_storage,
+                rholang::rust::interpreter::external_services::ExternalServices::noop(),
+            )
         } else {
             reporting_casper::noop()
         }
@@ -268,11 +312,14 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
 
     // Block processor queue - mpsc channel connecting producers (CasperLaunch, Running)
     // to consumer (BlockProcessorInstance)
+    let block_processor_queue_max_pending = block_processor_queue_max_pending();
     let (block_processor_queue_tx, block_processor_queue_rx) =
-        mpsc::unbounded_channel::<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>();
+        mpsc::channel::<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>(
+            block_processor_queue_max_pending,
+        );
 
     // Block processing state - set of items currently in processing
-    let block_processor_state_ref = Arc::new(Mutex::new(HashSet::<BlockHash>::new()));
+    let block_processor_state_ref = Arc::new(dashmap::DashSet::<BlockHash>::new());
 
     // Read RPConf once for use in multiple places
     let rp_conf = rp_conf_cell
@@ -331,36 +378,84 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
             conf.casper.heartbeat_conf.enabled,
         )
     });
+    match &proposer {
+        Some(_) => info!("Proposer initialized"),
+        None => info!("Running without proposer"),
+    }
 
     // Propose request is a tuple - Casper, async flag and deferred proposer result that will be resolved by proposer
-    let (proposer_queue_tx, proposer_queue_rx) = mpsc::unbounded_channel::<(
-        Arc<dyn Casper + Send + Sync>,
-        bool,
-        oneshot::Sender<ProposerResult>,
-    )>();
+    let proposer_queue_pending = Arc::new(AtomicUsize::new(0));
+    let proposer_queue_max_pending = proposer_queue_max_pending();
+    metrics::gauge!(
+        PROPOSER_QUEUE_PENDING_METRIC,
+        "source" => VALIDATOR_METRICS_SOURCE
+    )
+    .set(0.0);
+
+    let (proposer_queue_tx, proposer_queue_rx) =
+        mpsc::channel::<ProposerQueueEntry>(proposer_queue_max_pending);
 
     // Trigger propose function - wraps proposerQueue to provide propose functionality
     let trigger_propose_f_opt: Option<Arc<ProposeFunction>> = if proposer.is_some() {
         let queue_tx = proposer_queue_tx.clone();
+        let queue_pending = proposer_queue_pending.clone();
+        let queue_max_pending = proposer_queue_max_pending;
         Some(Arc::new(
             move |casper: Arc<dyn MultiParentCasper + Send + Sync>, is_async: bool| {
                 let queue_tx = queue_tx.clone();
+                let queue_pending = queue_pending.clone();
                 // Downcast to Arc<dyn Casper + Send + Sync> for the queue (MultiParentCasper extends Casper)
                 let casper_for_queue: Arc<dyn Casper + Send + Sync> = casper;
 
                 Box::pin(async move {
+                    debug!(async_mode = is_async, "Propose request enqueued");
+
+                    // Guard against unbounded queue growth under high deploy/autopropose load.
+                    let enqueue_reserved = queue_pending
+                        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |curr| {
+                            (curr < queue_max_pending).then_some(curr + 1)
+                        })
+                        .is_ok();
+                    if !enqueue_reserved {
+                        metrics::counter!(
+                            PROPOSER_QUEUE_REJECTED_TOTAL_METRIC,
+                            "source" => VALIDATOR_METRICS_SOURCE
+                        )
+                        .increment(1);
+                        return Ok(ProposerResult::empty());
+                    }
+                    metrics::gauge!(
+                        PROPOSER_QUEUE_PENDING_METRIC,
+                        "source" => VALIDATOR_METRICS_SOURCE
+                    )
+                    .set(queue_pending.load(Ordering::Relaxed) as f64);
+
                     // Create oneshot channel
                     let (result_tx, result_rx) = oneshot::channel::<ProposerResult>();
 
                     // Send to proposer queue
-                    queue_tx
-                        .send((casper_for_queue, is_async, result_tx))
-                        .map_err(|e| {
-                            CasperError::Other(format!("Failed to send to proposer queue: {}", e))
-                        })?;
+                    match queue_tx
+                        .send((casper_for_queue, is_async, result_tx, 0))
+                        .await
+                    {
+                        Ok(()) => {}
+                        Err(e) => {
+                            let _ = queue_pending.fetch_sub(1, Ordering::AcqRel);
+                            metrics::gauge!(
+                                PROPOSER_QUEUE_PENDING_METRIC,
+                                "source" => VALIDATOR_METRICS_SOURCE
+                            )
+                            .set(queue_pending.load(Ordering::Relaxed) as f64);
+                            return Err(CasperError::Other(format!(
+                                "Failed to send to proposer queue: {}",
+                                e
+                            )));
+                        }
+                    }
 
                     // Wait for result
                     result_rx.await.map_err(|e| {
+                        warn!(error = %e, "Failed to enqueue propose request");
                         CasperError::Other(format!("Failed to receive proposer result: {}", e))
                     })
                 })
@@ -389,6 +484,12 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
             None
         };
 
+        info!(
+            autopropose = conf.autopropose,
+            heartbeat = conf.casper.heartbeat_conf.enabled,
+            standalone = conf.standalone,
+            "Initializing CasperLaunch"
+        );
         // Create CasperLaunch with all dependencies
         Arc::new(casper::rust::engine::casper_launch::CasperLaunchImpl::new(
             // Infrastructure dependencies
@@ -396,7 +497,7 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
             rp_conf.clone(),
             rp_connections.clone(),
             last_approved_block,
-            event_publisher,
+            event_publisher.clone(),
             block_retriever.clone(),
             Arc::new(engine_cell.clone()),
             block_store.clone(),
@@ -417,6 +518,7 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
             conf.standalone,
         )) as Arc<dyn CasperLaunch>
     };
+    info!("CasperLaunch initialized");
 
     // Packet handler - handles incoming Casper protocol messages
     // Note: Scala has a commented-out fairDispatcher option (Setup.scala:268-277) that uses
@@ -437,21 +539,87 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
         engine_cell.clone(),
         block_store.clone(),
         oracle,
+        conf.dev_mode,
     );
 
     // API Servers - gRPC services for REPL, Deploy, Propose, and LSP
     let is_node_read_only = conf.casper.validator_private_key.is_none();
 
-    // Conditional propose function for autopropose
-    let propose_f_for_api = if conf.autopropose && conf.dev.deployer_private_key.is_some() {
+    // Conditional propose function for autopropose.
+    // In validator nodes this must remain enabled even without deployer private key
+    // so normal deploy flow can trigger propose on-chain in non-dev mode.
+    let propose_f_for_api = if conf.autopropose {
         trigger_propose_f_opt.clone()
     } else {
         None
     };
 
-    // Clone block_report_api before passing to api_servers since we'll use it later for transaction API and return value
-    let block_report_api_for_transaction = block_report_api.clone();
     let block_report_api_for_return = block_report_api.clone();
+
+    // Create transaction API and cache before API servers so the block enricher
+    // can be threaded into the gRPC service
+    let transaction_api = {
+        use crate::rust::web::transaction::{transfer_unforgeable, TransactionAPIImpl};
+
+        let block_report_api_for_transaction = block_report_api.clone();
+        let transfer_unforgeable_par = transfer_unforgeable();
+        TransactionAPIImpl::new(block_report_api_for_transaction, transfer_unforgeable_par)
+    };
+
+    let cache_transaction_api = {
+        use crate::rust::web::transaction::cache_transaction_api;
+
+        cache_transaction_api(transaction_api, &mut rnode_store_manager)
+            .await
+            .map_err(|e| {
+                CasperError::Other(format!("Failed to create cache transaction API: {}", e))
+            })?
+    };
+
+    let block_enricher: Arc<dyn crate::rust::web::block_info_enricher::BlockEnricher> = {
+        use crate::rust::web::block_info_enricher::CacheTransactionEnricher;
+        Arc::new(CacheTransactionEnricher::new(cache_transaction_api.clone()))
+    };
+
+    // Proactive transfer extraction: subscribe to BlockFinalised events and trigger
+    // cache_transaction_api.get_transaction() in the background so transfer data is
+    // pre-cached before clients request it.
+    //
+    // Note: This event-driven approach has a small race window where a client could
+    // call get_block for a just-finalized block before transfers are cached.
+    // CacheTransactionAPI handles this gracefully by computing on demand.
+    {
+        use futures::StreamExt;
+        use shared::rust::shared::f1r3fly_event::F1r3flyEvent;
+
+        let cache_tx_api = cache_transaction_api.clone();
+        let mut event_stream = event_publisher.consume();
+        let concurrency_limit = Arc::new(tokio::sync::Semaphore::new(8));
+
+        tokio::spawn(async move {
+            while let Some(event) = event_stream.next().await {
+                if let F1r3flyEvent::BlockFinalised(finalized) = event {
+                    let api = cache_tx_api.clone();
+                    let block_hash = finalized.block_hash.clone();
+                    let permit = match concurrency_limit.clone().acquire_owned().await {
+                        Ok(permit) => permit,
+                        Err(_) => break,
+                    };
+                    tokio::spawn(async move {
+                        let _permit = permit;
+                        if let Err(e) = api.get_transaction(block_hash.clone()).await {
+                            tracing::warn!(
+                                target: "f1r3fly.transaction",
+                                block_hash = %block_hash,
+                                error = %e,
+                                "Failed to extract transfers for finalized block"
+                            );
+                        }
+                    });
+                }
+            }
+        });
+    }
 
     // Clone trigger_propose_f_opt before passing to api_servers since we'll use it later for web_api, admin_web_api, and return value
     let trigger_propose_f_opt_for_web_api = trigger_propose_f_opt.clone();
@@ -479,6 +647,7 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
         rp_conf_cell.clone(),
         rp_connections.clone(),
         node_discovery.clone(),
+        Some(block_enricher.clone()),
     );
 
     // Reporting HTTP Routes - REST API for block reporting and tracing
@@ -492,6 +661,7 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
     // 2. Maintain requested blocks with timeout management
     // 3. Sleep for the configured interval
     let casper_loop = {
+        trace!("Casper loop tick");
         let engine_cell_clone = engine_cell.clone();
         let block_retriever_clone = block_retriever.clone();
         let requested_blocks_timeout = conf.casper.requested_blocks_timeout;
@@ -507,13 +677,20 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
 
                 // Fetch dependencies from CasperBuffer
                 if let Some(casper) = engine.with_casper() {
-                    casper.fetch_dependencies().await?;
+                    trace!("Fetching Casper dependencies");
+                    if let Err(err) = casper.fetch_dependencies().await {
+                        tracing::warn!("Casper dependency fetch failed: {}", err);
+                    }
+                } else {
+                    warn!("Casper engine present but Casper not initialized yet");
                 }
 
                 // Maintain RequestedBlocks for Casper
-                block_retriever
-                    .request_all(requested_blocks_timeout)
-                    .await?;
+                if let Err(err) = block_retriever.request_all(requested_blocks_timeout).await {
+                    tracing::warn!("RequestedBlocks maintenance failed: {}", err);
+                } else {
+                    trace!(timeout = ?requested_blocks_timeout, "RequestedBlocks maintenance executed");
+                }
 
                 // Sleep for the configured interval
                 tokio::time::sleep(casper_loop_interval).await;
@@ -550,6 +727,7 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
                     .read()
                     .map_err(|e| CasperError::Other(e.to_string()))?;
 
+                debug!(stale_threshold = ?fork_choice_stale_threshold, "Checking fork choice staleness");
                 // Call the standalone function
                 casper::rust::engine::running::update_fork_choice_tips_if_stuck(
                     &engine_cell,
@@ -596,31 +774,15 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
     // When implementing, add shutdown call like:
     //   rnode_store_manager.shutdown().await?;
 
-    let transaction_api = {
-        use crate::rust::web::transaction::{transfer_unforgeable, TransactionAPIImpl};
-
-        let transfer_unforgeable_par = transfer_unforgeable();
-        TransactionAPIImpl::new(block_report_api_for_transaction, transfer_unforgeable_par)
-    };
-
-    let cache_transaction_api = {
-        use crate::rust::web::transaction::cache_transaction_api;
-
-        cache_transaction_api(transaction_api, &mut rnode_store_manager)
-            .await
-            .map_err(|e| {
-                CasperError::Other(format!("Failed to create cache transaction API: {}", e))
-            })?
-    };
-
     // Web API - HTTP REST API implementation
     let web_api = {
         use crate::rust::api::web_api::WebApiImpl;
 
         let is_node_read_only = conf.casper.validator_private_key.is_none();
 
-        // Conditional propose function for autopropose
-        let trigger_propose_f = if conf.autopropose && conf.dev.deployer_private_key.is_some() {
+        // Conditional propose function for autopropose.
+        // Expose deploy-triggered propose from REST API whenever autopropose is enabled.
+        let trigger_propose_f = if conf.autopropose {
             trigger_propose_f_opt_for_web_api
         } else {
             None
@@ -633,6 +795,7 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
             conf.casper.shard_name.clone(),
             conf.casper.min_phlo_price,
             is_node_read_only,
+            block_enricher.clone(),
             cache_transaction_api,
             Arc::new(engine_cell.clone()),
             rp_conf_cell.clone(),
@@ -655,38 +818,39 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
 
     // Mergeable Channels GC Loop - background garbage collection for mergeable channel data
     // Only created when GC is enabled in config (required for multi-parent mode)
-    let mergeable_channels_gc_loop: Option<CasperLoop> =
-        if conf.casper.enable_mergeable_channel_gc {
-            use casper::rust::casper::CasperShardConf;
+    let mergeable_channels_gc_loop: Option<CasperLoop> = if conf.casper.enable_mergeable_channel_gc
+    {
+        use casper::rust::casper::CasperShardConf;
 
-            let gc_block_dag_storage = block_dag_storage.clone();
-            let gc_block_store = block_store.clone();
-            let gc_runtime_manager = Arc::new(tokio::sync::Mutex::new(runtime_manager.clone()));
-            let gc_interval = conf.casper.mergeable_channels_gc_interval;
-            let gc_casper_shard_conf = CasperShardConf {
-                fault_tolerance_threshold: conf.casper.fault_tolerance_threshold,
-                shard_name: conf.casper.shard_name.clone(),
-                parent_shard_id: conf.casper.parent_shard_id.clone(),
-                finalization_rate: conf.casper.finalization_rate,
-                max_number_of_parents: conf.casper.max_number_of_parents,
-                max_parent_depth: conf.casper.max_parent_depth,
-                synchrony_constraint_threshold: conf.casper.synchrony_constraint_threshold,
-                height_constraint_threshold: conf.casper.height_constraint_threshold,
-                deploy_lifespan: 50,
-                casper_version: 1,
-                config_version: 1,
-                bond_minimum: conf.casper.genesis_block_data.bond_minimum,
-                bond_maximum: conf.casper.genesis_block_data.bond_maximum,
-                epoch_length: conf.casper.genesis_block_data.epoch_length,
-                quarantine_length: conf.casper.genesis_block_data.quarantine_length,
-                min_phlo_price: conf.casper.min_phlo_price,
-                disable_late_block_filtering: conf.casper.disable_late_block_filtering,
-                disable_validator_progress_check: conf.standalone,
-                enable_mergeable_channel_gc: conf.casper.enable_mergeable_channel_gc,
-                mergeable_channels_gc_depth_buffer: conf.casper.mergeable_channels_gc_depth_buffer,
-            };
+        let gc_block_dag_storage = block_dag_storage.clone();
+        let gc_block_store = block_store.clone();
+        let gc_runtime_manager = Arc::new(tokio::sync::Mutex::new(runtime_manager.clone()));
+        let gc_interval = conf.casper.mergeable_channels_gc_interval;
+        let gc_casper_shard_conf = CasperShardConf {
+            fault_tolerance_threshold: conf.casper.fault_tolerance_threshold,
+            shard_name: conf.casper.shard_name.clone(),
+            parent_shard_id: conf.casper.parent_shard_id.clone(),
+            finalization_rate: conf.casper.finalization_rate,
+            max_number_of_parents: conf.casper.max_number_of_parents,
+            max_parent_depth: conf.casper.max_parent_depth,
+            synchrony_constraint_threshold: conf.casper.synchrony_constraint_threshold,
+            height_constraint_threshold: conf.casper.height_constraint_threshold,
+            deploy_lifespan: 50,
+            casper_version: 1,
+            config_version: 1,
+            bond_minimum: conf.casper.genesis_block_data.bond_minimum,
+            bond_maximum: conf.casper.genesis_block_data.bond_maximum,
+            epoch_length: conf.casper.genesis_block_data.epoch_length,
+            quarantine_length: conf.casper.genesis_block_data.quarantine_length,
+            min_phlo_price: conf.casper.min_phlo_price,
+            disable_late_block_filtering: conf.casper.disable_late_block_filtering,
+            disable_validator_progress_check: conf.standalone,
+            enable_mergeable_channel_gc: conf.casper.enable_mergeable_channel_gc,
+            mergeable_channels_gc_depth_buffer: conf.casper.mergeable_channels_gc_depth_buffer,
+        };
 
-            Some(Arc::new(move || -> Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>> {
+        Some(Arc::new(
+            move || -> Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>> {
                 use casper::rust::util::mergeable_channels_gc;
 
                 let gc_block_dag_storage = gc_block_dag_storage.clone();
@@ -712,10 +876,11 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
 
                     Ok::<(), CasperError>(())
                 })
-            }))
-        } else {
-            None
-        };
+            },
+        ))
+    } else {
+        None
+    };
 
     // Return all initialized components
     Ok((
@@ -731,6 +896,8 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
         proposer,
         proposer_queue_rx,
         proposer_queue_tx,
+        proposer_queue_pending,
+        proposer_queue_max_pending,
         proposer_state_ref_opt_for_return,
         block_processor,
         block_processor_state_ref,

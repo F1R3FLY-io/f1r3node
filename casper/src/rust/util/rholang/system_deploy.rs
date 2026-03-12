@@ -17,7 +17,7 @@ pub trait SystemDeployTrait: Send + Sync {
     type Output: Extractor;
     type Result;
 
-    fn source() -> String;
+    fn source() -> &'static str;
 
     fn process_result(
         value: <Self::Output as Extractor>::RustType,
@@ -27,13 +27,6 @@ pub trait SystemDeployTrait: Send + Sync {
 
     fn rand(&self) -> Blake2b512Random;
 
-    // TODO: Scala caches normalizerEnv as a `val` (computed once at construction).
-    // Rust rebuilds the env on every call, including a redundant mk_return_channel()
-    // PRNG operation. This is not a correctness bug for Rust-only networks (rand()
-    // returns a clone so the return channel is deterministic), but should be cached
-    // for: (1) mixed Scala/Rust compatibility (Scala advances rand after env
-    // construction, so evaluate() receives rand at position 1 vs Rust's position 0),
-    // and (2) eliminating redundant PRNG + HashMap allocation.
     fn env(&mut self) -> HashMap<String, Par>;
 
     fn return_channel(&mut self) -> Result<Par, CasperError>;

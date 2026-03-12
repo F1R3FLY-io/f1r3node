@@ -1,23 +1,50 @@
+use std::collections::HashMap;
+use std::fmt::Debug;
+use std::hash::Hash;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use dashmap::DashMap;
+use dashmap::mapref::entry::Entry;
+#[cfg(test)]
+use proptest::prelude::*;
+#[cfg(test)]
+use rand::{Rng, thread_rng};
+use tracing::warn;
+
 use crate::rspace::history::history_reader::HistoryReaderBase;
 use crate::rspace::hot_store_action::{
     DeleteAction, DeleteContinuations, DeleteData, DeleteJoins, HotStoreAction, InsertAction,
     InsertContinuations, InsertData, InsertJoins,
 };
 use crate::rspace::internal::{Datum, Row, WaitingContinuation};
-use dashmap::DashMap;
-use dashmap::mapref::entry::Entry;
-use proptest::prelude::*;
-use rand::Rng;
-use rand::thread_rng;
-use std::collections::HashMap;
-use std::fmt::Debug;
-use std::hash::Hash;
-use std::sync::{Arc, Mutex};
+use crate::rspace::metrics_constants::{
+    HOT_STORE_HISTORY_CONT_CACHE_ITEMS_METRIC, HOT_STORE_HISTORY_CONT_CACHE_SIZE_METRIC,
+    HOT_STORE_HISTORY_DATA_CACHE_ITEMS_METRIC, HOT_STORE_HISTORY_DATA_CACHE_SIZE_METRIC,
+    HOT_STORE_HISTORY_JOINS_CACHE_ITEMS_METRIC, HOT_STORE_HISTORY_JOINS_CACHE_SIZE_METRIC,
+    HOT_STORE_STATE_CONT_ITEMS_METRIC, HOT_STORE_STATE_CONT_SIZE_METRIC,
+    HOT_STORE_STATE_DATA_ITEMS_METRIC, HOT_STORE_STATE_DATA_SIZE_METRIC,
+    HOT_STORE_STATE_INSTALLED_CONT_ITEMS_METRIC, HOT_STORE_STATE_INSTALLED_CONT_SIZE_METRIC,
+    HOT_STORE_STATE_INSTALLED_JOINS_ITEMS_METRIC, HOT_STORE_STATE_INSTALLED_JOINS_SIZE_METRIC,
+    HOT_STORE_STATE_JOINS_ITEMS_METRIC, HOT_STORE_STATE_JOINS_SIZE_METRIC, RSPACE_METRICS_SOURCE,
+};
+
+const MAX_HISTORY_STORE_CACHE_ENTRIES: usize = 512;
+const MAX_HISTORY_STORE_CACHE_CONT_ITEMS: usize = 8192;
+const MAX_HISTORY_STORE_CACHE_DATA_ITEMS: usize = 8192;
+const MAX_HISTORY_STORE_CACHE_JOIN_ITEMS: usize = 8192;
+const HOT_STORE_STATE_METRICS_UPDATE_INTERVAL_MS_DEFAULT: u64 = 250;
+const HOT_STORE_STATE_METRICS_UPDATE_INTERVAL_MS_ENV: &str =
+    "F1R3_HOT_STORE_STATE_METRICS_UPDATE_INTERVAL_MS";
+const HOT_STORE_HISTORY_CACHE_METRICS_UPDATE_INTERVAL_MS_DEFAULT: u64 = 250;
+const HOT_STORE_HISTORY_CACHE_METRICS_UPDATE_INTERVAL_MS_ENV: &str =
+    "F1R3_HOT_STORE_HISTORY_CACHE_METRICS_UPDATE_INTERVAL_MS";
 
 // See rspace/src/main/scala/coop/rchain/rspace/HotStore.scala
 pub trait HotStore<C: Clone + Hash + Eq, P: Clone, A: Clone, K: Clone>: Sync + Send {
     fn get_continuations(&self, channels: &[C]) -> Vec<WaitingContinuation<P, K>>;
-    fn put_continuation(&self, channels: &[C], wc: WaitingContinuation<P, K>) -> Option<()>;
+    fn put_continuation(&self, channels: &[C], wc: WaitingContinuation<P, K>) -> Option<bool>;
     fn install_continuation(&self, channels: &[C], wc: WaitingContinuation<P, K>) -> Option<()>;
     fn remove_continuation(&self, channels: &[C], index: i32) -> Option<()>;
 
@@ -41,9 +68,7 @@ pub trait HotStore<C: Clone + Hash + Eq, P: Clone, A: Clone, K: Clone>: Sync + S
     fn is_empty(&self) -> bool;
 }
 
-pub fn new_dashmap<K: std::cmp::Eq + std::hash::Hash, V>() -> DashMap<K, V> {
-    DashMap::new()
-}
+pub fn new_dashmap<K: std::cmp::Eq + std::hash::Hash, V>() -> DashMap<K, V> { DashMap::new() }
 
 #[derive(Default, Debug, Clone)]
 pub struct HotStoreState<C, P, A, K>
@@ -61,6 +86,7 @@ where
 }
 
 // This impl is needed for hot_store_spec.rs
+#[cfg(test)]
 impl<C, P, A, K> HotStoreState<C, P, A, K>
 where
     C: Eq + Hash + Debug + Arbitrary + Default + Clone,
@@ -69,9 +95,7 @@ where
     K: Clone + Debug + Arbitrary + Default,
 {
     fn random_vec<T>(size: usize) -> Vec<T>
-    where
-        T: Default + Clone,
-    {
+    where T: Default + Clone {
         let mut rng = thread_rng();
         (0..size)
             .map(|_| T::default())
@@ -152,19 +176,18 @@ where
     // Continuations
 
     fn get_continuations(&self, channels: &[C]) -> Vec<WaitingContinuation<P, K>> {
-        let from_history_store: Vec<WaitingContinuation<P, K>> =
-            self.get_cont_from_history_store(channels);
+        let (continuations, installed) = {
+            let state = self.hot_store_state.lock().unwrap();
+            (
+                state.continuations.get(channels).map(|c| c.clone()),
+                state
+                    .installed_continuations
+                    .get(channels)
+                    .map(|c| c.clone()),
+            )
+        };
 
-        let state = self.hot_store_state.lock().unwrap();
-
-        // Clone the data we need to avoid lifetime issues
-        let continuations = state.continuations.get(channels).map(|c| c.clone());
-        let installed = state
-            .installed_continuations
-            .get(channels)
-            .map(|c| c.clone());
-
-        match (continuations, installed) {
+        let result = match (continuations, installed) {
             (Some(conts), Some(inst)) => {
                 let mut result = Vec::with_capacity(conts.len() + 1);
                 result.push(inst);
@@ -173,7 +196,10 @@ where
             }
             (Some(conts), None) => conts,
             (None, Some(inst)) => {
-                state
+                let from_history_store = self.get_cont_from_history_store(channels);
+                self.hot_store_state
+                    .lock()
+                    .unwrap()
                     .continuations
                     .insert(channels.to_vec(), from_history_store.clone());
                 let mut result = Vec::with_capacity(from_history_store.len() + 1);
@@ -182,43 +208,68 @@ where
                 result
             }
             (None, None) => {
-                state
+                let from_history_store = self.get_cont_from_history_store(channels);
+                self.hot_store_state
+                    .lock()
+                    .unwrap()
                     .continuations
                     .insert(channels.to_vec(), from_history_store.clone());
                 from_history_store
             }
-        }
+        };
+        let state = self.hot_store_state.lock().unwrap();
+        Self::update_hot_store_state_metrics(&state);
+        result
     }
 
-    fn put_continuation(&self, channels: &[C], wc: WaitingContinuation<P, K>) -> Option<()> {
+    fn put_continuation(&self, channels: &[C], wc: WaitingContinuation<P, K>) -> Option<bool> {
         // println!("\nHit put_continuation");
-
-        let from_history_store: Vec<WaitingContinuation<P, K>> =
-            self.get_cont_from_history_store(channels);
-        // println!("\nfrom_history_store: {:?}", from_history_store);
+        let mut inserted = false;
+        let has_existing = {
+            let state = self.hot_store_state.lock().unwrap();
+            let has = state.continuations.get(channels).is_some();
+            has
+        };
+        let from_history_store = if has_existing {
+            None
+        } else {
+            Some(self.get_cont_from_history_store(channels))
+        };
 
         let state = self.hot_store_state.lock().unwrap();
-        let current_continuations = state
-            .continuations
-            .get(channels)
-            .map(|c| c.clone())
-            .unwrap_or(from_history_store);
-
-        // Pre-allocate with known capacity for better memory efficiency
-        let mut new_continuations = Vec::with_capacity(current_continuations.len() + 1);
-        new_continuations.push(wc);
-        new_continuations.extend(current_continuations);
-
-        state
-            .continuations
-            .insert(channels.to_vec(), new_continuations);
-        Some(())
+        let wc_identity = Self::continuation_identity(&wc);
+        match state.continuations.entry(channels.to_vec()) {
+            Entry::Occupied(mut occupied) => {
+                if !occupied
+                    .get()
+                    .iter()
+                    .any(|existing| Self::continuation_identity(existing) == wc_identity)
+                {
+                    occupied.get_mut().insert(0, wc);
+                    inserted = true;
+                }
+            }
+            Entry::Vacant(vacant) => {
+                let mut new_continuations = from_history_store.unwrap_or_default();
+                if !new_continuations
+                    .iter()
+                    .any(|existing| Self::continuation_identity(existing) == wc_identity)
+                {
+                    new_continuations.insert(0, wc);
+                    inserted = true;
+                }
+                vacant.insert(new_continuations);
+            }
+        }
+        Self::update_hot_store_state_metrics(&state);
+        Some(inserted)
     }
 
     fn install_continuation(&self, channels: &[C], wc: WaitingContinuation<P, K>) -> Option<()> {
         // println!("hit install_continuation");
         let state = self.hot_store_state.lock().unwrap();
         let _ = state.installed_continuations.insert(channels.to_vec(), wc);
+        Self::update_hot_store_state_metrics(&state);
 
         // println!("installed_continuation result: {:?}", result);
         // println!("to_map: {:?}\n", self.print());
@@ -227,125 +278,132 @@ where
     }
 
     fn remove_continuation(&self, channels: &[C], index: i32) -> Option<()> {
-        let from_history_store: Vec<WaitingContinuation<P, K>> =
-            self.get_cont_from_history_store(channels);
-
         let state = self.hot_store_state.lock().unwrap();
-        let current_continuations = state
-            .continuations
-            .get(channels)
-            .map(|c| c.clone())
-            .unwrap_or(from_history_store);
-        let installed_continuation = state.installed_continuations.get(channels);
-        let is_installed = installed_continuation.is_some();
-
+        let is_installed = state.installed_continuations.get(channels).is_some();
         let removing_installed = is_installed && index == 0;
         let removed_index = if is_installed { index - 1 } else { index };
-        // println!("Index: {}", index);
-        // println!("Removed Index: {}", removed_index);
-        // println!("Current Continuations Length: {}", current_continuations.len());
 
-        let out_of_bounds =
-            removed_index < 0 || removed_index as usize >= current_continuations.len();
-
-        if removing_installed {
-            state
-                .continuations
-                .insert(channels.to_vec(), current_continuations);
-            println!("WARNING: Attempted to remove an installed continuation");
-            None
-        } else if out_of_bounds {
-            state
-                .continuations
-                .insert(channels.to_vec(), current_continuations);
-            println!("WARNING: Index {index} out of bounds when removing continuation");
+        let result = if removing_installed {
+            warn!("Attempted to remove an installed continuation");
             None
         } else {
-            let mut new_continuations = current_continuations;
-            new_continuations.remove(removed_index as usize);
-            state
-                .continuations
-                .insert(channels.to_vec(), new_continuations);
-            Some(())
-        }
+            match state.continuations.entry(channels.to_vec()) {
+                Entry::Occupied(mut occupied) => {
+                    let len = occupied.get().len();
+                    let out_of_bounds = removed_index < 0 || removed_index as usize >= len;
+                    if out_of_bounds {
+                        warn!(index, "Index out of bounds when removing continuation");
+                        None
+                    } else {
+                        occupied.get_mut().remove(removed_index as usize);
+                        Some(())
+                    }
+                }
+                Entry::Vacant(vacant) => {
+                    let mut from_history_store = self.get_cont_from_history_store(channels);
+                    let len = from_history_store.len();
+                    let out_of_bounds = removed_index < 0 || removed_index as usize >= len;
+                    if out_of_bounds {
+                        warn!(index, "Index out of bounds when removing continuation");
+                        vacant.insert(from_history_store);
+                        None
+                    } else {
+                        from_history_store.remove(removed_index as usize);
+                        vacant.insert(from_history_store);
+                        Some(())
+                    }
+                }
+            }
+        };
+        Self::update_hot_store_state_metrics(&state);
+        result
     }
 
     // Data
 
     fn get_data(&self, channel: &C) -> Vec<Datum<A>> {
-        let from_history_store: Vec<Datum<A>> = self.get_data_from_history_store(channel);
-
-        // println!("\nfrom_history_store in hot store get_data: {:?}", from_history_store);
-
         let maybe_data = {
-            let state = self.hot_store_state.lock().unwrap();
-            state.data.get(channel).map(|data| data.clone())
+            self.hot_store_state
+                .lock()
+                .unwrap()
+                .data
+                .get(channel)
+                .map(|data| data.clone())
         };
 
-        match maybe_data {
-            Some(data) => data,
-            None => {
-                self.hot_store_state
-                    .lock()
-                    .unwrap()
-                    .data
-                    .insert(channel.clone(), from_history_store.clone());
-                from_history_store
-            }
-        }
+        let result = if let Some(data) = maybe_data {
+            data
+        } else {
+            let data = self.get_data_from_history_store(channel);
+            self.hot_store_state
+                .lock()
+                .unwrap()
+                .data
+                .insert(channel.clone(), data.clone());
+            data
+        };
+        let state = self.hot_store_state.lock().unwrap();
+        Self::update_hot_store_state_metrics(&state);
+        result
     }
 
     fn put_datum(&self, channel: &C, d: Datum<A>) -> () {
         // println!("\nHit put_datum, channel: {:?}, data: {:?}", channel, d);
         // println!("\nHit put_datum, data: {:?}", d);
-
-        let from_history_store: Vec<Datum<A>> = self.get_data_from_history_store(channel);
-        // println!(
-        //     "\nfrom_history_store in put_datum: {:?}",
-        //     from_history_store
-        // );
+        let has_existing = {
+            let state = self.hot_store_state.lock().unwrap();
+            let has = state.data.get(channel).is_some();
+            has
+        };
+        let from_history_store = if has_existing {
+            None
+        } else {
+            Some(self.get_data_from_history_store(channel))
+        };
 
         let state = self.hot_store_state.lock().unwrap();
-
-        let existing_data = state.data.get(channel).map(|d| d.clone());
-
-        match existing_data {
-            Some(existing) => {
-                let mut new_data = Vec::with_capacity(existing.len() + 1);
-                new_data.push(d);
-                new_data.extend(existing);
-                state.data.insert(channel.clone(), new_data);
+        match state.data.entry(channel.clone()) {
+            Entry::Occupied(mut occupied) => {
+                occupied.get_mut().insert(0, d);
             }
-            None => {
-                let mut new_data = Vec::with_capacity(from_history_store.len() + 1);
-                new_data.push(d);
-                new_data.extend(from_history_store);
-                state.data.insert(channel.clone(), new_data);
+            Entry::Vacant(vacant) => {
+                let mut new_data = from_history_store.unwrap_or_default();
+                new_data.insert(0, d);
+                vacant.insert(new_data);
             }
         }
+        Self::update_hot_store_state_metrics(&state);
     }
 
     fn remove_datum(&self, channel: &C, index: i32) -> Option<()> {
-        let from_history_store: Vec<Datum<A>> = self.get_data_from_history_store(channel);
-
         let state = self.hot_store_state.lock().unwrap();
-        let current_datums = state
-            .data
-            .get(channel)
-            .map(|c| c.clone())
-            .unwrap_or(from_history_store);
-        let out_of_bounds = index as usize >= current_datums.len();
-
-        if out_of_bounds {
-            state.data.insert(channel.clone(), current_datums);
-            println!("WARNING: Index {index} out of bounds when removing datum");
-            None
-        } else {
-            let mut new_datums = current_datums;
-            new_datums.remove(index as usize);
-            state.data.insert(channel.clone(), new_datums);
-            Some(())
-        }
+        let result = match state.data.entry(channel.clone()) {
+            Entry::Occupied(mut occupied) => {
+                let out_of_bounds = index < 0 || index as usize >= occupied.get().len();
+                if out_of_bounds {
+                    warn!(index, "Index out of bounds when removing datum");
+                    None
+                } else {
+                    occupied.get_mut().remove(index as usize);
+                    Some(())
+                }
+            }
+            Entry::Vacant(vacant) => {
+                let mut from_history_store = self.get_data_from_history_store(channel);
+                let out_of_bounds = index < 0 || index as usize >= from_history_store.len();
+                if out_of_bounds {
+                    warn!(index, "Index out of bounds when removing datum");
+                    vacant.insert(from_history_store);
+                    None
+                } else {
+                    from_history_store.remove(index as usize);
+                    vacant.insert(from_history_store);
+                    Some(())
+                }
+            }
+        };
+        Self::update_hot_store_state_metrics(&state);
+        result
     }
 
     // Joins
@@ -353,18 +411,15 @@ where
     fn get_joins(&self, channel: &C) -> Vec<Vec<C>> {
         // println!("\nHit get_joins");
 
-        let from_history_store: Vec<Vec<C>> = self.get_joins_from_history_store(channel);
-        // println!(
-        //     "\nfrom_history_store in get_joins: {:?}",
-        //     from_history_store
-        // );
+        let (joins, installed_joins) = {
+            let state = self.hot_store_state.lock().unwrap();
+            (
+                state.joins.get(channel).map(|j| j.clone()),
+                state.installed_joins.get(channel).map(|j| j.clone()),
+            )
+        };
 
-        let state = self.hot_store_state.lock().unwrap();
-
-        let joins = state.joins.get(channel).map(|j| j.clone());
-        let installed_joins = state.installed_joins.get(channel).map(|j| j.clone());
-
-        match joins {
+        let result = match joins {
             Some(joins_data) => {
                 // println!("Found joins in store");
                 let mut result = Vec::new();
@@ -375,10 +430,13 @@ where
                 result
             }
             None => {
-                // println!("No joins found in store");
-                state
+                let from_history_store = self.get_joins_from_history_store(channel);
+                self.hot_store_state
+                    .lock()
+                    .unwrap()
                     .joins
                     .insert(channel.clone(), from_history_store.clone());
+                // println!("No joins found in store");
                 // println!("Inserted into store. Returning from history");
 
                 let mut result = Vec::new();
@@ -388,60 +446,63 @@ where
                 result.extend(from_history_store);
                 result
             }
-        }
+        };
+        let state = self.hot_store_state.lock().unwrap();
+        Self::update_hot_store_state_metrics(&state);
+        result
     }
 
     fn put_join(&self, channel: &C, join: &[C]) -> Option<()> {
-        let from_history_store: Vec<Vec<C>> = self.get_joins_from_history_store(channel);
+        let has_existing = {
+            let state = self.hot_store_state.lock().unwrap();
+            let has = state.joins.get(channel).is_some();
+            has
+        };
+        let from_history_store = if has_existing {
+            None
+        } else {
+            Some(self.get_joins_from_history_store(channel))
+        };
 
         let state = self.hot_store_state.lock().unwrap();
-        let current_joins = state
-            .joins
-            .get(channel)
-            .map(|j| j.clone())
-            .unwrap_or(from_history_store);
-        if current_joins.iter().any(|j| j.as_slice() == join) {
-            Some(())
-        } else {
-            let mut new_joins = Vec::with_capacity(current_joins.len() + 1);
-            new_joins.push(join.to_vec());
-            new_joins.extend(current_joins);
-            state.joins.insert(channel.clone(), new_joins);
-            Some(())
+        match state.joins.entry(channel.clone()) {
+            Entry::Occupied(mut occupied) => {
+                if !occupied.get().iter().any(|j| j.as_slice() == join) {
+                    occupied.get_mut().insert(0, join.to_vec());
+                }
+            }
+            Entry::Vacant(vacant) => {
+                let mut joins = from_history_store.unwrap_or_default();
+                if !joins.iter().any(|j| j.as_slice() == join) {
+                    joins.insert(0, join.to_vec());
+                }
+                vacant.insert(joins);
+            }
         }
+        Self::update_hot_store_state_metrics(&state);
+        Some(())
     }
 
     fn install_join(&self, channel: &C, join: &[C]) -> Option<()> {
         // println!("hit install_join");
         let state = self.hot_store_state.lock().unwrap();
-        let current_installed_joins = state
-            .installed_joins
-            .get(channel)
-            .map(|c| c.clone())
-            .unwrap_or(Vec::new());
-        if !current_installed_joins.iter().any(|j| j.as_slice() == join) {
-            let mut new_installed_joins = Vec::with_capacity(current_installed_joins.len() + 1);
-            new_installed_joins.push(join.to_vec());
-            new_installed_joins.extend(current_installed_joins);
-            let _ = state
-                .installed_joins
-                .insert(channel.clone(), new_installed_joins);
+        match state.installed_joins.entry(channel.clone()) {
+            Entry::Occupied(mut occupied) => {
+                if !occupied.get().iter().any(|j| j.as_slice() == join) {
+                    occupied.get_mut().insert(0, join.to_vec());
+                }
+            }
+            Entry::Vacant(vacant) => {
+                vacant.insert(vec![join.to_vec()]);
+            }
         }
+        Self::update_hot_store_state_metrics(&state);
         Some(())
     }
 
     fn remove_join(&self, channel: &C, join: &[C]) -> Option<()> {
-        let joins_in_history_store: Vec<Vec<C>> = self.get_joins_from_history_store(channel);
-        let continuations_in_history_store: Vec<WaitingContinuation<P, K>> =
-            self.get_cont_from_history_store(join);
-
         let state = self.hot_store_state.lock().unwrap();
-        let current_joins = state
-            .joins
-            .get(channel)
-            .map(|j| j.clone())
-            .unwrap_or(joins_in_history_store);
-
+        let has_join_in_state = state.joins.get(channel).is_some();
         let current_continuations = {
             let mut conts = state
                 .installed_continuations
@@ -453,50 +514,65 @@ where
                     .continuations
                     .get(join)
                     .map(|continuations| continuations.clone())
-                    .unwrap_or(continuations_in_history_store),
+                    .unwrap_or_else(|| self.get_cont_from_history_store(join)),
             );
             conts
         };
-
-        let index = current_joins.iter().position(|x| x.as_slice() == join);
-        let out_of_bounds = index.is_none();
 
         // Remove join is called when continuation is removed, so it can be called when
         // continuations are present in which case we just want to skip removal.
         let do_remove = current_continuations.is_empty();
 
-        if do_remove {
-            if out_of_bounds {
-                println!("WARNING: Join not found when removing join");
-                state.joins.insert(channel.clone(), current_joins);
-                Some(())
-            } else {
-                let mut new_joins = current_joins;
-                new_joins.remove(index.unwrap());
-                state.joins.insert(channel.clone(), new_joins);
-                Some(())
+        let result = if !do_remove {
+            if !has_join_in_state {
+                let joins_in_history_store = self.get_joins_from_history_store(channel);
+                state.joins.insert(channel.clone(), joins_in_history_store);
             }
-        } else {
-            state.joins.insert(channel.clone(), current_joins);
             Some(())
-        }
+        } else {
+            match state.joins.entry(channel.clone()) {
+                Entry::Occupied(mut occupied) => {
+                    if let Some(idx) = occupied.get().iter().position(|x| x.as_slice() == join) {
+                        occupied.get_mut().remove(idx);
+                    } else {
+                        warn!("Join not found when removing join");
+                    }
+                    Some(())
+                }
+                Entry::Vacant(vacant) => {
+                    let mut joins_in_history_store = self.get_joins_from_history_store(channel);
+                    if let Some(idx) = joins_in_history_store
+                        .iter()
+                        .position(|x| x.as_slice() == join)
+                    {
+                        joins_in_history_store.remove(idx);
+                    } else {
+                        warn!("Join not found when removing join");
+                    }
+                    vacant.insert(joins_in_history_store);
+                    Some(())
+                }
+            }
+        };
+        Self::update_hot_store_state_metrics(&state);
+        result
     }
 
     fn changes(&self) -> Vec<HotStoreAction<C, P, A, K>> {
         let cache = self.hot_store_state.lock().unwrap();
         let continuations: Vec<HotStoreAction<C, P, A, K>> = cache
             .continuations
-            .clone()
-            .into_iter()
-            .map(|(k, v)| {
+            .iter()
+            .map(|entry| {
+                let (k, v) = entry.pair();
                 if v.is_empty() {
                     HotStoreAction::Delete(DeleteAction::DeleteContinuations(DeleteContinuations {
-                        channels: k,
+                        channels: k.clone(),
                     }))
                 } else {
                     HotStoreAction::Insert(InsertAction::InsertContinuations(InsertContinuations {
-                        channels: k,
-                        continuations: v,
+                        channels: k.clone(),
+                        continuations: v.clone(),
                     }))
                 }
             })
@@ -504,15 +580,17 @@ where
 
         let data: Vec<HotStoreAction<C, P, A, K>> = cache
             .data
-            .clone()
-            .into_iter()
-            .map(|(k, v)| {
+            .iter()
+            .map(|entry| {
+                let (k, v) = entry.pair();
                 if v.is_empty() {
-                    HotStoreAction::Delete(DeleteAction::DeleteData(DeleteData { channel: k }))
+                    HotStoreAction::Delete(DeleteAction::DeleteData(DeleteData {
+                        channel: k.clone(),
+                    }))
                 } else {
                     HotStoreAction::Insert(InsertAction::InsertData(InsertData {
-                        channel: k,
-                        data: v,
+                        channel: k.clone(),
+                        data: v.clone(),
                     }))
                 }
             })
@@ -520,15 +598,17 @@ where
 
         let joins: Vec<HotStoreAction<C, P, A, K>> = cache
             .joins
-            .clone()
-            .into_iter()
-            .map(|(k, v)| {
+            .iter()
+            .map(|entry| {
+                let (k, v) = entry.pair();
                 if v.is_empty() {
-                    HotStoreAction::Delete(DeleteAction::DeleteJoins(DeleteJoins { channel: k }))
+                    HotStoreAction::Delete(DeleteAction::DeleteJoins(DeleteJoins {
+                        channel: k.clone(),
+                    }))
                 } else {
                     HotStoreAction::Insert(InsertAction::InsertJoins(InsertJoins {
-                        channel: k,
-                        joins: v,
+                        channel: k.clone(),
+                        joins: v.clone(),
                     }))
                 }
             })
@@ -636,7 +716,8 @@ where
         }
 
         // println!("\nHistory");
-        // println!("Continuations: {:?}", self.history_reader_base.get_continuations(&channels));
+        // println!("Continuations: {:?}",
+        // self.history_reader_base.get_continuations(&channels));
     }
 
     fn clear(&self) {
@@ -646,6 +727,35 @@ where
         state.data = DashMap::new();
         state.joins = DashMap::new();
         state.installed_joins = DashMap::new();
+        drop(state);
+
+        let history_cache = self.history_store_cache.lock().unwrap();
+        history_cache.continuations.clear();
+        history_cache.datums.clear();
+        history_cache.joins.clear();
+        metrics::gauge!(HOT_STORE_HISTORY_CONT_CACHE_SIZE_METRIC, "source" => RSPACE_METRICS_SOURCE)
+            .set(0.0);
+        metrics::gauge!(HOT_STORE_HISTORY_DATA_CACHE_SIZE_METRIC, "source" => RSPACE_METRICS_SOURCE)
+            .set(0.0);
+        metrics::gauge!(HOT_STORE_HISTORY_JOINS_CACHE_SIZE_METRIC, "source" => RSPACE_METRICS_SOURCE)
+            .set(0.0);
+        metrics::gauge!(HOT_STORE_HISTORY_CONT_CACHE_ITEMS_METRIC, "source" => RSPACE_METRICS_SOURCE)
+            .set(0.0);
+        metrics::gauge!(HOT_STORE_HISTORY_DATA_CACHE_ITEMS_METRIC, "source" => RSPACE_METRICS_SOURCE)
+            .set(0.0);
+        metrics::gauge!(HOT_STORE_HISTORY_JOINS_CACHE_ITEMS_METRIC, "source" => RSPACE_METRICS_SOURCE)
+            .set(0.0);
+        metrics::gauge!(HOT_STORE_STATE_INSTALLED_CONT_SIZE_METRIC, "source" => RSPACE_METRICS_SOURCE)
+            .set(0.0);
+        metrics::gauge!(HOT_STORE_STATE_INSTALLED_JOINS_SIZE_METRIC, "source" => RSPACE_METRICS_SOURCE)
+            .set(0.0);
+        metrics::gauge!(HOT_STORE_STATE_INSTALLED_CONT_ITEMS_METRIC, "source" => RSPACE_METRICS_SOURCE)
+            .set(0.0);
+        metrics::gauge!(HOT_STORE_STATE_INSTALLED_JOINS_ITEMS_METRIC, "source" => RSPACE_METRICS_SOURCE)
+            .set(0.0);
+
+        let state = self.hot_store_state.lock().unwrap();
+        Self::update_hot_store_state_metrics(&state);
     }
 
     // See rspace/src/test/scala/coop/rchain/rspace/test/package.scala
@@ -666,24 +776,181 @@ where
     A: Clone + Debug + Sync + Send,
     K: Clone + Debug + Sync + Send,
 {
+    fn continuation_identity(wc: &WaitingContinuation<P, K>) -> String {
+        format!(
+            "{:?}|{:?}|{}|{:?}",
+            wc.patterns, wc.continuation, wc.persist, wc.peeks
+        )
+    }
+
+    fn now_millis() -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64
+    }
+
+    fn state_metrics_update_interval_ms() -> u64 {
+        static VALUE: OnceLock<u64> = OnceLock::new();
+        *VALUE.get_or_init(|| {
+            std::env::var(HOT_STORE_STATE_METRICS_UPDATE_INTERVAL_MS_ENV)
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok())
+                .unwrap_or(HOT_STORE_STATE_METRICS_UPDATE_INTERVAL_MS_DEFAULT)
+        })
+    }
+
+    fn history_cache_metrics_update_interval_ms() -> u64 {
+        static VALUE: OnceLock<u64> = OnceLock::new();
+        *VALUE.get_or_init(|| {
+            std::env::var(HOT_STORE_HISTORY_CACHE_METRICS_UPDATE_INTERVAL_MS_ENV)
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok())
+                .unwrap_or(HOT_STORE_HISTORY_CACHE_METRICS_UPDATE_INTERVAL_MS_DEFAULT)
+        })
+    }
+
+    fn should_emit_metrics(last_emit_at_ms: &AtomicU64, update_interval_ms: u64) -> bool {
+        if update_interval_ms == 0 {
+            return true;
+        }
+
+        let now = Self::now_millis();
+        loop {
+            let last = last_emit_at_ms.load(Ordering::Relaxed);
+            if now.saturating_sub(last) < update_interval_ms {
+                return false;
+            }
+            if last_emit_at_ms
+                .compare_exchange_weak(last, now, Ordering::Relaxed, Ordering::Relaxed)
+                .is_ok()
+            {
+                return true;
+            }
+        }
+    }
+
+    fn update_hot_store_state_metrics(state: &HotStoreState<C, P, A, K>) {
+        static LAST_EMIT_AT_MS: AtomicU64 = AtomicU64::new(0);
+        if !Self::should_emit_metrics(&LAST_EMIT_AT_MS, Self::state_metrics_update_interval_ms()) {
+            return;
+        }
+
+        let cont_items: usize = state
+            .continuations
+            .iter()
+            .map(|entry| entry.value().len())
+            .sum();
+        let data_items: usize = state.data.iter().map(|entry| entry.value().len()).sum();
+        let joins_items: usize = state.joins.iter().map(|entry| entry.value().len()).sum();
+        let installed_cont_items = state.installed_continuations.len();
+        let installed_joins_items: usize = state
+            .installed_joins
+            .iter()
+            .map(|entry| entry.value().len())
+            .sum();
+
+        metrics::gauge!(HOT_STORE_STATE_CONT_SIZE_METRIC, "source" => RSPACE_METRICS_SOURCE)
+            .set(state.continuations.len() as f64);
+        metrics::gauge!(HOT_STORE_STATE_DATA_SIZE_METRIC, "source" => RSPACE_METRICS_SOURCE)
+            .set(state.data.len() as f64);
+        metrics::gauge!(HOT_STORE_STATE_JOINS_SIZE_METRIC, "source" => RSPACE_METRICS_SOURCE)
+            .set(state.joins.len() as f64);
+        metrics::gauge!(HOT_STORE_STATE_INSTALLED_CONT_SIZE_METRIC, "source" => RSPACE_METRICS_SOURCE)
+            .set(state.installed_continuations.len() as f64);
+        metrics::gauge!(HOT_STORE_STATE_INSTALLED_JOINS_SIZE_METRIC, "source" => RSPACE_METRICS_SOURCE)
+            .set(state.installed_joins.len() as f64);
+        metrics::gauge!(HOT_STORE_STATE_CONT_ITEMS_METRIC, "source" => RSPACE_METRICS_SOURCE)
+            .set(cont_items as f64);
+        metrics::gauge!(HOT_STORE_STATE_DATA_ITEMS_METRIC, "source" => RSPACE_METRICS_SOURCE)
+            .set(data_items as f64);
+        metrics::gauge!(HOT_STORE_STATE_JOINS_ITEMS_METRIC, "source" => RSPACE_METRICS_SOURCE)
+            .set(joins_items as f64);
+        metrics::gauge!(HOT_STORE_STATE_INSTALLED_CONT_ITEMS_METRIC, "source" => RSPACE_METRICS_SOURCE)
+            .set(installed_cont_items as f64);
+        metrics::gauge!(HOT_STORE_STATE_INSTALLED_JOINS_ITEMS_METRIC, "source" => RSPACE_METRICS_SOURCE)
+            .set(installed_joins_items as f64);
+    }
+
+    fn update_history_cache_metrics(cache: &HistoryStoreCache<C, P, A, K>) {
+        static LAST_EMIT_AT_MS: AtomicU64 = AtomicU64::new(0);
+        if !Self::should_emit_metrics(
+            &LAST_EMIT_AT_MS,
+            Self::history_cache_metrics_update_interval_ms(),
+        ) {
+            return;
+        }
+
+        let cont_items: usize = cache
+            .continuations
+            .iter()
+            .map(|entry| entry.value().len())
+            .sum();
+        let data_items: usize = cache.datums.iter().map(|entry| entry.value().len()).sum();
+        let joins_items: usize = cache.joins.iter().map(|entry| entry.value().len()).sum();
+
+        metrics::gauge!(HOT_STORE_HISTORY_CONT_CACHE_SIZE_METRIC, "source" => RSPACE_METRICS_SOURCE)
+            .set(cache.continuations.len() as f64);
+        metrics::gauge!(HOT_STORE_HISTORY_DATA_CACHE_SIZE_METRIC, "source" => RSPACE_METRICS_SOURCE)
+            .set(cache.datums.len() as f64);
+        metrics::gauge!(HOT_STORE_HISTORY_JOINS_CACHE_SIZE_METRIC, "source" => RSPACE_METRICS_SOURCE)
+            .set(cache.joins.len() as f64);
+        metrics::gauge!(HOT_STORE_HISTORY_CONT_CACHE_ITEMS_METRIC, "source" => RSPACE_METRICS_SOURCE)
+            .set(cont_items as f64);
+        metrics::gauge!(HOT_STORE_HISTORY_DATA_CACHE_ITEMS_METRIC, "source" => RSPACE_METRICS_SOURCE)
+            .set(data_items as f64);
+        metrics::gauge!(HOT_STORE_HISTORY_JOINS_CACHE_ITEMS_METRIC, "source" => RSPACE_METRICS_SOURCE)
+            .set(joins_items as f64);
+    }
+
+    fn enforce_history_cache_bounds(cache: &HistoryStoreCache<C, P, A, K>) {
+        let cont_items: usize = cache
+            .continuations
+            .iter()
+            .map(|entry| entry.value().len())
+            .sum();
+        let data_items: usize = cache.datums.iter().map(|entry| entry.value().len()).sum();
+        let joins_items: usize = cache.joins.iter().map(|entry| entry.value().len()).sum();
+
+        if cache.continuations.len() >= MAX_HISTORY_STORE_CACHE_ENTRIES ||
+            cont_items >= MAX_HISTORY_STORE_CACHE_CONT_ITEMS
+        {
+            cache.continuations.clear();
+        }
+        if cache.datums.len() >= MAX_HISTORY_STORE_CACHE_ENTRIES ||
+            data_items >= MAX_HISTORY_STORE_CACHE_DATA_ITEMS
+        {
+            cache.datums.clear();
+        }
+        if cache.joins.len() >= MAX_HISTORY_STORE_CACHE_ENTRIES ||
+            joins_items >= MAX_HISTORY_STORE_CACHE_JOIN_ITEMS
+        {
+            cache.joins.clear();
+        }
+    }
+
     fn get_cont_from_history_store(&self, channels: &[C]) -> Vec<WaitingContinuation<P, K>> {
         let cache = self.history_store_cache.lock().unwrap();
+        Self::enforce_history_cache_bounds(&cache);
         let channels_vec = channels.to_vec();
         let entry = cache.continuations.entry(channels_vec.clone());
-        match entry {
+        let result = match entry {
             Entry::Occupied(o) => o.get().clone(),
             Entry::Vacant(v) => {
                 let ks = self.history_reader_base.get_continuations(&channels_vec);
                 v.insert(ks.clone());
                 ks
             }
-        }
+        };
+        Self::update_history_cache_metrics(&cache);
+        result
     }
 
     fn get_data_from_history_store(&self, channel: &C) -> Vec<Datum<A>> {
         let cache = self.history_store_cache.lock().unwrap();
+        Self::enforce_history_cache_bounds(&cache);
         let entry = cache.datums.entry(channel.clone());
-        match entry {
+        let result = match entry {
             Entry::Occupied(o) => o.get().clone(),
             Entry::Vacant(v) => {
                 let datums = self.history_reader_base.get_data(channel);
@@ -691,20 +958,25 @@ where
                 v.insert(datums.clone());
                 datums
             }
-        }
+        };
+        Self::update_history_cache_metrics(&cache);
+        result
     }
 
     fn get_joins_from_history_store(&self, channel: &C) -> Vec<Vec<C>> {
         let cache = self.history_store_cache.lock().unwrap();
+        Self::enforce_history_cache_bounds(&cache);
         let entry = cache.joins.entry(channel.clone());
-        match entry {
+        let result = match entry {
             Entry::Occupied(o) => o.get().clone(),
             Entry::Vacant(v) => {
                 let joins = self.history_reader_base.get_joins(&channel);
                 v.insert(joins.clone());
                 joins
             }
-        }
+        };
+        Self::update_history_cache_metrics(&cache);
+        result
     }
 }
 

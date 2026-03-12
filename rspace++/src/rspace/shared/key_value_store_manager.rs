@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
-use crate::rspace::rspace::RSpaceStore;
 use async_trait::async_trait;
 use shared::rust::store::key_value_store::KeyValueStore;
+
+use crate::rspace::rspace::RSpaceStore;
 
 // See shared/src/main/scala/coop/rchain/store/KeyValueStoreManager.scala
 #[async_trait]

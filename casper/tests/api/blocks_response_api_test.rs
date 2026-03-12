@@ -5,7 +5,9 @@ use crate::helper::block_generator;
 use crate::helper::block_util;
 use crate::helper::no_ops_casper_effect::NoOpsCasperEffect;
 use crate::helper::unlimited_parents_estimator_fixture::UnlimitedParentsEstimatorFixture;
-use crate::util::rholang::resources::{mk_runtime_manager_at, mk_test_rnode_store_manager_shared, generate_scope_id};
+use crate::util::rholang::resources::{
+    generate_scope_id, mk_runtime_manager_at, mk_test_rnode_store_manager_shared,
+};
 use crate::util::test_mocks::MockKeyValueStore;
 use block_storage::rust::key_value_block_store::KeyValueBlockStore;
 use block_storage::rust::test::indexed_block_dag_storage::IndexedBlockDagStorage;
@@ -42,12 +44,12 @@ fn create_validators_and_bonds() -> (Validator, Validator, Validator, Bond, Bond
 }
 
 // Helper function to create storage components (similar to Scala's BlockDagStorageFixture)
-async fn create_storage(
-    _prefix: &str,
-) -> IndexedBlockDagStorage {
+async fn create_storage(_prefix: &str) -> IndexedBlockDagStorage {
     let scope_id = generate_scope_id();
     let mut kvm = mk_test_rnode_store_manager_shared(scope_id);
-    let dag = crate::util::rholang::resources::block_dag_storage_from_dyn(&mut *kvm).await.unwrap();
+    let dag = crate::util::rholang::resources::block_dag_storage_from_dyn(&mut *kvm)
+        .await
+        .unwrap();
     IndexedBlockDagStorage::new(dag)
 }
 

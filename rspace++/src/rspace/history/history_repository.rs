@@ -1,3 +1,10 @@
+use std::marker::PhantomData;
+use std::sync::{Arc, Mutex};
+
+use serde::{Deserialize, Serialize};
+use shared::rust::store::key_value_store::KeyValueStore;
+
+use super::instances::rspace_history_reader_impl::RSpaceHistoryReaderImpl;
 use crate::rspace::errors::{HistoryError, HistoryRepositoryError};
 use crate::rspace::hashing::blake2b256_hash::Blake2b256Hash;
 use crate::rspace::history::history::{History, HistoryInstances};
@@ -11,18 +18,12 @@ use crate::rspace::state::instances::rspace_exporter_store::RSpaceExporterStore;
 use crate::rspace::state::instances::rspace_importer_store::RSpaceImporterStore;
 use crate::rspace::state::rspace_exporter::RSpaceExporter;
 use crate::rspace::state::rspace_importer::RSpaceImporter;
-use serde::{Deserialize, Serialize};
-use shared::rust::store::key_value_store::KeyValueStore;
-use std::marker::PhantomData;
-use std::sync::{Arc, Mutex};
-
-use super::instances::rspace_history_reader_impl::RSpaceHistoryReaderImpl;
 
 // See rspace/src/main/scala/coop/rchain/rspace/history/HistoryRepository.scala
 pub trait HistoryRepository<C: Clone, P: Clone, A: Clone, K: Clone>: Send + Sync {
     fn checkpoint(
         &self,
-        actions: &Vec<HotStoreAction<C, P, A, K>>,
+        actions: Vec<HotStoreAction<C, P, A, K>>,
     ) -> Box<dyn HistoryRepository<C, P, A, K> + Send + Sync + 'static>;
 
     fn do_checkpoint(
@@ -78,7 +79,10 @@ where
         history_key_value_store: Arc<dyn KeyValueStore>,
         roots_key_value_store: Arc<dyn KeyValueStore>,
         cold_key_value_store: Arc<dyn KeyValueStore>,
-    ) -> Result<Box<dyn HistoryRepository<C, P, A, K> + Send + Sync + 'static>, HistoryRepositoryError> {
+    ) -> Result<
+        Box<dyn HistoryRepository<C, P, A, K> + Send + Sync + 'static>,
+        HistoryRepositoryError,
+    > {
         // Roots store
         let roots_repository = RootRepository {
             roots_store: Box::new(RootsStoreInstances::roots_store(roots_key_value_store.clone())),
@@ -95,7 +99,8 @@ where
         let history = HistoryInstances::create(current_root, history_key_value_store.clone())?;
 
         // Cold store
-        // let cold_store = ColdStoreInstances::cold_store(cold_key_value_store.clone());
+        // let cold_store =
+        // ColdStoreInstances::cold_store(cold_key_value_store.clone());
 
         // RSpace importer/exporter / directly operates on Store (lmdb)
         let exporter = RSpaceExporterStore::create(

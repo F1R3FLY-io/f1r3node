@@ -21,6 +21,8 @@ final case class KeyValueDeployStorage[F[_]: Functor] private (
 
   def readAll: F[Set[Signed[DeployData]]] =
     store.toMap.map(_.values.toSet)
+
+  def nonEmpty: F[Boolean] = store.nonEmpty
 }
 
 object KeyValueDeployStorage {

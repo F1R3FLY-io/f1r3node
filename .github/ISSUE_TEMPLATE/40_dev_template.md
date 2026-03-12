@@ -1,6 +1,10 @@
 ---
 name: Developer team template (internal)
 about: Task planning and estimation
+title: ''
+labels: ''
+assignees: ''
+
 ---
 
 ## Overview

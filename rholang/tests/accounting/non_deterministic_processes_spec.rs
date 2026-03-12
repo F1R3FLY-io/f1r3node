@@ -11,10 +11,10 @@ use rholang::rust::interpreter::test_utils::resources::create_runtimes_with_serv
 use rholang::rust::interpreter::{
     accounting::costs::Cost,
     chromadb_service::create_noop_chromadb_service,
-    interpreter::EvaluateResult,
     external_services::ExternalServices,
-    openai_service::{OpenAIMockConfig, create_mock_openai_service, create_noop_openai_service},
     grpc_client_service::{GrpcClientMockConfig, GrpcClientService},
+    interpreter::EvaluateResult,
+    openai_service::{create_mock_openai_service, create_noop_openai_service, OpenAIMockConfig},
     rho_runtime::RhoRuntime,
 };
 use rspace_plus_plus::rspace::history::history_repository::HistoryRepository;
@@ -69,7 +69,14 @@ async fn evaluate_with_mock_service(
     let (runtime, _, _): (
         RhoRuntimeImpl,
         RhoRuntimeImpl,
-        Arc<Box<dyn HistoryRepository<Par, BindPattern, ListParWithRandom, TaggedContinuation> + Send + Sync + 'static>>,
+        Arc<
+            Box<
+                dyn HistoryRepository<Par, BindPattern, ListParWithRandom, TaggedContinuation>
+                    + Send
+                    + Sync
+                    + 'static,
+            >,
+        >,
     ) = create_runtimes_with_services(store, false, &mut Vec::new(), external_services).await;
 
     let rand = Blake2b512Random::create_from_bytes(&[]);
@@ -88,10 +95,8 @@ async fn evaluate_with_mock_service(
 
 #[tokio::test]
 async fn test_gpt4_mock_service_works() {
-    let external_services = create_test_external_services(
-        OpenAIMockConfig::single_completion("gpt4 completion"),
-        None,
-    );
+    let external_services =
+        create_test_external_services(OpenAIMockConfig::single_completion("gpt4 completion"), None);
 
     let result = evaluate_with_mock_service(
         r#"new output, gpt4(`rho:ai:gpt4`) in { gpt4!("abc", *output) }"#,
@@ -108,10 +113,8 @@ async fn test_gpt4_mock_service_works() {
 
 #[tokio::test]
 async fn test_gpt4_mock_error_returns_error() {
-    let external_services = create_test_external_services(
-        OpenAIMockConfig::error_on_first_call(),
-        None,
-    );
+    let external_services =
+        create_test_external_services(OpenAIMockConfig::error_on_first_call(), None);
 
     let result = evaluate_with_mock_service(
         r#"new output, gpt4(`rho:ai:gpt4`) in { gpt4!("abc", *output) }"#,
@@ -148,10 +151,8 @@ async fn test_dalle3_mock_service_works() {
 
 #[tokio::test]
 async fn test_dalle3_mock_error_returns_error() {
-    let external_services = create_test_external_services(
-        OpenAIMockConfig::error_on_first_call(),
-        None,
-    );
+    let external_services =
+        create_test_external_services(OpenAIMockConfig::error_on_first_call(), None);
 
     let result = evaluate_with_mock_service(
         r#"new output, dalle3(`rho:ai:dalle3`) in { dalle3!("a cat painting", *output) }"#,
@@ -187,10 +188,8 @@ async fn test_tts_mock_service_works() {
 
 #[tokio::test]
 async fn test_tts_mock_error_returns_error() {
-    let external_services = create_test_external_services(
-        OpenAIMockConfig::error_on_first_call(),
-        None,
-    );
+    let external_services =
+        create_test_external_services(OpenAIMockConfig::error_on_first_call(), None);
 
     let result = evaluate_with_mock_service(
         r#"new output, tts(`rho:ai:textToAudio`) in { tts!("Hello world", *output) }"#,
@@ -221,7 +220,7 @@ async fn test_grpc_tell_mock_service_works() {
         "gRPC tell with mock service should not have errors: {:?}",
         result.errors
     );
-    
+
     // Verify the mock was called
     assert!(grpc_mock.was_called(), "gRPC mock should have been called");
 }
@@ -244,7 +243,7 @@ async fn test_grpc_tell_mock_error_returns_error() {
         !result.errors.is_empty(),
         "gRPC tell with error mock should have errors"
     );
-    
+
     // Verify the mock was called
     assert!(grpc_mock.was_called(), "gRPC mock should have been called");
 }

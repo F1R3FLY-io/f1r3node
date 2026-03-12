@@ -42,7 +42,7 @@ use shared::rust::store::key_value_typed_store_impl::KeyValueTypedStoreImpl;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::{Arc, Mutex};
+use std::sync::{atomic::AtomicU64, Arc, Mutex};
 use tokio::sync::mpsc;
 
 use crate::util::rholang::resources::mk_test_rnode_store_manager_from_genesis;
@@ -56,6 +56,7 @@ use casper::rust::estimator::Estimator;
 use casper::rust::genesis::genesis::Genesis;
 use casper::rust::util::rholang::runtime_manager::RuntimeManager;
 use crypto::rust::signatures::signed::Signed;
+use dashmap::DashSet;
 use models::rust::casper::protocol::casper_message::DeployData;
 use prost::Message;
 use rspace_plus_plus::rspace::state::rspace_state_manager::RSpaceStateManager;
@@ -79,10 +80,10 @@ pub struct TestFixture {
     // Scala: implicit val blockProcessingQueue = Queue.unbounded[Task, (Casper[Task], BlockMessage)]
     // Refactored to use mpsc channel - both sender and receiver kept for test inspection
     pub block_processing_queue_tx:
-        mpsc::UnboundedSender<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
+        mpsc::Sender<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
     pub block_processing_queue_rx: Arc<
         tokio::sync::Mutex<
-            mpsc::UnboundedReceiver<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
+            mpsc::Receiver<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
         >,
     >,
     // Test-only: Track blocks enqueued for processing (updated lazily on first check)
@@ -119,7 +120,7 @@ pub struct TestFixture {
     // Scala: val bap = BlockApproverProtocol.of[Task](validatorId, deployTimestamp, ...)
     pub bap: BlockApproverProtocol<TransportLayerStub>,
     // Scala: implicit val blockProcessingState = Ref.of[Task, Set[BlockHash]](Set.empty)
-    pub blocks_in_processing: Arc<Mutex<HashSet<BlockHash>>>,
+    pub blocks_in_processing: Arc<DashSet<BlockHash>>,
     // Scala: implicit val rpConf = createRPConfAsk[Task](local)
     pub rp_conf_ask: RPConf,
     // Scala: implicit val connectionsCell: ConnectionsCell[Task] = Cell.unsafe[Task, Connections](List(local))
@@ -182,9 +183,10 @@ impl TestFixture {
             .expect("Failed to create RSpace store from shared LMDB");
 
         // Scala: val mStore = RuntimeManager.mergeableStore(spaceKVManager).unsafeRunSync(scheduler)
-        let m_store = crate::util::rholang::resources::mergeable_store_from_dyn(&mut *space_kv_manager)
-            .await
-            .expect("Failed to create mergeable store");
+        let m_store =
+            crate::util::rholang::resources::mergeable_store_from_dyn(&mut *space_kv_manager)
+                .await
+                .expect("Failed to create mergeable store");
 
         // Scala: implicit val runtimeManager = RuntimeManager[Task](rspace, replay, historyRepo, mStore, ...)
         // Use the SAME rspace_store we just opened (RSpaceStore is Clone, so this is cheap)
@@ -270,6 +272,7 @@ impl TestFixture {
             deploy_index: Arc::new(std::sync::RwLock::new(deploy_index_typed_store)),
             invalid_blocks_index: invalid_blocks_typed_store,
             equivocation_tracker_index: equivocation_tracker,
+            dag_generation: Arc::new(AtomicU64::new(0)),
         };
 
         // Insert genesis block into DAG storage (approved = true, invalid = false)
@@ -324,7 +327,7 @@ impl TestFixture {
         );
 
         // Create mpsc channel for block processing queue (receiver kept for test inspection)
-        let (block_processing_queue_tx, block_processing_queue_rx) = mpsc::unbounded_channel();
+        let (block_processing_queue_tx, block_processing_queue_rx) = mpsc::channel(1024);
 
         let approved_block = ApprovedBlock {
             candidate: ApprovedBlockCandidate {
@@ -439,8 +442,7 @@ impl TestFixture {
         };
 
         // Scala: implicit val blockProcessingState = Ref.of[Task, Set[BlockHash]](Set.empty)
-        let blocks_in_processing: Arc<Mutex<HashSet<BlockHash>>> =
-            Arc::new(Mutex::new(HashSet::new()));
+        let blocks_in_processing: Arc<DashSet<BlockHash>> = Arc::new(DashSet::new());
 
         // NOT in Scala Setup - created locally in each test as: implicit val eventBus = EventPublisher.noop[Task]
         // Rust: Create F1r3flyEvents with default capacity (equivalent to noop for tests)
@@ -464,7 +466,7 @@ impl TestFixture {
 
         let engine = Running::new(
             block_processing_queue_tx.clone(),
-            Arc::new(Mutex::new(Default::default())),
+            Arc::new(DashSet::new()),
             casper_trait_object,
             approved_block,
             Arc::new(|| {
@@ -546,7 +548,7 @@ impl TestFixture {
         // Re-enqueue all blocks to maintain queue state
         for (casper, block) in blocks {
             // Safe to ignore send errors in tests - if channel is closed, test is ending anyway
-            let _ = self.block_processing_queue_tx.send((casper, block));
+            let _ = self.block_processing_queue_tx.send((casper, block)).await;
         }
     }
 }

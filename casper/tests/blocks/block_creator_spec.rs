@@ -3,7 +3,7 @@
 // Unit tests for BlockCreator.
 // Tests the deploy preparation and cleanup logic.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -21,12 +21,12 @@ use crypto::rust::{
     private_key::PrivateKey,
     signatures::{secp256k1::Secp256k1, signed::Signed},
 };
+use dashmap::{DashMap, DashSet};
 use models::rust::casper::protocol::casper_message::DeployData;
 use models::ByteString;
 use prost::bytes::Bytes;
 use rspace_plus_plus::rspace::shared::{
-    in_mem_store_manager::InMemoryStoreManager,
-    key_value_store_manager::KeyValueStoreManager,
+    in_mem_store_manager::InMemoryStoreManager, key_value_store_manager::KeyValueStoreManager,
 };
 
 use crate::util::genesis_builder::DEFAULT_VALIDATOR_SKS;
@@ -53,20 +53,13 @@ fn create_deploy(
         expiration_timestamp,
     };
 
-    Signed::create(
-        deploy_data,
-        Box::new(Secp256k1),
-        validator_sk.clone(),
-    )
-    .expect("Failed to create signed deploy")
+    Signed::create(deploy_data, Box::new(Secp256k1), validator_sk.clone())
+        .expect("Failed to create signed deploy")
 }
 
 /// Creates a CasperSnapshot for testing with the given parameters.
 /// Uses an in-memory DAG representation (matching Scala's TestBlockDagRepresentation).
-fn create_snapshot(
-    max_block_num: i64,
-    validator_id: Bytes,
-) -> CasperSnapshot {
+fn create_snapshot(max_block_num: i64, validator_id: Bytes) -> CasperSnapshot {
     let shard_conf = CasperShardConf {
         fault_tolerance_threshold: 0.0,
         shard_name: "test-shard".to_string(),
@@ -94,7 +87,7 @@ fn create_snapshot(
     bonds_map.insert(validator_id.clone(), 100);
 
     // Set maxSeqNums like Scala does: Map(validatorId -> 0)
-    let mut max_seq_nums: HashMap<ByteString, u64> = HashMap::new();
+    let max_seq_nums: DashMap<ByteString, u64> = DashMap::new();
     max_seq_nums.insert(validator_id.clone(), 0);
 
     let on_chain_state = OnChainCasperState {
@@ -112,9 +105,9 @@ fn create_snapshot(
         lca: Bytes::new(),
         tips: vec![],
         parents: vec![],
-        justifications: HashSet::new(),
+        justifications: DashSet::new(),
         invalid_blocks: HashMap::new(),
-        deploys_in_scope: HashSet::new(),
+        deploys_in_scope: Arc::new(DashSet::new()),
         max_block_num,
         max_seq_nums,
         on_chain_state,
@@ -149,7 +142,10 @@ async fn should_remove_block_expired_deploys_while_keeping_valid_ones() {
         .await
         .expect("Failed to create block store");
 
-    let rspace_store = kvm.r_space_stores().await.expect("Failed to get rspace store");
+    let rspace_store = kvm
+        .r_space_stores()
+        .await
+        .expect("Failed to get rspace store");
     let mergeable_store = resources::mergeable_store_from_dyn(&mut kvm)
         .await
         .expect("Failed to create mergeable store");
@@ -199,7 +195,11 @@ async fn should_remove_block_expired_deploys_while_keeping_valid_ones() {
     {
         let ds = deploy_storage.lock().unwrap();
         let deploys_after = ds.read_all().expect("Failed to read deploys");
-        assert_eq!(deploys_after.len(), 1, "Expected 1 deploy after create (expired should be removed)");
+        assert_eq!(
+            deploys_after.len(),
+            1,
+            "Expected 1 deploy after create (expired should be removed)"
+        );
 
         let remaining_deploy = deploys_after.iter().next().unwrap();
         assert_eq!(
@@ -235,7 +235,10 @@ async fn should_remove_both_block_expired_and_time_expired_deploys() {
         .await
         .expect("Failed to create block store");
 
-    let rspace_store = kvm.r_space_stores().await.expect("Failed to get rspace store");
+    let rspace_store = kvm
+        .r_space_stores()
+        .await
+        .expect("Failed to get rspace store");
     let mergeable_store = resources::mergeable_store_from_dyn(&mut kvm)
         .await
         .expect("Failed to create mergeable store");

@@ -8,8 +8,8 @@ use models::rhoapi::{BindPattern, ListParWithRandom, Par, TaggedContinuation};
 use rspace_plus_plus::rspace::history::history_repository::HistoryRepository;
 use rspace_plus_plus::rspace::rspace::{RSpace, RSpaceStore};
 
-use crate::rust::interpreter::matcher::r#match::Matcher;
 use crate::rust::interpreter::external_services::ExternalServices;
+use crate::rust::interpreter::matcher::r#match::Matcher;
 use crate::rust::interpreter::rho_runtime;
 use crate::rust::interpreter::rho_runtime::{create_replay_rho_runtime, create_rho_runtime};
 use crate::rust::interpreter::system_processes::Definition;
@@ -76,9 +76,22 @@ pub async fn create_runtimes(
 ) -> (
     RhoRuntimeImpl,
     RhoRuntimeImpl,
-    Arc<Box<dyn HistoryRepository<Par, BindPattern, ListParWithRandom, TaggedContinuation> + Send + Sync + 'static>>,
+    Arc<
+        Box<
+            dyn HistoryRepository<Par, BindPattern, ListParWithRandom, TaggedContinuation>
+                + Send
+                + Sync
+                + 'static,
+        >,
+    >,
 ) {
-    create_runtimes_with_services(stores, init_registry, additional_system_processes, ExternalServices::noop()).await
+    create_runtimes_with_services(
+        stores,
+        init_registry,
+        additional_system_processes,
+        ExternalServices::noop(),
+    )
+    .await
 }
 
 /// Create runtimes with custom external services for testing
@@ -90,7 +103,14 @@ pub async fn create_runtimes_with_services(
 ) -> (
     RhoRuntimeImpl,
     RhoRuntimeImpl,
-    Arc<Box<dyn HistoryRepository<Par, BindPattern, ListParWithRandom, TaggedContinuation> + Send + Sync + 'static>>,
+    Arc<
+        Box<
+            dyn HistoryRepository<Par, BindPattern, ListParWithRandom, TaggedContinuation>
+                + Send
+                + Sync
+                + 'static,
+        >,
+    >,
 ) {
     let hrstores =
         RSpace::<Par, BindPattern, ListParWithRandom, TaggedContinuation>::create_with_replay(

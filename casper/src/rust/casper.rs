@@ -2,9 +2,10 @@
 
 use async_trait::async_trait;
 use comm::rust::transport::transport_layer::TransportLayer;
+use dashmap::{DashMap, DashSet};
 use shared::rust::shared::f1r3fly_events::F1r3flyEvents;
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     fmt::{self, Display},
     sync::{Arc, Mutex},
 };
@@ -23,6 +24,7 @@ use models::rust::{
     casper::protocol::casper_message::{BlockMessage, DeployData, Justification},
     validator::Validator,
 };
+use prost::bytes::Bytes;
 use rspace_plus_plus::rspace::{history::Either, state::rspace_exporter::RSpaceExporter};
 
 use crate::rust::{
@@ -104,6 +106,18 @@ pub trait Casper {
         snapshot: &mut CasperSnapshot,
     ) -> Result<Either<BlockError, ValidBlock>, CasperError>;
 
+    /// Validate a self-created block, skipping the expensive checkpoint replay and bonds_cache
+    /// steps since both were already computed during `block_creator::create`.
+    /// All other validation steps (block_summary, neglected_invalid_block, phlo_price,
+    /// equivocation checks, block-index computation) still run.
+    async fn validate_self_created(
+        &self,
+        block: &BlockMessage,
+        snapshot: &mut CasperSnapshot,
+        pre_state_hash: Bytes,
+        post_state_hash: Bytes,
+    ) -> Result<Either<BlockError, ValidBlock>, CasperError>;
+
     async fn handle_valid_block(
         &self,
         block: &BlockMessage,
@@ -117,6 +131,8 @@ pub trait Casper {
     ) -> Result<KeyValueDagRepresentation, CasperError>;
 
     fn get_dependency_free_from_buffer(&self) -> Result<Vec<BlockMessage>, CasperError>;
+
+    fn get_all_from_buffer(&self) -> Result<Vec<BlockMessage>, CasperError>;
 }
 
 #[async_trait]
@@ -146,6 +162,15 @@ pub trait MultiParentCasper: Casper + Send + Sync {
 
     /// Check if pending deploys exist in storage (not yet included in blocks).
     async fn has_pending_deploys_in_storage(&self) -> Result<bool, CasperError>;
+
+    /// Check if pending deploys exist in storage using an already computed snapshot.
+    /// Default fallback uses the legacy method and may compute a fresh snapshot.
+    async fn has_pending_deploys_in_storage_for_snapshot(
+        &self,
+        _snapshot: &CasperSnapshot,
+    ) -> Result<bool, CasperError> {
+        self.has_pending_deploys_in_storage().await
+    }
 }
 
 pub fn hash_set_casper<T: TransportLayer + Send + Sync>(
@@ -175,7 +200,11 @@ pub fn hash_set_casper<T: TransportLayer + Send + Sync>(
         casper_shard_conf,
         approved_block,
         finalization_in_progress: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        finalizer_task_in_progress: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        finalizer_task_queued: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         heartbeat_signal_ref,
+        deploys_in_scope_cache: Arc::new(std::sync::Mutex::new(None)),
+        active_validators_cache: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
     })
 }
 
@@ -191,11 +220,13 @@ pub struct CasperSnapshot {
     pub lca: BlockHash,
     pub tips: Vec<BlockHash>,
     pub parents: Vec<BlockMessage>,
-    pub justifications: HashSet<Justification>,
-    pub invalid_blocks: HashMap<Validator, BlockHash>,
-    pub deploys_in_scope: HashSet<Signed<DeployData>>,
+    pub justifications: DashSet<Justification>,
+    pub invalid_blocks: HashMap<BlockHash, Validator>,
+    /// Signatures of deploys seen in ancestry window.
+    /// Keeping signatures avoids retaining full deploy payloads in long-lived snapshots.
+    pub deploys_in_scope: Arc<DashSet<Bytes>>,
     pub max_block_num: i64,
-    pub max_seq_nums: HashMap<Validator, u64>,
+    pub max_seq_nums: DashMap<Validator, u64>,
     pub on_chain_state: OnChainCasperState,
 }
 
@@ -207,11 +238,11 @@ impl CasperSnapshot {
             lca: BlockHash::default(),
             tips: vec![],
             parents: vec![],
-            justifications: HashSet::new(),
+            justifications: DashSet::new(),
             invalid_blocks: HashMap::new(),
-            deploys_in_scope: HashSet::new(),
+            deploys_in_scope: Arc::new(DashSet::new()),
             max_block_num: 0,
-            max_seq_nums: HashMap::new(),
+            max_seq_nums: DashMap::new(),
             on_chain_state: OnChainCasperState::new(CasperShardConf::new()),
         }
     }
@@ -260,7 +291,7 @@ pub struct CasperShardConf {
     pub disable_validator_progress_check: bool,
     /// Enable background garbage collection for mergeable channels.
     /// When enabled, uses safe reachability-based GC (required for multi-parent mode).
-    /// When disabled (default), uses immediate deletion on finalization (legacy behavior).
+    /// When disabled (default), mergeable data is retained.
     pub enable_mergeable_channel_gc: bool,
     /// Depth buffer for mergeable channels garbage collection.
     /// Additional safety margin beyond max-parent-depth before deleting data.
@@ -300,21 +331,44 @@ impl CasperShardConf {
 pub mod test_helpers {
     use super::*;
     use async_trait::async_trait;
+    use rspace_plus_plus::rspace::shared::in_mem_key_value_store::InMemoryKeyValueStore;
 
     /// A test implementation of MultiParentCasper that returns a configurable snapshot and LFB.
     pub struct TestCasperWithSnapshot {
         snapshot: CasperSnapshot,
         lfb: BlockMessage,
         pending_deploy_count: usize,
+        block_store: KeyValueBlockStore,
     }
 
     impl TestCasperWithSnapshot {
-        pub fn new(snapshot: CasperSnapshot, lfb: BlockMessage) -> Self {
-            Self { snapshot, lfb, pending_deploy_count: 0 }
+        fn create_test_block_store() -> KeyValueBlockStore {
+            KeyValueBlockStore::new(
+                Arc::new(InMemoryKeyValueStore::new()),
+                Arc::new(InMemoryKeyValueStore::new()),
+            )
         }
 
-        pub fn new_with_pending_deploys(snapshot: CasperSnapshot, lfb: BlockMessage, pending_deploy_count: usize) -> Self {
-            Self { snapshot, lfb, pending_deploy_count }
+        pub fn new(snapshot: CasperSnapshot, lfb: BlockMessage) -> Self {
+            Self {
+                snapshot,
+                lfb,
+                pending_deploy_count: 0,
+                block_store: Self::create_test_block_store(),
+            }
+        }
+
+        pub fn new_with_pending_deploys(
+            snapshot: CasperSnapshot,
+            lfb: BlockMessage,
+            pending_deploy_count: usize,
+        ) -> Self {
+            Self {
+                snapshot,
+                lfb,
+                pending_deploy_count,
+                block_store: Self::create_test_block_store(),
+            }
         }
 
         /// Create an empty CasperSnapshot for testing.
@@ -332,6 +386,9 @@ pub mod test_helpers {
                 latest_messages_map: imbl::HashMap::new(),
                 child_map: imbl::HashMap::new(),
                 height_map: imbl::OrdMap::new(),
+                block_number_map: imbl::HashMap::new(),
+                main_parent_map: imbl::HashMap::new(),
+                self_justification_map: imbl::HashMap::new(),
                 invalid_blocks_set: imbl::HashSet::new(),
                 last_finalized_block_hash: BlockHash::new(),
                 finalized_blocks_set: imbl::HashSet::new(),
@@ -397,6 +454,16 @@ pub mod test_helpers {
             Ok(Either::Right(ValidBlock::Valid))
         }
 
+        async fn validate_self_created(
+            &self,
+            _block: &BlockMessage,
+            _snapshot: &mut CasperSnapshot,
+            _pre_state_hash: Bytes,
+            _post_state_hash: Bytes,
+        ) -> Result<Either<BlockError, ValidBlock>, CasperError> {
+            Ok(Either::Right(ValidBlock::Valid))
+        }
+
         async fn handle_valid_block(
             &self,
             _block: &BlockMessage,
@@ -414,6 +481,10 @@ pub mod test_helpers {
         }
 
         fn get_dependency_free_from_buffer(&self) -> Result<Vec<BlockMessage>, CasperError> {
+            Ok(Vec::new())
+        }
+
+        fn get_all_from_buffer(&self) -> Result<Vec<BlockMessage>, CasperError> {
             Ok(Vec::new())
         }
     }
@@ -440,7 +511,7 @@ pub mod test_helpers {
         }
 
         fn block_store(&self) -> &KeyValueBlockStore {
-            unimplemented!("block_store not needed for heartbeat tests")
+            &self.block_store
         }
 
         fn runtime_manager(&self) -> Arc<tokio::sync::Mutex<RuntimeManager>> {

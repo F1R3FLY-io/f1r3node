@@ -1,25 +1,21 @@
-use rand::distributions::{Alphanumeric, DistString};
-use rspace_plus_plus::rspace::errors::{HistoryError, RadixTreeError};
-use rspace_plus_plus::rspace::hashing::blake2b256_hash::Blake2b256Hash;
-use shared::rust::store::key_value_store::KeyValueStore;
-use shared::rust::{Byte, ByteVector};
-
 // See rspace/src/test/scala/coop/rchain/rspace/history/HistoryActionTests.scala
-
 use std::collections::{BTreeMap, HashSet};
 use std::error::Error;
 use std::sync::Arc;
 
 use rand::Rng;
+use rand::distributions::{Alphanumeric, DistString};
 use rand::seq::SliceRandom;
-use rspace_plus_plus::rspace::{
-    history::{
-        history::{History, HistoryInstances},
-        history_action::{DeleteAction, HistoryAction, HistoryActionTrait, InsertAction, KeyPath},
-        instances::radix_history::RadixHistory,
-    },
-    shared::in_mem_key_value_store::InMemoryKeyValueStore,
+use rspace_plus_plus::rspace::errors::{HistoryError, RadixTreeError};
+use rspace_plus_plus::rspace::hashing::blake2b256_hash::Blake2b256Hash;
+use rspace_plus_plus::rspace::history::history::{History, HistoryInstances};
+use rspace_plus_plus::rspace::history::history_action::{
+    DeleteAction, HistoryAction, HistoryActionTrait, InsertAction, KeyPath,
 };
+use rspace_plus_plus::rspace::history::instances::radix_history::RadixHistory;
+use rspace_plus_plus::rspace::shared::in_mem_key_value_store::InMemoryKeyValueStore;
+use shared::rust::store::key_value_store::KeyValueStore;
+use shared::rust::{Byte, ByteVector};
 
 #[test]
 fn creating_and_read_one_record_should_work() {
@@ -467,13 +463,9 @@ fn update_state(
     state
 }
 
-fn zeros() -> KeyPath {
-    vec![0; 32]
-}
+fn zeros() -> KeyPath { vec![0; 32] }
 
-fn thirty_one_zeros() -> KeyPath {
-    vec![0; 31]
-}
+fn thirty_one_zeros() -> KeyPath { vec![0; 31] }
 
 fn zeros_and(i: u8) -> KeyPath {
     let mut key_path = thirty_one_zeros();
@@ -481,9 +473,7 @@ fn zeros_and(i: u8) -> KeyPath {
     key_path
 }
 
-fn hex_key(s: &str) -> Vec<Byte> {
-    hex::decode(s).unwrap()
-}
+fn hex_key(s: &str) -> Vec<Byte> { hex::decode(s).unwrap() }
 
 fn history_insert(k: KeyPath) -> (HistoryAction, InsertAction) {
     let insert_action = InsertAction {

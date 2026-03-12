@@ -94,10 +94,8 @@ impl ProposeService for ProposeGrpcServiceV1Impl {
                 {
                     Ok(result) => Ok(Self::create_success_propose_response(result).into()),
                     Err(e) => {
-                        let error = Self::create_service_error(format!(
-                            "Propose service method error: {}",
-                            e
-                        ));
+                        let error_message = format!("Propose service method error: {}", e);
+                        let error = Self::create_service_error(error_message);
                         Ok(Self::create_error_propose_response(error).into())
                     }
                 }
@@ -120,10 +118,8 @@ impl ProposeService for ProposeGrpcServiceV1Impl {
                 match BlockAPI::get_propose_result(&mut proposer_state).await {
                     Ok(result) => Ok(Self::create_success_propose_result_response(result).into()),
                     Err(e) => {
-                        let error = Self::create_service_error(format!(
-                            "Propose service method error: {}",
-                            e
-                        ));
+                        let error_message = format!("Propose service method error: {}", e);
+                        let error = Self::create_service_error(error_message);
                         Ok(Self::create_error_propose_result_response(error).into())
                     }
                 }

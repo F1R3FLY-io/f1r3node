@@ -124,45 +124,44 @@ impl TransactionAPIImpl {
             .map(|info| info.sig.clone())
             .unwrap_or_else(|| "unknown".to_string());
 
-        // Determine transaction types based on report length (matching Scala logic)
-        let transaction_types = match deploy.report.len() {
-            1 => vec![TransactionType::PreCharge {
-                deploy_id: deploy_sig.clone(),
-            }],
-            2 => vec![
-                TransactionType::PreCharge {
-                    deploy_id: deploy_sig.clone(),
-                },
-                TransactionType::Refund {
-                    deploy_id: deploy_sig.clone(),
-                },
-            ],
-            3 => vec![
-                TransactionType::PreCharge {
-                    deploy_id: deploy_sig.clone(),
-                },
-                TransactionType::UserDeploy {
-                    deploy_id: deploy_sig.clone(),
-                },
-                TransactionType::Refund {
-                    deploy_id: deploy_sig.clone(),
-                },
-            ],
-            _ => {
-                return Err(eyre::eyre!(
-                    "It is not possible that user report {} amount is not equal to 1, 2 or 3",
-                    deploy_sig
-                ));
-            }
-        };
+        if deploy.report.is_empty() {
+            return Err(eyre::eyre!(
+                "It is not possible that user report {} amount is 0",
+                deploy_sig
+            ));
+        }
 
-        // Process each report with its corresponding transaction type
-        for (report, tx_type) in deploy.report.iter().zip(transaction_types) {
+        // Precharge is always emitted in the first report batch.
+        let first_report_transactions = self.find_transactions(&deploy.report[0]);
+        let deployer_addr = first_report_transactions
+            .first()
+            .map(|t| t.from_addr.clone());
+        for transaction in first_report_transactions {
+            transactions.push(TransactionInfo {
+                transaction,
+                transaction_type: TransactionType::PreCharge {
+                    deploy_id: deploy_sig.clone(),
+                },
+            });
+        }
+
+        // Subsequent batches may contain either user-transfer events, refund events, or both.
+        // Classify by sender address: transactions sent by deployer are user deploy effects;
+        // others are refund/system side-effects.
+        for report in deploy.report.iter().skip(1) {
             let found_transactions = self.find_transactions(report);
             for transaction in found_transactions {
+                let tx_type = match deployer_addr.as_ref() {
+                    Some(addr) if transaction.from_addr == *addr => TransactionType::UserDeploy {
+                        deploy_id: deploy_sig.clone(),
+                    },
+                    _ => TransactionType::Refund {
+                        deploy_id: deploy_sig.clone(),
+                    },
+                };
                 transactions.push(TransactionInfo {
                     transaction,
-                    transaction_type: tx_type.clone(),
+                    transaction_type: tx_type,
                 });
             }
         }
@@ -283,6 +282,20 @@ where
         Arc<DashMap<String, Shared<BoxFuture<'static, Result<TransactionResponse, String>>>>>,
 }
 
+impl<TA, TS> Clone for CacheTransactionAPI<TA, TS>
+where
+    TA: TransactionAPI,
+    TS: KeyValueTypedStore<String, TransactionResponse> + Send + Sync + 'static,
+{
+    fn clone(&self) -> Self {
+        Self {
+            transaction_api: self.transaction_api.clone(),
+            store: self.store.clone(),
+            block_defer_map: self.block_defer_map.clone(),
+        }
+    }
+}
+
 impl<TA, TS> CacheTransactionAPI<TA, TS>
 where
     TA: TransactionAPI + Send + Sync + 'static,
@@ -299,30 +312,28 @@ where
 
     /// Get transaction response for a block hash with caching
     pub async fn get_transaction(&self, block_hash: String) -> Result<TransactionResponse> {
+        // Treat missing/empty cache entries as cache miss, not an error.
         let transaction_response = {
             let store = self.store.read().await;
             store
                 .get(&vec![block_hash.clone()])?
-                .first()
-                .ok_or(eyre::eyre!("No response found"))?
-                .clone()
+                .into_iter()
+                .next()
+                .flatten()
         };
 
         if let Some(transaction_response) = transaction_response {
-            return Ok(transaction_response.clone());
+            return Ok(transaction_response);
         }
 
-        let fetch_task = {
-            self.block_defer_map
-                .get(&block_hash)
-                .map(|entry| entry.value().clone())
-        }
-        .unwrap_or_else(|| {
+        let fetch_task = if let Some(entry) = self.block_defer_map.get(&block_hash) {
+            entry.value().clone()
+        } else {
             let transaction_api = self.transaction_api.clone();
             let block_hash_str = block_hash.clone();
             let store = self.store.clone();
 
-            async move {
+            let task = async move {
                 let data = transaction_api
                     .get_transaction(Blake2b256Hash::from_hex(&block_hash_str))
                     .await
@@ -338,12 +349,17 @@ where
                 Ok(response)
             }
             .boxed()
-            .shared()
-        });
+            .shared();
 
-        let res = fetch_task.await.map_err(|e| eyre::eyre!(e))?;
+            self.block_defer_map
+                .insert(block_hash.clone(), task.clone());
+            task
+        };
 
+        let res = fetch_task.await.map_err(|e| eyre::eyre!(e));
+        // Cleanup in-flight dedup entry regardless of success/failure.
         self.block_defer_map.remove(&block_hash);
+        let res = res?;
 
         Ok(res)
     }

@@ -17,7 +17,6 @@ use models::rust::casper::protocol::casper_message::{
 use models::rust::casper::protocol::packet_type_tag::ToPacket;
 use shared::rust::shared::f1r3fly_event::F1r3flyEvent;
 use shared::rust::shared::f1r3fly_events::F1r3flyEvents;
-use std::collections::HashSet;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
@@ -30,6 +29,11 @@ use crate::rust::engine::engine_cell::EngineCell;
 use crate::rust::engine::running::Running;
 use crate::rust::errors::CasperError;
 use crate::rust::estimator::Estimator;
+use crate::rust::metrics_constants::{
+    CASPER_INIT_APPROVED_BLOCK_RECEIVED_METRIC, CASPER_INIT_ATTEMPTS_METRIC,
+    CASPER_INIT_TIME_TO_APPROVED_BLOCK_METRIC, CASPER_INIT_TIME_TO_RUNNING_METRIC,
+    CASPER_INIT_TRANSITION_TO_RUNNING_METRIC, CASPER_METRICS_SOURCE,
+};
 use crate::rust::util::rholang::runtime_manager::RuntimeManager;
 use crate::rust::validator_identity::ValidatorIdentity;
 use rspace_plus_plus::rspace::state::rspace_state_manager::RSpaceStateManager;
@@ -116,6 +120,36 @@ pub fn log_no_approved_block_available(identifier: &str) {
     )
 }
 
+/// Record initialization metrics for the direct-to-running startup path.
+/// This path legitimately bypasses Initializing, so we emit equivalent counters/timers here.
+pub fn record_direct_to_running_init_metrics() {
+    metrics::counter!(
+        CASPER_INIT_ATTEMPTS_METRIC,
+        "source" => CASPER_METRICS_SOURCE
+    )
+    .increment(1);
+    metrics::counter!(
+        CASPER_INIT_APPROVED_BLOCK_RECEIVED_METRIC,
+        "source" => CASPER_METRICS_SOURCE
+    )
+    .increment(1);
+    metrics::histogram!(
+        CASPER_INIT_TIME_TO_APPROVED_BLOCK_METRIC,
+        "source" => CASPER_METRICS_SOURCE
+    )
+    .record(0.0);
+    metrics::histogram!(
+        CASPER_INIT_TIME_TO_RUNNING_METRIC,
+        "source" => CASPER_METRICS_SOURCE
+    )
+    .record(0.0);
+    metrics::counter!(
+        CASPER_INIT_TRANSITION_TO_RUNNING_METRIC,
+        "source" => CASPER_METRICS_SOURCE
+    )
+    .increment(1);
+}
+
 /*
  * Note the ordering of the insertions is important.
  * We always want the block dag store to be a subset of the block store.
@@ -158,11 +192,11 @@ pub async fn send_no_approved_block_available<T: TransportLayer + Send + Sync + 
 // NOTE: Changed to use trait object (dyn MultiParentCasper) instead of generic T
 // based on discussion with Steven for TestFixture compatibility
 pub async fn transition_to_running<U: TransportLayer + Send + Sync + 'static>(
-    block_processing_queue_tx: mpsc::UnboundedSender<(
+    block_processing_queue_tx: mpsc::Sender<(
         Arc<dyn MultiParentCasper + Send + Sync>,
         BlockMessage,
     )>,
-    blocks_in_processing: Arc<Mutex<HashSet<BlockHash>>>,
+    blocks_in_processing: Arc<DashSet<BlockHash>>,
     casper: Arc<dyn MultiParentCasper + Send + Sync>,
     approved_block: ApprovedBlock,
     the_init: Arc<
@@ -182,6 +216,11 @@ pub async fn transition_to_running<U: TransportLayer + Send + Sync + 'static>(
         "Making a transition to Running state. Approved {}",
         approved_block_info
     );
+    metrics::counter!(
+        CASPER_INIT_TRANSITION_TO_RUNNING_METRIC,
+        "source" => CASPER_METRICS_SOURCE
+    )
+    .increment(1);
 
     // Publish EnteredRunningState event
     let block_hash_string =
@@ -223,16 +262,15 @@ pub async fn transition_to_running<U: TransportLayer + Send + Sync + 'static>(
 //   Returning senders ensures producers can enqueue LFS responses, mirroring Scala tests that
 //   enqueue directly into queues.
 // - Behavior equivalence: `Initializing` still consumes from these channels; Scala used bounded(50),
-//   here we use unbounded for simplicity and low test traffic. If strict bounds are needed later,
-//   we can switch to `mpsc::channel(50)` and still return the senders.
+//   while Rust now uses bounded channels with runtime-configurable defaults.
 // NOTE: Parameter types adapted to match GenesisValidator changes (Arc wrappers, trait objects)
 // based on discussion with Steven for TestFixture compatibility
 pub async fn transition_to_initializing<U: TransportLayer + Send + Sync + Clone + 'static>(
-    block_processing_queue_tx: &mpsc::UnboundedSender<(
+    block_processing_queue_tx: &mpsc::Sender<(
         Arc<dyn MultiParentCasper + Send + Sync>,
         BlockMessage,
     )>,
-    blocks_in_processing: &Arc<Mutex<HashSet<BlockHash>>>,
+    blocks_in_processing: &Arc<DashSet<BlockHash>>,
     casper_shard_conf: &CasperShardConf,
     validator_id: &Option<ValidatorIdentity>,
     init: Arc<
@@ -256,14 +294,15 @@ pub async fn transition_to_initializing<U: TransportLayer + Send + Sync + Clone 
     estimator: &Estimator,
     heartbeat_signal_ref: &crate::rust::heartbeat_signal::HeartbeatSignalRef,
 ) -> Result<(), CasperError> {
-    // Create channels and return senders so caller can feed LFS responses (Scala: expose queues)
-    let (block_tx, block_rx) = mpsc::unbounded_channel::<BlockMessage>();
-    let (tuple_tx, tuple_rx) = mpsc::unbounded_channel::<StoreItemsMessage>();
+    // Create bounded channels and return senders so caller can feed LFS responses (Scala: expose queues).
+    // Scala uses size-50 bounded queues in both cases.
+    let (block_tx, block_rx) = mpsc::channel::<BlockMessage>(50);
+    let (tuple_tx, tuple_rx) = mpsc::channel::<StoreItemsMessage>(50);
 
     // RuntimeManager is now Arc<Mutex<RuntimeManager>>, so we clone the Arc instead of taking
     let runtime_manager = runtime_manager_arc.clone();
 
-    let initializing = crate::rust::engine::initializing::Initializing::new(
+    let initializing = Arc::new(crate::rust::engine::initializing::Initializing::new(
         (**transport_layer).clone(),
         rp_conf_ask.clone(),
         connections_cell.clone(),
@@ -290,9 +329,14 @@ pub async fn transition_to_initializing<U: TransportLayer + Send + Sync + Clone 
         runtime_manager,
         estimator.clone(),
         heartbeat_signal_ref.clone(),
-    );
+    ));
 
-    engine_cell.set(Arc::new(initializing)).await;
+    // Initialize immediately on transition.
+    // Relying on the one-time NodeRuntime engine init can miss this when the node
+    // moves GenesisValidator -> Initializing after startup.
+    engine_cell.set(initializing.clone()).await;
+    initializing.init().await?;
 
     Ok(())
 }
+use dashmap::DashSet;

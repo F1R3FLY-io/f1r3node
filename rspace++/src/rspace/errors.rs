@@ -26,21 +26,15 @@ impl std::fmt::Display for RSpaceError {
 }
 
 impl From<RadixTreeError> for RSpaceError {
-    fn from(error: RadixTreeError) -> Self {
-        RSpaceError::RadixTreeError(error)
-    }
+    fn from(error: RadixTreeError) -> Self { RSpaceError::RadixTreeError(error) }
 }
 
 impl From<KvStoreError> for RSpaceError {
-    fn from(error: KvStoreError) -> Self {
-        RSpaceError::KvStoreError(error)
-    }
+    fn from(error: KvStoreError) -> Self { RSpaceError::KvStoreError(error) }
 }
 
 impl From<HistoryError> for RSpaceError {
-    fn from(error: HistoryError) -> Self {
-        RSpaceError::HistoryError(error)
-    }
+    fn from(error: HistoryError) -> Self { RSpaceError::HistoryError(error) }
 }
 
 /* History Error */
@@ -67,21 +61,15 @@ impl std::fmt::Display for HistoryError {
 }
 
 impl From<RadixTreeError> for HistoryError {
-    fn from(error: RadixTreeError) -> Self {
-        HistoryError::RadixTreeError(error)
-    }
+    fn from(error: RadixTreeError) -> Self { HistoryError::RadixTreeError(error) }
 }
 
 impl From<KvStoreError> for HistoryError {
-    fn from(error: KvStoreError) -> Self {
-        HistoryError::KvStoreError(error)
-    }
+    fn from(error: KvStoreError) -> Self { HistoryError::KvStoreError(error) }
 }
 
 impl From<RootError> for HistoryError {
-    fn from(error: RootError) -> Self {
-        HistoryError::RootError(error)
-    }
+    fn from(error: RootError) -> Self { HistoryError::RootError(error) }
 }
 
 /* History Repository Error */
@@ -102,15 +90,11 @@ impl std::fmt::Display for HistoryRepositoryError {
 }
 
 impl From<RootError> for HistoryRepositoryError {
-    fn from(error: RootError) -> Self {
-        HistoryRepositoryError::RootError(error)
-    }
+    fn from(error: RootError) -> Self { HistoryRepositoryError::RootError(error) }
 }
 
 impl From<HistoryError> for HistoryRepositoryError {
-    fn from(error: HistoryError) -> Self {
-        HistoryRepositoryError::HistoryError(error)
-    }
+    fn from(error: HistoryError) -> Self { HistoryRepositoryError::HistoryError(error) }
 }
 
 /* Radix Tree Error */
@@ -137,9 +121,7 @@ impl std::fmt::Display for RadixTreeError {
 }
 
 impl From<KvStoreError> for RadixTreeError {
-    fn from(error: KvStoreError) -> Self {
-        RadixTreeError::KvStoreError(error)
-    }
+    fn from(error: KvStoreError) -> Self { RadixTreeError::KvStoreError(error) }
 }
 
 /* Root Error */
@@ -160,7 +142,5 @@ impl std::fmt::Display for RootError {
 }
 
 impl From<KvStoreError> for RootError {
-    fn from(error: KvStoreError) -> Self {
-        RootError::KvStoreError(error.to_string())
-    }
+    fn from(error: KvStoreError) -> Self { RootError::KvStoreError(error.to_string()) }
 }

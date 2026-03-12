@@ -2,9 +2,10 @@
 
 use crate::rust::api::serde_types::block_info::BlockInfoSerde;
 use crate::rust::api::serde_types::light_block_info::LightBlockInfoSerde;
+use crate::rust::web::block_info_enricher::BlockEnricher;
 use crate::rust::web::transaction::{CacheTransactionAPI, TransactionAPI, TransactionResponse};
 use crate::rust::web::version_info::get_version_info_str;
-use casper::rust::api::block_api::BlockAPI;
+use casper::rust::api::block_api::{BlockAPI, DeployNotFoundError};
 use casper::rust::engine::engine_cell::EngineCell;
 use casper::rust::ProposeFunction;
 use comm::rust::discovery::node_discovery::NodeDiscovery;
@@ -20,7 +21,31 @@ use serde::{Deserialize, Serialize};
 use shared::rust::store::key_value_typed_store::KeyValueTypedStore;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
+use tokio::time::sleep;
+use tracing::warn;
 use utoipa::ToSchema;
+
+const FIND_DEPLOY_RETRY_INTERVAL_MS_ENV: &str = "F1R3_FIND_DEPLOY_RETRY_INTERVAL_MS";
+const FIND_DEPLOY_MAX_ATTEMPTS_ENV: &str = "F1R3_FIND_DEPLOY_MAX_ATTEMPTS";
+const DEFAULT_FIND_DEPLOY_RETRY_INTERVAL_MS: u64 = 50;
+const DEFAULT_FIND_DEPLOY_MAX_ATTEMPTS: u16 = 1;
+
+fn find_deploy_retry_interval_ms() -> u64 {
+    shared::rust::env::var_or_filtered(
+        FIND_DEPLOY_RETRY_INTERVAL_MS_ENV,
+        DEFAULT_FIND_DEPLOY_RETRY_INTERVAL_MS,
+        |value: &u64| *value > 0,
+    )
+}
+
+fn find_deploy_max_attempts() -> u16 {
+    shared::rust::env::var_or_filtered(
+        FIND_DEPLOY_MAX_ATTEMPTS_ENV,
+        DEFAULT_FIND_DEPLOY_MAX_ATTEMPTS,
+        |value: &u16| *value > 0,
+    )
+}
 
 /// Web API trait defining the interface for HTTP endpoints
 #[async_trait::async_trait]
@@ -93,6 +118,7 @@ where
     min_phlo_price: i64,
     is_node_read_only: bool,
     engine_cell: Arc<EngineCell>,
+    block_enricher: Arc<dyn BlockEnricher>,
     cache_transaction_api: CacheTransactionAPI<TA, TS>,
     rp_conf_cell: comm::rust::rp::rp_conf::RPConfCell,
     connections_cell: ConnectionsCell,
@@ -112,6 +138,7 @@ where
         shard_id: String,
         min_phlo_price: i64,
         is_node_read_only: bool,
+        block_enricher: Arc<dyn BlockEnricher>,
         cache_transaction_api: CacheTransactionAPI<TA, TS>,
         engine_cell: Arc<EngineCell>,
         rp_conf_cell: comm::rust::rp::rp_conf::RPConfCell,
@@ -127,6 +154,7 @@ where
             min_phlo_price,
             is_node_read_only,
             engine_cell,
+            block_enricher,
             cache_transaction_api,
             rp_conf_cell,
             connections_cell,
@@ -143,10 +171,21 @@ where
     TS: KeyValueTypedStore<String, TransactionResponse> + Send + Sync + 'static,
 {
     async fn status(&self) -> Result<ApiStatus> {
+        const STATUS_SLOW_THRESHOLD: Duration = Duration::from_millis(500);
+        let total_start = Instant::now();
+
+        let rp_conf_start = Instant::now();
         let rp_conf = self.rp_conf_cell.read()?;
+        let rp_conf_elapsed = rp_conf_start.elapsed();
+
+        let connections_start = Instant::now();
         let address = rp_conf.local.to_address();
         let connections = self.connections_cell.read()?;
+        let connections_elapsed = connections_start.elapsed();
+
+        let discovery_start = Instant::now();
         let discovered_nodes = self.node_discovery.peers()?;
+        let discovery_elapsed = discovery_start.elapsed();
 
         let peers = connections.len() as i32;
         let nodes = discovered_nodes.len() as i32;
@@ -167,6 +206,19 @@ where
                 is_connected: connected_ids.contains(&node.id.key),
             })
             .collect();
+
+        let total_elapsed = total_start.elapsed();
+        if total_elapsed >= STATUS_SLOW_THRESHOLD {
+            warn!(
+                ?total_elapsed,
+                ?rp_conf_elapsed,
+                ?connections_elapsed,
+                ?discovery_elapsed,
+                peers,
+                nodes,
+                "Web API status assembly is slow"
+            );
+        }
 
         Ok(ApiStatus {
             version: VersionInfo {
@@ -249,15 +301,15 @@ where
     }
 
     async fn last_finalized_block(&self) -> Result<BlockInfoSerde> {
-        BlockAPI::last_finalized_block(&self.engine_cell)
-            .await
-            .map(BlockInfoSerde::from)
+        let block_info = BlockAPI::last_finalized_block(&self.engine_cell).await?;
+        let enriched = self.block_enricher.enrich(block_info).await;
+        Ok(BlockInfoSerde::from(enriched))
     }
 
     async fn get_block(&self, hash: String) -> Result<BlockInfoSerde> {
-        BlockAPI::get_block(&self.engine_cell, &hash)
-            .await
-            .map(BlockInfoSerde::from)
+        let block_info = BlockAPI::get_block(&self.engine_cell, &hash).await?;
+        let enriched = self.block_enricher.enrich(block_info).await;
+        Ok(BlockInfoSerde::from(enriched))
     }
 
     async fn get_blocks(&self, depth: i32) -> Result<Vec<LightBlockInfoSerde>> {
@@ -273,9 +325,33 @@ where
     async fn find_deploy(&self, deploy_id: String) -> Result<LightBlockInfoSerde> {
         let deploy_id_bytes =
             hex::decode(&deploy_id).map_err(|e| eyre!("Invalid deploy ID format: {}", e))?;
-        let block = BlockAPI::find_deploy(&self.engine_cell, &deploy_id_bytes).await?;
 
-        Ok(LightBlockInfoSerde::from(block))
+        let retry_interval_ms = find_deploy_retry_interval_ms();
+        let max_attempts = find_deploy_max_attempts();
+
+        let mut attempt: u16 = 1;
+        loop {
+            match BlockAPI::find_deploy(&self.engine_cell, &deploy_id_bytes).await {
+                Ok(block) => return Ok(LightBlockInfoSerde::from(block)),
+                Err(err) => {
+                    let not_found = err.downcast_ref::<DeployNotFoundError>().is_some();
+
+                    if !not_found || attempt >= max_attempts {
+                        return Err(err);
+                    }
+
+                    tracing::debug!(
+                        ?attempt,
+                        ?max_attempts,
+                        ?retry_interval_ms,
+                        ?deploy_id,
+                        "Waiting for deploy to become visible in block DAG"
+                    );
+                    sleep(Duration::from_millis(retry_interval_ms)).await;
+                    attempt += 1;
+                }
+            }
+        }
     }
 
     async fn exploratory_deploy(

@@ -52,11 +52,15 @@ async fn eval_rholang_code(code: &str, timeout: Duration) -> Result<(), String> 
 /// Without StackGrowingFuture, this causes stack overflow in debug builds.
 #[tokio::test]
 async fn deep_recursion_shortslow_should_not_stackoverflow() {
-    let code = CompiledRholangSource::load_source("shortslow.rho")
-        .expect("Failed to load shortslow.rho");
+    let code =
+        CompiledRholangSource::load_source("shortslow.rho").expect("Failed to load shortslow.rho");
 
     let result = eval_rholang_code(&code, Duration::from_secs(300)).await;
-    assert!(result.is_ok(), "shortslow deep recursion failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "shortslow deep recursion failed: {:?}",
+        result.err()
+    );
 }
 
 /// Regression test for https://github.com/F1R3FLY-io/f1r3node/issues/306
@@ -66,9 +70,13 @@ async fn deep_recursion_shortslow_should_not_stackoverflow() {
 /// in addition to deep recursion, matching the exact integration test scenario.
 #[tokio::test]
 async fn deep_recursion_longslow_should_not_stackoverflow() {
-    let code = CompiledRholangSource::load_source("longslow.rho")
-        .expect("Failed to load longslow.rho");
+    let code =
+        CompiledRholangSource::load_source("longslow.rho").expect("Failed to load longslow.rho");
 
     let result = eval_rholang_code(&code, Duration::from_secs(300)).await;
-    assert!(result.is_ok(), "longslow deep recursion failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "longslow deep recursion failed: {:?}",
+        result.err()
+    );
 }

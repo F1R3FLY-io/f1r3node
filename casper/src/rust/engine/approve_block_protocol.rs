@@ -143,6 +143,11 @@ impl ApproveBlockProtocolFactory {
         connections_cell: Arc<ConnectionsCell>,
         conf: Arc<RPConf>,
     ) -> Result<ApproveBlockProtocolImpl<T>, CasperError> {
+        tracing::info!(
+            required_sigs = required_sigs,
+            "Bootstrap configured required_sigs"
+        );
+
         let now = Self::current_millis();
         let timestamp = deploy_timestamp.unwrap_or(now as i64);
 
@@ -348,33 +353,18 @@ impl<T: TransportLayer + Send + Sync> ApproveBlockProtocolImpl<T> {
         time: u64,
         signatures: &HashSet<SignatureWrapper>,
     ) -> Result<(), CasperError> {
-        // 1. All bonded validators have signed (early exit — no need to wait for timeout)
-        // 2. Timeout reached AND minimum threshold met
-        // 3. Zero required signatures (self-approve)
-        let all_validators_signed = signatures.len() >= self.trusted_validators.len();
-        let timeout_reached = time >= self.start + self.duration.as_millis() as u64;
-        let minimum_threshold_met = signatures.len() >= self.required_sigs as usize;
-
-        if all_validators_signed
-            || (timeout_reached && minimum_threshold_met)
+        if (time >= self.start + self.duration.as_millis() as u64
+            && signatures.len() >= self.required_sigs as usize)
             || self.required_sigs == 0
         {
-            tracing::info!(
-                "Completing genesis ceremony: \
-                {}/{} validators signed, required: {}",
-                signatures.len(),
-                self.trusted_validators.len(),
-                self.required_sigs,
-            );
             Box::pin(self.complete_genesis_ceremony(signatures.clone())).await
         } else {
             tracing::info!(
-                "Genesis ceremony in progress. \
-                Signatures: {}/{} total ({} required). \
-                Duration: {} ms of {} ms timeout. \
+                "Failed to meet approval conditions. \
+                Signatures: {} of {} required. \
+                Duration {} ms of {} ms minimum. \
                 Continue broadcasting UnapprovedBlock...",
                 signatures.len(),
-                self.trusted_validators.len(),
                 self.required_sigs,
                 time - self.start,
                 self.duration.as_millis()

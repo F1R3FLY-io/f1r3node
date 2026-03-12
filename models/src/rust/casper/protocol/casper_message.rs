@@ -607,6 +607,7 @@ impl ProcessedDeploy {
             cost: self.cost.cost,
             errored: self.is_failed,
             system_deploy_error: self.system_deploy_error.unwrap_or_default(),
+            transfers: Vec::new(),
         }
     }
 
