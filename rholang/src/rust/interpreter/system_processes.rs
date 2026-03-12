@@ -1625,15 +1625,9 @@ impl SystemProcesses {
             return Ok(previous_output);
         }
 
-        match self.chromadb_service
+        self.chromadb_service
             .create_collection(&collection_name, ignore_or_update_if_exists, metadata)
-            .await
-        {
-            Ok(_) => (),
-            Err(e) => {
-                return Err(e);
-            }
-        };
+            .await?;
 
         let output = vec![Par::default()];
         produce(&output, ack).await?;
@@ -1663,21 +1657,15 @@ impl SystemProcesses {
             return Ok(previous_output);
         }
 
-        match self.chromadb_service.get_collection_meta(&collection_name).await {
-            Ok(meta) => {
-                let result_par = match meta {
-                    None => RhoNil::create_par(),
-                    Some(inner) => inner.into(),
-                };
+        let meta = self.chromadb_service.get_collection_meta(&collection_name).await?;
+        let result_par = match meta {
+            None => RhoNil::create_par(),
+            Some(inner) => inner.into(),
+        };
 
-                let output = vec![result_par];
-                produce(&output, &ack).await?;
-                Ok(output)
-            }
-            Err(e) => {
-                return Err(e);
-            }
-        }
+        let output = vec![result_par];
+        produce(&output, &ack).await?;
+        Ok(output)
     }
 
     pub async fn chroma_upsert_entries(
@@ -1741,25 +1729,19 @@ impl SystemProcesses {
             return Ok(previous_output);
         }
 
-        match self.chromadb_service
+        let res = self.chromadb_service
             .query(
                 &collection_name,
                 doc_texts.iter().map(|s| s.as_ref()).collect(),
             )
-            .await
-        {
-            Ok(res) => {
-                let result_par_vec: Vec<Par> = res.into_iter().map(Into::into).collect();
-                let result_par = RhoList::create_par(result_par_vec);
+            .await?;
 
-                let output = vec![result_par];
-                produce(&output, &ack).await?;
-                Ok(output)
-            }
-            Err(e) => {
-                return Err(e);
-            }
-        }
+        let result_par_vec: Vec<Par> = res.into_iter().map(Into::into).collect();
+        let result_par = RhoList::create_par(result_par_vec);
+
+        let output = vec![result_par];
+        produce(&output, &ack).await?;
+        Ok(output)
     }
 
     pub async fn chroma_delete_documents(
