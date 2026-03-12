@@ -3032,6 +3032,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "num-rational"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f83d14da390562dca69fc84082e73e548e1ad308d24accdedd2720017cb37824"
+dependencies = [
+ "num-bigint",
+ "num-integer",
+ "num-traits",
+]
+
+[[package]]
 name = "num-traits"
 version = "0.2.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4124,6 +4135,10 @@ dependencies = [
  "lazy_static",
  "metrics 0.24.3",
  "models",
+ "num-bigint",
+ "num-integer",
+ "num-rational",
+ "num-traits",
  "openai-api-rs",
  "pretty_assertions",
  "prost",
@@ -4154,7 +4169,7 @@ dependencies = [
 [[package]]
 name = "rholang-parser"
 version = "0.1.0"
-source = "git+https://github.com/F1R3FLY-io/rholang-rs?rev=600110e2f27d54a96cdb2ab08bc91e6252ab98e3#600110e2f27d54a96cdb2ab08bc91e6252ab98e3"
+source = "git+https://github.com/F1R3FLY-io/rholang-rs?branch=feat%2Fnumeric-types#09de1a0f40bd42254173b5bb3efed36efe6319bd"
 dependencies = [
  "bitvec",
  "nonempty-collections",
@@ -4169,7 +4184,7 @@ dependencies = [
 [[package]]
 name = "rholang-tree-sitter"
 version = "0.1.2"
-source = "git+https://github.com/F1R3FLY-io/rholang-rs?rev=600110e2f27d54a96cdb2ab08bc91e6252ab98e3#600110e2f27d54a96cdb2ab08bc91e6252ab98e3"
+source = "git+https://github.com/F1R3FLY-io/rholang-rs?branch=feat%2Fnumeric-types#09de1a0f40bd42254173b5bb3efed36efe6319bd"
 dependencies = [
  "cc",
  "tree-sitter-language",
@@ -4178,7 +4193,7 @@ dependencies = [
 [[package]]
 name = "rholang-tree-sitter-proc-macro"
 version = "0.1.2"
-source = "git+https://github.com/F1R3FLY-io/rholang-rs?rev=600110e2f27d54a96cdb2ab08bc91e6252ab98e3#600110e2f27d54a96cdb2ab08bc91e6252ab98e3"
+source = "git+https://github.com/F1R3FLY-io/rholang-rs?branch=feat%2Fnumeric-types#09de1a0f40bd42254173b5bb3efed36efe6319bd"
 dependencies = [
  "anyhow",
  "quote",

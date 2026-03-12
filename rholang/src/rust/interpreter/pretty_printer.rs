@@ -529,6 +529,42 @@ impl PrettyPrinter {
                     ))
                 }
                 ExprInstance::GByteArray(bs) => Ok(hex::encode(bs)),
+                ExprInstance::GDouble(bits) => {
+                    let f = f64::from_bits(*bits);
+                    if f == f.floor() && f.is_finite() {
+                        Ok(format!("{:.1}f64", f))
+                    } else {
+                        Ok(format!("{}f64", f))
+                    }
+                }
+                ExprInstance::GBigInt(bytes) => {
+                    Ok(format!("{}n", twos_complement_to_decimal(bytes)))
+                }
+                ExprInstance::GBigRat(rat) => {
+                    let num_str = twos_complement_to_decimal(&rat.numerator);
+                    let den_str = twos_complement_to_decimal(&rat.denominator);
+                    Ok(format!("{}/{}r", num_str, den_str))
+                }
+                ExprInstance::GFixedPoint(fp) => {
+                    let unscaled_str = twos_complement_to_decimal(&fp.unscaled);
+                    if fp.scale == 0 {
+                        Ok(format!("{}p0", unscaled_str))
+                    } else {
+                        let scale = fp.scale as usize;
+                        let is_negative = unscaled_str.starts_with('-');
+                        let digits = if is_negative { &unscaled_str[1..] } else { &unscaled_str };
+                        if digits.len() <= scale {
+                            let padded = format!("{:0>width$}", digits, width = scale + 1);
+                            let (integer, fraction) = padded.split_at(padded.len() - scale);
+                            let prefix = if is_negative { "-" } else { "" };
+                            Ok(format!("{}{}.{}p{}", prefix, integer, fraction, scale))
+                        } else {
+                            let (integer, fraction) = digits.split_at(digits.len() - scale);
+                            let prefix = if is_negative { "-" } else { "" };
+                            Ok(format!("{}{}.{}p{}", prefix, integer, fraction, scale))
+                        }
+                    }
+                }
             },
             // TODO: Figure out if we can prevent prost from generating - OLD
             None => Ok(String::from("Nil")),
@@ -1315,4 +1351,11 @@ mod tests {
         let target = r#"{"a" : 1, "b" : 2, "c" : 3}"#;
         assert_eq!(result, target);
     }
+}
+
+fn twos_complement_to_decimal(bytes: &[u8]) -> String {
+    if bytes.is_empty() {
+        return "0".to_string();
+    }
+    num_bigint::BigInt::from_signed_bytes_be(bytes).to_string()
 }
