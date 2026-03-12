@@ -677,8 +677,11 @@ object MultiParentCasperImpl {
   // TODO: Extract hardcoded deployLifespan from shard config
   // Size of deploy safety range.
   // Validators will try to put deploy in a block only for next `deployLifespan` blocks.
-  // Required to enable protection from re-submitting duplicate deploys
-  val deployLifespan = 50
+  // Required to enable protection from re-submitting duplicate deploys.
+  // Set to 250 to accommodate 6 GB P2P file replication with default casper-loop-interval=30s:
+  // at ~6s/block the LFB lags 100+ blocks while a large block validates; a lifespan of 250
+  // (≈ 25 min) ensures the file deploy is never evicted before replication completes.
+  val deployLifespan = 250
 
   def addedEvent(block: BlockMessage): RChainEvent = {
     val (blockHash, parents, justifications, deploys, creator, seqNum) = blockEvent(block)
