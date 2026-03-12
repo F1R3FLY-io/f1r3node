@@ -40,7 +40,7 @@ where
         chroma: chromadb_service,
         openai_enabled: false,
         ollama_enabled: true,
-        is_validator: true
+        is_validator: true,
     };
 
     let runtime = rho_runtime::create_runtime_from_kv_store(

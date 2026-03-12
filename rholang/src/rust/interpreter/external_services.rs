@@ -37,7 +37,7 @@ impl ExternalServices {
             chroma: create_chromadb_service(),
             openai_enabled: openai_config.enabled,
             ollama_enabled: ollama_config.enabled,
-            is_validator: true
+            is_validator: true,
         }
     }
 
@@ -51,7 +51,7 @@ impl ExternalServices {
             chroma: create_chromadb_service(),
             openai_enabled: false,
             ollama_enabled: false,
-            is_validator: false
+            is_validator: false,
         }
     }
 
@@ -65,7 +65,7 @@ impl ExternalServices {
             chroma: create_noop_chromadb_service(),
             openai_enabled: false,
             ollama_enabled: false,
-            is_validator: false
+            is_validator: false,
         }
     }
 
@@ -98,7 +98,7 @@ impl ExternalServices {
             chroma: create_chromadb_service(),
             openai_enabled: openai_config.enabled,
             ollama_enabled: ollama_config.enabled,
-            is_validator: true
+            is_validator: true,
         })
     }
 
