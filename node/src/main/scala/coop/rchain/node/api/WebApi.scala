@@ -57,6 +57,8 @@ trait WebApi[F[_]] {
 
   def findDeploy(deployId: String): F[LightBlockInfo]
 
+  def findDeployMinimal(deployId: String): F[DeployLookupResponse]
+
   def exploratoryDeploy(
       term: String,
       blockHash: Option[String],
@@ -147,6 +149,9 @@ object WebApi {
       BlockAPI
         .findDeploy[F](deployId.unsafeHexToByteString)
         .flatMap(_.liftToBlockApiErr)
+
+    def findDeployMinimal(deployId: String): F[DeployLookupResponse] =
+      findDeploy(deployId).map(DeployLookupResponse.fromLightBlockInfo)
 
     def exploratoryDeploy(
         term: String,
@@ -319,6 +324,33 @@ object WebApi {
   )
 
   final case class VersionInfo(api: String, node: String)
+
+  final case class DeployLookupResponse(
+      blockHash: String,
+      blockNumber: Long,
+      timestamp: Long,
+      sender: String,
+      seqNum: Long,
+      sig: String,
+      sigAlgorithm: String,
+      shardId: String,
+      version: Long
+  )
+
+  object DeployLookupResponse {
+    def fromLightBlockInfo(info: LightBlockInfo): DeployLookupResponse =
+      DeployLookupResponse(
+        blockHash = info.blockHash,
+        blockNumber = info.blockNumber,
+        timestamp = info.timestamp,
+        sender = info.sender,
+        seqNum = info.seqNum,
+        sig = info.sig,
+        sigAlgorithm = info.sigAlgorithm,
+        shardId = info.shardId,
+        version = info.version
+      )
+  }
 
   // Exception thrown by BlockAPI
   final class BlockApiException(message: String) extends Exception(message)
