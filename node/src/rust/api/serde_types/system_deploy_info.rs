@@ -7,6 +7,7 @@ use models::casper::{
     ReportCommProto, ReportConsumeProto, ReportProduceProto, ReportProto, SingleReport,
     SlashSystemDeployDataProto, SystemDeployDataProto, SystemDeployInfoWithEventData,
 };
+use super::base64_bytes;
 use models::rhoapi::{BindPattern, ListParWithRandom, Par};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -79,9 +80,9 @@ impl From<RejectedDeployInfoSerde> for RejectedDeployInfo {
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct SlashSystemDeployDataSerde {
-    #[serde(rename = "invalidBlockHash")]
+    #[serde(rename = "invalidBlockHash", with = "base64_bytes")]
     pub invalid_block_hash: Vec<u8>,
-    #[serde(rename = "issuerPublicKey")]
+    #[serde(rename = "issuerPublicKey", with = "base64_bytes")]
     pub issuer_public_key: Vec<u8>,
 }
 

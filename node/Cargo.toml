@@ -16,6 +16,7 @@ comm = { path = "../comm" }
 rspace_plus_plus = { path = "../rspace++" }
 graphz = { path = "../graphz" }
 block-storage = { path = "../block-storage" }
+base64 = "0.22"
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 itertools = { workspace = true }
