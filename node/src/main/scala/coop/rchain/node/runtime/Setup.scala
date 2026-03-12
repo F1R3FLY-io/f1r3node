@@ -389,7 +389,7 @@ object Setup {
           conf.casper.maxParentDepth.getOrElse(Int.MaxValue),
           conf.casper.synchronyConstraintThreshold.toFloat,
           conf.casper.heightConstraintThreshold,
-          50,
+          250,
           1,
           1,
           conf.casper.genesisBlockData.bondMinimum,
