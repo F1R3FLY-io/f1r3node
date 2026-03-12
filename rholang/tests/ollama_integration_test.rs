@@ -43,8 +43,7 @@ async fn with_runtime_and_mock_ollama<F, Fut>(
         chroma: chromadb_service,
         openai_enabled: false,
         ollama_enabled: true,
-        is_validator: true,
-        chroma_enabled: false
+        is_validator: true
     };
 
     let runtime = rho_runtime::create_runtime_from_kv_store(

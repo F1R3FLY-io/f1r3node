@@ -51,10 +51,6 @@ boot/
 rholang/bnfc/
 rholang/src/main/java/
 
-# SBERT
-#########
-models/
-
 # ChromaDB
 #############
 chroma_data/

@@ -1,57 +1,48 @@
 use async_trait::async_trait;
 use chroma::embed::EmbeddingFunction;
 use rust_bert::{
-    pipelines::sentence_embeddings::{SentenceEmbeddingsBuilder, SentenceEmbeddingsModelType},
-    RustBertError,
+    RustBertError, pipelines::sentence_embeddings::{SentenceEmbeddingsBuilder, SentenceEmbeddingsModel, SentenceEmbeddingsModelType}
 };
-use tokio::task::JoinError;
+use std::sync::Mutex;
 
-// Struct that must be constructed using the provided new method.
+// Struct to store the model for embedding documents
 pub struct SBERTEmbeddings {
-    _init: (),
+    model: Mutex<SentenceEmbeddingsModel>
 }
 
 impl SBERTEmbeddings {
     /// Download the SBERT model and cache it.
     pub fn new() -> Result<Self, SBERTEmbeddingsError> {
-        // Since the model cannot be easily shared between threads, we only download and cache it.
-        // We cannot also store it within the struct - but this is not too bad since later `.create_model`
-        // calls will not trigger re-downloads.
+        // Since the model cannot be easily shared between threads, we store it
+        // in a Mutex.
         // See: https://github.com/guillaume-be/rust-bert/issues/389
-        let _ = SentenceEmbeddingsBuilder::remote(SentenceEmbeddingsModelType::AllMiniLmL6V2)
+        let model = SentenceEmbeddingsBuilder::remote(SentenceEmbeddingsModelType::AllMiniLmL6V2)
             .create_model()
             .map_err(SBERTEmbeddingsError::ModelError)?;
+        let model = Mutex::new(model);
 
-        Ok(Self { _init: () })
+        Ok(Self { model })
     }
 }
 
 #[derive(thiserror::Error, Debug)]
 pub enum SBERTEmbeddingsError {
-    #[error("Could not instantiate model: {0}")]
-    ThreadingError(JoinError),
-    #[error("Could not encode documents {0}")]
+    #[error("Could not read model: {0}")]
+    ThreadingError(String),
+    #[error("Could not encode documents: {0}")]
     ModelError(RustBertError),
 }
 
-// Helper SBERT embedding function sto be used in ChromaDB.
+// Helper SBERT embedding function to be used in ChromaDB.
 #[async_trait]
 impl EmbeddingFunction for SBERTEmbeddings {
     type Embedding = Vec<f32>;
     type Error = SBERTEmbeddingsError;
 
     async fn embed_strs(&self, docs: &[&str]) -> Result<Vec<Self::Embedding>, Self::Error> {
-        // Since the model cannot be easily shared between threads, we re-create it.
-        // However, at this point, the remote model should already have been downloaded and cached.
-        // See [`SBERTEmbeddings::new`].
-        let sbert_embeddings = tokio::task::spawn_blocking(move || {
-            SentenceEmbeddingsBuilder::remote(SentenceEmbeddingsModelType::AllMiniLmL6V2)
-                .create_model()
-        })
-        .await
-        .map_err(SBERTEmbeddingsError::ThreadingError)?
-        .map_err(SBERTEmbeddingsError::ModelError)?;
-        let res = sbert_embeddings
+        let res = self.model
+            .lock()
+            .map_err(|err| SBERTEmbeddingsError::ThreadingError(err.to_string()))?
             .encode(docs)
             .map_err(SBERTEmbeddingsError::ModelError)?;
         Ok(res)

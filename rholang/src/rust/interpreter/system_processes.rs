@@ -1,4 +1,6 @@
-use crate::rust::interpreter::chromadb_service::{ChromaDBService, CollectionEntries, Metadata};
+use crate::rust::interpreter::chromadb_service::{
+    CollectionEntries, Metadata, SharedChromaDBService
+};
 use crate::rust::interpreter::rho_type::{Extractor, RhoList, RhoNil};
 
 use super::contract_call::ContractCall;
@@ -284,7 +286,7 @@ impl ProcessContext {
         openai_service: SharedOpenAIService,
         ollama_service: SharedOllamaService,
         grpc_client_service: GrpcClientService,
-        chromadb_service: Arc<tokio::sync::Mutex<ChromaDBService>>,
+        chromadb_service: SharedChromaDBService,
     ) -> Self {
         ProcessContext {
             space: space.clone(),
@@ -456,7 +458,7 @@ pub struct SystemProcesses {
     openai_service: SharedOpenAIService,
     ollama_service: SharedOllamaService,
     grpc_client_service: GrpcClientService,
-    chromadb_service: Arc<tokio::sync::Mutex<ChromaDBService>>,
+    chromadb_service: SharedChromaDBService,
     pretty_printer: PrettyPrinter,
 }
 
@@ -469,7 +471,7 @@ impl SystemProcesses {
         openai_service: SharedOpenAIService,
         ollama_service: SharedOllamaService,
         grpc_client_service: GrpcClientService,
-        chromadb_service: Arc<tokio::sync::Mutex<ChromaDBService>>,
+        chromadb_service: SharedChromaDBService,
     ) -> Self {
         SystemProcesses {
             dispatcher,
@@ -1584,15 +1586,12 @@ impl SystemProcesses {
             return Ok(previous_output);
         }
 
-        let chromadb_service = self.chromadb_service.lock().await;
-        match chromadb_service
+        match self.chromadb_service
             .create_collection(&collection_name, ignore_or_update_if_exists, metadata)
             .await
         {
             Ok(_) => (),
             Err(e) => {
-                let p = RhoString::create_par(collection_name);
-                produce(&[p], ack).await?;
                 return Err(e);
             }
         };
@@ -1625,8 +1624,7 @@ impl SystemProcesses {
             return Ok(previous_output);
         }
 
-        let chromadb_service = self.chromadb_service.lock().await;
-        match chromadb_service.get_collection_meta(&collection_name).await {
+        match self.chromadb_service.get_collection_meta(&collection_name).await {
             Ok(meta) => {
                 let result_par = match meta {
                     None => RhoNil::create_par(),
@@ -1638,9 +1636,6 @@ impl SystemProcesses {
                 Ok(output)
             }
             Err(e) => {
-                // TODO (chase): Is this right? It seems like other service methods do something similar.
-                let p = RhoString::create_par(collection_name);
-                produce(&[p], ack).await?;
                 return Err(e);
             }
         }
@@ -1672,11 +1667,10 @@ impl SystemProcesses {
             return Ok(previous_output);
         }
 
-        let chromadb_service = self.chromadb_service.lock().await;
-        chromadb_service
+        self.chromadb_service
             .upsert_entries(&collection_name, entries)
             .await?;
-        // TODO (chase): Is this right? It seems like other service methods do something similar.
+
         let p = RhoString::create_par(collection_name);
         produce(&[p], ack).await?;
         Ok(vec![])
@@ -1708,8 +1702,7 @@ impl SystemProcesses {
             return Ok(previous_output);
         }
 
-        let chromadb_service = self.chromadb_service.lock().await;
-        match chromadb_service
+        match self.chromadb_service
             .query(
                 &collection_name,
                 doc_texts.iter().map(|s| s.as_ref()).collect(),
@@ -1725,9 +1718,6 @@ impl SystemProcesses {
                 Ok(output)
             }
             Err(e) => {
-                // TODO (chase): Is this right? It seems like other service methods do something similar.
-                let p = RhoString::create_par(collection_name);
-                produce(&[p], ack).await?;
                 return Err(e);
             }
         }
@@ -1759,11 +1749,10 @@ impl SystemProcesses {
             return Ok(previous_output);
         }
 
-        let chromadb_service = self.chromadb_service.lock().await;
-        chromadb_service
+        self.chromadb_service
             .delete_documents(&collection_name, doc_ids)
             .await?;
-        // TODO (chase): Is this right? It seems like other service methods do something similar.
+
         let p = RhoString::create_par(collection_name);
         produce(&[p], ack).await?;
         Ok(vec![])

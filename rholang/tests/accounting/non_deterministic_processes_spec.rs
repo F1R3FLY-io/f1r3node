@@ -40,8 +40,7 @@ fn create_test_external_services(
         chroma: create_noop_chromadb_service(),
         openai_enabled: true,
         ollama_enabled: false,
-        is_validator: true,
-        chroma_enabled: false
+        is_validator: true
     }
 }
 
@@ -55,8 +54,7 @@ fn create_test_external_services_grpc(grpc_mock: GrpcClientMockConfig) -> Extern
         chroma: create_noop_chromadb_service(),
         openai_enabled: false,
         ollama_enabled: false,
-        is_validator: true,
-        chroma_enabled: false
+        is_validator: true
     }
 }
 

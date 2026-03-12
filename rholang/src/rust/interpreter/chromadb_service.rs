@@ -187,17 +187,22 @@ pub struct ChromaDBClient {
 }
 
 impl ChromaDBClient {
-    fn new() -> Self {
+    fn new() -> Result<Self, InterpreterError> {
         // TODO (chase): Do we need custom options? i.e custom database name, authentication method, and url?
         // If the chroma db is hosted alongside the node locally, custom options don't make much sense.
-        let client = ChromaHttpClient::from_env().expect("Failed to build ChromaDB client");
+        let client = ChromaHttpClient::from_env()
+            .map_err(|_| InterpreterError::ChromaDBError(
+                "Failed to build ChromaDB client".into()
+            ))?;
         let embedding_f = SBERTEmbeddings::new()
-            .expect("Failed to build SBERTEmbeddings model");
+            .map_err(|_| InterpreterError::ChromaDBError(
+                "Failed to build SBERTEmbeddings model".into()
+            ))?;
 
-        Self {
+        Ok(Self {
             client,
             embedding_f,
-        }
+        })
     }
 
     async fn create_collection_helper(
@@ -237,7 +242,13 @@ pub enum ChromaDBService {
 
 impl ChromaDBService {
     pub fn new_real() -> Self {
-        Self::Real(ChromaDBClient::new())
+        if let Ok(client) = ChromaDBClient::new() {
+            Self::Real(client)
+        }
+        else {
+            tracing::info!("ChromaDB service could not be started.");
+            Self::NoOp
+        }
     }
 
     pub fn new_noop() -> Self {
@@ -530,16 +541,16 @@ impl ChromaDBService {
 }
 
 /// Type alias for thread-safe ChromaDB service
-pub type SharedChromaDBService = Arc<tokio::sync::Mutex<ChromaDBService>>;
+pub type SharedChromaDBService = Arc<ChromaDBService>;
 
 /// Create a shared ChromaDB service
 pub fn create_chromadb_service() -> SharedChromaDBService {
-    Arc::new(tokio::sync::Mutex::new(ChromaDBService::new_real()))
+    Arc::new(ChromaDBService::new_real())
 }
 
 /// Create a NoOp OpenAI service
 pub fn create_noop_chromadb_service() -> SharedChromaDBService {
-    Arc::new(tokio::sync::Mutex::new(ChromaDBService::new_noop()))
+    Arc::new(ChromaDBService::new_noop())
 }
 
 #[cfg(test)]

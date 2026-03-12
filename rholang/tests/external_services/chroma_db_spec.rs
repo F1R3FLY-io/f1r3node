@@ -1,5 +1,5 @@
 use models::rhoapi::Par;
-use rholang::rust::interpreter::chromadb_service::{self, CollectionEntry, MetadataValue};
+use rholang::rust::interpreter::chromadb_service::{Metadata, CollectionEntry, MetadataValue};
 use rholang::rust::interpreter::rho_type::{RhoList, RhoNil, RhoNumber};
 use rholang::rust::interpreter::{
     errors::InterpreterError,
@@ -44,7 +44,7 @@ async fn collection_should_yield_correct_meta_after_creation() {
     test_runtime(
         meta_contract,
         Some(
-            chromadb_service::Metadata::from([
+            Metadata::from([
                 ("meta1".to_string(), MetadataValue::Number(1)),
                 ("two".to_string(), MetadataValue::String("42".to_string())),
                 ("three".to_string(), MetadataValue::Number(42)),
@@ -118,7 +118,7 @@ async fn entry_should_be_queried() {
             .into(),
             CollectionEntry {
                 document: "Hello world again!".to_string(),
-                metadata: Some(chromadb_service::Metadata::from([(
+                metadata: Some(Metadata::from([(
                     "meta2".to_string(),
                     MetadataValue::String("42".to_string()),
                 )])),

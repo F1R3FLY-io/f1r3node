@@ -19,8 +19,7 @@ pub struct ExternalServices {
     pub chroma: SharedChromaDBService,
     pub openai_enabled: bool,
     pub ollama_enabled: bool,
-    pub is_validator: bool,
-    pub chroma_enabled: bool
+    pub is_validator: bool
 }
 
 impl ExternalServices {
@@ -33,8 +32,7 @@ impl ExternalServices {
             chroma: create_chromadb_service(),
             openai_enabled: openai_config.enabled,
             ollama_enabled: ollama_config.enabled,
-            is_validator: true,
-            chroma_enabled: true
+            is_validator: true
         }
     }
 
@@ -48,8 +46,7 @@ impl ExternalServices {
             chroma: create_chromadb_service(),
             openai_enabled: false,
             ollama_enabled: false,
-            is_validator: false,
-            chroma_enabled: true
+            is_validator: false
         }
     }
 
@@ -64,8 +61,7 @@ impl ExternalServices {
             chroma: create_noop_chromadb_service(),
             openai_enabled: false,
             ollama_enabled: false,
-            is_validator: false,
-            chroma_enabled: false
+            is_validator: false
         }
     }
 
@@ -91,8 +87,7 @@ impl ExternalServices {
             chroma: create_chromadb_service(),
             openai_enabled: openai_config.enabled,
             ollama_enabled: ollama_config.enabled,
-            is_validator: true,
-            chroma_enabled: true
+            is_validator: true
         })
     }
 
