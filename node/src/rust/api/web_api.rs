@@ -2,6 +2,7 @@
 
 use crate::rust::api::serde_types::block_info::BlockInfoSerde;
 use crate::rust::api::serde_types::light_block_info::LightBlockInfoSerde;
+use crate::rust::web::block_info_enricher::BlockEnricher;
 use crate::rust::web::transaction::{CacheTransactionAPI, TransactionAPI, TransactionResponse};
 use crate::rust::web::version_info::get_version_info_str;
 use casper::rust::api::block_api::{BlockAPI, DeployNotFoundError};
@@ -117,6 +118,7 @@ where
     min_phlo_price: i64,
     is_node_read_only: bool,
     engine_cell: Arc<EngineCell>,
+    block_enricher: Arc<dyn BlockEnricher>,
     cache_transaction_api: CacheTransactionAPI<TA, TS>,
     rp_conf_cell: comm::rust::rp::rp_conf::RPConfCell,
     connections_cell: ConnectionsCell,
@@ -136,6 +138,7 @@ where
         shard_id: String,
         min_phlo_price: i64,
         is_node_read_only: bool,
+        block_enricher: Arc<dyn BlockEnricher>,
         cache_transaction_api: CacheTransactionAPI<TA, TS>,
         engine_cell: Arc<EngineCell>,
         rp_conf_cell: comm::rust::rp::rp_conf::RPConfCell,
@@ -151,6 +154,7 @@ where
             min_phlo_price,
             is_node_read_only,
             engine_cell,
+            block_enricher,
             cache_transaction_api,
             rp_conf_cell,
             connections_cell,
@@ -297,15 +301,15 @@ where
     }
 
     async fn last_finalized_block(&self) -> Result<BlockInfoSerde> {
-        BlockAPI::last_finalized_block(&self.engine_cell)
-            .await
-            .map(BlockInfoSerde::from)
+        let block_info = BlockAPI::last_finalized_block(&self.engine_cell).await?;
+        let enriched = self.block_enricher.enrich(block_info).await;
+        Ok(BlockInfoSerde::from(enriched))
     }
 
     async fn get_block(&self, hash: String) -> Result<BlockInfoSerde> {
-        BlockAPI::get_block(&self.engine_cell, &hash)
-            .await
-            .map(BlockInfoSerde::from)
+        let block_info = BlockAPI::get_block(&self.engine_cell, &hash).await?;
+        let enriched = self.block_enricher.enrich(block_info).await;
+        Ok(BlockInfoSerde::from(enriched))
     }
 
     async fn get_blocks(&self, depth: i32) -> Result<Vec<LightBlockInfoSerde>> {

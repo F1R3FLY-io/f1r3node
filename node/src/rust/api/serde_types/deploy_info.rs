@@ -3,11 +3,47 @@
 //! This module provides custom JSON serialization for the DeployInfo protobuf type
 //! that doesn't have serde derives by default.
 
-use models::casper::{DeployInfo, DeployInfoWithEventData};
+use models::casper::{DeployInfo, DeployInfoWithEventData, TransferInfo};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::rust::api::serde_types::system_deploy_info::SingleReportSerde;
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct TransferInfoSerde {
+    #[serde(rename = "fromAddr")]
+    pub from_addr: String,
+    #[serde(rename = "toAddr")]
+    pub to_addr: String,
+    pub amount: i64,
+    pub success: bool,
+    #[serde(rename = "failReason")]
+    pub fail_reason: String,
+}
+
+impl From<TransferInfo> for TransferInfoSerde {
+    fn from(t: TransferInfo) -> Self {
+        Self {
+            from_addr: t.from_addr,
+            to_addr: t.to_addr,
+            amount: t.amount,
+            success: t.success,
+            fail_reason: t.fail_reason,
+        }
+    }
+}
+
+impl From<TransferInfoSerde> for TransferInfo {
+    fn from(t: TransferInfoSerde) -> Self {
+        TransferInfo {
+            from_addr: t.from_addr,
+            to_addr: t.to_addr,
+            amount: t.amount,
+            success: t.success,
+            fail_reason: t.fail_reason,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct DeployInfoSerde {
@@ -27,6 +63,7 @@ pub struct DeployInfoSerde {
     pub errored: bool,
     #[serde(rename = "systemDeployError")]
     pub system_deploy_error: String,
+    pub transfers: Vec<TransferInfoSerde>,
 }
 
 impl From<DeployInfo> for DeployInfoSerde {
@@ -43,6 +80,7 @@ impl From<DeployInfo> for DeployInfoSerde {
             cost: deploy.cost,
             errored: deploy.errored,
             system_deploy_error: deploy.system_deploy_error,
+            transfers: deploy.transfers.into_iter().map(TransferInfoSerde::from).collect(),
         }
     }
 }
@@ -61,6 +99,7 @@ impl From<DeployInfoSerde> for DeployInfo {
             cost: json.cost,
             errored: json.errored,
             system_deploy_error: json.system_deploy_error,
+            transfers: json.transfers.into_iter().map(TransferInfo::from).collect(),
         }
     }
 }
@@ -79,6 +118,7 @@ impl Default for DeployInfoSerde {
             cost: 0,
             errored: false,
             system_deploy_error: String::new(),
+            transfers: Vec::new(),
         }
     }
 }
