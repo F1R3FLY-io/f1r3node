@@ -203,6 +203,10 @@ impl Score {
     pub const ESET: i32 = 8;
     pub const EMAP: i32 = 9;
     pub const EPATHMAP: i32 = 13;
+    pub const DOUBLE: i32 = 14;
+    pub const BIG_INT: i32 = 15;
+    pub const BIG_RAT: i32 = 16;
+    pub const FIXED_POINT: i32 = 17;
     pub const DEPLOYER_AUTH: i32 = 10;
     pub const DEPLOY_ID: i32 = 11;
     pub const SYS_AUTH_TOKEN: i32 = 12;

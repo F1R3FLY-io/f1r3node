@@ -737,6 +737,44 @@ impl Sortable<Expr> for ExprSortMatcher {
                         vec![Tree::<ScoreAtom>::create_leaf_from_bytes(ba.clone())],
                     ),
                 },
+
+                ExprInstance::GDouble(bits) => ScoredTerm {
+                    term: e.clone(),
+                    score: Tree::<ScoreAtom>::create_node_from_i64s(vec![
+                        Score::DOUBLE as i64,
+                        *bits as i64,
+                    ]),
+                },
+
+                ExprInstance::GBigInt(bytes) => ScoredTerm {
+                    term: e.clone(),
+                    score: Tree::<ScoreAtom>::create_node_from_i32(
+                        Score::BIG_INT,
+                        vec![Tree::<ScoreAtom>::create_leaf_from_bytes(bytes.clone())],
+                    ),
+                },
+
+                ExprInstance::GBigRat(rat) => ScoredTerm {
+                    term: e.clone(),
+                    score: Tree::<ScoreAtom>::create_node_from_i32(
+                        Score::BIG_RAT,
+                        vec![
+                            Tree::<ScoreAtom>::create_leaf_from_bytes(rat.numerator.clone()),
+                            Tree::<ScoreAtom>::create_leaf_from_bytes(rat.denominator.clone()),
+                        ],
+                    ),
+                },
+
+                ExprInstance::GFixedPoint(fp) => ScoredTerm {
+                    term: e.clone(),
+                    score: Tree::<ScoreAtom>::create_node_from_i32(
+                        Score::FIXED_POINT,
+                        vec![
+                            Tree::<ScoreAtom>::create_leaf_from_bytes(fp.unscaled.clone()),
+                            Tree::<ScoreAtom>::create_node_from_i64s(vec![fp.scale as i64]),
+                        ],
+                    ),
+                },
             },
 
             // TODO get rid of Empty nodes in Protobuf unless they represent sth indeed optional - OLD

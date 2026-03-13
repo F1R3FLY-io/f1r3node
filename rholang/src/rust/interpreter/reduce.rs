@@ -43,10 +43,14 @@ use crate::rust::interpreter::rho_type::RhoTuple2;
 
 use super::accounting::_cost;
 use super::accounting::costs::{
-    boolean_and_cost, boolean_or_cost, byte_array_append_cost, comparison_cost, division_cost,
-    equality_check_cost, list_append_cost, method_call_cost, modulo_cost, multiplication_cost,
-    new_bindings_cost, op_call_cost, receive_eval_cost, send_eval_cost, string_append_cost,
-    subtraction_cost, sum_cost, var_eval_cost,
+    bigint_comparison_cost, bigint_division_cost, bigint_modulo_cost,
+    bigint_multiplication_cost, bigint_negation_cost, bigint_subtraction_cost, bigint_sum_cost,
+    bigrat_comparison_cost, bigrat_division_cost, bigrat_multiplication_cost, bigrat_negation_cost,
+    bigrat_subtraction_cost, bigrat_sum_cost, boolean_and_cost, boolean_or_cost,
+    byte_array_append_cost, comparison_cost, division_cost, equality_check_cost, list_append_cost,
+    method_call_cost, modulo_cost, multiplication_cost, new_bindings_cost, op_call_cost,
+    receive_eval_cost, send_eval_cost, string_append_cost, subtraction_cost, sum_cost,
+    var_eval_cost,
 };
 use super::dispatch::{DispatchType, RhoDispatch, RholangAndScalaDispatcher};
 use super::env::Env;
@@ -1590,17 +1594,71 @@ impl DebruijnInterpreter {
                 v1.expr_instance.clone().unwrap(),
                 v2.expr_instance.clone().unwrap(),
             ) {
-                (ExprInstance::GBool(b1), ExprInstance::GBool(b2)) => Ok(Expr {
-                    expr_instance: Some(ExprInstance::GBool(relopb(b1, b2))),
-                }),
+                (ExprInstance::GBool(b1), ExprInstance::GBool(b2)) => {
+                    self.cost.charge(comparison_cost())?;
+                    Ok(Expr {
+                        expr_instance: Some(ExprInstance::GBool(relopb(b1, b2))),
+                    })
+                }
 
-                (ExprInstance::GInt(i1), ExprInstance::GInt(i2)) => Ok(Expr {
-                    expr_instance: Some(ExprInstance::GBool(relopi(i1, i2))),
-                }),
+                (ExprInstance::GInt(i1), ExprInstance::GInt(i2)) => {
+                    self.cost.charge(comparison_cost())?;
+                    Ok(Expr {
+                        expr_instance: Some(ExprInstance::GBool(relopi(i1, i2))),
+                    })
+                }
 
-                (ExprInstance::GString(s1), ExprInstance::GString(s2)) => Ok(Expr {
-                    expr_instance: Some(ExprInstance::GBool(relops(s1, s2))),
-                }),
+                (ExprInstance::GString(s1), ExprInstance::GString(s2)) => {
+                    self.cost.charge(comparison_cost())?;
+                    Ok(Expr {
+                        expr_instance: Some(ExprInstance::GBool(relops(s1, s2))),
+                    })
+                }
+
+                (ExprInstance::GDouble(d1), ExprInstance::GDouble(d2)) => {
+                    self.cost.charge(comparison_cost())?;
+                    let f1 = f64::from_bits(d1);
+                    let f2 = f64::from_bits(d2);
+                    if f1.is_nan() || f2.is_nan() {
+                        Ok(Expr {
+                            expr_instance: Some(ExprInstance::GBool(false)),
+                        })
+                    } else {
+                        Ok(Expr {
+                            expr_instance: Some(ExprInstance::GBool(relopi(
+                                f1.partial_cmp(&f2).map_or(0, |o| o as i64),
+                                0,
+                            ))),
+                        })
+                    }
+                }
+
+                (ExprInstance::GBigInt(b1), ExprInstance::GBigInt(b2)) => {
+                    self.cost.charge(bigint_comparison_cost(b1.len(), b2.len()))?;
+                    let cmp = compare_twos_complement_bytes(&b1, &b2);
+                    Ok(Expr {
+                        expr_instance: Some(ExprInstance::GBool(relopi(cmp as i64, 0))),
+                    })
+                }
+
+                (ExprInstance::GBigRat(r1), ExprInstance::GBigRat(r2)) => {
+                    self.cost.charge(bigrat_comparison_cost(
+                        r1.numerator.len(), r1.denominator.len(),
+                        r2.numerator.len(), r2.denominator.len(),
+                    ))?;
+                    let cmp = compare_big_rationals(&r1, &r2);
+                    Ok(Expr {
+                        expr_instance: Some(ExprInstance::GBool(relopi(cmp as i64, 0))),
+                    })
+                }
+
+                (ExprInstance::GFixedPoint(fp1), ExprInstance::GFixedPoint(fp2)) => {
+                    self.cost.charge(bigint_comparison_cost(fp1.unscaled.len(), fp2.unscaled.len()))?;
+                    let cmp = compare_fixed_points(&fp1, &fp2)?;
+                    Ok(Expr {
+                        expr_instance: Some(ExprInstance::GBool(relopi(cmp as i64, 0))),
+                    })
+                }
 
                 _ => Err(InterpreterError::ReduceError(format!(
                     "Unexpected compare: {:?} vs. {:?}",
@@ -1631,6 +1689,22 @@ impl DebruijnInterpreter {
                     expr_instance: Some(ExprInstance::GByteArray(x.clone())),
                 }),
 
+                ExprInstance::GDouble(x) => Ok(Expr {
+                    expr_instance: Some(ExprInstance::GDouble(*x)),
+                }),
+
+                ExprInstance::GBigInt(x) => Ok(Expr {
+                    expr_instance: Some(ExprInstance::GBigInt(x.clone())),
+                }),
+
+                ExprInstance::GBigRat(x) => Ok(Expr {
+                    expr_instance: Some(ExprInstance::GBigRat(x.clone())),
+                }),
+
+                ExprInstance::GFixedPoint(x) => Ok(Expr {
+                    expr_instance: Some(ExprInstance::GFixedPoint(x.clone())),
+                }),
+
                 ExprInstance::ENotBody(enot) => {
                     let b = self.eval_to_bool(&enot.p.as_ref().unwrap(), env)?;
                     Ok(Expr {
@@ -1639,58 +1713,290 @@ impl DebruijnInterpreter {
                 }
 
                 ExprInstance::ENegBody(eneg) => {
-                    let v = self.eval_to_i64(&eneg.p.as_ref().unwrap(), env)?;
-                    let result = v.checked_neg().ok_or_else(|| {
-                        InterpreterError::ReduceError("Arithmetic overflow in negation".to_string())
-                    })?;
-                    Ok(Expr {
-                        expr_instance: Some(ExprInstance::GInt(result)),
-                    })
+                    let v = self.eval_single_expr(&eneg.p.as_ref().unwrap(), env)?;
+                    match v.expr_instance.unwrap() {
+                        ExprInstance::GInt(i) => {
+                            let result = i.checked_neg().ok_or_else(|| {
+                                InterpreterError::ReduceError(
+                                    "Arithmetic overflow in negation".to_string(),
+                                )
+                            })?;
+                            Ok(Expr {
+                                expr_instance: Some(ExprInstance::GInt(result)),
+                            })
+                        }
+                        ExprInstance::GDouble(bits) => {
+                            let f = f64::from_bits(bits);
+                            Ok(Expr {
+                                expr_instance: Some(ExprInstance::GDouble((-f).to_bits())),
+                            })
+                        }
+                        ExprInstance::GBigInt(bytes) => {
+                            self.cost.charge(bigint_negation_cost(bytes.len()))?;
+                            make_bigint_expr(negate_twos_complement(&bytes), "negation")
+                        }
+                        ExprInstance::GBigRat(rat) => {
+                            self.cost.charge(bigrat_negation_cost(rat.numerator.len()))?;
+                            make_bigrat_expr(
+                                models::rhoapi::GBigRational {
+                                    numerator: negate_twos_complement(&rat.numerator),
+                                    denominator: rat.denominator,
+                                },
+                                "negation",
+                            )
+                        }
+                        ExprInstance::GFixedPoint(fp) => {
+                            self.cost.charge(bigint_negation_cost(fp.unscaled.len()))?;
+                            make_fixedpoint_expr(
+                                models::rhoapi::GFixedPoint {
+                                    unscaled: negate_twos_complement(&fp.unscaled),
+                                    scale: fp.scale,
+                                },
+                                "negation",
+                            )
+                        }
+                        other => Err(InterpreterError::OperatorNotDefined {
+                            op: "neg".to_string(),
+                            other_type: get_type(other),
+                        }),
+                    }
                 }
 
                 ExprInstance::EMultBody(EMult { p1, p2 }) => {
-                    let v1 = self.eval_to_i64(&p1.clone().unwrap(), env)?;
-                    let v2 = self.eval_to_i64(&p2.clone().unwrap(), env)?;
-                    self.cost.charge(multiplication_cost())?;
-                    let result = v1.checked_mul(v2).ok_or_else(|| {
-                        InterpreterError::ReduceError(
-                            "Arithmetic overflow in multiplication".to_string(),
-                        )
-                    })?;
-                    Ok(Expr {
-                        expr_instance: Some(ExprInstance::GInt(result)),
-                    })
+                    let v1 = self.eval_single_expr(&p1.clone().unwrap(), env)?;
+                    let v2 = self.eval_single_expr(&p2.clone().unwrap(), env)?;
+
+                    match (v1.expr_instance.unwrap(), v2.expr_instance.unwrap()) {
+                        (ExprInstance::GInt(lhs), ExprInstance::GInt(rhs)) => {
+                            self.cost.charge(multiplication_cost())?;
+                            let result = lhs.checked_mul(rhs).ok_or_else(|| {
+                                InterpreterError::ReduceError(
+                                    "Arithmetic overflow in multiplication".to_string(),
+                                )
+                            })?;
+                            Ok(Expr {
+                                expr_instance: Some(ExprInstance::GInt(result)),
+                            })
+                        }
+                        (ExprInstance::GDouble(d1), ExprInstance::GDouble(d2)) => {
+                            self.cost.charge(multiplication_cost())?;
+                            let result = f64::from_bits(d1) * f64::from_bits(d2);
+                            Ok(Expr {
+                                expr_instance: Some(ExprInstance::GDouble(result.to_bits())),
+                            })
+                        }
+                        (ExprInstance::GBigInt(b1), ExprInstance::GBigInt(b2)) => {
+                            self.cost.charge(bigint_multiplication_cost(b1.len(), b2.len()))?;
+                            make_bigint_expr(multiply_twos_complement(&b1, &b2), "multiplication")
+                        }
+                        (ExprInstance::GBigRat(r1), ExprInstance::GBigRat(r2)) => {
+                            self.cost.charge(bigrat_multiplication_cost(
+                                r1.numerator.len(), r1.denominator.len(),
+                                r2.numerator.len(), r2.denominator.len(),
+                            ))?;
+                            make_bigrat_expr(multiply_big_rationals(&r1, &r2), "multiplication")
+                        }
+                        (ExprInstance::GFixedPoint(fp1), ExprInstance::GFixedPoint(fp2)) => {
+                            if fp1.scale != fp2.scale {
+                                return Err(InterpreterError::OperatorExpectedError {
+                                    op: "*".to_string(),
+                                    expected: format!("FixedPoint(p{})", fp1.scale),
+                                    other_type: format!("FixedPoint(p{})", fp2.scale),
+                                });
+                            }
+                            self.cost.charge(bigint_multiplication_cost(fp1.unscaled.len(), fp2.unscaled.len()))?;
+                            make_fixedpoint_expr(multiply_fixed_points(&fp1, &fp2), "multiplication")
+                        }
+                        (lhs, rhs) => {
+                            let lhs_type = get_type(lhs);
+                            let rhs_type = get_type(rhs);
+                            if lhs_type == rhs_type {
+                                Err(InterpreterError::OperatorNotDefined {
+                                    op: "*".to_string(),
+                                    other_type: lhs_type,
+                                })
+                            } else {
+                                Err(InterpreterError::OperatorExpectedError {
+                                    op: "*".to_string(),
+                                    expected: lhs_type,
+                                    other_type: rhs_type,
+                                })
+                            }
+                        }
+                    }
                 }
 
                 ExprInstance::EDivBody(EDiv { p1, p2 }) => {
-                    let v1 = self.eval_to_i64(&p1.clone().unwrap(), env)?;
-                    let v2 = self.eval_to_i64(&p2.clone().unwrap(), env)?;
-                    if v2 == 0 {
-                        return Err(InterpreterError::ReduceError(
-                            "Division by zero".to_string(),
-                        ));
+                    let v1 = self.eval_single_expr(&p1.clone().unwrap(), env)?;
+                    let v2 = self.eval_single_expr(&p2.clone().unwrap(), env)?;
+
+                    match (v1.expr_instance.unwrap(), v2.expr_instance.unwrap()) {
+                        (ExprInstance::GInt(lhs), ExprInstance::GInt(rhs)) => {
+                            self.cost.charge(division_cost())?;
+                            if rhs == 0 {
+                                return Err(InterpreterError::ReduceError(
+                                    "Division by zero".to_string(),
+                                ));
+                            }
+                            if lhs == i64::MIN && rhs == -1 {
+                                return Err(InterpreterError::ReduceError(
+                                    "Arithmetic overflow in division".to_string(),
+                                ));
+                            }
+                            Ok(Expr {
+                                expr_instance: Some(ExprInstance::GInt(lhs / rhs)),
+                            })
+                        }
+                        (ExprInstance::GDouble(d1), ExprInstance::GDouble(d2)) => {
+                            self.cost.charge(division_cost())?;
+                            let result = f64::from_bits(d1) / f64::from_bits(d2);
+                            Ok(Expr {
+                                expr_instance: Some(ExprInstance::GDouble(result.to_bits())),
+                            })
+                        }
+                        (ExprInstance::GBigInt(b1), ExprInstance::GBigInt(b2)) => {
+                            self.cost.charge(bigint_division_cost(b1.len(), b2.len()))?;
+                            if is_zero_twos_complement(&b2) {
+                                return Err(InterpreterError::ReduceError(
+                                    "Division by zero".to_string(),
+                                ));
+                            }
+                            make_bigint_expr(divide_twos_complement(&b1, &b2), "division")
+                        }
+                        (ExprInstance::GBigRat(r1), ExprInstance::GBigRat(r2)) => {
+                            self.cost.charge(bigrat_division_cost(
+                                r1.numerator.len(), r1.denominator.len(),
+                                r2.numerator.len(), r2.denominator.len(),
+                            ))?;
+                            if is_zero_twos_complement(&r2.numerator) {
+                                return Err(InterpreterError::ReduceError(
+                                    "Division by zero".to_string(),
+                                ));
+                            }
+                            make_bigrat_expr(divide_big_rationals(&r1, &r2), "division")
+                        }
+                        (ExprInstance::GFixedPoint(fp1), ExprInstance::GFixedPoint(fp2)) => {
+                            self.cost.charge(bigint_division_cost(fp1.unscaled.len(), fp2.unscaled.len()))?;
+                            if is_zero_twos_complement(&fp2.unscaled) {
+                                return Err(InterpreterError::ReduceError(
+                                    "Division by zero".to_string(),
+                                ));
+                            }
+                            make_fixedpoint_expr(divide_fixed_points(&fp1, &fp2), "division")
+                        }
+                        (lhs, rhs) => {
+                            let lhs_type = get_type(lhs);
+                            let rhs_type = get_type(rhs);
+                            if lhs_type == rhs_type {
+                                Err(InterpreterError::OperatorNotDefined {
+                                    op: "/".to_string(),
+                                    other_type: lhs_type,
+                                })
+                            } else {
+                                Err(InterpreterError::OperatorExpectedError {
+                                    op: "/".to_string(),
+                                    expected: lhs_type,
+                                    other_type: rhs_type,
+                                })
+                            }
+                        }
                     }
-                    if v1 == i64::MIN && v2 == -1 {
-                        return Err(InterpreterError::ReduceError(
-                            "Arithmetic overflow in division".to_string(),
-                        ));
-                    }
-                    self.cost.charge(division_cost())?;
-                    Ok(Expr {
-                        expr_instance: Some(ExprInstance::GInt(v1 / v2)),
-                    })
                 }
 
                 ExprInstance::EModBody(EMod { p1, p2 }) => {
-                    let v1 = self.eval_to_i64(&p1.clone().unwrap(), env)?;
-                    let v2 = self.eval_to_i64(&p2.clone().unwrap(), env)?;
-                    if v2 == 0 {
-                        return Err(InterpreterError::ReduceError("Modulo by zero".to_string()));
+                    let v1 = self.eval_single_expr(&p1.clone().unwrap(), env)?;
+                    let v2 = self.eval_single_expr(&p2.clone().unwrap(), env)?;
+
+                    match (v1.expr_instance.unwrap(), v2.expr_instance.unwrap()) {
+                        (ExprInstance::GInt(lhs), ExprInstance::GInt(rhs)) => {
+                            self.cost.charge(modulo_cost())?;
+                            if rhs == 0 {
+                                return Err(InterpreterError::ReduceError(
+                                    "Modulo by zero".to_string(),
+                                ));
+                            }
+                            Ok(Expr {
+                                expr_instance: Some(ExprInstance::GInt(lhs % rhs)),
+                            })
+                        }
+                        (ExprInstance::GDouble(_), ExprInstance::GDouble(_)) => {
+                            Err(InterpreterError::ReduceError(
+                                "Modulus not defined on floating point".to_string(),
+                            ))
+                        }
+                        (ExprInstance::GBigInt(b1), ExprInstance::GBigInt(b2)) => {
+                            self.cost.charge(bigint_modulo_cost(b1.len(), b2.len()))?;
+                            if is_zero_twos_complement(&b2) {
+                                return Err(InterpreterError::ReduceError(
+                                    "Modulo by zero".to_string(),
+                                ));
+                            }
+                            make_bigint_expr(modulo_twos_complement(&b1, &b2), "%")
+                        }
+                        (ExprInstance::GBigRat(_), ExprInstance::GBigRat(r2)) => {
+                            if is_zero_twos_complement(&r2.numerator) {
+                                return Err(InterpreterError::ReduceError(
+                                    "Modulo by zero".to_string(),
+                                ));
+                            }
+                            Ok(Expr {
+                                expr_instance: Some(ExprInstance::GBigRat(
+                                    models::rhoapi::GBigRational {
+                                        numerator: vec![0],
+                                        denominator: vec![1],
+                                    },
+                                )),
+                            })
+                        }
+                        (ExprInstance::GFixedPoint(fp1), ExprInstance::GFixedPoint(fp2)) => {
+                            if fp1.scale != fp2.scale {
+                                return Err(InterpreterError::OperatorExpectedError {
+                                    op: "%".to_string(),
+                                    expected: format!("FixedPoint(p{})", fp1.scale),
+                                    other_type: format!("FixedPoint(p{})", fp2.scale),
+                                });
+                            }
+                            self.cost.charge(bigint_modulo_cost(
+                                fp1.unscaled.len(),
+                                fp2.unscaled.len(),
+                            ))?;
+                            if is_zero_twos_complement(&fp2.unscaled) {
+                                return Err(InterpreterError::ReduceError(
+                                    "Modulo by zero".to_string(),
+                                ));
+                            }
+                            let ten = num_bigint::BigInt::from(10);
+                            let scale_factor =
+                                num_traits::pow::pow(ten, fp1.scale as usize);
+                            let ua = bytes_to_bigint(&fp1.unscaled);
+                            let ub = bytes_to_bigint(&fp2.unscaled);
+                            let quotient = (&ua * &scale_factor) / &ub;
+                            let remainder = ua - (&quotient * &ub) / scale_factor;
+                            make_fixedpoint_expr(
+                                models::rhoapi::GFixedPoint {
+                                    unscaled: bigint_to_bytes(&remainder),
+                                    scale: fp1.scale,
+                                },
+                                "%",
+                            )
+                        }
+                        (lhs, rhs) => {
+                            let lhs_type = get_type(lhs);
+                            let rhs_type = get_type(rhs);
+                            if lhs_type == rhs_type {
+                                Err(InterpreterError::OperatorNotDefined {
+                                    op: "%".to_string(),
+                                    other_type: lhs_type,
+                                })
+                            } else {
+                                Err(InterpreterError::OperatorExpectedError {
+                                    op: "%".to_string(),
+                                    expected: lhs_type,
+                                    other_type: rhs_type,
+                                })
+                            }
+                        }
                     }
-                    self.cost.charge(modulo_cost())?;
-                    Ok(Expr {
-                        expr_instance: Some(ExprInstance::GInt(v1 % v2)),
-                    })
                 }
 
                 ExprInstance::EPlusBody(EPlus { p1, p2 }) => {
@@ -1703,6 +2009,45 @@ impl DebruijnInterpreter {
                             Ok(Expr {
                                 expr_instance: Some(ExprInstance::GInt(lhs.wrapping_add(rhs))),
                             })
+                        }
+
+                        (ExprInstance::GDouble(d1), ExprInstance::GDouble(d2)) => {
+                            self.cost.charge(sum_cost())?;
+                            let result = f64::from_bits(d1) + f64::from_bits(d2);
+                            Ok(Expr {
+                                expr_instance: Some(ExprInstance::GDouble(result.to_bits())),
+                            })
+                        }
+
+                        (ExprInstance::GBigInt(b1), ExprInstance::GBigInt(b2)) => {
+                            self.cost.charge(bigint_sum_cost(b1.len(), b2.len()))?;
+                            make_bigint_expr(add_twos_complement(&b1, &b2), "+")
+                        }
+
+                        (ExprInstance::GBigRat(r1), ExprInstance::GBigRat(r2)) => {
+                            self.cost.charge(bigrat_sum_cost(
+                                r1.numerator.len(), r1.denominator.len(),
+                                r2.numerator.len(), r2.denominator.len(),
+                            ))?;
+                            make_bigrat_expr(add_big_rationals(&r1, &r2), "+")
+                        }
+
+                        (ExprInstance::GFixedPoint(fp1), ExprInstance::GFixedPoint(fp2)) => {
+                            self.cost.charge(bigint_sum_cost(fp1.unscaled.len(), fp2.unscaled.len()))?;
+                            if fp1.scale != fp2.scale {
+                                return Err(InterpreterError::OperatorExpectedError {
+                                    op: "+".to_string(),
+                                    expected: format!("FixedPoint(p{})", fp1.scale),
+                                    other_type: format!("FixedPoint(p{})", fp2.scale),
+                                });
+                            }
+                            make_fixedpoint_expr(
+                                models::rhoapi::GFixedPoint {
+                                    unscaled: add_twos_complement(&fp1.unscaled, &fp2.unscaled),
+                                    scale: fp1.scale,
+                                },
+                                "+",
+                            )
                         }
 
                         (ExprInstance::ESetBody(lhs), rhs) => {
@@ -1721,10 +2066,14 @@ impl DebruijnInterpreter {
                             Ok(result_expr)
                         }
 
-                        (ExprInstance::GInt(_), other) => {
+                        (ExprInstance::GInt(_), other)
+                        | (ExprInstance::GDouble(_), other)
+                        | (ExprInstance::GBigInt(_), other)
+                        | (ExprInstance::GBigRat(_), other)
+                        | (ExprInstance::GFixedPoint(_), other) => {
                             Err(InterpreterError::OperatorExpectedError {
                                 op: "+".to_string(),
-                                expected: "Int".to_string(),
+                                expected: "matching numeric types".to_string(),
                                 other_type: get_type(other),
                             })
                         }
@@ -1746,6 +2095,48 @@ impl DebruijnInterpreter {
                             Ok(Expr {
                                 expr_instance: Some(ExprInstance::GInt(lhs - rhs)),
                             })
+                        }
+
+                        (ExprInstance::GDouble(d1), ExprInstance::GDouble(d2)) => {
+                            self.cost.charge(subtraction_cost())?;
+                            let result = f64::from_bits(d1) - f64::from_bits(d2);
+                            Ok(Expr {
+                                expr_instance: Some(ExprInstance::GDouble(result.to_bits())),
+                            })
+                        }
+
+                        (ExprInstance::GBigInt(b1), ExprInstance::GBigInt(b2)) => {
+                            self.cost.charge(bigint_subtraction_cost(b1.len(), b2.len()))?;
+                            make_bigint_expr(subtract_twos_complement(&b1, &b2), "-")
+                        }
+
+                        (ExprInstance::GBigRat(r1), ExprInstance::GBigRat(r2)) => {
+                            self.cost.charge(bigrat_subtraction_cost(
+                                r1.numerator.len(), r1.denominator.len(),
+                                r2.numerator.len(), r2.denominator.len(),
+                            ))?;
+                            make_bigrat_expr(subtract_big_rationals(&r1, &r2), "-")
+                        }
+
+                        (ExprInstance::GFixedPoint(fp1), ExprInstance::GFixedPoint(fp2)) => {
+                            self.cost.charge(bigint_subtraction_cost(fp1.unscaled.len(), fp2.unscaled.len()))?;
+                            if fp1.scale != fp2.scale {
+                                return Err(InterpreterError::OperatorExpectedError {
+                                    op: "-".to_string(),
+                                    expected: format!("FixedPoint(p{})", fp1.scale),
+                                    other_type: format!("FixedPoint(p{})", fp2.scale),
+                                });
+                            }
+                            make_fixedpoint_expr(
+                                models::rhoapi::GFixedPoint {
+                                    unscaled: subtract_twos_complement(
+                                        &fp1.unscaled,
+                                        &fp2.unscaled,
+                                    ),
+                                    scale: fp1.scale,
+                                },
+                                "-",
+                            )
                         }
 
                         (ExprInstance::EMapBody(lhs), rhs) => {
@@ -1780,10 +2171,14 @@ impl DebruijnInterpreter {
                             Ok(result_expr)
                         }
 
-                        (ExprInstance::GInt(_), other) => {
+                        (ExprInstance::GInt(_), other)
+                        | (ExprInstance::GDouble(_), other)
+                        | (ExprInstance::GBigInt(_), other)
+                        | (ExprInstance::GBigRat(_), other)
+                        | (ExprInstance::GFixedPoint(_), other) => {
                             Err(InterpreterError::OperatorExpectedError {
                                 op: "-".to_string(),
-                                expected: "Int".to_string(),
+                                expected: "matching numeric types".to_string(),
                                 other_type: get_type(other),
                             })
                         }
@@ -1796,7 +2191,6 @@ impl DebruijnInterpreter {
                 }
 
                 ExprInstance::ELtBody(ELt { p1, p2 }) => {
-                    self.cost.charge(comparison_cost())?;
                     relop(
                         &p1.clone().unwrap(),
                         &p2.clone().unwrap(),
@@ -1807,7 +2201,6 @@ impl DebruijnInterpreter {
                 }
 
                 ExprInstance::ELteBody(ELte { p1, p2 }) => {
-                    self.cost.charge(comparison_cost())?;
                     relop(
                         &p1.clone().unwrap(),
                         &p2.clone().unwrap(),
@@ -1818,7 +2211,6 @@ impl DebruijnInterpreter {
                 }
 
                 ExprInstance::EGtBody(EGt { p1, p2 }) => {
-                    self.cost.charge(comparison_cost())?;
                     relop(
                         &p1.clone().unwrap(),
                         &p2.clone().unwrap(),
@@ -1829,7 +2221,6 @@ impl DebruijnInterpreter {
                 }
 
                 ExprInstance::EGteBody(EGte { p1, p2 }) => {
-                    self.cost.charge(comparison_cost())?;
                     relop(
                         &p1.clone().unwrap(),
                         &p2.clone().unwrap(),
@@ -1847,8 +2238,15 @@ impl DebruijnInterpreter {
                     let sv2 = self.substitute.substitute_and_charge(&v2, 0, env)?;
                     self.cost.charge(equality_check_cost(&sv1, &sv2))?;
 
+                    let result = if par_contains_nan_double(&sv1)
+                        || par_contains_nan_double(&sv2)
+                    {
+                        false
+                    } else {
+                        sv1 == sv2
+                    };
                     Ok(Expr {
-                        expr_instance: Some(ExprInstance::GBool(sv1 == sv2)),
+                        expr_instance: Some(ExprInstance::GBool(result)),
                     })
                 }
 
@@ -1859,8 +2257,15 @@ impl DebruijnInterpreter {
                     let sv2 = self.substitute.substitute_and_charge(&v2, 0, env)?;
                     self.cost.charge(equality_check_cost(&sv1, &sv2))?;
 
+                    let result = if par_contains_nan_double(&sv1)
+                        || par_contains_nan_double(&sv2)
+                    {
+                        true
+                    } else {
+                        sv1 != sv2
+                    };
                     Ok(Expr {
-                        expr_instance: Some(ExprInstance::GBool(sv1 != sv2)),
+                        expr_instance: Some(ExprInstance::GBool(result)),
                     })
                 }
 
@@ -6831,6 +7236,10 @@ fn get_type(expr_instance: ExprInstance) -> String {
     match expr_instance {
         ExprInstance::GBool(_) => String::from("bool"),
         ExprInstance::GInt(_) => String::from("int"),
+        ExprInstance::GDouble(_) => String::from("float"),
+        ExprInstance::GBigInt(_) => String::from("bigint"),
+        ExprInstance::GBigRat(_) => String::from("bigrat"),
+        ExprInstance::GFixedPoint(_) => String::from("fixedpoint"),
         ExprInstance::GString(_) => String::from("string"),
         ExprInstance::GUri(_) => String::from("uri"),
         ExprInstance::GByteArray(_) => String::from("byte array"),
@@ -6870,5 +7279,204 @@ fn get_unforgeable_type(inf_instance: &UnfInstance) -> String {
         UnfInstance::GDeployIdBody(_) => String::from("DeployId"),
         UnfInstance::GDeployerIdBody(_) => String::from("DeployerId"),
         UnfInstance::GSysAuthTokenBody(_) => String::from("SysAuthToken"),
+    }
+}
+
+fn par_contains_nan_double(par: &Par) -> bool {
+    par.exprs.iter().any(|e| {
+        matches!(
+            &e.expr_instance,
+            Some(ExprInstance::GDouble(bits)) if f64::from_bits(*bits).is_nan()
+        )
+    })
+}
+
+fn bytes_to_bigint(bytes: &[u8]) -> num_bigint::BigInt {
+    if bytes.is_empty() {
+        num_bigint::BigInt::from(0)
+    } else {
+        num_bigint::BigInt::from_signed_bytes_be(bytes)
+    }
+}
+
+fn bigint_to_bytes(n: &num_bigint::BigInt) -> Vec<u8> {
+    use num_traits::Zero;
+    if n.is_zero() {
+        vec![0]
+    } else {
+        n.to_signed_bytes_be()
+    }
+}
+
+fn make_bigint_expr(bytes: Vec<u8>, _op: &str) -> Result<Expr, InterpreterError> {
+    Ok(Expr {
+        expr_instance: Some(ExprInstance::GBigInt(bytes)),
+    })
+}
+
+fn make_bigrat_expr(
+    rat: models::rhoapi::GBigRational,
+    _op: &str,
+) -> Result<Expr, InterpreterError> {
+    Ok(Expr {
+        expr_instance: Some(ExprInstance::GBigRat(rat)),
+    })
+}
+
+fn make_fixedpoint_expr(
+    fp: models::rhoapi::GFixedPoint,
+    _op: &str,
+) -> Result<Expr, InterpreterError> {
+    Ok(Expr {
+        expr_instance: Some(ExprInstance::GFixedPoint(fp)),
+    })
+}
+
+fn is_zero_twos_complement(bytes: &[u8]) -> bool {
+    bytes.is_empty() || bytes.iter().all(|&b| b == 0)
+}
+
+fn negate_twos_complement(bytes: &[u8]) -> Vec<u8> {
+    let n = bytes_to_bigint(bytes);
+    bigint_to_bytes(&(-n))
+}
+
+fn add_twos_complement(a: &[u8], b: &[u8]) -> Vec<u8> {
+    let result = bytes_to_bigint(a) + bytes_to_bigint(b);
+    bigint_to_bytes(&result)
+}
+
+fn subtract_twos_complement(a: &[u8], b: &[u8]) -> Vec<u8> {
+    let result = bytes_to_bigint(a) - bytes_to_bigint(b);
+    bigint_to_bytes(&result)
+}
+
+fn multiply_twos_complement(a: &[u8], b: &[u8]) -> Vec<u8> {
+    let result = bytes_to_bigint(a) * bytes_to_bigint(b);
+    bigint_to_bytes(&result)
+}
+
+fn divide_twos_complement(a: &[u8], b: &[u8]) -> Vec<u8> {
+    let result = bytes_to_bigint(a) / bytes_to_bigint(b);
+    bigint_to_bytes(&result)
+}
+
+fn modulo_twos_complement(a: &[u8], b: &[u8]) -> Vec<u8> {
+    let result = bytes_to_bigint(a) % bytes_to_bigint(b);
+    bigint_to_bytes(&result)
+}
+
+fn compare_twos_complement_bytes(a: &[u8], b: &[u8]) -> i32 {
+    match bytes_to_bigint(a).cmp(&bytes_to_bigint(b)) {
+        std::cmp::Ordering::Less => -1,
+        std::cmp::Ordering::Equal => 0,
+        std::cmp::Ordering::Greater => 1,
+    }
+}
+
+fn bytes_to_bigrat(
+    rat: &models::rhoapi::GBigRational,
+) -> num_rational::BigRational {
+    num_rational::BigRational::new(
+        bytes_to_bigint(&rat.numerator),
+        bytes_to_bigint(&rat.denominator),
+    )
+}
+
+fn bigrat_to_proto(r: &num_rational::BigRational) -> models::rhoapi::GBigRational {
+    models::rhoapi::GBigRational {
+        numerator: bigint_to_bytes(r.numer()),
+        denominator: bigint_to_bytes(r.denom()),
+    }
+}
+
+fn compare_big_rationals(
+    a: &models::rhoapi::GBigRational,
+    b: &models::rhoapi::GBigRational,
+) -> i32 {
+    match bytes_to_bigrat(a).cmp(&bytes_to_bigrat(b)) {
+        std::cmp::Ordering::Less => -1,
+        std::cmp::Ordering::Equal => 0,
+        std::cmp::Ordering::Greater => 1,
+    }
+}
+
+fn add_big_rationals(
+    a: &models::rhoapi::GBigRational,
+    b: &models::rhoapi::GBigRational,
+) -> models::rhoapi::GBigRational {
+    bigrat_to_proto(&(bytes_to_bigrat(a) + bytes_to_bigrat(b)))
+}
+
+fn subtract_big_rationals(
+    a: &models::rhoapi::GBigRational,
+    b: &models::rhoapi::GBigRational,
+) -> models::rhoapi::GBigRational {
+    bigrat_to_proto(&(bytes_to_bigrat(a) - bytes_to_bigrat(b)))
+}
+
+fn multiply_big_rationals(
+    a: &models::rhoapi::GBigRational,
+    b: &models::rhoapi::GBigRational,
+) -> models::rhoapi::GBigRational {
+    bigrat_to_proto(&(bytes_to_bigrat(a) * bytes_to_bigrat(b)))
+}
+
+fn divide_big_rationals(
+    a: &models::rhoapi::GBigRational,
+    b: &models::rhoapi::GBigRational,
+) -> models::rhoapi::GBigRational {
+    bigrat_to_proto(&(bytes_to_bigrat(a) / bytes_to_bigrat(b)))
+}
+
+fn compare_fixed_points(
+    a: &models::rhoapi::GFixedPoint,
+    b: &models::rhoapi::GFixedPoint,
+) -> Result<i32, InterpreterError> {
+    if a.scale != b.scale {
+        return Err(InterpreterError::OperatorExpectedError {
+            op: "cmp".to_string(),
+            expected: format!("FixedPoint(p{})", a.scale),
+            other_type: format!("FixedPoint(p{})", b.scale),
+        });
+    }
+    Ok(compare_twos_complement_bytes(&a.unscaled, &b.unscaled))
+}
+
+fn multiply_fixed_points(
+    a: &models::rhoapi::GFixedPoint,
+    b: &models::rhoapi::GFixedPoint,
+) -> models::rhoapi::GFixedPoint {
+    // Scale-preserving: (ua * ub) / 10^scale, using floor division
+    let ua = bytes_to_bigint(&a.unscaled);
+    let ub = bytes_to_bigint(&b.unscaled);
+    let raw = &ua * &ub;
+    let ten = num_bigint::BigInt::from(10);
+    let scale_factor = num_traits::pow::pow(ten, a.scale as usize);
+    let one = num_bigint::BigInt::from(1);
+    let unscaled = if raw < num_bigint::BigInt::from(0) {
+        // Floor division for negative values
+        let abs_raw = -&raw;
+        -((&abs_raw - &one) / &scale_factor + &one)
+    } else {
+        &raw / &scale_factor
+    };
+    models::rhoapi::GFixedPoint {
+        unscaled: bigint_to_bytes(&unscaled),
+        scale: a.scale,
+    }
+}
+
+fn divide_fixed_points(
+    a: &models::rhoapi::GFixedPoint,
+    b: &models::rhoapi::GFixedPoint,
+) -> models::rhoapi::GFixedPoint {
+    let ten = num_bigint::BigInt::from(10);
+    let factor = num_traits::pow::pow(ten, b.scale as usize);
+    let scaled = bytes_to_bigint(&a.unscaled) * factor;
+    let result = scaled / bytes_to_bigint(&b.unscaled);
+    models::rhoapi::GFixedPoint {
+        unscaled: bigint_to_bytes(&result),
+        scale: a.scale,
     }
 }
