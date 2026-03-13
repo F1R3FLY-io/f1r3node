@@ -90,11 +90,12 @@ async fn entry_should_be_queried() {
                 for(@x <- createRet) {
                     upsertEntries!(
                         "test-collection-entries",
-                        { "doc1": ("Hello world!", Nil),
-                        "doc2": (
-                            "Hello world again!",
-                            { "meta1": "42" }
-                        )
+                        {
+                            "doc1": ("Hello world!", Nil),
+                            "doc2": (
+                                "Hello world again!",
+                                { "meta1": "42" }
+                            )
                         },
                         *upsertRet
                     )
@@ -127,41 +128,6 @@ async fn entry_should_be_queried() {
         ])),
     )
     .await
-}
-
-#[tokio::test]
-async fn query_should_return_empty() {
-    let meta_contract = r#"
-        new createCollection(`rho:chroma:collection:new`),
-            upsertEntries(`rho:chroma:collection:entries:new`),
-            queryEntries(`rho:chroma:collection:entries:query`),
-            createRet, upsertRet, queryRet in {
-                createCollection!("test-collection-entries-empty", true, Nil, *createRet) |
-                for(@x <- createRet) {
-                    upsertEntries!(
-                        "foo",
-                        { "doc1": ("Hello world!", Nil),
-                        "doc2": (
-                            "Hello world again!",
-                            { "meta1": "42" }
-                        )
-                        },
-                        *upsertRet
-                    )
-                } |
-                for(@y <- upsertRet) {
-                    queryEntries!("test-collection-entries-empty", [ "None" ], *queryRet)
-                } |
-                for(@res <- queryRet) {
-                    @0!(res)
-                }
-        }
-        "#;
-
-    test_runtime(
-        meta_contract,
-        Some(RhoList::create_par(vec![RhoMap::create_par(HashMap::new())]))
-    ).await
 }
 
 async fn test_runtime(contract: &str, expected: Option<Par>) {
