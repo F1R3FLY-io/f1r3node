@@ -316,7 +316,7 @@ async fn fixedpoint_arithmetic_produces_correct_values() {
 
         let storage = rholang::rust::interpreter::storage::storage_printer::pretty_print(&runtime);
         assert!(storage.contains("3.75p2"));
-        assert!(storage.contains("3.00p2"));
+        assert!(storage.contains("3.0p1"));
         assert!(storage.contains("6.75p2"));
     })
     .await
@@ -327,6 +327,7 @@ async fn fixedpoint_scale_mismatch_is_error() {
     with_runtime("fp-scale-", |mut runtime| async move {
         eval_err(&mut runtime, r#"@0!(1.5p1 + 2.50p2)"#).await;
         eval_err(&mut runtime, r#"@0!(1.5p1 - 2.50p2)"#).await;
+        eval_err(&mut runtime, r#"@0!(1.5p1 * 2.50p2)"#).await;
         eval_err(&mut runtime, r#"@0!(1.5p1 < 2.50p2)"#).await;
     })
     .await

@@ -19,7 +19,7 @@ new stdout(`rho:io:stdout`) in {
   // FixedPoint arithmetic (suffix: p<scale>)
   // 1.50 + 2.25 = 3.75 (scale 2)
   stdout!(["FixedPoint addition:", 1.50p2 + 2.25p2]) |
-  // Multiplication doubles scale: 1.5p1 * 2.0p1 = 3.00p2
+  // Multiplication preserves scale: 1.5p1 * 2.0p1 = 3.0p1
   stdout!(["FixedPoint multiply:", 1.5p1 * 2.0p1]) |
 
   // Comparison operators work across all numeric types

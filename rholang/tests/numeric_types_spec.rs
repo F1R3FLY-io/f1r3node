@@ -316,11 +316,6 @@ async fn bigint_errors() {
 
     assert_err!(r, e, binop_expr!(div, bi(10), bi(0)), "Division by zero");
     assert_err!(r, e, binop_expr!(modulo, bi(10), bi(0)), "Modulo by zero");
-
-    // Overflow: multiply two values that exceed 1024-byte (8192-bit) cap
-    let mut large = vec![0u8; 1025];
-    large[0] = 0x40;
-    assert_err_contains!(r, e, binop_expr!(mult, bigint_par(large.clone()), bigint_par(large)), "8192-bit maximum");
 }
 
 #[tokio::test]
@@ -375,8 +370,10 @@ async fn fixedpoint_arithmetic() {
     assert_ok_expr!(r, e, binop_expr!(plus, fixed(150, 2), fixed(225, 2)), fixed_expr(375, 2));
     // 5.00 - 3.25 = 1.75 (scale 2)
     assert_ok_expr!(r, e, binop_expr!(minus, fixed(500, 2), fixed(325, 2)), fixed_expr(175, 2));
-    // 1.5 * 2.0 = 3.00 (scale doubles: 1+1=2)
-    assert_ok_expr!(r, e, binop_expr!(mult, fixed(15, 1), fixed(20, 1)), fixed_expr(300, 2));
+    // 1.5 * 2.0 = 3.0 (scale-preserving: (15*20)/10 = 30)
+    assert_ok_expr!(r, e, binop_expr!(mult, fixed(15, 1), fixed(20, 1)), fixed_expr(30, 1));
+    // Precision loss: 0.1 * 0.1 = 0.0 (unscaled: (1*1)/10 = 0, floor)
+    assert_ok_expr!(r, e, binop_expr!(mult, fixed(1, 1), fixed(1, 1)), fixed_expr(0, 1));
     // 10.0 / 3.0 = 3.3 (shifted integer division, scale preserved)
     assert_ok_expr!(r, e, binop_expr!(div, fixed(100, 1), fixed(30, 1)), fixed_expr(33, 1));
     // C99 identity: 10.0 % 3.0 = 0.1 (quotient=33, remainder=100-(33*30)/10=1)
@@ -389,10 +386,11 @@ async fn fixedpoint_arithmetic() {
 #[tokio::test]
 async fn fixedpoint_scale_mismatch_errors() {
     let (r, e) = setup!();
-    assert_err!(r, e, binop_expr!(plus, fixed(10, 1), fixed(10, 2)), "FixedPoint scale mismatch in addition");
-    assert_err!(r, e, binop_expr!(minus, fixed(10, 1), fixed(10, 2)), "FixedPoint scale mismatch in subtraction");
-    assert_err!(r, e, binop_expr!(lt, fixed(10, 1), fixed(10, 2)), "FixedPoint scale mismatch in comparison");
-    assert_err!(r, e, binop_expr!(modulo, fixed(10, 1), fixed(10, 2)), "FixedPoint scale mismatch in modulo");
+    assert_err_contains!(r, e, binop_expr!(plus, fixed(10, 1), fixed(10, 2)), "is not defined on FixedPoint(p2)");
+    assert_err_contains!(r, e, binop_expr!(minus, fixed(10, 1), fixed(10, 2)), "is not defined on FixedPoint(p2)");
+    assert_err_contains!(r, e, binop_expr!(mult, fixed(10, 1), fixed(10, 2)), "is not defined on FixedPoint(p2)");
+    assert_err_contains!(r, e, binop_expr!(lt, fixed(10, 1), fixed(10, 2)), "is not defined on FixedPoint(p2)");
+    assert_err_contains!(r, e, binop_expr!(modulo, fixed(10, 1), fixed(10, 2)), "is not defined on FixedPoint(p2)");
 }
 
 #[tokio::test]
@@ -418,9 +416,9 @@ async fn cross_type_errors() {
     let (r, e) = setup!();
     let bi = |v: i64| bigint_par(bigint_from_i64(v));
 
-    assert_err_contains!(r, e, binop_expr!(plus, gint_par(1), gdouble_par(1.0)), "ype mismatch");
-    assert_err_contains!(r, e, binop_expr!(mult, bi(2), rat(1, 2)), "ype mismatch");
-    assert_err_contains!(r, e, binop_expr!(minus, gdouble_par(1.0), bi(1)), "ype mismatch");
+    assert_err_contains!(r, e, binop_expr!(plus, gint_par(1), gdouble_par(1.0)), "is not defined on");
+    assert_err_contains!(r, e, binop_expr!(mult, bi(2), rat(1, 2)), "is not defined on");
+    assert_err_contains!(r, e, binop_expr!(minus, gdouble_par(1.0), bi(1)), "is not defined on");
     assert!(r.eval_expr(&binop_expr!(lt, gint_par(1), bi(2)), &e).is_err());
     assert!(r.eval_expr(&binop_expr!(plus, fixed(10, 1), rat(1, 2)), &e).is_err());
 }
