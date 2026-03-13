@@ -82,6 +82,13 @@ services:
       - ./certs/bootstrap/node.certificate.pem:/var/lib/rnode/node.certificate.pem:ro
       - ./certs/bootstrap/node.key.pem:/var/lib/rnode/node.key.pem:ro
 
+  chroma-db:
+    image: chromadb/chroma
+    volumes:
+      - ./chroma_data:/data
+    ports:
+      - "8000:8000"
+
   validator1:
     <<: *default-rnode
     container_name: $VALIDATOR1_HOST
@@ -201,4 +208,4 @@ services:
 
 networks:
   f1r3fly:
-    driver: bridge 
+    driver: bridge

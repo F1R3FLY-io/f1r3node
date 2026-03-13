@@ -62,6 +62,10 @@ where
         false,
         &mut Vec::new(),
         Arc::new(Box::new(Matcher)),
+        
+        #[cfg(feature = "chromadb")]
+        ExternalServices::for_observer(),
+        #[cfg(not(feature = "chromadb"))]
         ExternalServices::noop(),
     )
     .await;
