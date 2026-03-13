@@ -1797,6 +1797,13 @@ impl DebruijnInterpreter {
                             make_bigrat_expr(multiply_big_rationals(&r1, &r2), "multiplication")
                         }
                         (ExprInstance::GFixedPoint(fp1), ExprInstance::GFixedPoint(fp2)) => {
+                            if fp1.scale != fp2.scale {
+                                return Err(InterpreterError::OperatorExpectedError {
+                                    op: "*".to_string(),
+                                    expected: format!("FixedPoint(p{})", fp1.scale),
+                                    other_type: format!("FixedPoint(p{})", fp2.scale),
+                                });
+                            }
                             self.cost.charge(bigint_multiplication_cost(fp1.unscaled.len(), fp2.unscaled.len()))?;
                             make_fixedpoint_expr(multiply_fixed_points(&fp1, &fp2), "multiplication")
                         }
@@ -1809,10 +1816,11 @@ impl DebruijnInterpreter {
                                     other_type: lhs_type,
                                 })
                             } else {
-                                Err(InterpreterError::ReduceError(format!(
-                                    "Type mismatch in *: {} vs {}",
-                                    lhs_type, rhs_type
-                                )))
+                                Err(InterpreterError::OperatorExpectedError {
+                                    op: "*".to_string(),
+                                    expected: lhs_type,
+                                    other_type: rhs_type,
+                                })
                             }
                         }
                     }
@@ -1885,10 +1893,11 @@ impl DebruijnInterpreter {
                                     other_type: lhs_type,
                                 })
                             } else {
-                                Err(InterpreterError::ReduceError(format!(
-                                    "Type mismatch in /: {} vs {}",
-                                    lhs_type, rhs_type
-                                )))
+                                Err(InterpreterError::OperatorExpectedError {
+                                    op: "/".to_string(),
+                                    expected: lhs_type,
+                                    other_type: rhs_type,
+                                })
                             }
                         }
                     }
@@ -1941,9 +1950,11 @@ impl DebruijnInterpreter {
                         }
                         (ExprInstance::GFixedPoint(fp1), ExprInstance::GFixedPoint(fp2)) => {
                             if fp1.scale != fp2.scale {
-                                return Err(InterpreterError::ReduceError(
-                                    "FixedPoint scale mismatch in modulo".to_string(),
-                                ));
+                                return Err(InterpreterError::OperatorExpectedError {
+                                    op: "%".to_string(),
+                                    expected: format!("FixedPoint(p{})", fp1.scale),
+                                    other_type: format!("FixedPoint(p{})", fp2.scale),
+                                });
                             }
                             self.cost.charge(bigint_modulo_cost(
                                 fp1.unscaled.len(),
@@ -1978,10 +1989,11 @@ impl DebruijnInterpreter {
                                     other_type: lhs_type,
                                 })
                             } else {
-                                Err(InterpreterError::ReduceError(format!(
-                                    "Type mismatch in %: {} vs {}",
-                                    lhs_type, rhs_type
-                                )))
+                                Err(InterpreterError::OperatorExpectedError {
+                                    op: "%".to_string(),
+                                    expected: lhs_type,
+                                    other_type: rhs_type,
+                                })
                             }
                         }
                     }
@@ -2023,9 +2035,11 @@ impl DebruijnInterpreter {
                         (ExprInstance::GFixedPoint(fp1), ExprInstance::GFixedPoint(fp2)) => {
                             self.cost.charge(bigint_sum_cost(fp1.unscaled.len(), fp2.unscaled.len()))?;
                             if fp1.scale != fp2.scale {
-                                return Err(InterpreterError::ReduceError(
-                                    "FixedPoint scale mismatch in addition".to_string(),
-                                ));
+                                return Err(InterpreterError::OperatorExpectedError {
+                                    op: "+".to_string(),
+                                    expected: format!("FixedPoint(p{})", fp1.scale),
+                                    other_type: format!("FixedPoint(p{})", fp2.scale),
+                                });
                             }
                             make_fixedpoint_expr(
                                 models::rhoapi::GFixedPoint {
@@ -2057,10 +2071,11 @@ impl DebruijnInterpreter {
                         | (ExprInstance::GBigInt(_), other)
                         | (ExprInstance::GBigRat(_), other)
                         | (ExprInstance::GFixedPoint(_), other) => {
-                            Err(InterpreterError::ReduceError(format!(
-                                "Type mismatch in +: expected matching numeric types, got {}",
-                                get_type(other)
-                            )))
+                            Err(InterpreterError::OperatorExpectedError {
+                                op: "+".to_string(),
+                                expected: "matching numeric types".to_string(),
+                                other_type: get_type(other),
+                            })
                         }
 
                         (other, _) => Err(InterpreterError::OperatorNotDefined {
@@ -2106,9 +2121,11 @@ impl DebruijnInterpreter {
                         (ExprInstance::GFixedPoint(fp1), ExprInstance::GFixedPoint(fp2)) => {
                             self.cost.charge(bigint_subtraction_cost(fp1.unscaled.len(), fp2.unscaled.len()))?;
                             if fp1.scale != fp2.scale {
-                                return Err(InterpreterError::ReduceError(
-                                    "FixedPoint scale mismatch in subtraction".to_string(),
-                                ));
+                                return Err(InterpreterError::OperatorExpectedError {
+                                    op: "-".to_string(),
+                                    expected: format!("FixedPoint(p{})", fp1.scale),
+                                    other_type: format!("FixedPoint(p{})", fp2.scale),
+                                });
                             }
                             make_fixedpoint_expr(
                                 models::rhoapi::GFixedPoint {
@@ -2159,10 +2176,11 @@ impl DebruijnInterpreter {
                         | (ExprInstance::GBigInt(_), other)
                         | (ExprInstance::GBigRat(_), other)
                         | (ExprInstance::GFixedPoint(_), other) => {
-                            Err(InterpreterError::ReduceError(format!(
-                                "Type mismatch in -: expected matching numeric types, got {}",
-                                get_type(other)
-                            )))
+                            Err(InterpreterError::OperatorExpectedError {
+                                op: "-".to_string(),
+                                expected: "matching numeric types".to_string(),
+                                other_type: get_type(other),
+                            })
                         }
 
                         (other, _) => Err(InterpreterError::OperatorNotDefined {
@@ -7273,8 +7291,6 @@ fn par_contains_nan_double(par: &Par) -> bool {
     })
 }
 
-const BIGINT_MAX_BYTES: usize = 1024;
-
 fn bytes_to_bigint(bytes: &[u8]) -> num_bigint::BigInt {
     if bytes.is_empty() {
         num_bigint::BigInt::from(0)
@@ -7292,20 +7308,7 @@ fn bigint_to_bytes(n: &num_bigint::BigInt) -> Vec<u8> {
     }
 }
 
-fn check_bigint_size(bytes: &[u8], op: &str) -> Result<(), InterpreterError> {
-    if bytes.len() > BIGINT_MAX_BYTES {
-        Err(InterpreterError::ReduceError(format!(
-            "BigInt exceeds {}-bit maximum after {}",
-            BIGINT_MAX_BYTES * 8,
-            op
-        )))
-    } else {
-        Ok(())
-    }
-}
-
-fn make_bigint_expr(bytes: Vec<u8>, op: &str) -> Result<Expr, InterpreterError> {
-    check_bigint_size(&bytes, op)?;
+fn make_bigint_expr(bytes: Vec<u8>, _op: &str) -> Result<Expr, InterpreterError> {
     Ok(Expr {
         expr_instance: Some(ExprInstance::GBigInt(bytes)),
     })
@@ -7313,10 +7316,8 @@ fn make_bigint_expr(bytes: Vec<u8>, op: &str) -> Result<Expr, InterpreterError> 
 
 fn make_bigrat_expr(
     rat: models::rhoapi::GBigRational,
-    op: &str,
+    _op: &str,
 ) -> Result<Expr, InterpreterError> {
-    check_bigint_size(&rat.numerator, op)?;
-    check_bigint_size(&rat.denominator, op)?;
     Ok(Expr {
         expr_instance: Some(ExprInstance::GBigRat(rat)),
     })
@@ -7324,9 +7325,8 @@ fn make_bigrat_expr(
 
 fn make_fixedpoint_expr(
     fp: models::rhoapi::GFixedPoint,
-    op: &str,
+    _op: &str,
 ) -> Result<Expr, InterpreterError> {
-    check_bigint_size(&fp.unscaled, op)?;
     Ok(Expr {
         expr_instance: Some(ExprInstance::GFixedPoint(fp)),
     })
@@ -7434,9 +7434,11 @@ fn compare_fixed_points(
     b: &models::rhoapi::GFixedPoint,
 ) -> Result<i32, InterpreterError> {
     if a.scale != b.scale {
-        return Err(InterpreterError::ReduceError(
-            "FixedPoint scale mismatch in comparison".to_string(),
-        ));
+        return Err(InterpreterError::OperatorExpectedError {
+            op: "cmp".to_string(),
+            expected: format!("FixedPoint(p{})", a.scale),
+            other_type: format!("FixedPoint(p{})", b.scale),
+        });
     }
     Ok(compare_twos_complement_bytes(&a.unscaled, &b.unscaled))
 }
@@ -7445,10 +7447,23 @@ fn multiply_fixed_points(
     a: &models::rhoapi::GFixedPoint,
     b: &models::rhoapi::GFixedPoint,
 ) -> models::rhoapi::GFixedPoint {
-    let raw = multiply_twos_complement(&a.unscaled, &b.unscaled);
+    // Scale-preserving: (ua * ub) / 10^scale, using floor division
+    let ua = bytes_to_bigint(&a.unscaled);
+    let ub = bytes_to_bigint(&b.unscaled);
+    let raw = &ua * &ub;
+    let ten = num_bigint::BigInt::from(10);
+    let scale_factor = num_traits::pow::pow(ten, a.scale as usize);
+    let one = num_bigint::BigInt::from(1);
+    let unscaled = if raw < num_bigint::BigInt::from(0) {
+        // Floor division for negative values
+        let abs_raw = -&raw;
+        -((&abs_raw - &one) / &scale_factor + &one)
+    } else {
+        &raw / &scale_factor
+    };
     models::rhoapi::GFixedPoint {
-        unscaled: raw,
-        scale: a.scale + b.scale,
+        unscaled: bigint_to_bytes(&unscaled),
+        scale: a.scale,
     }
 }
 
