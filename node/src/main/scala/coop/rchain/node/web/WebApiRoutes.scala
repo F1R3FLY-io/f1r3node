@@ -10,10 +10,13 @@ import coop.rchain.node.api.WebApi
 import coop.rchain.node.api.WebApi._
 import coop.rchain.shared.Log
 import io.circe.generic.semiauto._
-import org.http4s.{HttpRoutes, Response}
+import org.http4s.{HttpRoutes, QueryParamDecoder, Response}
+import org.http4s.dsl.impl.OptionalQueryParamDecoderMatcher
 import coop.rchain.node.encode.JsonEncoder._
 
 object WebApiRoutes {
+
+  object ViewParam extends OptionalQueryParamDecoderMatcher[String]("view")
 
   def service[F[_]: Sync: Log](webApi: WebApi[F]): HttpRoutes[F] = {
     import coop.rchain.casper.protocol.{BlockInfo, LightBlockInfo}
@@ -89,16 +92,17 @@ object WebApiRoutes {
     implicit val encodeBlockInfo: Encoder[BlockInfo] = deriveEncoder[BlockInfo]
 
     // Encoders
-    implicit val stringEncoder              = jsonEncoderOf[F, String]
-    implicit val booleanEncode              = jsonEncoderOf[F, Boolean]
-    implicit val apiStatusEncoder           = jsonEncoderOf[F, ApiStatus]
-    implicit val blockInfoEncoder           = jsonEncoderOf[F, BlockInfo]
-    implicit val lightBlockEncoder          = jsonEncoderOf[F, LightBlockInfo]
-    implicit val lightBlockListEnc          = jsonEncoderOf[F, List[LightBlockInfo]]
-    implicit val dataAtNameRespEncoder      = jsonEncoderOf[F, DataAtNameResponse]
-    implicit val dataAtParRespEncoder       = jsonEncoderOf[F, RhoDataResponse]
-    implicit val prepareEncoder             = jsonEncoderOf[F, PrepareResponse]
-    implicit val transactionResponseEncoder = jsonEncoderOf[F, TransactionResponse]
+    implicit val stringEncoder               = jsonEncoderOf[F, String]
+    implicit val booleanEncode               = jsonEncoderOf[F, Boolean]
+    implicit val apiStatusEncoder            = jsonEncoderOf[F, ApiStatus]
+    implicit val blockInfoEncoder            = jsonEncoderOf[F, BlockInfo]
+    implicit val lightBlockEncoder           = jsonEncoderOf[F, LightBlockInfo]
+    implicit val lightBlockListEnc           = jsonEncoderOf[F, List[LightBlockInfo]]
+    implicit val dataAtNameRespEncoder       = jsonEncoderOf[F, DataAtNameResponse]
+    implicit val dataAtParRespEncoder        = jsonEncoderOf[F, RhoDataResponse]
+    implicit val prepareEncoder              = jsonEncoderOf[F, PrepareResponse]
+    implicit val transactionResponseEncoder  = jsonEncoderOf[F, TransactionResponse]
+    implicit val deployLookupResponseEncoder = jsonEncoderOf[F, DeployLookupResponse]
     // Decoders
     implicit val deployRequestDecoder     = jsonOf[F, DeployRequest]
     implicit val dataAtNameRequestDecoder = jsonOf[F, DataAtNameRequest]
@@ -162,8 +166,11 @@ object WebApiRoutes {
       case GET -> Root / "blocks" / IntVar(depth) =>
         webApi.getBlocks(depth).handle
 
-      case GET -> Root / "deploy" / deployId =>
-        webApi.findDeploy(deployId).handle
+      case GET -> Root / "deploy" / deployId :? ViewParam(view) =>
+        view match {
+          case Some("minimal") => webApi.findDeployMinimal(deployId).handle
+          case _               => webApi.findDeploy(deployId).handle
+        }
 
       case GET -> Root / "is-finalized" / hash =>
         webApi.isFinalized(hash).handle
