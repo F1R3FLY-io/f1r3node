@@ -1,12 +1,13 @@
 use models::rhoapi::Par;
 use rholang::rust::interpreter::chromadb_service::{Metadata, CollectionEntry, MetadataValue};
-use rholang::rust::interpreter::rho_type::{RhoList, RhoNil, RhoNumber};
+use rholang::rust::interpreter::rho_type::{RhoList, RhoMap, RhoNil, RhoNumber, RhoString};
 use rholang::rust::interpreter::{
     errors::InterpreterError,
     interpreter::EvaluateResult,
     rho_runtime::{RhoRuntime, RhoRuntimeImpl},
     test_utils::resources::with_runtime,
 };
+use std::collections::HashMap;
 
 async fn success(runtime: &mut RhoRuntimeImpl, term: &str) -> Result<(), InterpreterError> {
     execute(runtime, term).await.map(|res| {
@@ -81,26 +82,25 @@ async fn collection_should_yield_correct_meta_after_creation_empty() {
 #[tokio::test]
 async fn entry_should_be_queried() {
     let meta_contract = r#"
-            new createCollection(`rho:chroma:collection:new`),
+        new createCollection(`rho:chroma:collection:new`),
             upsertEntries(`rho:chroma:collection:entries:new`),
             queryEntries(`rho:chroma:collection:entries:query`),
             createRet, upsertRet, queryRet in {
                 createCollection!("test-collection-entries", true, Nil, *createRet) |
                 for(@x <- createRet) {
                     upsertEntries!(
-                        "foo",
+                        "test-collection-entries",
                         { "doc1": ("Hello world!", Nil),
                         "doc2": (
                             "Hello world again!",
                             { "meta1": "42" }
                         )
                         },
-                        true,
                         *upsertRet
                     )
                 } |
                 for(@y <- upsertRet) {
-                    queryEntries!("test-collection-entries", [ "Hello world" ], true, *queryRet)
+                    queryEntries!("test-collection-entries", [ "Hello world" ], *queryRet)
                 } |
                 for(@res <- queryRet) {
                     @0!(res)
@@ -111,19 +111,19 @@ async fn entry_should_be_queried() {
     test_runtime(
         meta_contract,
         Some(RhoList::create_par(vec![
-            CollectionEntry {
-                document: "Hello world!".to_string(),
-                metadata: None,
-            }
-            .into(),
-            CollectionEntry {
-                document: "Hello world again!".to_string(),
-                metadata: Some(Metadata::from([(
-                    "meta2".to_string(),
-                    MetadataValue::String("42".to_string()),
-                )])),
-            }
-            .into(),
+            RhoMap::create_par(HashMap::from([
+                (RhoString::create_par("doc1".into()), CollectionEntry {
+                    document: "Hello world!".to_string(),
+                    metadata: None,
+                }.into()),
+                (RhoString::create_par("doc2".into()), CollectionEntry {
+                    document: "Hello world again!".to_string(),
+                    metadata: Some(Metadata::from([(
+                        "meta1".to_string(),
+                        MetadataValue::String("42".to_string()),
+                    )]))
+                }.into())
+            ]))
         ])),
     )
     .await
@@ -132,7 +132,7 @@ async fn entry_should_be_queried() {
 #[tokio::test]
 async fn query_should_return_empty() {
     let meta_contract = r#"
-            new createCollection(`rho:chroma:collection:new`),
+        new createCollection(`rho:chroma:collection:new`),
             upsertEntries(`rho:chroma:collection:entries:new`),
             queryEntries(`rho:chroma:collection:entries:query`),
             createRet, upsertRet, queryRet in {
@@ -146,12 +146,11 @@ async fn query_should_return_empty() {
                             { "meta1": "42" }
                         )
                         },
-                        true,
                         *upsertRet
                     )
                 } |
                 for(@y <- upsertRet) {
-                    queryEntries!("test-collection-entries-empty", [ "None" ], true, *queryRet)
+                    queryEntries!("test-collection-entries-empty", [ "None" ], *queryRet)
                 } |
                 for(@res <- queryRet) {
                     @0!(res)
@@ -159,7 +158,10 @@ async fn query_should_return_empty() {
         }
         "#;
 
-    test_runtime(meta_contract, Some(RhoList::create_par(vec![]))).await
+    test_runtime(
+        meta_contract,
+        Some(RhoList::create_par(vec![RhoMap::create_par(HashMap::new())]))
+    ).await
 }
 
 async fn test_runtime(contract: &str, expected: Option<Par>) {
@@ -168,11 +170,7 @@ async fn test_runtime(contract: &str, expected: Option<Par>) {
 
         let tuple_space = runtime.get_hot_changes();
 
-        fn rho_int(n: i64) -> Vec<Par> {
-            vec![RhoNumber::create_par(n)]
-        }
-
-        let ch_zero = rho_int(0);
+        let ch_zero = vec![RhoNumber::create_par(0)];
         println!("ch_zero: {:?}", ch_zero);
 
         let tuple_space_data = tuple_space.get(&ch_zero);
