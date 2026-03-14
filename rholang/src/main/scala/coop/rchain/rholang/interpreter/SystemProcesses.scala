@@ -22,8 +22,8 @@ import coop.rchain.rholang.externalservices.ExternalServices
 import coop.rchain.rholang.interpreter.RhoRuntime.RhoTuplespace
 import coop.rchain.rholang.interpreter.registry.Registry
 import coop.rchain.rholang.interpreter.RholangAndScalaDispatcher.RhoDispatch
-import coop.rchain.rholang.interpreter.errors.NonDeterministicProcessFailure
-import coop.rchain.rholang.interpreter.util.RevAddress
+import coop.rchain.rholang.interpreter.errors.{NonDeterministicProcessFailure, ReduceError}
+import coop.rchain.rholang.interpreter.util.VaultAddress
 import coop.rchain.rspace.{ContResult, Result}
 import coop.rchain.shared.{Base16, Log}
 import io.cequence.openaiscala.domain.ModelId
@@ -54,7 +54,7 @@ trait SystemProcesses[F[_]] {
   def getBlockData(blockData: Ref[F, SystemProcesses.BlockData]): Contract[F]
   def getDeployData(blockData: Ref[F, SystemProcesses.DeployData]): Contract[F]
   def invalidBlocks(invalidBlocks: SystemProcesses.InvalidBlocks[F]): Contract[F]
-  def revAddress: Contract[F]
+  def vaultAddress: Contract[F]
   def deployerIdOps: Contract[F]
   def registryOps: Contract[F]
   def sysAuthTokenOps: Contract[F]
@@ -144,7 +144,7 @@ object SystemProcesses {
     val SECP256K1_VERIFY: Par   = byteName(8)
     val GET_BLOCK_DATA: Par     = byteName(10)
     val GET_INVALID_BLOCKS: Par = byteName(11)
-    val REV_ADDRESS: Par        = byteName(12)
+    val VAULT_ADDRESS: Par      = byteName(12)
     val DEPLOYER_ID_OPS: Par    = byteName(13)
     val REG_LOOKUP: Par         = byteName(14)
     val REG_INSERT_RANDOM: Par  = byteName(15)
@@ -174,7 +174,7 @@ object SystemProcesses {
     val SECP256K1_VERIFY: Long   = 9L
     val GET_BLOCK_DATA: Long     = 11L
     val GET_INVALID_BLOCKS: Long = 12L
-    val REV_ADDRESS: Long        = 13L
+    val VAULT_ADDRESS: Long      = 13L
     val DEPLOYER_ID_OPS: Long    = 14L
     val REG_OPS: Long            = 15L
     val SYS_AUTHTOKEN_OPS: Long  = 16L
@@ -253,7 +253,7 @@ object SystemProcesses {
       private val logger       = Logger("coop.rchain.rholang.ollama")
 
       private def illegalArgumentException(msg: String): F[Seq[Par]] =
-        F.raiseError(new IllegalArgumentException(msg))
+        ReduceError(msg).raiseError[F, Seq[Par]]
 
       def verifySignatureContract(
           name: String,
@@ -271,9 +271,12 @@ object SystemProcesses {
             )
             ) =>
           for {
-            verified <- F.fromTry(Try(algorithm(data, signature, pub)))
-            output   = Seq(RhoType.Boolean(verified): Par)
-            _        <- produce(output, ack)
+            verified <- F.fromTry(Try(algorithm(data, signature, pub))).handleErrorWith {
+                         case e: Throwable =>
+                           ReduceError(s"$name: ${e.getMessage}").raiseError[F, Boolean]
+                       }
+            output = Seq(RhoType.Boolean(verified): Par)
+            _      <- produce(output, ack)
           } yield output
         case _ =>
           illegalArgumentException(
@@ -284,7 +287,10 @@ object SystemProcesses {
       def hashContract(name: String, algorithm: Array[Byte] => Array[Byte]): Contract[F] = {
         case isContractCall(produce, _, _, Seq(RhoType.ByteArray(input), ack)) =>
           for {
-            hash   <- F.fromTry(Try(algorithm(input)))
+            hash <- F.fromTry(Try(algorithm(input))).handleErrorWith {
+                     case e: Throwable =>
+                       ReduceError(s"$name: ${e.getMessage}").raiseError[F, Array[Byte]]
+                   }
             output = Seq(RhoType.ByteArray(hash))
             _      <- produce(output, ack)
           } yield output
@@ -334,7 +340,7 @@ object SystemProcesses {
           } yield output
       }
 
-      def revAddress: Contract[F] = {
+      def vaultAddress: Contract[F] = {
         case isContractCall(
             produce,
             _,
@@ -342,7 +348,7 @@ object SystemProcesses {
             Seq(RhoType.String("validate"), RhoType.String(address), ack)
             ) =>
           val errorMessage =
-            RevAddress
+            VaultAddress
               .parse(address)
               .swap
               .toOption
@@ -362,7 +368,7 @@ object SystemProcesses {
             Seq(RhoType.String("fromPublicKey"), RhoType.ByteArray(publicKey), ack)
             ) =>
           val response =
-            RevAddress
+            VaultAddress
               .fromPublicKey(PublicKey(publicKey))
               .map(ra => RhoType.String(ra.toBase58))
               .getOrElse(Par())
@@ -379,7 +385,7 @@ object SystemProcesses {
             Seq(RhoType.String("fromDeployerId"), RhoType.DeployerId(id), ack)
             ) =>
           val response =
-            RevAddress
+            VaultAddress
               .fromDeployerId(id)
               .map(ra => RhoType.String(ra.toBase58))
               .getOrElse(Par())
@@ -397,7 +403,7 @@ object SystemProcesses {
             ) =>
           val response = argument match {
             case RhoType.Name(gprivate) =>
-              RhoType.String(RevAddress.fromUnforgeable(gprivate).toBase58)
+              RhoType.String(VaultAddress.fromUnforgeable(gprivate).toBase58)
             case _ => Par()
           }
 

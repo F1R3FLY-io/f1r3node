@@ -49,6 +49,7 @@ object BlockAPI {
   // TODO: we should refactor BlockApi with applicative errors for better classification
   //  of errors and to overcome nesting when validating data.
   final case class BlockRetrievalError(message: String) extends Exception
+  final case class DeployExpiredError(message: String)  extends Exception
 
   def deploy[F[_]: Concurrent: EngineCell: Log: Span](
       d: Signed[DeployData],
@@ -97,13 +98,23 @@ object BlockAPI {
     ).raiseError[F, ApiErr[String]]
     val minPhloPriceCheck = minPriceError.whenA(d.data.phloPrice < minPhloPrice)
 
+    // Check if deploy has already expired based on expirationTimestamp
+    lazy val expirationError = DeployExpiredError(
+      s"Deploy has expired: expirationTimestamp=${d.data.expirationTimestamp} is in the past."
+    ).raiseError[F, ApiErr[String]]
+    val expirationCheck = Sync[F].delay(System.currentTimeMillis()).flatMap { now =>
+      expirationError.whenA(d.data.isExpiredAt(now))
+    }
+
     // Error message in case Casper is not ready
     val errorMessage = "Could not deploy, casper instance was not available yet."
     val logErrorMessage = Log[F]
       .warn(errorMessage)
       .as(s"Error: $errorMessage".asLeft[String])
 
-    readOnlyCheck >> shardIdCheck >> forbiddenKeyCheck >> minPhloPriceCheck >> EngineCell[F].read >>= (_.withCasper[
+    readOnlyCheck >> shardIdCheck >> forbiddenKeyCheck >> minPhloPriceCheck >> expirationCheck >> EngineCell[
+      F
+    ].read >>= (_.withCasper[
       ApiErr[String]
     ](
       casperDeploy,
@@ -186,13 +197,14 @@ object BlockAPI {
       maxBlocksLimit: Int
   ): F[ApiErr[(Seq[DataWithBlockInfo], Int)]] = {
 
-    val errorMessage = "Could not get listening name data, casper instance was not available yet."
+    val errorMessage   = "Could not get listening name data, casper instance was not available yet."
+    val effectiveDepth = depth.min(maxBlocksLimit)
 
     def casperResponse(
         implicit casper: MultiParentCasper[F]
     ): F[ApiErr[(Seq[DataWithBlockInfo], Int)]] =
       for {
-        mainChain           <- getMainChainFromTip[F](depth)
+        mainChain           <- getMainChainFromTip[F](effectiveDepth)
         runtimeManager      <- casper.getRuntimeManager
         sortedListeningName <- parSortable.sortMatch[F](listeningName).map(_.term)
         maybeBlocksWithActiveName <- mainChain.toList.traverse { block =>
@@ -205,17 +217,12 @@ object BlockAPI {
         blocksWithActiveName = maybeBlocksWithActiveName.flatten
       } yield (blocksWithActiveName, blocksWithActiveName.length).asRight
 
-    if (depth > maxBlocksLimit)
-      s"Your request on getListeningName depth ${depth} exceed the max limit ${maxBlocksLimit}"
-        .asLeft[(Seq[DataWithBlockInfo], Int)]
-        .pure[F]
-    else
-      EngineCell[F].read >>= (_.withCasper[ApiErr[(Seq[DataWithBlockInfo], Int)]](
-        casperResponse(_),
-        Log[F]
-          .warn(errorMessage)
-          .as(s"Error: $errorMessage".asLeft)
-      ))
+    EngineCell[F].read >>= (_.withCasper[ApiErr[(Seq[DataWithBlockInfo], Int)]](
+      casperResponse(_),
+      Log[F]
+        .warn(errorMessage)
+        .as(s"Error: $errorMessage".asLeft)
+    ))
   }
 
   def getListeningNameContinuationResponse[F[_]: Concurrent: EngineCell: Log: SafetyOracle: BlockStore](
@@ -225,11 +232,13 @@ object BlockAPI {
   ): F[ApiErr[(Seq[ContinuationsWithBlockInfo], Int)]] = {
     val errorMessage =
       "Could not get listening names continuation, casper instance was not available yet."
+    val effectiveDepth = depth.min(maxBlocksLimit)
+
     def casperResponse(
         implicit casper: MultiParentCasper[F]
     ): F[ApiErr[(Seq[ContinuationsWithBlockInfo], Int)]] =
       for {
-        mainChain      <- getMainChainFromTip[F](depth)
+        mainChain      <- getMainChainFromTip[F](effectiveDepth)
         runtimeManager <- casper.getRuntimeManager
         sortedListeningNames <- listeningNames.toList
                                  .traverse(parSortable.sortMatch[F](_).map(_.term))
@@ -243,17 +252,12 @@ object BlockAPI {
         blocksWithActiveName = maybeBlocksWithActiveName.flatten
       } yield (blocksWithActiveName, blocksWithActiveName.length).asRight
 
-    if (depth > maxBlocksLimit)
-      s"Your request on getListeningNameContinuation depth ${depth} exceed the max limit ${maxBlocksLimit}"
-        .asLeft[(Seq[ContinuationsWithBlockInfo], Int)]
-        .pure[F]
-    else
-      EngineCell[F].read >>= (_.withCasper[ApiErr[(Seq[ContinuationsWithBlockInfo], Int)]](
-        casperResponse(_),
-        Log[F]
-          .warn(errorMessage)
-          .as(s"Error: $errorMessage".asLeft)
-      ))
+    EngineCell[F].read >>= (_.withCasper[ApiErr[(Seq[ContinuationsWithBlockInfo], Int)]](
+      casperResponse(_),
+      Log[F]
+        .warn(errorMessage)
+        .as(s"Error: $errorMessage".asLeft)
+    ))
   }
 
   private def getMainChainFromTip[F[_]: Sync: Log: SafetyOracle: BlockStore](depth: Int)(
@@ -343,21 +347,20 @@ object BlockAPI {
     val errorMessage =
       "Could not visualize graph, casper instance was not available yet."
 
+    val effectiveDepth = depth.min(maxDepthLimit)
+
     def casperResponse(implicit casper: MultiParentCasper[F]): F[ApiErr[A]] =
       for {
         dag               <- MultiParentCasper[F].blockDag
         latestBlockNumber <- dag.latestBlockNumber
-        topoSort          <- dag.topoSort((latestBlockNumber - depth).toLong, none)
+        topoSort          <- dag.topoSort((latestBlockNumber - effectiveDepth).toLong, none)
         result            <- doIt(casper, topoSort)
       } yield result
 
-    if (depth > maxDepthLimit)
-      s"Your request depth ${depth} exceed the max limit ${maxDepthLimit}".asLeft[A].pure[F]
-    else
-      EngineCell[F].read >>= (_.withCasper[ApiErr[A]](
-        casperResponse(_),
-        Log[F].warn(errorMessage).as(errorMessage.asLeft)
-      ))
+    EngineCell[F].read >>= (_.withCasper[ApiErr[A]](
+      casperResponse(_),
+      Log[F].warn(errorMessage).as(errorMessage.asLeft)
+    ))
   }
 
   def getBlocksByHeights[F[_]: Sync: EngineCell: Log: SafetyOracle: BlockStore](
@@ -365,12 +368,13 @@ object BlockAPI {
       endBlockNumber: Long,
       maxBlocksLimit: Int
   ): F[ApiErr[List[LightBlockInfo]]] = {
-    val errorMessage = s"Could not retrieve blocks from ${startBlockNumber} to ${endBlockNumber}"
+    val errorMessage            = s"Could not retrieve blocks from ${startBlockNumber} to ${endBlockNumber}"
+    val effectiveEndBlockNumber = endBlockNumber.min(startBlockNumber + maxBlocksLimit)
 
     def casperResponse(implicit casper: MultiParentCasper[F]): F[ApiErr[List[LightBlockInfo]]] =
       for {
         dag         <- MultiParentCasper[F].blockDag
-        topoSortDag <- dag.topoSort(startBlockNumber, Some(endBlockNumber))
+        topoSortDag <- dag.topoSort(startBlockNumber, Some(effectiveEndBlockNumber))
         result <- topoSortDag
                    .foldM(List.empty[LightBlockInfo]) {
                      case (blockInfosAtHeightAcc, blockHashesAtHeight) =>
@@ -384,17 +388,12 @@ object BlockAPI {
                    .map(_.asRight[Error])
       } yield result
 
-    if (endBlockNumber - startBlockNumber > maxBlocksLimit)
-      s"Your request startBlockNumber ${startBlockNumber} and endBlockNumber ${endBlockNumber} exceed the max limit ${maxBlocksLimit}"
-        .asLeft[List[LightBlockInfo]]
-        .pure[F]
-    else
-      EngineCell[F].read >>= (_.withCasper[ApiErr[List[LightBlockInfo]]](
-        casperResponse(_),
-        Log[F]
-          .warn(errorMessage)
-          .as(s"Error: $errorMessage".asLeft)
-      ))
+    EngineCell[F].read >>= (_.withCasper[ApiErr[List[LightBlockInfo]]](
+      casperResponse(_),
+      Log[F]
+        .warn(errorMessage)
+        .as(s"Error: $errorMessage".asLeft)
+    ))
   }
 
   def visualizeDag[F[_]: Monad: Sync: EngineCell: Log: SafetyOracle: BlockStore, R](
@@ -471,23 +470,26 @@ object BlockAPI {
     val errorMessage =
       "Could not show main chain, casper instance was not available yet."
 
+    val effectiveDepth = depth.min(maxDepthLimit)
+
     def casperResponse(implicit casper: MultiParentCasper[F]) =
       for {
-        dag        <- MultiParentCasper[F].blockDag
-        tipHashes  <- MultiParentCasper[F].estimator(dag)
-        tipHash    = tipHashes.head
-        tip        <- BlockStore[F].getUnsafe(tipHash)
-        mainChain  <- ProtoUtil.getMainChainUntilDepth[F](tip, IndexedSeq.empty[BlockMessage], depth)
+        dag       <- MultiParentCasper[F].blockDag
+        tipHashes <- MultiParentCasper[F].estimator(dag)
+        tipHash   = tipHashes.head
+        tip       <- BlockStore[F].getUnsafe(tipHash)
+        mainChain <- ProtoUtil.getMainChainUntilDepth[F](
+                      tip,
+                      IndexedSeq.empty[BlockMessage],
+                      effectiveDepth
+                    )
         blockInfos <- mainChain.toList.traverse(getLightBlockInfo[F])
       } yield blockInfos
 
-    if (depth > maxDepthLimit)
-      List.empty[LightBlockInfo].pure[F]
-    else
-      EngineCell[F].read >>= (_.withCasper[List[LightBlockInfo]](
-        casperResponse(_),
-        Log[F].warn(errorMessage).as(List.empty[LightBlockInfo])
-      ))
+    EngineCell[F].read >>= (_.withCasper[List[LightBlockInfo]](
+      casperResponse(_),
+      Log[F].warn(errorMessage).as(List.empty[LightBlockInfo])
+    ))
   }
 
   def findDeploy[F[_]: Sync: EngineCell: Log: SafetyOracle: BlockStore](
@@ -745,7 +747,7 @@ object BlockAPI {
           for {
             isReadOnly <- casper.getValidator.map(_.isEmpty)
             result <- if (isReadOnly || devMode) {
-                       for {
+                       (for {
                          runtimeManager <- casper.getRuntimeManager
                          snapshot       <- casper.getSnapshot
                          // When no block specified, compute merged state from all DAG tips
@@ -821,7 +823,17 @@ object BlockAPI {
                                })
                        } yield res.fold(
                          s"Can not find block ${blockHash}".asLeft[(Seq[Par], LightBlockInfo)]
-                       )(_.asRight[Error])
+                       )(_.asRight[Error])).handleErrorWith {
+                         // Finalization temporarily locks the DAG state, preventing snapshot
+                         // creation. Return a clean API error so the caller can retry.
+                         case _: FinalizationInProgressException =>
+                           Log[F].info(
+                             "exploratoryDeploy: finalization in progress, returning transient error"
+                           ) >>
+                             "Finalization in progress, please retry shortly"
+                               .asLeft[(Seq[Par], LightBlockInfo)]
+                               .pure[F]
+                       }
                      } else {
                        "Exploratory deploy can only be executed on read-only RNode."
                          .asLeft[(Seq[Par], LightBlockInfo)]

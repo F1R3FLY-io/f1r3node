@@ -207,6 +207,7 @@ object CasperLaunch {
                   casperShardConf,
                   validatorId.get,
                   bap,
+                  conf.genesisCeremony.approveInterval,
                   onBlockFinalized
                 )
               )

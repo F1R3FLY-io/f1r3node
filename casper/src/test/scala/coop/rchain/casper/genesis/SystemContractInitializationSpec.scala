@@ -7,13 +7,13 @@ import coop.rchain.casper.util.{ConstructDeploy, GenesisBuilder}
 import coop.rchain.casper.util.GenesisBuilder.buildGenesis
 import coop.rchain.blockstorage.syntax._
 import coop.rchain.p2p.EffectsTestInstances.LogicalTime
-import coop.rchain.rholang.interpreter.util.RevAddress
+import coop.rchain.rholang.interpreter.util.VaultAddress
 import coop.rchain.shared.Base16
 import monix.execution.Scheduler.Implicits.global
 import org.scalatest.{FlatSpec, Matchers}
 
 /**
-  * Tests to verify system contracts (PoS, RevVault) are properly
+  * Tests to verify system contracts (PoS, SystemVault) are properly
   * initialized at genesis and accessible in subsequent blocks.
   *
   * These tests verify:
@@ -32,7 +32,7 @@ class SystemContractInitializationSpec extends FlatSpec with Matchers {
   "PoS contract" should "return correct bonds at genesis" in {
     val getBondsQuery = """
       |new return, rl(`rho:registry:lookup`), posCh in {
-      |  rl!(`rho:rchain:pos`, *posCh) |
+      |  rl!(`rho:system:pos`, *posCh) |
       |  for (@(_, PoS) <- posCh) {
       |    @PoS!("getBonds", *return)
       |  }
@@ -56,16 +56,16 @@ class SystemContractInitializationSpec extends FlatSpec with Matchers {
     t.runSyncUnsafe()
   }
 
-  "RevVault" should "be accessible at genesis post-state" in {
+  "SystemVault" should "be accessible at genesis post-state" in {
     // genesisVaults is Iterable[(PrivateKey, PublicKey)]
     val (_, vaultPk)     = genesis.genesisVaults.toList.head
-    val genesisVaultAddr = RevAddress.fromPublicKey(vaultPk).get
+    val genesisVaultAddr = VaultAddress.fromPublicKey(vaultPk).get
 
     val getVaultQuery = s"""
-      |new return, rl(`rho:registry:lookup`), RevVaultCh, vaultCh in {
-      |  rl!(`rho:rchain:revVault`, *RevVaultCh) |
-      |  for (@(_, RevVault) <- RevVaultCh) {
-      |    @RevVault!("findOrCreate", "${genesisVaultAddr.address.toBase58}", *vaultCh) |
+      |new return, rl(`rho:registry:lookup`), SystemVaultCh, vaultCh in {
+      |  rl!(`rho:vault:system`, *SystemVaultCh) |
+      |  for (@(_, SystemVault) <- SystemVaultCh) {
+      |    @SystemVault!("findOrCreate", "${genesisVaultAddr.address.toBase58}", *vaultCh) |
       |    for (@(true, vault) <- vaultCh) {
       |      @vault!("balance", *return)
       |    }
@@ -80,9 +80,9 @@ class SystemContractInitializationSpec extends FlatSpec with Matchers {
                    getVaultQuery,
                    genesis.genesisBlock.body.state.postStateHash
                  )
-        _ <- logEff.info(s"RevVault balance result: $result")
+        _ <- logEff.info(s"SystemVault balance result: $result")
       } yield {
-        // Verify RevVault is accessible and returns a balance
+        // Verify SystemVault is accessible and returns a balance
         result should not be empty
       }
     }
@@ -90,15 +90,15 @@ class SystemContractInitializationSpec extends FlatSpec with Matchers {
   }
 
   "Validator vaults" should "have zero balance at genesis" in {
-    // GenesisBuilder sets validator vaults to 0 REV (Vault(_, 0))
+    // GenesisBuilder sets validator vaults to 0 tokens (Vault(_, 0))
     val validatorPk   = genesis.validatorKeyPairs.head._2
-    val validatorAddr = RevAddress.fromPublicKey(validatorPk).get
+    val validatorAddr = VaultAddress.fromPublicKey(validatorPk).get
 
     val getValidatorVaultQuery = s"""
-      |new return, rl(`rho:registry:lookup`), RevVaultCh, vaultCh in {
-      |  rl!(`rho:rchain:revVault`, *RevVaultCh) |
-      |  for (@(_, RevVault) <- RevVaultCh) {
-      |    @RevVault!("findOrCreate", "${validatorAddr.address.toBase58}", *vaultCh) |
+      |new return, rl(`rho:registry:lookup`), SystemVaultCh, vaultCh in {
+      |  rl!(`rho:vault:system`, *SystemVaultCh) |
+      |  for (@(_, SystemVault) <- SystemVaultCh) {
+      |    @SystemVault!("findOrCreate", "${validatorAddr.address.toBase58}", *vaultCh) |
       |    for (@(true, vault) <- vaultCh) {
       |      @vault!("balance", *return)
       |    }
@@ -116,7 +116,7 @@ class SystemContractInitializationSpec extends FlatSpec with Matchers {
         _ <- logEff.info(s"Validator vault balance result: $result")
       } yield {
         result should not be empty
-        // Validator vaults are initialized to 0 REV per GenesisBuilder
+        // Validator vaults are initialized to 0 tokens per GenesisBuilder
       }
     }
     t.runSyncUnsafe()
@@ -162,7 +162,7 @@ class SystemContractInitializationSpec extends FlatSpec with Matchers {
 
     val getBondsQuery = """
       |new return, rl(`rho:registry:lookup`), posCh in {
-      |  rl!(`rho:rchain:pos`, *posCh) |
+      |  rl!(`rho:system:pos`, *posCh) |
       |  for (@(_, PoS) <- posCh) {
       |    @PoS!("getBonds", *return)
       |  }
@@ -198,7 +198,7 @@ class SystemContractInitializationSpec extends FlatSpec with Matchers {
 
     val lookupQuery = s"""
       |new return, rl(`rho:registry:lookup`), posCh in {
-      |  rl!(`rho:rchain:pos`, *posCh) |
+      |  rl!(`rho:system:pos`, *posCh) |
       |  for (@(_, PoS) <- posCh) {
       |    new bondsCh in {
       |      @PoS!("getBonds", *bondsCh) |

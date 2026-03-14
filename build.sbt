@@ -362,7 +362,7 @@ lazy val node = (project in file("node"))
     Compile / discoveredMainClasses := Seq(),
     assembly / mainClass := Some("coop.rchain.node.Main"),
     assembly / assemblyMergeStrategy := {
-      // TODO: investigate if still needed? Got error after adding ExternalCommunicationService.proto and ExternalCommunicationServiceCommon.proto
+      case x if x.startsWith("META-INF/services/") => MergeStrategy.concat
       case x if x.startsWith("META-INF") => MergeStrategy.discard
       case x if x.endsWith(".proto") => MergeStrategy.first
       //
