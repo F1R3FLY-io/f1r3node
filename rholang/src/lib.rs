@@ -149,7 +149,7 @@ extern "C" fn evaluate(
     let eval_result_proto = EvaluateResultProto {
         cost: Some(CostProto {
             value: eval_result.cost.value,
-            operation: eval_result.cost.operation,
+            operation: eval_result.cost.operation.to_string(),
         }),
         errors: eval_result
             .errors
@@ -1321,7 +1321,14 @@ extern "C" fn create_runtime(
     let rho_runtime = tokio_runtime.block_on(async {
         let openai_config = OpenAIConfig::from_env();
         let ollama_config = OllamaConfig::from_env();
-        create_rho_runtime(rspace, mergeable_tag_name, init_registry, &mut Vec::new(), ExternalServices::for_validator(&openai_config, &ollama_config)).await
+        create_rho_runtime(
+            rspace,
+            mergeable_tag_name,
+            init_registry,
+            &mut Vec::new(),
+            ExternalServices::for_validator(&openai_config, &ollama_config),
+        )
+        .await
     });
 
     Box::into_raw(Box::new(RhoRuntime {
@@ -1388,7 +1395,14 @@ extern "C" fn create_replay_runtime(
     let replay_rho_runtime = tokio_runtime.block_on(async {
         let openai_config = OpenAIConfig::from_env();
         let ollama_config = OllamaConfig::from_env();
-        create_rho_runtime(rspace, mergeable_tag_name, init_registry, &mut Vec::new(), ExternalServices::for_validator(&openai_config, &ollama_config)).await
+        create_rho_runtime(
+            rspace,
+            mergeable_tag_name,
+            init_registry,
+            &mut Vec::new(),
+            ExternalServices::for_validator(&openai_config, &ollama_config),
+        )
+        .await
     });
 
     Box::into_raw(Box::new(ReplayRhoRuntime {

@@ -20,12 +20,13 @@ use models::rhoapi::PCost;
 use models::rust::block::state_hash::StateHash;
 use models::rust::block_hash::BlockHash;
 use models::rust::casper::protocol::casper_message::{
-    BlockMessage, DeployData, ProcessedDeploy, ProcessedSystemDeploy,
+    BlockMessage, Bond, DeployData, ProcessedDeploy, ProcessedSystemDeploy,
 };
 use prost::bytes::Bytes;
 use rholang::rust::interpreter::system_processes::BlockData;
 use rspace_plus_plus::rspace::history::Either;
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 // Note: In Scala, genesisContext is defined at class level. In Rust, each test creates its own genesis context
 struct TestContext {
@@ -120,7 +121,7 @@ impl TestContext {
             parents: Vec::new(),
             justifications: DashSet::new(),
             invalid_blocks: HashMap::new(),
-            deploys_in_scope: DashSet::new(),
+            deploys_in_scope: Arc::new(DashSet::new()),
             max_block_num: 0,
             max_seq_nums: DashMap::new(),
             on_chain_state: OnChainCasperState {
@@ -178,6 +179,7 @@ impl TestContext {
             Vec<ProcessedDeploy>,
             Vec<Bytes>,
             Vec<ProcessedSystemDeploy>,
+            Vec<Bond>,
         ),
         CasperError,
     > {
@@ -927,7 +929,7 @@ async fn validate_block_checkpoint_should_return_a_checkpoint_with_the_right_has
             .await
             .expect("Failed to compute deploys checkpoint");
 
-            let (pre_state_hash, computed_ts_hash, processed_deploys, _, _) = deploys_checkpoint;
+            let (pre_state_hash, computed_ts_hash, processed_deploys, _, _, _) = deploys_checkpoint;
 
             let creator = ctx.genesis_context.validator_pks()[0].bytes.clone();
             let block = block_generator::create_block(
@@ -1038,7 +1040,7 @@ contract @"recursionTest"(@list) = {
             .await
             .expect("Failed to compute deploys checkpoint");
 
-            let (pre_state_hash, computed_ts_hash, processed_deploys, _, _) = deploys_checkpoint;
+            let (pre_state_hash, computed_ts_hash, processed_deploys, _, _, _) = deploys_checkpoint;
 
             let creator = ctx.genesis_context.validator_pks()[0].bytes.clone();
             let block = block_generator::create_block(
@@ -1153,7 +1155,7 @@ async fn validate_block_checkpoint_should_pass_persistent_produce_test_with_caus
             .await
             .expect("Failed to compute deploys checkpoint");
 
-            let (pre_state_hash, computed_ts_hash, processed_deploys, _, _) = deploys_checkpoint;
+            let (pre_state_hash, computed_ts_hash, processed_deploys, _, _, _) = deploys_checkpoint;
 
             let creator = ctx.genesis_context.validator_pks()[0].bytes.clone();
             let block = block_generator::create_block(
@@ -1264,7 +1266,7 @@ new loop, primeCheck, stdoutAck(`rho:io:stdoutAck`) in {
             .await
             .expect("Failed to compute deploys checkpoint");
 
-            let (pre_state_hash, computed_ts_hash, processed_deploys, _, _) = deploys_checkpoint;
+            let (pre_state_hash, computed_ts_hash, processed_deploys, _, _, _) = deploys_checkpoint;
 
             let creator = ctx.genesis_context.validator_pks()[0].bytes.clone();
             let block = block_generator::create_block(
@@ -1367,7 +1369,7 @@ async fn validate_block_checkpoint_should_pass_tests_involving_races() {
                 .await
                 .expect("Failed to compute deploys checkpoint");
 
-                let (pre_state_hash, computed_ts_hash, processed_deploys, _, _) =
+                let (pre_state_hash, computed_ts_hash, processed_deploys, _, _, _) =
                     deploys_checkpoint;
 
                 let creator = ctx.genesis_context.validator_pks()[0].bytes.clone();
@@ -1461,8 +1463,7 @@ async fn validate_block_checkpoint_should_return_none_for_logs_containing_extra_
             .await
             .expect("Failed to compute deploys checkpoint");
 
-            let (pre_state_hash, computed_ts_hash, processed_deploys, _, _) =
-                deploys_checkpoint;
+            let (pre_state_hash, computed_ts_hash, processed_deploys, _, _, _) = deploys_checkpoint;
 
             // create single deploy with log that includes excess comm events
             let mut bad_processed_deploy = processed_deploys[0].clone();
@@ -1587,7 +1588,7 @@ async fn validate_block_checkpoint_should_pass_map_update_test() {
                 .await
                 .expect("Failed to compute deploys checkpoint");
 
-                let (pre_state_hash, computed_ts_hash, processed_deploys, _, _) =
+                let (pre_state_hash, computed_ts_hash, processed_deploys, _, _, _) =
                     deploys_checkpoint;
 
                 let creator = ctx.genesis_context.validator_pks()[0].bytes.clone();
@@ -1648,9 +1649,9 @@ async fn used_deploy_with_insufficient_phlos_should_be_added_to_a_block_with_all
 
     let sample_term = r#"
   new
-    rl(`rho:registry:lookup`), RevVaultCh, vaultCh, balanceCh, deployId(`rho:rchain:deployId`)
+    rl(`rho:registry:lookup`), RevVaultCh, vaultCh, balanceCh, deployId(`rho:system:deployId`)
   in {
-    rl!(`rho:rchain:revVault`, *RevVaultCh) |
+    rl!(`rho:vault:system`, *RevVaultCh) |
     for (@(_, RevVault) <- RevVaultCh) {
       match "1111MnCcfyG9sExhw1jQcW6hSb98c2XUtu3E4KGSxENo1nTn4e5cx" {
         revAddress => {
@@ -1708,7 +1709,7 @@ const MULTI_BRANCH_SAMPLE_TERM_WITH_ERROR: &str = r#"
     new signal in {
       signal!(0) | signal!(0) | signal!(0) | signal!(0) | signal!(0) | signal!(0) | signal!(1) |
       contract signal(@x) = {
-        rl!(`rho:rchain:revVault`, *RevVaultCh) | ackCh!(x) |
+        rl!(`rho:vault:system`, *RevVaultCh) | ackCh!(x) |
         if (x == 1) {}.xxx() // Simulates error in one branch
       }
     } |

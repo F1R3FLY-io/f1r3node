@@ -16,7 +16,7 @@ use models::{
         casper::{
             pretty_printer::PrettyPrinter,
             protocol::casper_message::{
-                BlockMessage, DeployData, ProcessedDeploy, ProcessedSystemDeploy,
+                BlockMessage, Bond, DeployData, ProcessedDeploy, ProcessedSystemDeploy,
             },
         },
         validator::Validator,
@@ -32,10 +32,7 @@ use crate::rust::{
     casper::CasperSnapshot,
     errors::CasperError,
     merging::{block_index::BlockIndex, dag_merger, deploy_chain_index::DeployChainIndex},
-    metrics_constants::{
-        CASPER_METRICS_SOURCE,
-        BLOCK_PROCESSING_REPLAY_TIME_METRIC,
-    },
+    metrics_constants::{BLOCK_PROCESSING_REPLAY_TIME_METRIC, CASPER_METRICS_SOURCE},
     util::proto_util,
     BlockProcessing,
 };
@@ -511,9 +508,11 @@ pub async fn compute_deploys_checkpoint(
         Vec<ProcessedDeploy>,
         Vec<prost::bytes::Bytes>,
         Vec<ProcessedSystemDeploy>,
+        Vec<Bond>,
     ),
     CasperError,
 > {
+    let checkpoint_started = std::time::Instant::now();
     // Using tracing events for async - Span[F] equivalent from Scala
     tracing::debug!(target: "f1r3fly.casper.compute-deploys-checkpoint", "compute-deploys-checkpoint-started");
     // Ensure parents are not empty
@@ -524,13 +523,16 @@ pub async fn compute_deploys_checkpoint(
     }
 
     // Compute parents post state
+    let parents_started = std::time::Instant::now();
     let computed_parents_info =
         compute_parents_post_state(block_store, parents, s, runtime_manager, None)?;
+    let parents_ms = parents_started.elapsed().as_millis();
     let (pre_state_hash, rejected_deploys) = computed_parents_info;
 
-    // Compute state using runtime manager
+    // Compute state and bonds using one spawned runtime
+    let compute_state_started = std::time::Instant::now();
     let result = runtime_manager
-        .compute_state(
+        .compute_state_with_bonds(
             &pre_state_hash,
             deploys,
             system_deploys,
@@ -538,8 +540,19 @@ pub async fn compute_deploys_checkpoint(
             Some(invalid_blocks),
         )
         .await?;
+    let compute_state_ms = compute_state_started.elapsed().as_millis();
 
-    let (post_state_hash, processed_deploys, processed_system_deploys) = result;
+    let (post_state_hash, processed_deploys, processed_system_deploys, bonds) = result;
+    tracing::debug!(
+        target: "f1r3fly.compute_deploys_checkpoint.timing",
+        "compute_deploys_checkpoint timing: parents_post_state_ms={}, compute_state_ms={}, total_ms={}, processed_deploys={}, processed_system_deploys={}, rejected_deploys={}",
+        parents_ms,
+        compute_state_ms,
+        checkpoint_started.elapsed().as_millis(),
+        processed_deploys.len(),
+        processed_system_deploys.len(),
+        rejected_deploys.len()
+    );
 
     Ok((
         pre_state_hash,
@@ -547,11 +560,12 @@ pub async fn compute_deploys_checkpoint(
         processed_deploys,
         rejected_deploys,
         processed_system_deploys,
+        bonds,
     ))
 }
 
 /// Compute the merged post-state from multiple parent blocks.
-/// 
+///
 /// For exploratory deploy, pass `disable_late_block_filtering_override = Some(true)` to
 /// always disable late block filtering (see full merged state).
 /// For normal block creation, pass `None` to use the shard config value.
@@ -562,22 +576,139 @@ pub fn compute_parents_post_state(
     runtime_manager: &RuntimeManager,
     disable_late_block_filtering_override: Option<bool>,
 ) -> Result<(StateHash, Vec<Bytes>), CasperError> {
+    let total_started = std::time::Instant::now();
+    const MAX_PARENT_MERGE_SCOPE_BLOCKS: usize = 512;
+    const MAX_LCA_DISTANCE_BLOCKS: i64 = 256;
+
     // Span guard must live until end of scope to maintain tracing context
     let _span = tracing::debug_span!(target: "f1r3fly.casper.compute-parents-post-state", "compute-parents-post-state").entered();
     match parents.len() {
         // For genesis, use empty trie's root hash
-        0 => Ok((RuntimeManager::empty_state_hash_fixed(), Vec::new())),
+        0 => {
+            let state = RuntimeManager::empty_state_hash_fixed();
+            tracing::debug!(
+                target: "f1r3fly.compute_parents_post_state.timing",
+                "compute_parents_post_state timing: path=genesis, parents=0, total_ms={}",
+                total_started.elapsed().as_millis()
+            );
+            Ok((state, Vec::new()))
+        }
 
         // For single parent, get its post state hash
         1 => {
             let parent = &parents[0];
-            Ok((proto_util::post_state_hash(parent), Vec::new()))
+            let state = proto_util::post_state_hash(parent);
+            tracing::debug!(
+                target: "f1r3fly.compute_parents_post_state.timing",
+                "compute_parents_post_state timing: path=single_parent, parents=1, total_ms={}",
+                total_started.elapsed().as_millis()
+            );
+            Ok((state, Vec::new()))
         }
 
         // Multiple parents - we might want to take some data from the parent with the most stake,
         // e.g. bonds map, slashing deploys, bonding deploys.
         // such system deploys are not mergeable, so take them from one of the parents.
         _ => {
+            let cache_lookup_started = std::time::Instant::now();
+            // Fast path: if one parent is descendant of all others, its post-state already
+            // includes all effects from the remaining parents and we can skip DAG merge.
+            for candidate in &parents {
+                let covers_all = parents
+                    .iter()
+                    .filter(|p| p.block_hash != candidate.block_hash)
+                    .all(|p| {
+                        s.dag
+                            .is_in_main_chain(&p.block_hash, &candidate.block_hash)
+                            .unwrap_or(false)
+                    });
+                if covers_all {
+                    tracing::debug!(
+                        target: "f1r3fly.compute_parents_post_state.fast_path",
+                        "compute_parents_post_state fast path: descendant parent {} covers all {} parents",
+                        PrettyPrinter::build_string_bytes(&candidate.block_hash),
+                        parents.len()
+                    );
+                    let state = proto_util::post_state_hash(candidate);
+                    tracing::debug!(
+                        target: "f1r3fly.compute_parents_post_state.timing",
+                        "compute_parents_post_state timing: path=descendant_fast_path, parents={}, cache_lookup_ms={}, total_ms={}",
+                        parents.len(),
+                        cache_lookup_started.elapsed().as_millis(),
+                        total_started.elapsed().as_millis()
+                    );
+                    return Ok((state, Vec::new()));
+                }
+            }
+
+            // Broader fast path: if one parent is an ancestor-descendant cover in DAG
+            // (not only on the main-parent chain), its post-state already subsumes the
+            // remaining parents and merge can be skipped safely.
+            if parents.len() <= 8 {
+                let parent_hashes: HashSet<BlockHash> =
+                    parents.iter().map(|p| p.block_hash.clone()).collect();
+                for candidate in &parents {
+                    let Ok(mut candidate_closure) =
+                        s.dag.with_ancestors(candidate.block_hash.clone(), |_| true)
+                    else {
+                        continue;
+                    };
+                    candidate_closure.insert(candidate.block_hash.clone());
+
+                    let covers_all = parent_hashes
+                        .iter()
+                        .filter(|hash| **hash != candidate.block_hash)
+                        .all(|hash| candidate_closure.contains(hash));
+
+                    if covers_all {
+                        tracing::debug!(
+                            target: "f1r3fly.compute_parents_post_state.fast_path",
+                            "compute_parents_post_state fast path: dag-descendant parent {} covers all {} parents",
+                            PrettyPrinter::build_string_bytes(&candidate.block_hash),
+                            parents.len()
+                        );
+                        let state = proto_util::post_state_hash(candidate);
+                        tracing::debug!(
+                            target: "f1r3fly.compute_parents_post_state.timing",
+                            "compute_parents_post_state timing: path=dag_descendant_fast_path, parents={}, cache_lookup_ms={}, total_ms={}",
+                            parents.len(),
+                            cache_lookup_started.elapsed().as_millis(),
+                            total_started.elapsed().as_millis()
+                        );
+                        return Ok((state, Vec::new()));
+                    }
+                }
+            }
+
+            let mut parent_hashes_for_key: Vec<BlockHash> =
+                parents.iter().map(|p| p.block_hash.clone()).collect();
+            parent_hashes_for_key.sort();
+            let disable_late_block_filtering = disable_late_block_filtering_override
+                .unwrap_or(s.on_chain_state.shard_conf.disable_late_block_filtering);
+            let cache_key = super::runtime_manager::ParentsPostStateCacheKey {
+                sorted_parent_hashes: parent_hashes_for_key,
+                disable_late_block_filtering,
+            };
+            if let Some((cached_state, cached_rejected)) =
+                runtime_manager.get_cached_parents_post_state(&cache_key)
+            {
+                tracing::debug!(
+                    target: "f1r3fly.compute_parents_post_state.cache",
+                    "compute_parents_post_state cache hit: parents={}, rejected_deploys={}",
+                    cache_key.sorted_parent_hashes.len(),
+                    cached_rejected.len()
+                );
+                tracing::debug!(
+                    target: "f1r3fly.compute_parents_post_state.timing",
+                    "compute_parents_post_state timing: path=cache_hit, parents={}, cache_lookup_ms={}, total_ms={}",
+                    cache_key.sorted_parent_hashes.len(),
+                    cache_lookup_started.elapsed().as_millis(),
+                    total_started.elapsed().as_millis()
+                );
+                return Ok((cached_state, cached_rejected));
+            }
+            let cache_lookup_ms = cache_lookup_started.elapsed().as_millis();
+
             // Function to get or compute BlockIndex for each parent block hash
             let block_index_f = |v: &BlockHash| -> Result<BlockIndex, CasperError> {
                 // Try cache first
@@ -614,39 +745,114 @@ pub fn compute_parents_post_state(
             };
 
             // Compute scope: all ancestors of parents (blocks visible from these parents)
+            // bounded by max-parent-depth configured for the shard to avoid
+            // expensive ancestry walks through finalized history.
             let parent_hashes: Vec<BlockHash> =
                 parents.iter().map(|p| p.block_hash.clone()).collect();
+            let max_parent_block_number = parents
+                .iter()
+                .map(|p| p.body.state.block_number)
+                .max()
+                .unwrap_or(0);
+            let max_parent_depth = s.on_chain_state.shard_conf.max_parent_depth;
+            let ancestor_min_block_number = if max_parent_depth <= 0 || max_parent_depth == i32::MAX
+            {
+                i64::MIN
+            } else {
+                max_parent_block_number.saturating_sub(max_parent_depth as i64)
+            };
+            let include_visible_ancestor =
+                |hash: &BlockHash, dag: &KeyValueDagRepresentation| -> bool {
+                    // IMPORTANT: do not use local finalized status as a merge-scope filter.
+                    // Different validators can have temporarily different finalized views, and
+                    // filtering by `is_finalized` causes non-deterministic parent post-state
+                    // computation for the same parent set.
+                    if ancestor_min_block_number == i64::MIN {
+                        return true;
+                    }
+
+                    match dag.lookup(hash) {
+                        Ok(Some(meta)) => meta.block_number >= ancestor_min_block_number,
+                        Ok(None) => false,
+                        Err(_) => false,
+                    }
+                };
+            let include_lca_ancestor =
+                |hash: &BlockHash, dag: &KeyValueDagRepresentation| -> bool {
+                    if ancestor_min_block_number == i64::MIN {
+                        return true;
+                    }
+
+                    match dag.lookup(hash) {
+                        Ok(Some(meta)) => meta.block_number >= ancestor_min_block_number,
+                        Ok(None) => false,
+                        Err(_) => false,
+                    }
+                };
 
             // Get all ancestors of all parents (including the parents themselves)
             // Use bounded traversal that stops at finalized blocks to prevent O(chain_length) growth
-            let mut ancestor_sets_with_parents: Vec<HashSet<BlockHash>> = Vec::new();
+            let collect_ancestors_started = std::time::Instant::now();
+            let mut visible_ancestor_sets_with_parents: Vec<HashSet<BlockHash>> = Vec::new();
+            let mut lca_ancestor_sets_with_parents: Vec<HashSet<BlockHash>> = Vec::new();
             for parent_hash in &parent_hashes {
-                let ancestors = s
+                let visible_ancestors = s.dag.with_ancestors(parent_hash.clone(), |bh| {
+                    include_visible_ancestor(bh, &s.dag)
+                })?;
+                let mut visible_ancestors_with_parent = visible_ancestors;
+                visible_ancestors_with_parent.insert(parent_hash.clone());
+                visible_ancestor_sets_with_parents.push(visible_ancestors_with_parent);
+
+                let lca_ancestors = s
                     .dag
-                    .with_ancestors(parent_hash.clone(), |bh| !s.dag.is_finalized(bh))?;
-                let mut ancestors_with_parent = ancestors;
-                ancestors_with_parent.insert(parent_hash.clone());
-                ancestor_sets_with_parents.push(ancestors_with_parent);
+                    .with_ancestors(parent_hash.clone(), |bh| include_lca_ancestor(bh, &s.dag))?;
+                let mut lca_ancestors_with_parent = lca_ancestors;
+                lca_ancestors_with_parent.insert(parent_hash.clone());
+                lca_ancestor_sets_with_parents.push(lca_ancestors_with_parent);
             }
+            let collect_ancestors_ms = collect_ancestors_started.elapsed().as_millis();
 
             // Flatten all ancestor sets to get visible blocks
-            let visible_blocks: HashSet<BlockHash> = ancestor_sets_with_parents
+            let flatten_visible_started = std::time::Instant::now();
+            let visible_blocks: HashSet<BlockHash> = visible_ancestor_sets_with_parents
                 .iter()
                 .flat_map(|s| s.iter().cloned())
                 .collect();
+            let flatten_visible_ms = flatten_visible_started.elapsed().as_millis();
 
             // Find the lowest common ancestor of all parents.
             // This is the highest block that is an ancestor of ALL parents.
             // This is deterministic because it depends only on DAG structure, not finalization state.
-            let common_ancestors: HashSet<BlockHash> = if ancestor_sets_with_parents.is_empty() {
-                HashSet::new()
-            } else {
-                let first = ancestor_sets_with_parents[0].clone();
-                ancestor_sets_with_parents
-                    .iter()
-                    .skip(1)
-                    .fold(first, |acc, set| acc.intersection(set).cloned().collect())
-            };
+            let lca_started = std::time::Instant::now();
+            let mut common_ancestors: HashSet<BlockHash> =
+                if lca_ancestor_sets_with_parents.is_empty() {
+                    HashSet::new()
+                } else {
+                    let first = lca_ancestor_sets_with_parents[0].clone();
+                    lca_ancestor_sets_with_parents
+                        .iter()
+                        .skip(1)
+                        .fold(first, |acc, set| acc.intersection(set).cloned().collect())
+                };
+
+            // Deterministic fallback: if bounded LCA search misses a common ancestor,
+            // perform a full ancestry intersection that is independent of finalized state.
+            if common_ancestors.is_empty() {
+                let mut full_ancestor_sets_with_parents: Vec<HashSet<BlockHash>> = Vec::new();
+                for parent_hash in &parent_hashes {
+                    let mut ancestors = s.dag.with_ancestors(parent_hash.clone(), |_| true)?;
+                    ancestors.insert(parent_hash.clone());
+                    full_ancestor_sets_with_parents.push(ancestors);
+                }
+
+                if !full_ancestor_sets_with_parents.is_empty() {
+                    let first = full_ancestor_sets_with_parents[0].clone();
+                    common_ancestors = full_ancestor_sets_with_parents
+                        .iter()
+                        .skip(1)
+                        .fold(first, |acc, set| acc.intersection(set).cloned().collect());
+                }
+            }
 
             // Get block numbers for common ancestors to find LCA (highest block number)
             let mut common_ancestors_with_height: Vec<(BlockHash, i64)> = Vec::new();
@@ -656,12 +862,22 @@ pub fn compute_parents_post_state(
                 }
             }
 
-            // The LCA is the common ancestor with the highest block number
+            // The LCA is the common ancestor with the highest block number.
+            // Tie-break deterministically by block hash to avoid cross-node
+            // divergence when multiple LCAs share the same block height.
             // Fall back to genesis/snapshot LFB if no common ancestor found
             let lca_opt = common_ancestors_with_height
                 .iter()
-                .max_by_key(|(_, height)| height)
+                .max_by(|(hash_a, height_a), (hash_b, height_b)| {
+                    height_a
+                        .cmp(height_b)
+                        // Prefer lexicographically smaller hash on equal height
+                        // (reverse compare because we are using max_by).
+                        .then_with(|| hash_b.cmp(hash_a))
+                })
                 .map(|(hash, _)| hash.clone());
+            let lca_ms = lca_started.elapsed().as_millis();
+            let used_snapshot_lfb_fallback = lca_opt.is_none();
 
             // Use LCA as the LFB for computing descendants, fall back to snapshot LFB
             let lfb_for_descendants = lca_opt.unwrap_or_else(|| s.last_finalized_block.clone());
@@ -670,37 +886,82 @@ pub fn compute_parents_post_state(
             let lfb_block = block_store.get_unsafe(&lfb_for_descendants);
             let lfb_state = Blake2b256Hash::from_bytes_prost(&lfb_block.body.state.post_state_hash);
 
-            // Log
-            let parent_hash_str: Vec<String> = parent_hashes
+            if tracing::enabled!(tracing::Level::DEBUG) {
+                let parent_hash_str: Vec<String> = parent_hashes
+                    .iter()
+                    .map(|h| hex::encode(&h[..std::cmp::min(10, h.len())]))
+                    .collect();
+                let lca_str = hex::encode(
+                    &lfb_for_descendants[..std::cmp::min(10, lfb_for_descendants.len())],
+                );
+                let lca_state_str = hex::encode(
+                    &lfb_block.body.state.post_state_hash
+                        [..std::cmp::min(10, lfb_block.body.state.post_state_hash.len())],
+                );
+                let snapshot_lfb_str = hex::encode(
+                    &s.last_finalized_block[..std::cmp::min(10, s.last_finalized_block.len())],
+                );
+
+                tracing::debug!(
+                    "computeParentsPostState: parents=[{}], commonAncestors={}, LCA={} (block {}), LCA state={}..., visibleBlocks={}, snapshotLFB={}",
+                    parent_hash_str.join(", "),
+                    common_ancestors.len(),
+                    lca_str,
+                    lfb_block.body.state.block_number,
+                    lca_state_str,
+                    visible_blocks.len(),
+                    snapshot_lfb_str
+                );
+            }
+
+            let max_parent_block_number = parents
                 .iter()
-                .map(|h| hex::encode(&h[..std::cmp::min(10, h.len())]))
-                .collect();
-            let lca_str =
-                hex::encode(&lfb_for_descendants[..std::cmp::min(10, lfb_for_descendants.len())]);
-            let lca_state_str = hex::encode(
-                &lfb_block.body.state.post_state_hash
-                    [..std::cmp::min(10, lfb_block.body.state.post_state_hash.len())],
-            );
-            let snapshot_lfb_str = hex::encode(
-                &s.last_finalized_block[..std::cmp::min(10, s.last_finalized_block.len())],
-            );
-
-            tracing::info!(
-                "computeParentsPostState: parents=[{}], commonAncestors={}, LCA={} (block {}), LCA state={}..., visibleBlocks={}, snapshotLFB={}",
-                parent_hash_str.join(", "),
-                common_ancestors.len(),
-                lca_str,
-                lfb_block.body.state.block_number,
-                lca_state_str,
-                visible_blocks.len(),
-                snapshot_lfb_str
-            );
-
-            // Get disableLateBlockFiltering from override or shard config
-            let disable_late_block_filtering = disable_late_block_filtering_override
-                .unwrap_or(s.on_chain_state.shard_conf.disable_late_block_filtering);
+                .map(|p| p.body.state.block_number)
+                .max()
+                .unwrap_or(lfb_block.body.state.block_number);
+            let lca_distance = max_parent_block_number - lfb_block.body.state.block_number;
+            let visible_blocks_len = visible_blocks.len();
+            if visible_blocks.len() > MAX_PARENT_MERGE_SCOPE_BLOCKS
+                || lca_distance > MAX_LCA_DISTANCE_BLOCKS
+            {
+                let fallback_parent = parents
+                    .iter()
+                    .max_by(|a, b| {
+                        a.body
+                            .state
+                            .block_number
+                            .cmp(&b.body.state.block_number)
+                            .then_with(|| a.block_hash.cmp(&b.block_hash))
+                    })
+                    .expect("parents is non-empty in multi-parent branch");
+                tracing::warn!(
+                    target: "f1r3fly.compute_parents_post_state.fallback",
+                    "compute_parents_post_state fallback: visibleBlocks={}, lca_distance={}, chosen_parent={} (block {}), reason=merge_scope_too_large",
+                    visible_blocks.len(),
+                    lca_distance,
+                    PrettyPrinter::build_string_bytes(&fallback_parent.block_hash),
+                    fallback_parent.body.state.block_number
+                );
+                let fallback_state = proto_util::post_state_hash(fallback_parent);
+                runtime_manager
+                    .put_cached_parents_post_state(cache_key, (fallback_state.clone(), Vec::new()));
+                tracing::debug!(
+                    target: "f1r3fly.compute_parents_post_state.timing",
+                    "compute_parents_post_state timing: path=fallback_latest_parent, parents={}, cache_lookup_ms={}, collect_ancestors_ms={}, flatten_visible_ms={}, lca_ms={}, visible_blocks={}, lca_distance={}, total_ms={}",
+                    parents.len(),
+                    cache_lookup_ms,
+                    collect_ancestors_ms,
+                    flatten_visible_ms,
+                    lca_ms,
+                    visible_blocks_len,
+                    lca_distance,
+                    total_started.elapsed().as_millis()
+                );
+                return Ok((fallback_state, Vec::new()));
+            }
 
             // Use DagMerger to merge parent states with scope
+            let merge_started = std::time::Instant::now();
             let merger_result = dag_merger::merge(
                 &s.dag,
                 &lfb_for_descendants,
@@ -714,13 +975,36 @@ pub fn compute_parents_post_state(
                 Some(visible_blocks),
                 disable_late_block_filtering,
             )?;
+            let merge_ms = merge_started.elapsed().as_millis();
 
             let (state, rejected) = merger_result;
 
-            Ok((
-                prost::bytes::Bytes::copy_from_slice(&state.bytes()),
-                rejected,
-            ))
+            let computed_state = prost::bytes::Bytes::copy_from_slice(&state.bytes());
+            if used_snapshot_lfb_fallback {
+                tracing::warn!(
+                    target: "f1r3fly.compute_parents_post_state.cache",
+                    "Skipping parents_post_state cache store because merge used snapshot LFB fallback"
+                );
+            } else {
+                runtime_manager.put_cached_parents_post_state(
+                    cache_key,
+                    (computed_state.clone(), rejected.clone()),
+                );
+            }
+            tracing::debug!(
+                target: "f1r3fly.compute_parents_post_state.timing",
+                "compute_parents_post_state timing: path=merged, parents={}, cache_lookup_ms={}, collect_ancestors_ms={}, flatten_visible_ms={}, lca_ms={}, merge_ms={}, visible_blocks={}, rejected_deploys={}, total_ms={}",
+                parents.len(),
+                cache_lookup_ms,
+                collect_ancestors_ms,
+                flatten_visible_ms,
+                lca_ms,
+                merge_ms,
+                visible_blocks_len,
+                rejected.len(),
+                total_started.elapsed().as_millis()
+            );
+            Ok((computed_state, rejected))
         }
     }
 }

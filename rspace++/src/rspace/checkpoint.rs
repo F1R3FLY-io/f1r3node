@@ -1,8 +1,10 @@
-use super::trace::Log;
-use super::trace::event::Produce;
-use super::{hashing::blake2b256_hash::Blake2b256Hash, hot_store::HotStoreState};
 use std::collections::BTreeMap;
 use std::hash::Hash;
+
+use super::hashing::blake2b256_hash::Blake2b256Hash;
+use super::hot_store::HotStoreState;
+use super::trace::Log;
+use super::trace::event::Produce;
 
 // See rspace/src/main/scala/coop/rchain/rspace/Checkpoint.scala
 #[derive(Clone)]

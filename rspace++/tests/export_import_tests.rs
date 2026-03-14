@@ -1,23 +1,20 @@
-use rspace_plus_plus::rspace::hashing::blake2b256_hash::Blake2b256Hash;
-use rspace_plus_plus::rspace::history::instances::radix_history::RadixHistory;
-use rspace_plus_plus::rspace::hot_store::HotStoreInstances;
-use rspace_plus_plus::rspace::r#match::Match;
-use rspace_plus_plus::rspace::rspace_interface::ISpace;
-use rspace_plus_plus::rspace::state::exporters::rspace_exporter_items::RSpaceExporterItems;
-use rspace_plus_plus::rspace::state::rspace_importer::RSpaceImporterInstance;
-use rspace_plus_plus::rspace::{
-    history::history_repository::HistoryRepositoryInstances,
-    hot_store::HotStoreState,
-    rspace::RSpace,
-    shared::{
-        in_mem_store_manager::InMemoryStoreManager, key_value_store_manager::KeyValueStoreManager,
-    },
-    state::{rspace_exporter::RSpaceExporter, rspace_importer::RSpaceImporter},
-};
-use serde::{Deserialize, Serialize};
-use shared::rust::{Byte, ByteVector};
 use std::collections::BTreeSet;
 use std::sync::Arc;
+
+use rspace_plus_plus::rspace::hashing::blake2b256_hash::Blake2b256Hash;
+use rspace_plus_plus::rspace::history::history_repository::HistoryRepositoryInstances;
+use rspace_plus_plus::rspace::history::instances::radix_history::RadixHistory;
+use rspace_plus_plus::rspace::hot_store::{HotStoreInstances, HotStoreState};
+use rspace_plus_plus::rspace::r#match::Match;
+use rspace_plus_plus::rspace::rspace::RSpace;
+use rspace_plus_plus::rspace::rspace_interface::ISpace;
+use rspace_plus_plus::rspace::shared::in_mem_store_manager::InMemoryStoreManager;
+use rspace_plus_plus::rspace::shared::key_value_store_manager::KeyValueStoreManager;
+use rspace_plus_plus::rspace::state::exporters::rspace_exporter_items::RSpaceExporterItems;
+use rspace_plus_plus::rspace::state::rspace_exporter::RSpaceExporter;
+use rspace_plus_plus::rspace::state::rspace_importer::{RSpaceImporter, RSpaceImporterInstance};
+use serde::{Deserialize, Serialize};
+use shared::rust::{Byte, ByteVector};
 
 // See rspace/src/main/scala/coop/rchain/rspace/examples/StringExamples.scala
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
@@ -228,7 +225,8 @@ async fn multipage_export_should_work_correctly() {
 }
 
 // Attention! Skipped export is significantly slower than last path export.
-// But on the other hand, this allows you to work simultaneously with several nodes.
+// But on the other hand, this allows you to work simultaneously with several
+// nodes.
 #[tokio::test]
 async fn multipage_export_with_skip_should_work_correctly() {
     let (mut space1, exporter1, importer1, mut space2, _, importer2) = test_setup().await;
@@ -401,7 +399,7 @@ async fn test_setup() -> (
 
     let exporter2 = history_repository2.exporter();
     let importer2 = history_repository2.importer();
-    
+
     let space2 = RSpace::apply(history_repository2, store2, Arc::new(Box::new(StringMatch)));
 
     (space1, exporter1, importer1, space2, exporter2, importer2)

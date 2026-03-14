@@ -120,6 +120,22 @@ impl KeyValueStore for LmdbKeyValueStore {
 
         Ok(())
     }
+
+    fn non_empty(&self) -> Result<bool, KvStoreError> {
+        let db = self.db.lock().map_err(|_| {
+            KvStoreError::LockError(
+                "LMDB Key Value Store: Failed to acquire lock on db".to_string(),
+            )
+        })?;
+
+        let reader = self.env.read_txn()?;
+        let has_first = {
+            let mut iter = db.iter(&reader)?;
+            iter.next().is_some()
+        };
+        reader.commit()?;
+        Ok(has_first)
+    }
 }
 
 impl LmdbKeyValueStore {

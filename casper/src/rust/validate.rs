@@ -7,7 +7,6 @@ use crate::rust::{
     ValidBlockProcessing,
 };
 use block_storage::rust::key_value_block_store::KeyValueBlockStore;
-use bytes::Bytes;
 use crypto::rust::hash::blake2b256::Blake2b256;
 use crypto::rust::signatures::secp256k1::Secp256k1;
 use crypto::rust::signatures::signatures_alg::SignaturesAlg;
@@ -15,7 +14,9 @@ use models::casper::Signature as ProtoSignature;
 use models::rust::{
     block_metadata::BlockMetadata,
     casper::pretty_printer::PrettyPrinter,
-    casper::protocol::casper_message::{ApprovedBlock, BlockMessage},
+    casper::protocol::casper_message::{
+        ApprovedBlock, BlockMessage, ProcessedSystemDeploy, SystemDeployData,
+    },
 };
 use rspace_plus_plus::rspace::history::Either;
 use shared::rust::{dag::dag_ops, store::key_value_store::KvStoreError};
@@ -26,7 +27,7 @@ use crate::rust::errors::CasperError;
 use crate::rust::util::rholang::runtime_manager::RuntimeManager;
 use models::rust::block_hash::BlockHash;
 use models::rust::validator::Validator;
-use prost::{bytes, Message};
+use prost::{bytes::Bytes, Message};
 use std::collections::{HashMap, HashSet};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -268,6 +269,11 @@ impl Validate {
             Either::Left(err) => return Either::Left(err),
             Either::Right(_) => {}
         }
+        tracing::debug!(target: "f1r3fly.casper", "before-time-based-expiration-validation");
+        match Self::time_based_expiration(block) {
+            Either::Left(err) => return Either::Left(err),
+            Either::Right(_) => {}
+        }
         tracing::debug!(target: "f1r3fly.casper", "before-justification-follows-validation");
         match Self::justification_follows(block, block_store) {
             Either::Left(err) => return Either::Left(err),
@@ -307,12 +313,15 @@ impl Validate {
         block_store: &KeyValueBlockStore,
         expiration_threshold: i32,
     ) -> ValidBlockProcessing {
-        let deploy_key_set: HashSet<Bytes> = block
+        let deploy_key_set: HashSet<Vec<u8>> = block
             .body
             .deploys
             .iter()
-            .map(|deploy| deploy.deploy.sig.clone())
+            .map(|deploy| deploy.deploy.sig.to_vec())
             .collect();
+        if deploy_key_set.is_empty() {
+            return Either::Right(ValidBlock::Valid);
+        }
 
         let block_metadata = BlockMetadata::from_block(block, false, None, None);
 
@@ -326,23 +335,21 @@ impl Validate {
         let max_block_number = proto_util::max_block_number_metadata(&init_parents);
         let earliest_block_number = max_block_number + 1 - expiration_threshold as i64;
 
-        let traversed_blocks = dag_ops::bf_traverse(init_parents, |block_metadata| {
-            proto_util::get_parent_metadatas_above_block_number(
-                &block_metadata,
-                earliest_block_number,
-                &s.dag,
-            )
-            .unwrap_or_default()
-        });
-
         tracing::debug!(target: "f1r3fly.casper", "before-repeat-deploy-duplicate-block");
-        let maybe_duplicated_block_metadata = traversed_blocks.into_iter().find(|block_metadata| {
-            let block = block_store.get_unsafe(&block_metadata.block_hash);
-            let block_deploys = proto_util::deploys(&block);
-            block_deploys
-                .iter()
-                .any(|deploy| deploy_key_set.contains(&deploy.deploy.sig))
-        });
+        let maybe_duplicated_block_metadata = dag_ops::bf_traverse_find(
+            init_parents,
+            |block_metadata| {
+                proto_util::get_parent_metadatas_above_block_number(
+                    &block_metadata,
+                    earliest_block_number,
+                    &s.dag,
+                )
+                .unwrap_or_default()
+            },
+            |block_metadata| {
+                block_store.has_any_deploy_sig_unsafe(&block_metadata.block_hash, &deploy_key_set)
+            },
+        );
 
         tracing::debug!(target: "f1r3fly.casper", "before-repeat-deploy-duplicate-block-log");
         let maybe_error = maybe_duplicated_block_metadata.map(|duplicated_block_metadata| {
@@ -354,7 +361,7 @@ impl Validate {
       let duplicated_deploy = duplicated_deploys
         .iter()
         .map(|processed_deploy| &processed_deploy.deploy)
-        .find(|deploy| deploy_key_set.contains(&deploy.sig))
+        .find(|deploy| deploy_key_set.contains(deploy.sig.as_ref()))
         .expect("Duplicated deploy should exist");
 
       let term = &duplicated_deploy.data.term;
@@ -516,6 +523,36 @@ impl Validate {
         maybe_error.map_or(Either::Right(ValidBlock::Valid), Either::Left)
     }
 
+    /// Validates that the block does not contain deploys that have expired based on their
+    /// expirationTimestamp field. A deploy is time-expired if its expirationTimestamp is
+    /// set (> 0) and the block's timestamp exceeds the expirationTimestamp.
+    pub fn time_based_expiration(b: &BlockMessage) -> ValidBlockProcessing {
+        let block_timestamp = b.header.timestamp;
+        let processed_deploys = proto_util::deploys(b);
+        let deploys: Vec<_> = processed_deploys
+            .iter()
+            .map(|processed_deploy| &processed_deploy.deploy)
+            .collect();
+
+        let maybe_time_expired_deploy = deploys
+            .iter()
+            .find(|&deploy| deploy.data.is_expired_at(block_timestamp));
+
+        let maybe_error = maybe_time_expired_deploy.map(|expired_deploy| {
+            let message = format!(
+                "block contains a time-expired deploy with expirationTimestamp={:?} but block timestamp is {}: {}",
+                expired_deploy.data.expiration_timestamp.unwrap_or(0),
+                block_timestamp,
+                expired_deploy.data.term
+            );
+
+            tracing::warn!("{}", Self::ignore(b, &message));
+            BlockError::Invalid(InvalidBlock::ContainsTimeExpiredDeploy)
+        });
+
+        maybe_error.map_or(Either::Right(ValidBlock::Valid), Either::Left)
+    }
+
     /// Works with either efficient justifications or full explicit justifications.
     /// Specifically, with efficient justifications, if a block B doesn't update its
     /// creator justification, this check will fail as expected. The exception is when
@@ -640,6 +677,17 @@ impl Validate {
             .deploys
             .iter()
             .any(|pd| !is_system_deploy_id(&pd.deploy.sig));
+        // Slash deploys are liveness-critical recovery actions and must not be blocked
+        // by empty-block progress checks.
+        let has_slash_system_deploys = b.body.system_deploys.iter().any(|system_deploy| {
+            matches!(
+                system_deploy,
+                ProcessedSystemDeploy::Succeeded {
+                    system_deploy: SystemDeployData::Slash { .. },
+                    ..
+                }
+            )
+        });
 
         let maybe_parent_hashes = proto_util::parent_hashes(b);
         let parent_hashes: Vec<BlockHash> = match maybe_parent_hashes {
@@ -707,12 +755,27 @@ impl Validate {
 
                 // Check if at least one parent is new (not in ancestor closure)
                 let has_new_parent = parent_hashes.iter().any(|p| !ancestor_set.contains(p));
+                // Heartbeat-empty block: no user deploys and only CloseBlock system deploy.
+                // Allow these to keep liveness when cluster is stale and parent frontier does not move.
+                let is_heartbeat_empty_block = !has_user_deploys
+                    && b.body.system_deploys.len() == 1
+                    && matches!(
+                        &b.body.system_deploys[0],
+                        ProcessedSystemDeploy::Succeeded {
+                            system_deploy: SystemDeployData::CloseBlockSystemDeployData,
+                            ..
+                        }
+                    );
 
                 // Validation logic:
                 // - Blocks with user deploys: always valid (users are paying for service)
                 // - Empty blocks: must have new parents (must show progress)
+                // - Slash-only blocks: always valid (network recovery action)
+                // - Heartbeat-empty blocks: valid to recover from stale/no-progress deadlocks
                 // - disable_validator_progress_check: skip progress check (for standalone mode)
                 if has_user_deploys
+                    || has_slash_system_deploys
+                    || is_heartbeat_empty_block
                     || is_genesis
                     || has_new_parent
                     || disable_validator_progress_check
@@ -865,7 +928,7 @@ impl Validate {
                                     }
                                 };
                             let cur_justification =
-                                match s.dag.lookup_unsafe(cur_justification_hash) {
+                                match s.dag.lookup_unsafe(&cur_justification_hash) {
                                     Ok(metadata) => metadata,
                                     Err(e) => {
                                         return Either::Left(BlockError::BlockException(
@@ -881,7 +944,7 @@ impl Validate {
 
                                 if regression {
                                     log_warn(
-                                        cur_justification_hash,
+                                        &cur_justification_hash,
                                         new_justification_hash,
                                         sender,
                                     );
@@ -937,7 +1000,19 @@ impl Validate {
             }
         });
 
-        if neglected_invalid_justification {
+        // Recovery path: if this block carries slash system deploys, allow it through so
+        // validators can converge by slashing the offending branch.
+        let has_slash_system_deploys = block.body.system_deploys.iter().any(|system_deploy| {
+            matches!(
+                system_deploy,
+                ProcessedSystemDeploy::Succeeded {
+                    system_deploy: SystemDeployData::Slash { .. },
+                    ..
+                }
+            )
+        });
+
+        if neglected_invalid_justification && !has_slash_system_deploys {
             Either::Left(BlockError::Invalid(InvalidBlock::NeglectedInvalidBlock))
         } else {
             Either::Right(ValidBlock::Valid)

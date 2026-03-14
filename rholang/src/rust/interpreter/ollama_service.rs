@@ -1,8 +1,8 @@
-use std::env;
-use std::sync::Arc;
+use super::errors::InterpreterError;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use super::errors::InterpreterError;
+use std::env;
+use std::sync::Arc;
 
 #[derive(Clone, Debug)]
 pub struct OllamaConfig {
@@ -19,8 +19,8 @@ impl OllamaConfig {
             false,
             "http://localhost:11434".to_string(),
             "llama4:latest".to_string(),
-            30,    // default timeout
-            true,  // default validate_connection
+            30,   // default timeout
+            true, // default validate_connection
         )
     }
 
@@ -38,8 +38,8 @@ impl OllamaConfig {
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(config_timeout_sec);
-        let validate_connection = parse_bool_env("OLLAMA_VALIDATE_CONNECTION")
-            .unwrap_or(config_validate_connection);
+        let validate_connection =
+            parse_bool_env("OLLAMA_VALIDATE_CONNECTION").unwrap_or(config_validate_connection);
 
         Self {
             enabled,
@@ -49,7 +49,7 @@ impl OllamaConfig {
             validate_connection,
         }
     }
-    
+
     pub fn disabled() -> Self {
         Self {
             enabled: false,
@@ -62,13 +62,13 @@ impl OllamaConfig {
 }
 
 pub fn parse_bool_env(name: &str) -> Option<bool> {
-    env::var(name).ok().and_then(|v| {
-        match v.to_lowercase().as_str() {
+    env::var(name)
+        .ok()
+        .and_then(|v| match v.to_lowercase().as_str() {
             "true" | "1" | "yes" | "on" => Some(true),
             "false" | "0" | "no" | "off" => Some(false),
             _ => None,
-        }
-    })
+        })
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -140,7 +140,11 @@ impl OllamaService {
         }
     }
 
-    pub fn new_mock(chat_response: String, generate_response: String, models_response: Vec<String>) -> Self {
+    pub fn new_mock(
+        chat_response: String,
+        generate_response: String,
+        models_response: Vec<String>,
+    ) -> Self {
         Self::Mock {
             chat_response,
             generate_response,
@@ -160,9 +164,18 @@ impl OllamaService {
         }
     }
 
-    pub async fn chat(&self, model_override: Option<&str>, messages: Vec<ChatMessage>) -> Result<String, InterpreterError> {
+    pub async fn chat(
+        &self,
+        model_override: Option<&str>,
+        messages: Vec<ChatMessage>,
+    ) -> Result<String, InterpreterError> {
         match self {
-            Self::Real { client, base_url, model, .. } => {
+            Self::Real {
+                client,
+                base_url,
+                model,
+                ..
+            } => {
                 // Empty model string falls back to default (parity with Scala)
                 let actual_model = match model_override {
                     Some(m) if !m.is_empty() => m.to_string(),
@@ -179,7 +192,11 @@ impl OllamaService {
                 } else {
                     String::new()
                 };
-                tracing::info!("Ollama chat - model: '{}', prompt: '{}'", actual_model, prompt_preview);
+                tracing::info!(
+                    "Ollama chat - model: '{}', prompt: '{}'",
+                    actual_model,
+                    prompt_preview
+                );
 
                 let req = ChatRequest {
                     model: actual_model.clone(),
@@ -187,35 +204,56 @@ impl OllamaService {
                     stream: false,
                 };
 
-                let res = client.post(format!("{}/api/chat", base_url))
+                let res = client
+                    .post(format!("{}/api/chat", base_url))
                     .json(&req)
                     .send()
                     .await
-                    .map_err(|e| InterpreterError::OllamaError(format!("Ollama request failed: {}", e)))?;
+                    .map_err(|e| {
+                        InterpreterError::OllamaError(format!("Ollama request failed: {}", e))
+                    })?;
 
                 if !res.status().is_success() {
                     let status = res.status();
-                    let error_body = res.text().await.unwrap_or_else(|_| "<failed to read body>".to_string());
-                    return Err(InterpreterError::OllamaError(format!("Ollama error: {} - {}", status, error_body)));
+                    let error_body = res
+                        .text()
+                        .await
+                        .unwrap_or_else(|_| "<failed to read body>".to_string());
+                    return Err(InterpreterError::OllamaError(format!(
+                        "Ollama error: {} - {}",
+                        status, error_body
+                    )));
                 }
 
-                let body: ChatResponse = res.json()
-                    .await
-                    .map_err(|e| InterpreterError::OllamaError(format!("Failed to parse response: {}", e)))?;
+                let body: ChatResponse = res.json().await.map_err(|e| {
+                    InterpreterError::OllamaError(format!("Failed to parse response: {}", e))
+                })?;
 
-                tracing::info!("Ollama chat completion succeeded for model: {}", actual_model);
+                tracing::info!(
+                    "Ollama chat completion succeeded for model: {}",
+                    actual_model
+                );
                 Ok(body.message.content)
             }
             Self::Mock { chat_response, .. } => Ok(chat_response.clone()),
             Self::Disabled => Err(InterpreterError::OllamaError(
-                "Ollama service is disabled via configuration".to_string()
+                "Ollama service is disabled via configuration".to_string(),
             )),
         }
     }
 
-    pub async fn generate(&self, model_override: Option<&str>, prompt: &str) -> Result<String, InterpreterError> {
+    pub async fn generate(
+        &self,
+        model_override: Option<&str>,
+        prompt: &str,
+    ) -> Result<String, InterpreterError> {
         match self {
-            Self::Real { client, base_url, model, .. } => {
+            Self::Real {
+                client,
+                base_url,
+                model,
+                ..
+            } => {
                 // Empty model string falls back to default (parity with Scala)
                 let actual_model = match model_override {
                     Some(m) if !m.is_empty() => m.to_string(),
@@ -228,7 +266,11 @@ impl OllamaService {
                 } else {
                     format!("{}...", &prompt[..250])
                 };
-                tracing::info!("Ollama generate - model: '{}', prompt: '{}'", actual_model, prompt_preview);
+                tracing::info!(
+                    "Ollama generate - model: '{}', prompt: '{}'",
+                    actual_model,
+                    prompt_preview
+                );
 
                 let req = GenerateRequest {
                     model: actual_model.clone(),
@@ -236,59 +278,86 @@ impl OllamaService {
                     stream: false,
                 };
 
-                let res = client.post(format!("{}/api/generate", base_url))
+                let res = client
+                    .post(format!("{}/api/generate", base_url))
                     .json(&req)
                     .send()
                     .await
-                    .map_err(|e| InterpreterError::OllamaError(format!("Ollama request failed: {}", e)))?;
+                    .map_err(|e| {
+                        InterpreterError::OllamaError(format!("Ollama request failed: {}", e))
+                    })?;
 
                 if !res.status().is_success() {
                     let status = res.status();
-                    let error_body = res.text().await.unwrap_or_else(|_| "<failed to read body>".to_string());
-                    return Err(InterpreterError::OllamaError(format!("Ollama error: {} - {}", status, error_body)));
+                    let error_body = res
+                        .text()
+                        .await
+                        .unwrap_or_else(|_| "<failed to read body>".to_string());
+                    return Err(InterpreterError::OllamaError(format!(
+                        "Ollama error: {} - {}",
+                        status, error_body
+                    )));
                 }
 
-                let body: GenerateResponse = res.json()
-                    .await
-                    .map_err(|e| InterpreterError::OllamaError(format!("Failed to parse response: {}", e)))?;
+                let body: GenerateResponse = res.json().await.map_err(|e| {
+                    InterpreterError::OllamaError(format!("Failed to parse response: {}", e))
+                })?;
 
                 tracing::info!("Ollama generate succeeded for model: {}", actual_model);
                 Ok(body.response)
             }
-            Self::Mock { generate_response, .. } => Ok(generate_response.clone()),
+            Self::Mock {
+                generate_response, ..
+            } => Ok(generate_response.clone()),
             Self::Disabled => Err(InterpreterError::OllamaError(
-                "Ollama service is disabled via configuration".to_string()
+                "Ollama service is disabled via configuration".to_string(),
             )),
         }
     }
 
     pub async fn list_models(&self) -> Result<Vec<String>, InterpreterError> {
         match self {
-            Self::Real { client, base_url, .. } => {
+            Self::Real {
+                client, base_url, ..
+            } => {
                 tracing::info!("Ollama list_models - fetching available models");
 
-                let res = client.get(format!("{}/api/tags", base_url))
+                let res = client
+                    .get(format!("{}/api/tags", base_url))
                     .send()
                     .await
-                    .map_err(|e| InterpreterError::OllamaError(format!("Ollama request failed: {}", e)))?;
-                
+                    .map_err(|e| {
+                        InterpreterError::OllamaError(format!("Ollama request failed: {}", e))
+                    })?;
+
                 if !res.status().is_success() {
                     let status = res.status();
-                    let error_body = res.text().await.unwrap_or_else(|_| "<failed to read body>".to_string());
-                    return Err(InterpreterError::OllamaError(format!("Ollama error: {} - {}", status, error_body)));
+                    let error_body = res
+                        .text()
+                        .await
+                        .unwrap_or_else(|_| "<failed to read body>".to_string());
+                    return Err(InterpreterError::OllamaError(format!(
+                        "Ollama error: {} - {}",
+                        status, error_body
+                    )));
                 }
 
-                let body: ListModelsResponse = res.json()
-                    .await
-                    .map_err(|e| InterpreterError::OllamaError(format!("Failed to parse response: {}", e)))?;
-                
+                let body: ListModelsResponse = res.json().await.map_err(|e| {
+                    InterpreterError::OllamaError(format!("Failed to parse response: {}", e))
+                })?;
+
                 let models: Vec<String> = body.models.into_iter().map(|m| m.name).collect();
-                tracing::info!("Ollama list_models succeeded, found {} models", models.len());
+                tracing::info!(
+                    "Ollama list_models succeeded, found {} models",
+                    models.len()
+                );
                 Ok(models)
             }
-            Self::Mock { models_response, .. } => Ok(models_response.clone()),
+            Self::Mock {
+                models_response, ..
+            } => Ok(models_response.clone()),
             Self::Disabled => Err(InterpreterError::OllamaError(
-                "Ollama service is disabled via configuration".to_string()
+                "Ollama service is disabled via configuration".to_string(),
             )),
         }
     }
@@ -307,21 +376,26 @@ pub fn create_disabled_ollama_service() -> SharedOllamaService {
 /// Create Ollama service with connection validation (matches Scala's validateConnectionOrFail)
 /// This should be used during node startup to ensure Ollama is reachable.
 /// Returns an error if validate_connection is true and Ollama is unreachable.
-pub async fn create_ollama_service_validated(config: &OllamaConfig) -> Result<SharedOllamaService, InterpreterError> {
+pub async fn create_ollama_service_validated(
+    config: &OllamaConfig,
+) -> Result<SharedOllamaService, InterpreterError> {
     if !config.enabled {
         tracing::info!("Ollama service is disabled");
         return Ok(create_disabled_ollama_service());
     }
-    
+
     let service = OllamaService::from_config(config);
-    
+
     if config.validate_connection {
         tracing::info!("Validating Ollama connection to {}", config.base_url);
         // Test connection by listing models (same as Scala's validateConnectionOrFail)
         match service.list_models().await {
             Ok(models) => {
-                tracing::info!("Ollama service connection validated successfully at {} ({} models available)", 
-                    config.base_url, models.len());
+                tracing::info!(
+                    "Ollama service connection validated successfully at {} ({} models available)",
+                    config.base_url,
+                    models.len()
+                );
             }
             Err(e) => {
                 return Err(InterpreterError::OllamaError(format!(
@@ -331,8 +405,10 @@ pub async fn create_ollama_service_validated(config: &OllamaConfig) -> Result<Sh
             }
         }
     } else {
-        tracing::info!("Ollama connection validation is disabled by config 'validate_connection=false'");
+        tracing::info!(
+            "Ollama connection validation is disabled by config 'validate_connection=false'"
+        );
     }
-    
+
     Ok(Arc::new(tokio::sync::Mutex::new(service)))
 }

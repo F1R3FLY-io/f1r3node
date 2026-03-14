@@ -61,15 +61,15 @@ impl Substitute {
         // scala 'charge' function built in here
         match self.substitute(term.clone(), depth, env) {
             Ok(subst_term) => {
-                self.cost.charge(Cost::create_from_generic(
-                    subst_term.clone(),
-                    "substitution".to_string(),
+                self.cost.charge(Cost::create(
+                    subst_term.encoded_len() as i64,
+                    "substitution",
                 ))?;
                 Ok(subst_term)
             }
             Err(th) => {
                 self.cost
-                    .charge(Cost::create_from_generic(term.clone(), "".to_string()))?;
+                    .charge(Cost::create(term.encoded_len() as i64, ""))?;
                 Err(th)
             }
         }
@@ -88,15 +88,15 @@ impl Substitute {
         // scala 'charge' function built in here
         match self.substitute_no_sort(term.clone(), depth, env) {
             Ok(subst_term) => {
-                self.cost.charge(Cost::create_from_generic(
-                    subst_term.clone(),
-                    "substitution".to_string(),
+                self.cost.charge(Cost::create(
+                    subst_term.encoded_len() as i64,
+                    "substitution",
                 ))?;
                 Ok(subst_term)
             }
             Err(th) => {
                 self.cost
-                    .charge(Cost::create_from_generic(term.clone(), "".to_string()))?;
+                    .charge(Cost::create(term.encoded_len() as i64, ""))?;
                 Err(th)
             }
         }
@@ -248,7 +248,7 @@ impl Substitute {
                     }
 
                     ConnectiveInstance::ConnAndBody(ConnectiveBody { ps }) => {
-                        let _ps: Vec<Par> = ps
+                        let sub_ps: Vec<Par> = ps
                             .iter()
                             .map(|p| self.substitute_no_sort(p.clone(), depth, env))
                             .collect::<Result<Vec<Par>, InterpreterError>>()?;
@@ -257,7 +257,7 @@ impl Substitute {
                             par,
                             Connective {
                                 connective_instance: Some(ConnectiveInstance::ConnAndBody(
-                                    ConnectiveBody { ps: ps.to_vec() },
+                                    ConnectiveBody { ps: sub_ps },
                                 )),
                             },
                             depth,
@@ -265,7 +265,7 @@ impl Substitute {
                     }
 
                     ConnectiveInstance::ConnOrBody(ConnectiveBody { ps }) => {
-                        let _ps: Vec<Par> = ps
+                        let sub_ps: Vec<Par> = ps
                             .iter()
                             .map(|p| self.substitute_no_sort(p.clone(), depth, env))
                             .collect::<Result<Vec<Par>, InterpreterError>>()?;
@@ -274,7 +274,7 @@ impl Substitute {
                             par,
                             Connective {
                                 connective_instance: Some(ConnectiveInstance::ConnOrBody(
-                                    ConnectiveBody { ps: ps.to_vec() },
+                                    ConnectiveBody { ps: sub_ps },
                                 )),
                             },
                             depth,

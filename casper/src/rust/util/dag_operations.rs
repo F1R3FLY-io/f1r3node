@@ -1,7 +1,7 @@
 // See casper/src/main/scala/coop/rchain/casper/util/DagOperations.scala
 
 use block_storage::rust::dag::block_dag_key_value_storage::KeyValueDagRepresentation;
-use models::rust::block_metadata::BlockMetadata;
+use models::rust::{block_hash::BlockHash, block_metadata::BlockMetadata};
 use shared::rust::store::key_value_store::KvStoreError;
 use std::cmp::Ordering;
 use std::collections::{BTreeSet, BinaryHeap, HashMap, HashSet};
@@ -46,6 +46,20 @@ impl Ord for ReverseOrderedBlockMetadata {
 }
 
 impl DagOperations {
+    fn metadata_from_cache_or_dag(
+        metadata_cache: &mut HashMap<BlockHash, BlockMetadata>,
+        block_hash: &BlockHash,
+        dag: &KeyValueDagRepresentation,
+    ) -> Result<BlockMetadata, KvStoreError> {
+        if let Some(metadata) = metadata_cache.get(block_hash) {
+            return Ok(metadata.clone());
+        }
+
+        let metadata = dag.lookup_unsafe(block_hash)?;
+        metadata_cache.insert(block_hash.clone(), metadata.clone());
+        Ok(metadata)
+    }
+
     /// Determines the ancestors to a set of blocks which are not common to all
     /// blocks in the set. Each starting block is assigned an index (hence the
     /// usage of slice with indices) and this is used to refer to that block in the result.
@@ -190,57 +204,71 @@ impl DagOperations {
     /// Conceptually, the LUCA is the lowest point at which the histories of b1 and b2 diverge.
     /// We compute by finding the first block that is the "lowest" (has highest blocknum) block common
     /// for both blocks' ancestors.
+    pub async fn lowest_universal_common_ancestor_many(
+        blocks: &[BlockMetadata],
+        dag: &KeyValueDagRepresentation,
+    ) -> Result<BlockMetadata, KvStoreError> {
+        if blocks.is_empty() {
+            return Err(KvStoreError::InvalidArgument(
+                "Cannot compute LUCA for an empty block set".to_string(),
+            ));
+        }
+
+        if blocks.len() == 1 {
+            return Ok(blocks[0].clone());
+        }
+
+        let mut current: BTreeSet<ReverseOrderedBlockMetadata> = BTreeSet::new();
+        let mut metadata_cache: HashMap<BlockHash, BlockMetadata> = HashMap::new();
+
+        for block in blocks {
+            metadata_cache.insert(block.block_hash.clone(), block.clone());
+            current.insert(ReverseOrderedBlockMetadata(block.clone()));
+        }
+
+        loop {
+            if current.len() == 1 {
+                break current;
+            }
+
+            let (head, tail) = (
+                current
+                    .iter()
+                    .next()
+                    .expect("BTreeSet should not be empty")
+                    .0
+                    .clone(),
+                current.iter().skip(1).cloned(),
+            );
+
+            let mut next: BTreeSet<ReverseOrderedBlockMetadata> = tail.collect();
+
+            for parent_hash in &head.parents {
+                let parent =
+                    Self::metadata_from_cache_or_dag(&mut metadata_cache, parent_hash, dag)?;
+                next.insert(ReverseOrderedBlockMetadata(parent));
+            }
+
+            current = next;
+        }
+        .into_iter()
+        .next()
+        .map(|wrapper| wrapper.0)
+        .ok_or_else(|| KvStoreError::KeyNotFound("No common ancestor found".to_string()))
+    }
+
+    /// Conceptually, the LUCA is the lowest point at which the histories of b1 and b2 diverge.
+    /// We compute by finding the first block that is the "lowest" (has highest blocknum) block common
+    /// for both blocks' ancestors.
     pub async fn lowest_universal_common_ancestor(
         b1: &BlockMetadata,
         b2: &BlockMetadata,
         dag: &KeyValueDagRepresentation,
     ) -> Result<BlockMetadata, KvStoreError> {
-        async fn get_parents(
-            p: &BlockMetadata,
-            dag: &KeyValueDagRepresentation,
-        ) -> Result<HashSet<BlockMetadata>, KvStoreError> {
-            let parents: Result<Vec<_>, _> =
-                p.parents.iter().map(|b| dag.lookup_unsafe(b)).collect();
-            Ok(parents?.into_iter().collect())
-        }
-
-        async fn extract_parents_from_highest_num_block(
-            blocks: BTreeSet<ReverseOrderedBlockMetadata>,
-            dag: &KeyValueDagRepresentation,
-        ) -> Result<BTreeSet<ReverseOrderedBlockMetadata>, KvStoreError> {
-            let (head, tail) = (
-                blocks.iter().next().expect("BTreeSet should not be empty"),
-                blocks.iter().skip(1).cloned(),
-            );
-
-            get_parents(&head.0, dag).await.map(|new_blocks| {
-                tail.chain(new_blocks.into_iter().map(ReverseOrderedBlockMetadata))
-                    .collect()
-            })
-        }
-
         if b1 == b2 {
-            Ok(b1.clone())
-        } else {
-            let mut start = BTreeSet::new();
-            start.insert(ReverseOrderedBlockMetadata(b1.clone()));
-            start.insert(ReverseOrderedBlockMetadata(b2.clone()));
-
-            let final_result = {
-                let mut current = start;
-                loop {
-                    current = extract_parents_from_highest_num_block(current, dag).await?;
-                    if current.len() == 1 {
-                        break current;
-                    }
-                }
-            };
-
-            final_result
-                .into_iter()
-                .next()
-                .map(|wrapper| wrapper.0)
-                .ok_or_else(|| KvStoreError::KeyNotFound("No common ancestor found".to_string()))
+            return Ok(b1.clone());
         }
+
+        Self::lowest_universal_common_ancestor_many(&[b1.clone(), b2.clone()], dag).await
     }
 }

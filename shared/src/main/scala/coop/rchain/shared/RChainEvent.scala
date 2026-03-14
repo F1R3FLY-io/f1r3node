@@ -2,13 +2,15 @@ package coop.rchain.shared
 
 import cats.Applicative
 
+final case class DeployEvent(id: String, cost: Long, deployer: String, errored: Boolean)
+
 sealed trait RChainEvent {}
 
 final case class BlockCreated(
     blockHash: String,
     parentHashes: List[String],
     justificationHashes: List[(String, String)],
-    deployIds: List[String],
+    deploys: List[DeployEvent],
     creator: String,
     seqNum: Int
 ) extends RChainEvent
@@ -17,35 +19,50 @@ final case class BlockAdded(
     blockHash: String,
     parentHashes: List[String],
     justificationHashes: List[(String, String)],
-    deployIds: List[String],
+    deploys: List[DeployEvent],
     creator: String,
     seqNum: Int
 ) extends RChainEvent
 
-final case class BlockFinalised(blockHash: String) extends RChainEvent
+final case class BlockFinalised(
+    blockHash: String,
+    parentHashes: List[String],
+    justificationHashes: List[(String, String)],
+    deploys: List[DeployEvent],
+    creator: String,
+    seqNum: Int
+) extends RChainEvent
 
 object RChainEvent {
   def blockCreated(
       bs: String,
       parents: List[String],
       justifications: List[(String, String)],
-      deployIds: List[String],
+      deploys: List[DeployEvent],
       creator: String,
       seqNum: Int
   ): RChainEvent =
-    BlockCreated(bs, parents, justifications, deployIds, creator, seqNum)
+    BlockCreated(bs, parents, justifications, deploys, creator, seqNum)
 
   def blockAdded(
       bs: String,
       parents: List[String],
       justifications: List[(String, String)],
-      deployIds: List[String],
+      deploys: List[DeployEvent],
       creator: String,
       seqNum: Int
   ): RChainEvent =
-    BlockAdded(bs, parents, justifications, deployIds, creator, seqNum)
+    BlockAdded(bs, parents, justifications, deploys, creator, seqNum)
 
-  def blockFinalised(bs: String): RChainEvent = BlockFinalised(bs)
+  def blockFinalised(
+      bs: String,
+      parents: List[String],
+      justifications: List[(String, String)],
+      deploys: List[DeployEvent],
+      creator: String,
+      seqNum: Int
+  ): RChainEvent =
+    BlockFinalised(bs, parents, justifications, deploys, creator, seqNum)
 }
 
 trait EventPublisher[F[_]] {

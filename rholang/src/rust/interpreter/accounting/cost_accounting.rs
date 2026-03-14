@@ -8,7 +8,7 @@ impl CostAccounting {
     fn empty() -> Cost {
         Cost {
             value: 0,
-            operation: "init".to_string(),
+            operation: "init".into(),
         }
     }
 

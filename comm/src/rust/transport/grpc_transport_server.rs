@@ -7,19 +7,21 @@ use std::path::Path;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tokio::sync::{Mutex, OnceCell};
+use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 
 use models::routing::Protocol;
 
 use crate::rust::{
     errors::CommError,
-    metrics_constants::{DISPATCHED_MESSAGES_METRIC, DISPATCHED_PACKETS_METRIC, TRANSPORT_METRICS_SOURCE},
+    metrics_constants::{
+        DISPATCHED_MESSAGES_METRIC, DISPATCHED_PACKETS_METRIC, TRANSPORT_METRICS_SOURCE,
+    },
     peer_node::PeerNode,
     rp::rp_conf::RPConf,
     transport::{
         communication_response::CommunicationResponse,
-        grpc_transport_receiver::{GrpcTransportReceiver, MessageBuffers, MessageHandlers},
+        grpc_transport_receiver::{GrpcTransportReceiver, MessageHandlers, PeerBufferSlot},
         packet_ops::StreamCache,
         stream_handler::StreamHandler,
         transport_layer::Blob,
@@ -272,7 +274,7 @@ impl TransportLayerServer for GrpcTransportServer {
         handle_streamed: HandleStreamedFn,
     ) -> Result<Cancelable, CommError> {
         // Create buffers map for per-peer message queues
-        let buffers_map: Arc<Mutex<HashMap<PeerNode, Arc<OnceCell<MessageBuffers>>>>> =
+        let buffers_map: Arc<Mutex<HashMap<PeerNode, PeerBufferSlot>>> =
             Arc::new(Mutex::new(HashMap::new()));
 
         // Create message handlers that bridge to the provided dispatch functions

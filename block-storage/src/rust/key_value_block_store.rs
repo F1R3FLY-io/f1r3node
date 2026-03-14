@@ -1,7 +1,10 @@
 // See block-storage/src/main/scala/coop/rchain/blockstorage/KeyValueBlockStore.scala
 
 use prost::Message;
+use std::cell::RefCell;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
+use std::sync::OnceLock;
 
 use models::casper::{ApprovedBlockProto, BlockMessageProto};
 use models::rust::casper::protocol::casper_message::{ApprovedBlock, BlockMessage};
@@ -16,7 +19,20 @@ pub struct KeyValueBlockStore {
     approved_block_key: [u8; 1],
 }
 
+thread_local! {
+    static DEPLOY_SIG_CACHE: RefCell<DeploySigCache> = RefCell::new(DeploySigCache::default());
+    static BLOCK_PROTO_DECOMPRESS_BUFFER: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
+    static DEPLOY_SIG_DECOMPRESS_BUFFER: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
+}
+
 impl KeyValueBlockStore {
+    // Keep a small bounded decompression scratch buffer per thread to prevent
+    // long-lived memory retention from repeatedly decoding block payloads.
+    const DECOMPRESS_BUFFER_RETAIN_BYTES_DEFAULT: usize = 64 * 1024;
+    const DECOMPRESS_BUFFER_RETAIN_BYTES_ENV: &str = "F1R3_BLOCK_PROTO_DECODE_BUFFER_BYTES";
+    const DEPLOY_SIG_CACHE_MAX_ENTRIES_DEFAULT: usize = 1024;
+    const DEPLOY_SIG_CACHE_MAX_ENTRIES_ENV: &str = "F1R3_BLOCK_STORE_DEPLOY_SIG_CACHE_MAX_ENTRIES";
+
     pub fn new(
         store: Arc<dyn KeyValueStore>,
         store_approved_block: Arc<dyn KeyValueStore>,
@@ -72,6 +88,90 @@ impl KeyValueBlockStore {
         self.get(block_hash).expect(&err_msg).expect(&err_msg)
     }
 
+    /// Fast path used by repeat-deploy checks to avoid full BlockMessage conversion.
+    pub fn has_any_deploy_sig(
+        &self,
+        block_hash: &BlockHash,
+        deploy_sigs: &HashSet<Vec<u8>>,
+    ) -> Result<bool, KvStoreError> {
+        if deploy_sigs.is_empty() {
+            return Ok(false);
+        }
+        let key = block_hash.to_vec();
+        if let Some(has_any) = Self::cached_has_any_deploy_sig(&key, deploy_sigs) {
+            return Ok(has_any);
+        }
+
+        let bytes = match self.store.get_one(&key)? {
+            Some(bytes) => bytes,
+            None => return Ok(false),
+        };
+
+        let body = Self::decode_block_deploy_sigs(&bytes)?;
+        let mut block_deploy_sigs = Vec::with_capacity(body.deploys.len());
+        let mut has_any = false;
+        for processed_deploy in body.deploys {
+            let deploy = processed_deploy.deploy.ok_or_else(|| {
+                KvStoreError::SerializationError(Self::error_block(
+                    block_hash.clone(),
+                    "Missing deploy field".to_string(),
+                ))
+            })?;
+            let sig = deploy.sig;
+            if deploy_sigs.contains(&sig) {
+                has_any = true;
+            }
+            block_deploy_sigs.push(sig);
+        }
+        Self::cache_deploy_sigs(key, block_deploy_sigs);
+        Ok(has_any)
+    }
+
+    /// Fetch deploy signatures for a block without decoding a full BlockMessage.
+    /// Uses the same bounded thread-local cache as `has_any_deploy_sig`.
+    pub fn deploy_sigs(
+        &self,
+        block_hash: &BlockHash,
+    ) -> Result<Option<Vec<Vec<u8>>>, KvStoreError> {
+        let key = block_hash.to_vec();
+        if let Some(cached) = Self::cached_deploy_sigs(&key) {
+            return Ok(Some(cached));
+        }
+
+        let bytes = match self.store.get_one(&key)? {
+            Some(bytes) => bytes,
+            None => return Ok(None),
+        };
+
+        let body = Self::decode_block_deploy_sigs(&bytes)?;
+        let mut block_deploy_sigs = Vec::with_capacity(body.deploys.len());
+        for processed_deploy in body.deploys {
+            let deploy = processed_deploy.deploy.ok_or_else(|| {
+                KvStoreError::SerializationError(Self::error_block(
+                    block_hash.clone(),
+                    "Missing deploy field".to_string(),
+                ))
+            })?;
+            block_deploy_sigs.push(deploy.sig);
+        }
+
+        Self::cache_deploy_sigs(key, block_deploy_sigs.clone());
+        Ok(Some(block_deploy_sigs))
+    }
+
+    pub fn has_any_deploy_sig_unsafe(
+        &self,
+        block_hash: &BlockHash,
+        deploy_sigs: &HashSet<Vec<u8>>,
+    ) -> bool {
+        let err_msg = format!(
+            "BlockStore is missing hash: {}",
+            PrettyPrinter::build_string_bytes(&block_hash),
+        );
+        self.has_any_deploy_sig(block_hash, deploy_sigs)
+            .expect(&err_msg)
+    }
+
     pub fn put(&self, block_hash: BlockHash, block: &BlockMessage) -> Result<(), KvStoreError> {
         let block_proto = block.to_proto();
         let bytes = Self::block_proto_to_bytes(&block_proto);
@@ -121,55 +221,201 @@ impl KeyValueBlockStore {
     }
 
     fn bytes_to_block_proto(bytes: &[u8]) -> Result<BlockMessageProto, KvStoreError> {
-        let bytes = Self::decompress_bytes(bytes);
-        let decode_result = BlockMessageProto::decode(&*bytes);
-        match decode_result {
-            Ok(block_proto) => Ok(block_proto),
-            Err(err) => Err(KvStoreError::SerializationError(err.to_string())),
-        }
+        use prost::encoding::decode_varint;
+        use std::io::Cursor;
+
+        let mut cursor = Cursor::new(bytes);
+        let decompressed_length = decode_varint(&mut cursor).map_err(|err| {
+            KvStoreError::SerializationError(format!(
+                "Failed to decode varint length prefix: {err}"
+            ))
+        })? as usize;
+
+        let compressed_data = &bytes[cursor.position() as usize..];
+        let max_retain_bytes = Self::decode_buffer_retain_bytes();
+        BLOCK_PROTO_DECOMPRESS_BUFFER.with(|buffer| {
+            let mut output_buf = buffer.borrow_mut();
+            if output_buf.len() < decompressed_length {
+                output_buf.resize(decompressed_length, 0u8);
+            }
+            let output = &mut output_buf[..decompressed_length];
+
+            lz4_flex::decompress_into(compressed_data, output).map_err(|err| {
+                KvStoreError::SerializationError(format!("Decompress of block failed: {err}"))
+            })?;
+
+            let decode_result = BlockMessageProto::decode(&*output)
+                .map_err(|err| KvStoreError::SerializationError(err.to_string()));
+
+            // Avoid retaining very large per-thread scratch buffers indefinitely.
+            if output_buf.capacity() > max_retain_bytes {
+                output_buf.clear();
+                output_buf.shrink_to(max_retain_bytes);
+            }
+
+            decode_result
+        })
+    }
+
+    fn decode_block_deploy_sigs(bytes: &[u8]) -> Result<BlockDeploySigsBody, KvStoreError> {
+        use prost::encoding::decode_varint;
+        use std::io::Cursor;
+
+        let mut cursor = Cursor::new(bytes);
+        let decompressed_length = decode_varint(&mut cursor).map_err(|err| {
+            KvStoreError::SerializationError(format!(
+                "Failed to decode varint length prefix: {err}"
+            ))
+        })? as usize;
+
+        let compressed_data = &bytes[cursor.position() as usize..];
+        let max_retain_bytes = Self::decode_buffer_retain_bytes();
+        DEPLOY_SIG_DECOMPRESS_BUFFER.with(|buffer| {
+            let mut output_buf = buffer.borrow_mut();
+            if output_buf.len() < decompressed_length {
+                output_buf.resize(decompressed_length, 0u8);
+            }
+            let output = &mut output_buf[..decompressed_length];
+
+            lz4_flex::decompress_into(compressed_data, output).map_err(|err| {
+                KvStoreError::SerializationError(format!("Decompress of block failed: {err}"))
+            })?;
+
+            let decode_result = BlockMessageDeploySigIndex::decode(&*output)
+                .map_err(|err| KvStoreError::SerializationError(err.to_string()))
+                .and_then(|proto| {
+                    proto.body.ok_or_else(|| {
+                        KvStoreError::SerializationError("Missing body field".to_string())
+                    })
+                });
+
+            if output_buf.capacity() > max_retain_bytes {
+                output_buf.clear();
+                output_buf.shrink_to(max_retain_bytes);
+            }
+
+            decode_result
+        })
     }
 
     fn block_proto_to_bytes(block_proto: &BlockMessageProto) -> Vec<u8> {
         Self::compress_bytes(&block_proto.encode_to_vec())
     }
 
+    fn cached_has_any_deploy_sig(
+        block_hash: &[u8],
+        deploy_sigs: &HashSet<Vec<u8>>,
+    ) -> Option<bool> {
+        DEPLOY_SIG_CACHE.with(|cache| {
+            let cache = cache.borrow();
+            cache
+                .entries
+                .get(block_hash)
+                .map(|cached_sigs| cached_sigs.iter().any(|sig| deploy_sigs.contains(sig)))
+        })
+    }
+
+    fn cached_deploy_sigs(block_hash: &[u8]) -> Option<Vec<Vec<u8>>> {
+        DEPLOY_SIG_CACHE.with(|cache| cache.borrow().entries.get(block_hash).cloned())
+    }
+
+    fn cache_deploy_sigs(block_hash: Vec<u8>, deploy_sigs: Vec<Vec<u8>>) {
+        let max_entries = Self::max_deploy_sig_cache_entries();
+        if max_entries == 0 {
+            return;
+        }
+        DEPLOY_SIG_CACHE.with(|cache| {
+            let mut cache = cache.borrow_mut();
+            if !cache.entries.contains_key(&block_hash) {
+                cache.order.push_back(block_hash.clone());
+                while cache.order.len() > max_entries {
+                    if let Some(oldest) = cache.order.pop_front() {
+                        cache.entries.remove(&oldest);
+                    }
+                }
+            }
+            cache.entries.insert(block_hash, deploy_sigs);
+        });
+    }
+
+    fn decode_buffer_retain_bytes() -> usize {
+        static VALUE: OnceLock<usize> = OnceLock::new();
+        *VALUE.get_or_init(|| {
+            std::env::var(Self::DECOMPRESS_BUFFER_RETAIN_BYTES_ENV)
+                .ok()
+                .and_then(|v| v.parse::<usize>().ok())
+                .filter(|v| *v > 0)
+                .unwrap_or(Self::DECOMPRESS_BUFFER_RETAIN_BYTES_DEFAULT)
+        })
+    }
+
+    fn max_deploy_sig_cache_entries() -> usize {
+        static VALUE: OnceLock<usize> = OnceLock::new();
+        *VALUE.get_or_init(|| {
+            std::env::var(Self::DEPLOY_SIG_CACHE_MAX_ENTRIES_ENV)
+                .ok()
+                .and_then(|v| v.parse::<usize>().ok())
+                .unwrap_or(Self::DEPLOY_SIG_CACHE_MAX_ENTRIES_DEFAULT)
+        })
+    }
+
+    #[cfg(test)]
+    fn block_proto_decode_buffer_capacity_for_test() -> usize {
+        BLOCK_PROTO_DECOMPRESS_BUFFER.with(|buffer| buffer.borrow().capacity())
+    }
+
     /// Compress bytes with varint length prefix (compatible with Java LZ4CompressorWithLength)
     fn compress_bytes(bytes: &[u8]) -> Vec<u8> {
         use prost::encoding::encode_varint;
-        
+
         let compressed = lz4_flex::compress(bytes);
         let mut result = Vec::new();
-        
+
         // Encode original (decompressed) length as varint to match Java format
         encode_varint(bytes.len() as u64, &mut result);
         result.extend_from_slice(&compressed);
         result
     }
+}
 
-    /// Decompress bytes with varint length prefix (compatible with Java LZ4DecompressorWithLength)
-    fn decompress_bytes(bytes: &[u8]) -> Vec<u8> {
-        use prost::encoding::decode_varint;
-        use std::io::Cursor;
-        
-        let mut cursor = Cursor::new(bytes);
-        
-        // Decode varint length prefix (matching Java format)
-        let decompressed_length = decode_varint(&mut cursor)
-            .expect("Failed to decode varint length prefix") as usize;
-        
-        let compressed_data = &bytes[cursor.position() as usize..];
-        
-        // Decompress with the decoded length
-        lz4_flex::decompress(compressed_data, decompressed_length)
-            .expect("Decompress of block failed")
-    }
+#[derive(Default)]
+struct DeploySigCache {
+    entries: HashMap<Vec<u8>, Vec<Vec<u8>>>,
+    order: VecDeque<Vec<u8>>,
+}
+
+#[derive(Clone, PartialEq, ::prost::Message)]
+struct BlockMessageDeploySigIndex {
+    #[prost(message, optional, tag = "3")]
+    body: Option<BlockDeploySigsBody>,
+}
+
+#[derive(Clone, PartialEq, ::prost::Message)]
+struct BlockDeploySigsBody {
+    #[prost(message, repeated, tag = "2")]
+    deploys: Vec<BlockDeploySigsProcessedDeploy>,
+}
+
+#[derive(Clone, PartialEq, ::prost::Message)]
+struct BlockDeploySigsProcessedDeploy {
+    #[prost(message, optional, tag = "1")]
+    deploy: Option<BlockDeploySigsDeploy>,
+}
+
+#[derive(Clone, PartialEq, ::prost::Message)]
+struct BlockDeploySigsDeploy {
+    #[prost(bytes = "vec", tag = "4")]
+    sig: Vec<u8>,
 }
 
 // See block-storage/src/test/scala/coop/rchain/blockstorage/KeyValueBlockStoreSpec.scala
 
 #[cfg(test)]
 mod tests {
+    use models::rust::block_implicits::processed_deploy_gen;
     use proptest::prelude::*;
+    use proptest::strategy::ValueTree;
+    use proptest::test_runner::TestRunner;
     use std::sync::{Arc, Mutex};
 
     use models::rust::{
@@ -252,6 +498,10 @@ mod tests {
         fn size_bytes(&self) -> usize {
             todo!()
         }
+
+        fn non_empty(&self) -> Result<bool, KvStoreError> {
+            todo!()
+        }
     }
 
     pub struct NotImplementedKV;
@@ -290,6 +540,10 @@ mod tests {
         fn size_bytes(&self) -> usize {
             todo!()
         }
+
+        fn non_empty(&self) -> Result<bool, KvStoreError> {
+            todo!()
+        }
     }
 
     fn to_approved_block(block: BlockMessage) -> ApprovedBlock {
@@ -301,6 +555,27 @@ mod tests {
             candidate,
             sigs: vec![],
         }
+    }
+
+    fn vm_rss_kb() -> Option<usize> {
+        let status = std::fs::read_to_string("/proc/self/status").ok()?;
+        status
+            .lines()
+            .find(|line| line.starts_with("VmRSS:"))
+            .and_then(|line| line.split_whitespace().nth(1))
+            .and_then(|value| value.parse::<usize>().ok())
+    }
+
+    fn kb_to_mib(kb: usize) -> f64 {
+        kb as f64 / 1024.0
+    }
+
+    fn delta_kb_to_mib(delta_kb: isize) -> f64 {
+        delta_kb as f64 / 1024.0
+    }
+
+    fn bytes_to_mib(bytes: usize) -> f64 {
+        bytes as f64 / (1024.0 * 1024.0)
     }
 
     proptest! {
@@ -392,5 +667,134 @@ mod tests {
           assert_eq!(*input_keys.lock().unwrap(), vec![bs.approved_block_key]);
           assert_eq!(*input_puts.lock().unwrap(), vec![approved_block_bytes]);
       }
+    }
+
+    #[test]
+    fn has_any_deploy_sig_returns_true_or_false_and_caches() {
+        let deploy = processed_deploy_gen()
+            .new_tree(&mut TestRunner::default())
+            .unwrap()
+            .current();
+        let block = block_element_gen(
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(vec![deploy.clone()]),
+            None,
+            None,
+            None,
+            None,
+        )
+        .new_tree(&mut TestRunner::default())
+        .unwrap()
+        .current();
+
+        let block_bytes = KeyValueBlockStore::block_proto_to_bytes(&block.to_proto());
+        let kv = MockKeyValueStore::new(Some(block_bytes));
+        let input_keys = Arc::clone(&kv.input_keys);
+        let bs = KeyValueBlockStore::new(Arc::new(kv), Arc::new(NotImplementedKV));
+
+        let matching_sig = HashSet::from([deploy.deploy.sig.to_vec()]);
+        let not_matching_sig = HashSet::from([vec![0u8]]);
+
+        let has_matching = bs.has_any_deploy_sig(&block.block_hash.clone(), &matching_sig);
+        assert!(has_matching.is_ok());
+        assert!(has_matching.unwrap());
+
+        let has_not_matching = bs.has_any_deploy_sig(&block.block_hash.clone(), &not_matching_sig);
+        assert!(has_not_matching.is_ok());
+        assert!(!has_not_matching.unwrap());
+
+        let repeated_lookup = bs
+            .has_any_deploy_sig(&block.block_hash.clone(), &not_matching_sig)
+            .unwrap();
+        assert!(!repeated_lookup);
+        assert_eq!(*input_keys.lock().unwrap(), vec![block.block_hash.to_vec()]);
+    }
+
+    #[test]
+    fn bytes_to_block_proto_should_not_retain_oversized_decode_buffers() {
+        let mut block = block_element_gen(
+            None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+        )
+        .new_tree(&mut TestRunner::default())
+        .unwrap()
+        .current();
+
+        let oversized_payload_len = KeyValueBlockStore::decode_buffer_retain_bytes()
+            .saturating_mul(8)
+            .max(256 * 1024);
+        block.extra_bytes = vec![0xAB; oversized_payload_len].into();
+
+        let block_bytes = KeyValueBlockStore::block_proto_to_bytes(&block.to_proto());
+        let retain_limit = KeyValueBlockStore::decode_buffer_retain_bytes();
+        let mut last_rss = vm_rss_kb();
+        let baseline_rss = last_rss;
+        let baseline_cap = KeyValueBlockStore::block_proto_decode_buffer_capacity_for_test();
+
+        println!(
+            "decode baseline: cap={}B ({:.2} MiB), retain_limit={}B ({:.2} MiB), rss={}KB ({:.2} MiB)",
+            baseline_cap,
+            bytes_to_mib(baseline_cap),
+            retain_limit,
+            bytes_to_mib(retain_limit),
+            baseline_rss.unwrap_or(0),
+            baseline_rss.map(kb_to_mib).unwrap_or(0.0),
+        );
+
+        for i in 0..16 {
+            let decode_result = KeyValueBlockStore::bytes_to_block_proto(&block_bytes);
+            assert!(decode_result.is_ok(), "block decode must succeed");
+
+            if matches!(i + 1, 1 | 2 | 4 | 8 | 16) {
+                let cap = KeyValueBlockStore::block_proto_decode_buffer_capacity_for_test();
+                let rss = vm_rss_kb();
+
+                let cap_delta_from_limit = cap as isize - retain_limit as isize;
+                let cap_delta_from_base = cap as isize - baseline_cap as isize;
+
+                let (rss_value, rss_delta_iter, rss_delta_total) =
+                    match (rss, last_rss, baseline_rss) {
+                        (Some(curr), Some(prev), Some(base)) => (
+                            curr,
+                            curr as isize - prev as isize,
+                            curr as isize - base as isize,
+                        ),
+                        (Some(curr), _, _) => (curr, 0, 0),
+                        _ => (0, 0, 0),
+                    };
+
+                println!(
+                    "decode iter #{:>2}: cap={}B ({:.2} MiB) delta_base={:+}B delta_limit={:+}B rss={}KB ({:.2} MiB) rss_delta_iter={:+}KB ({:+.2} MiB) rss_delta_total={:+}KB ({:+.2} MiB)",
+                    i + 1,
+                    cap,
+                    bytes_to_mib(cap),
+                    cap_delta_from_base,
+                    cap_delta_from_limit,
+                    rss_value,
+                    kb_to_mib(rss_value),
+                    rss_delta_iter,
+                    delta_kb_to_mib(rss_delta_iter),
+                    rss_delta_total,
+                    delta_kb_to_mib(rss_delta_total),
+                );
+
+                last_rss = rss;
+            }
+        }
+
+        let retained_capacity = KeyValueBlockStore::block_proto_decode_buffer_capacity_for_test();
+        assert!(
+            retained_capacity <= retain_limit,
+            "decode buffer retained capacity {} > configured retain limit {}",
+            retained_capacity,
+            retain_limit
+        );
     }
 }

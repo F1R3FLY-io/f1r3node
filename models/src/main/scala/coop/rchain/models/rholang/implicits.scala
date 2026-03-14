@@ -235,6 +235,17 @@ object implicits {
       }
   }
 
+  implicit class RichUnforgeableInstance(un: UnfInstance) {
+    def typ: String =
+      un match {
+        case GPrivateBody(_)      => "PrivateBody"
+        case GDeployIdBody(_)     => "DeployId"
+        case GDeployerIdBody(_)   => "DeployerId"
+        case GSysAuthTokenBody(_) => "SysAuthToken"
+        case _                    => "Empty"
+      }
+  }
+
   implicit class ParExtension[T](p: T)(implicit toPar: T => Par) {
     // Convenience prepend methods
     def prepend(s: Send): Par =

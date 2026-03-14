@@ -12,10 +12,10 @@ use models::rust::casper::protocol::casper_message::BlockMessage;
 use prost::bytes::Bytes;
 use rspace_plus_plus::rspace::shared::in_mem_key_value_store::InMemoryKeyValueStore;
 use shared::rust::store::key_value_typed_store_impl::KeyValueTypedStoreImpl;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::future::Future;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex, OnceLock, RwLock};
+use std::sync::{atomic::AtomicU64, Arc, Mutex, OnceLock, RwLock};
 use tempfile::{Builder, TempDir};
 use uuid::Uuid;
 
@@ -56,7 +56,7 @@ lazy_static! {
         let path = temp_dir.path().to_path_buf();
         (path, temp_dir)
     };
-    
+
     /// Global lock to ensure test isolation when using shared LMDB.
     ///
     /// ## Why is this needed?
@@ -388,6 +388,7 @@ pub async fn block_dag_storage_from_dyn(
         invalid_blocks_index: invalid_blocks_db,
         equivocation_tracker_index: equivocation_tracker_store,
         latest_messages_index: latest_messages_db,
+        dag_generation: Arc::new(AtomicU64::new(0)),
     })
 }
 
@@ -463,7 +464,12 @@ pub async fn mk_runtime_manager_at(
 
     let r_store = kvm.r_space_stores().await.unwrap();
     let m_store = mergeable_store_from_dyn(kvm).await.unwrap();
-    RuntimeManager::create_with_store(r_store, m_store, mergeable_tag_name, rholang::rust::interpreter::external_services::ExternalServices::noop())
+    RuntimeManager::create_with_store(
+        r_store,
+        m_store,
+        mergeable_tag_name,
+        rholang::rust::interpreter::external_services::ExternalServices::noop(),
+    )
 }
 
 pub async fn mk_runtime_manager_with_history_at(
@@ -480,17 +486,20 @@ pub async fn mk_runtime_manager_with_history_at(
     (rt_manager, history_repo)
 }
 
-fn new_key_value_dag_representation() -> KeyValueDagRepresentation {
+pub fn new_key_value_dag_representation() -> KeyValueDagRepresentation {
     let block_metadata_store = KeyValueTypedStoreImpl::new(Arc::new(InMemoryKeyValueStore::new()));
 
     KeyValueDagRepresentation {
-        dag_set: Arc::new(DashSet::new()),
-        latest_messages_map: Arc::new(DashMap::new()),
-        child_map: Arc::new(DashMap::new()),
-        height_map: Arc::new(RwLock::new(BTreeMap::new())),
-        invalid_blocks_set: Arc::new(DashSet::new()),
+        dag_set: imbl::HashSet::new(),
+        latest_messages_map: imbl::HashMap::new(),
+        child_map: imbl::HashMap::new(),
+        height_map: imbl::OrdMap::new(),
+        block_number_map: imbl::HashMap::new(),
+        main_parent_map: imbl::HashMap::new(),
+        self_justification_map: imbl::HashMap::new(),
+        invalid_blocks_set: imbl::HashSet::new(),
         last_finalized_block_hash: BlockHash::new(),
-        finalized_blocks_set: Arc::new(DashSet::new()),
+        finalized_blocks_set: imbl::HashSet::new(),
         block_metadata_index: Arc::new(RwLock::new(BlockMetadataStore::new(block_metadata_store))),
         deploy_index: Arc::new(RwLock::new(KeyValueTypedStoreImpl::new(Arc::new(
             InMemoryKeyValueStore::new(),
@@ -509,7 +518,7 @@ pub fn mk_dummy_casper_snapshot() -> CasperSnapshot {
         parents: Vec::new(),
         justifications: DashSet::new(),
         invalid_blocks: HashMap::new(),
-        deploys_in_scope: DashSet::new(),
+        deploys_in_scope: Arc::new(DashSet::new()),
         max_block_num: 0,
         max_seq_nums: DashMap::new(),
         on_chain_state: OnChainCasperState {

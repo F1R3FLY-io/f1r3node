@@ -1,22 +1,23 @@
+use crate::rust::diagnostics::SYSTEM_METRICS_SOURCE;
 use std::time::Duration;
 use sysinfo::{CpuExt, System, SystemExt};
-use tokio::time;
-use crate::rust::diagnostics::SYSTEM_METRICS_SOURCE;
 
 pub fn start_sigar_reporter(interval_duration: Duration) {
-    tokio::spawn(async move {
+    std::thread::spawn(move || {
         let mut sys = System::new_all();
-        let mut interval = time::interval(interval_duration);
         loop {
-            interval.tick().await;
             sys.refresh_cpu();
             sys.refresh_memory();
 
             let cpu_usage = sys.global_cpu_info().cpu_usage();
             let mem_usage = sys.used_memory() as f64 / sys.total_memory() as f64 * 100.0;
 
-            metrics::gauge!("system_cpu_usage_percent", "source" => SYSTEM_METRICS_SOURCE).set(cpu_usage as f64);
-            metrics::gauge!("system_memory_usage_percent", "source" => SYSTEM_METRICS_SOURCE).set(mem_usage);
+            metrics::gauge!("system_cpu_usage_percent", "source" => SYSTEM_METRICS_SOURCE)
+                .set(cpu_usage as f64);
+            metrics::gauge!("system_memory_usage_percent", "source" => SYSTEM_METRICS_SOURCE)
+                .set(mem_usage);
+
+            std::thread::sleep(interval_duration);
         }
     });
 }
@@ -44,13 +45,18 @@ mod tests {
         let interval = Duration::from_millis(50);
         start_sigar_reporter(interval);
 
-        tokio::time::sleep(Duration::from_millis(150)).await;
-
-        let scrape = reporter.scrape_data();
-        assert!(
-            scrape.contains("system_cpu_usage_percent") || scrape.is_empty(),
-            "If metrics are recorded, scrape should contain system_cpu_usage_percent"
-        );
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            let scrape = reporter.scrape_data();
+            if scrape.contains("system_cpu_usage_percent") {
+                return;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "Timed out waiting for system_cpu_usage_percent in scrape output"
+            );
+        }
     }
 
     #[tokio::test]
@@ -78,13 +84,21 @@ mod tests {
         let interval = Duration::from_millis(50);
         start_sigar_reporter(interval);
 
-        tokio::time::sleep(Duration::from_millis(150)).await;
-
-        let scrape = reporter.scrape_data();
-        assert!(
-            scrape.contains("f1r3fly.system") || scrape.contains("source=\"f1r3fly.system\"") || scrape.is_empty(),
-            "If metrics are recorded, scrape should contain f1r3fly.system source"
-        );
+        // Poll until the metric appears rather than relying on a fixed sleep.
+        // The global registry is non-empty from prior tests, so scrape.is_empty()
+        // cannot be used as a fallback — we must actually see the label.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            let scrape = reporter.scrape_data();
+            if scrape.contains("f1r3fly.system") {
+                return;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "Timed out waiting for f1r3fly.system source in scrape output"
+            );
+        }
     }
 
     #[tokio::test]

@@ -49,6 +49,7 @@ pub struct BlockCreated {
     pub justification_hashes: Vec<(String, String)>,
     pub deploys: Vec<DeployEvent>,
     pub creator: String,
+    #[serde(rename = "seq-num")]
     pub seq_number: i32,
 }
 
@@ -60,6 +61,7 @@ pub struct BlockAdded {
     pub justification_hashes: Vec<(String, String)>,
     pub deploys: Vec<DeployEvent>,
     pub creator: String,
+    #[serde(rename = "seq-num")]
     pub seq_number: i32,
 }
 
@@ -72,6 +74,7 @@ pub struct BlockFinalised {
     pub justification_hashes: Vec<(String, String)>,
     pub deploys: Vec<DeployEvent>,
     pub creator: String,
+    #[serde(rename = "seq-num")]
     pub seq_number: i32,
 }
 

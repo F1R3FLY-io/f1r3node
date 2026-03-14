@@ -108,7 +108,11 @@ impl BlockCreator for TestBlockCreator {
         _: bool,
     ) -> Result<BlockCreatorResult, CasperError> {
         use models::rust::block_implicits::get_random_block_default;
-        Ok(BlockCreatorResult::Created(get_random_block_default()))
+        Ok(BlockCreatorResult::Created(
+            get_random_block_default(),
+            prost::bytes::Bytes::new(),
+            prost::bytes::Bytes::new(),
+        ))
     }
 }
 
@@ -391,7 +395,7 @@ async fn proposer_should_shut_down_the_node_if_block_created_is_not_successfully
         use std::collections::HashMap;
 
         let dag_representation = block_dag_storage.get_representation();
-        let casper = Arc::new(NoOpsCasperEffect::new(
+        let casper = Arc::new(NoOpsCasperEffect::new_with_self_created_validation_failure(
             Some(HashMap::new()),
             None,
             Arc::new(tokio::sync::Mutex::new(runtime_manager)),

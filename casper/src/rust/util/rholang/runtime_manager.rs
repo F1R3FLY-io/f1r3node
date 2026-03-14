@@ -3,19 +3,23 @@
 
 use dashmap::DashMap;
 use std::collections::{BTreeMap, HashMap};
+use std::hash::Hash;
 use std::sync::Arc;
+use std::sync::OnceLock;
 
+use crypto::rust::hash::blake2b256::Blake2b256;
 use crypto::rust::signatures::signed::Signed;
 use hex::ToHex;
 use models::rhoapi::{BindPattern, ListParWithRandom, Par, TaggedContinuation};
 use models::rust::block::state_hash::{StateHash, StateHashSerde};
 use models::rust::block_hash::BlockHash;
 use models::rust::casper::protocol::casper_message::{
-    Bond, DeployData, ProcessedDeploy, ProcessedSystemDeploy,
+    Bond, DeployData, Event, ProcessedDeploy, ProcessedSystemDeploy,
 };
 use models::rust::validator::Validator;
-use rholang::rust::interpreter::matcher::r#match::Matcher;
+use prost::Message;
 use rholang::rust::interpreter::external_services::ExternalServices;
+use rholang::rust::interpreter::matcher::r#match::Matcher;
 use rholang::rust::interpreter::merging::rholang_merging_logic::{
     DeployMergeableData, NumberChannel, RholangMergingLogic,
 };
@@ -29,13 +33,21 @@ use rspace_plus_plus::rspace::replay_rspace::ReplayRSpace;
 use rspace_plus_plus::rspace::rspace::{RSpace, RSpaceStore};
 use rspace_plus_plus::rspace::shared::key_value_store_manager::KeyValueStoreManager;
 use shared::rust::store::key_value_store::KvStoreError;
+use shared::rust::store::key_value_typed_store::KeyValueTypedStore;
 use shared::rust::store::key_value_typed_store_impl::KeyValueTypedStoreImpl;
 use shared::rust::ByteVector;
 
 use crate::rust::errors::CasperError;
 use crate::rust::merging::block_index::BlockIndex;
+use crate::rust::metrics_constants::{
+    BLOCK_INDEX_CACHE_SIZE_METRIC, CASPER_METRICS_SOURCE, PARENTS_POST_STATE_CACHE_SIZE_METRIC,
+};
 use crate::rust::rholang::replay_runtime::ReplayRuntimeOps;
 use crate::rust::rholang::runtime::RuntimeOps;
+use crate::rust::util::rholang::replay_cache::{
+    InMemoryReplayCache, ReplayCache, ReplayCacheEntry, ReplayCacheKey,
+};
+use crate::rust::util::rholang::state_hash_cache::StateHashCache;
 
 type MergeableStore = KeyValueTypedStoreImpl<ByteVector, Vec<DeployMergeableData>>;
 
@@ -56,10 +68,197 @@ pub struct RuntimeManager {
     pub mergeable_tag_name: Par,
     // TODO: make proper storage for block indices - OLD
     pub block_index_cache: Arc<DashMap<BlockHash, BlockIndex>>,
+    pub active_validators_cache: Arc<DashMap<StateHash, Vec<Validator>>>,
+    /// Cache for merged parent post-state computation keyed by parent-set snapshot context.
+    pub parents_post_state_cache: Arc<DashMap<ParentsPostStateCacheKey, ParentsPostStateCacheVal>>,
+    /// Optional replay cache for delta replay optimization
+    pub replay_cache: Option<Arc<InMemoryReplayCache>>,
+    /// Optional state hash cache for skipping known replays
+    pub state_hash_cache: Option<Arc<StateHashCache>>,
     pub external_services: ExternalServices,
 }
 
+#[derive(Clone, Hash, PartialEq, Eq)]
+pub struct ParentsPostStateCacheKey {
+    pub sorted_parent_hashes: Vec<BlockHash>,
+    // Snapshot LFB is intentionally excluded from the cache key.
+    // Parent-post-state merge is derived from the parent set and config; keying by
+    // moving LFB destroys cache locality and causes repeated recomputation.
+    pub disable_late_block_filtering: bool,
+}
+
+pub type ParentsPostStateCacheVal = (StateHash, Vec<prost::bytes::Bytes>);
+
 impl RuntimeManager {
+    const MAX_BLOCK_INDEX_CACHE_ENTRIES: usize = 64;
+    const MAX_BLOCK_INDEX_CACHE_ENTRIES_ENV: &str = "F1R3_BLOCK_INDEX_CACHE_MAX_ENTRIES";
+    const MAX_PARENTS_POST_STATE_CACHE_ENTRIES: usize = 128;
+    const MAX_PARENTS_POST_STATE_CACHE_ENTRIES_ENV: &str =
+        "F1R3_PARENTS_POST_STATE_CACHE_MAX_ENTRIES";
+    const MAX_ACTIVE_VALIDATORS_CACHE_ENTRIES: usize = 256;
+    const MAX_ACTIVE_VALIDATORS_CACHE_ENTRIES_ENV: &str =
+        "F1R3_ACTIVE_VALIDATORS_CACHE_MAX_ENTRIES";
+    const MAX_REPLAY_CACHE_ENTRIES: usize = 256;
+    const MAX_REPLAY_CACHE_ENTRIES_ENV: &str = "F1R3_REPLAY_CACHE_MAX_ENTRIES";
+    const MAX_REPLAY_CACHE_EVENT_LOG_ENTRIES: usize = 2048;
+    const MAX_REPLAY_CACHE_EVENT_LOG_ENTRIES_ENV: &str = "F1R3_REPLAY_CACHE_MAX_EVENT_LOG_ENTRIES";
+    const MAX_STATE_HASH_CACHE_ENTRIES: usize = 0;
+    const MAX_STATE_HASH_CACHE_ENTRIES_ENV: &str = "F1R3_STATE_HASH_CACHE_MAX_ENTRIES";
+
+    fn collect_replay_logs(
+        usr_processed: &[ProcessedDeploy],
+        sys_processed: &[ProcessedSystemDeploy],
+    ) -> Vec<Event> {
+        let user_log_len: usize = usr_processed.iter().map(|pd| pd.deploy_log.len()).sum();
+        let sys_log_len: usize = sys_processed
+            .iter()
+            .map(|psd| match psd {
+                ProcessedSystemDeploy::Succeeded { event_list, .. } => event_list.len(),
+                ProcessedSystemDeploy::Failed { event_list, .. } => event_list.len(),
+            })
+            .sum();
+
+        let mut all_logs = Vec::with_capacity(user_log_len + sys_log_len);
+
+        for pd in usr_processed {
+            all_logs.extend(pd.deploy_log.iter().cloned());
+        }
+
+        for psd in sys_processed {
+            match psd {
+                ProcessedSystemDeploy::Succeeded { event_list, .. } => {
+                    all_logs.extend(event_list.iter().cloned());
+                }
+                ProcessedSystemDeploy::Failed { event_list, .. } => {
+                    all_logs.extend(event_list.iter().cloned());
+                }
+            }
+        }
+
+        all_logs
+    }
+
+    fn replay_payload_hash(
+        usr_processed: &[ProcessedDeploy],
+        sys_processed: &[ProcessedSystemDeploy],
+        is_genesis: bool,
+    ) -> Vec<u8> {
+        // Fingerprint replay-relevant payload so cache keys stay safe under adversarial input.
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&(usr_processed.len() as u64).to_le_bytes());
+        for pd in usr_processed {
+            let encoded = pd.clone().to_proto().encode_to_vec();
+            bytes.extend_from_slice(&(encoded.len() as u64).to_le_bytes());
+            bytes.extend_from_slice(&encoded);
+        }
+        bytes.extend_from_slice(&(sys_processed.len() as u64).to_le_bytes());
+        for psd in sys_processed {
+            let encoded = psd.clone().to_proto().encode_to_vec();
+            bytes.extend_from_slice(&(encoded.len() as u64).to_le_bytes());
+            bytes.extend_from_slice(&encoded);
+        }
+        bytes.push(u8::from(is_genesis));
+        Blake2b256::hash(bytes)
+    }
+
+    fn max_block_index_cache_entries() -> usize {
+        static VALUE: OnceLock<usize> = OnceLock::new();
+        *VALUE.get_or_init(|| {
+            std::env::var(Self::MAX_BLOCK_INDEX_CACHE_ENTRIES_ENV)
+                .ok()
+                .and_then(|v| v.parse::<usize>().ok())
+                .filter(|v| *v > 0)
+                .unwrap_or(Self::MAX_BLOCK_INDEX_CACHE_ENTRIES)
+        })
+    }
+
+    fn max_parents_post_state_cache_entries() -> usize {
+        static VALUE: OnceLock<usize> = OnceLock::new();
+        *VALUE.get_or_init(|| {
+            std::env::var(Self::MAX_PARENTS_POST_STATE_CACHE_ENTRIES_ENV)
+                .ok()
+                .and_then(|v| v.parse::<usize>().ok())
+                .filter(|v| *v > 0)
+                .unwrap_or(Self::MAX_PARENTS_POST_STATE_CACHE_ENTRIES)
+        })
+    }
+
+    fn max_active_validators_cache_entries() -> usize {
+        static VALUE: OnceLock<usize> = OnceLock::new();
+        *VALUE.get_or_init(|| {
+            std::env::var(Self::MAX_ACTIVE_VALIDATORS_CACHE_ENTRIES_ENV)
+                .ok()
+                .and_then(|v| v.parse::<usize>().ok())
+                .filter(|v| *v > 0)
+                .unwrap_or(Self::MAX_ACTIVE_VALIDATORS_CACHE_ENTRIES)
+        })
+    }
+
+    fn max_replay_cache_entries() -> usize {
+        static VALUE: OnceLock<usize> = OnceLock::new();
+        *VALUE.get_or_init(|| {
+            std::env::var(Self::MAX_REPLAY_CACHE_ENTRIES_ENV)
+                .ok()
+                .and_then(|v| v.parse::<usize>().ok())
+                .unwrap_or(Self::MAX_REPLAY_CACHE_ENTRIES)
+        })
+    }
+
+    fn max_replay_cache_event_log_entries() -> usize {
+        static VALUE: OnceLock<usize> = OnceLock::new();
+        *VALUE.get_or_init(|| {
+            std::env::var(Self::MAX_REPLAY_CACHE_EVENT_LOG_ENTRIES_ENV)
+                .ok()
+                .and_then(|v| v.parse::<usize>().ok())
+                .unwrap_or(Self::MAX_REPLAY_CACHE_EVENT_LOG_ENTRIES)
+        })
+    }
+
+    fn max_state_hash_cache_entries() -> usize {
+        static VALUE: OnceLock<usize> = OnceLock::new();
+        *VALUE.get_or_init(|| {
+            std::env::var(Self::MAX_STATE_HASH_CACHE_ENTRIES_ENV)
+                .ok()
+                .and_then(|v| v.parse::<usize>().ok())
+                .unwrap_or(Self::MAX_STATE_HASH_CACHE_ENTRIES)
+        })
+    }
+
+    fn maybe_trim_allocator() {
+        let enabled = std::env::var("F1R3_RUNTIME_MALLOC_TRIM")
+            .ok()
+            .map(|v| {
+                let normalized = v.trim().to_ascii_lowercase();
+                normalized == "1" || normalized == "true" || normalized == "yes"
+            })
+            .unwrap_or(true);
+        if !enabled {
+            return;
+        }
+
+        #[cfg(target_os = "linux")]
+        unsafe {
+            unsafe extern "C" {
+                fn malloc_trim(pad: usize) -> i32;
+            }
+            let _ = malloc_trim(0);
+        }
+    }
+
+    pub fn trim_allocator() {
+        Self::maybe_trim_allocator();
+    }
+
+    fn evict_one_dashmap_entry<K, V>(map: &DashMap<K, V>)
+    where
+        K: Eq + Hash + Clone,
+    {
+        let evict_key = map.iter().next().map(|entry| entry.key().clone());
+        if let Some(key) = evict_key {
+            map.remove(&key);
+        }
+    }
+
     pub async fn spawn_runtime(&self) -> RhoRuntimeImpl {
         let new_space = self.space.spawn().expect("Failed to spawn RSpace");
         let runtime = rho_runtime::create_rho_runtime(
@@ -124,6 +323,7 @@ impl RuntimeManager {
             Vec<ProcessedSystemDeploy>,
             Vec<NumberChannelsEndVal>,
         ) = sys_deploy_res.into_iter().unzip();
+        let replay_cache_event_log_cap = Self::max_replay_cache_event_log_entries();
 
         // Concat user and system deploys mergeable channel maps
         let mergeable_chs = usr_mergeable
@@ -138,13 +338,195 @@ impl RuntimeManager {
         // Save mergeable channels to store
         self.save_mergeable_channels(
             post_state_hash,
-            sender.bytes,
+            sender.bytes.clone(),
             seq_num,
             mergeable_chs,
             &pre_state_hash,
         )?;
 
+        // Cache replay result for potential replay shortcut (including event logs)
+        if let Some(ref cache) = self.replay_cache {
+            let all_logs = Self::collect_replay_logs(&usr_processed, &sys_processed);
+            let replay_payload_hash =
+                Self::replay_payload_hash(&usr_processed, &sys_processed, false);
+
+            if !all_logs.is_empty() && all_logs.len() <= replay_cache_event_log_cap {
+                let key = ReplayCacheKey::new(
+                    start_hash.clone(),
+                    sender.bytes.to_vec(),
+                    seq_num as i64,
+                    replay_payload_hash,
+                );
+                let entry = ReplayCacheEntry::new(all_logs, state_hash.clone());
+                cache.put(key, entry);
+                tracing::debug!(
+                    "[CACHE] Stored replay cache entry for sender seq={}",
+                    seq_num
+                );
+            } else if !all_logs.is_empty() {
+                tracing::debug!(
+                    "[CACHE] Skipped replay cache store for sender seq={} (event_log={})",
+                    seq_num,
+                    all_logs.len()
+                );
+            }
+        }
+
+        // Cache state hash mapping for skip-replay optimization
+        if let Some(ref cache) = self.state_hash_cache {
+            cache.put(start_hash.clone(), state_hash.clone());
+            tracing::debug!("[CACHE] Stored state hash mapping");
+        }
+
         Ok((state_hash, usr_processed, sys_processed))
+    }
+
+    pub async fn compute_state_with_bonds(
+        &mut self,
+        start_hash: &StateHash,
+        terms: Vec<Signed<DeployData>>,
+        system_deploys: Vec<super::system_deploy_enum::SystemDeployEnum>,
+        block_data: BlockData,
+        invalid_blocks: Option<HashMap<BlockHash, Validator>>,
+    ) -> Result<
+        (
+            StateHash,
+            Vec<ProcessedDeploy>,
+            Vec<ProcessedSystemDeploy>,
+            Vec<Bond>,
+        ),
+        CasperError,
+    > {
+        let mem_profile_enabled = std::env::var("F1R3_BLOCK_CREATOR_PHASE_SUBSTEP_PROFILE")
+            .ok()
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        let read_vm_rss_kb = || -> Option<usize> {
+            let status = std::fs::read_to_string("/proc/self/status").ok()?;
+            status
+                .lines()
+                .find(|line| line.starts_with("VmRSS:"))
+                .and_then(|line| line.split_whitespace().nth(1))
+                .and_then(|value| value.parse::<usize>().ok())
+        };
+        let mut rss_baseline = if mem_profile_enabled {
+            read_vm_rss_kb()
+        } else {
+            None
+        };
+        let mut rss_prev = rss_baseline;
+        let mut log_mem_step = |step: &str| {
+            if !mem_profile_enabled {
+                return;
+            }
+            if let Some(curr) = read_vm_rss_kb() {
+                let prev = rss_prev.unwrap_or(curr);
+                let baseline = rss_baseline.unwrap_or(curr);
+                eprintln!(
+                    "compute_state_with_bonds.mem step={} rss_kb={} delta_prev_kb={} delta_total_kb={}",
+                    step,
+                    curr,
+                    curr as i64 - prev as i64,
+                    curr as i64 - baseline as i64
+                );
+                rss_prev = Some(curr);
+                if rss_baseline.is_none() {
+                    rss_baseline = Some(curr);
+                }
+            }
+        };
+        log_mem_step("start");
+
+        let invalid_blocks = invalid_blocks.unwrap_or_default();
+        let runtime = self.spawn_runtime().await;
+        log_mem_step("after_spawn_runtime");
+        let mut runtime_ops = RuntimeOps::new(runtime);
+
+        // Block data used for mergeable key
+        let sender = block_data.sender.clone();
+        let seq_num = block_data.seq_num;
+
+        let (state_hash, usr_deploy_res, sys_deploy_res) = runtime_ops
+            .compute_state(
+                start_hash,
+                terms,
+                system_deploys,
+                block_data,
+                invalid_blocks,
+            )
+            .await?;
+        log_mem_step("after_compute_state");
+
+        let (usr_processed, usr_mergeable): (Vec<ProcessedDeploy>, Vec<NumberChannelsEndVal>) =
+            usr_deploy_res.into_iter().unzip();
+        let (sys_processed, sys_mergeable): (
+            Vec<ProcessedSystemDeploy>,
+            Vec<NumberChannelsEndVal>,
+        ) = sys_deploy_res.into_iter().unzip();
+        let replay_cache_event_log_cap = Self::max_replay_cache_event_log_entries();
+
+        // Concat user and system deploys mergeable channel maps
+        let mergeable_chs = usr_mergeable
+            .into_iter()
+            .chain(sys_mergeable.into_iter())
+            .collect();
+
+        // Convert from final to diff values and persist mergeable (number) channels for post-state hash
+        let pre_state_hash = Blake2b256Hash::from_bytes_prost(start_hash);
+        let post_state_hash = Blake2b256Hash::from_bytes_prost(&state_hash);
+
+        // Save mergeable channels to store
+        self.save_mergeable_channels(
+            post_state_hash,
+            sender.bytes.clone(),
+            seq_num,
+            mergeable_chs,
+            &pre_state_hash,
+        )?;
+        log_mem_step("after_save_mergeable_channels");
+
+        // Cache replay result for potential replay shortcut (including event logs)
+        if let Some(ref cache) = self.replay_cache {
+            let all_logs = Self::collect_replay_logs(&usr_processed, &sys_processed);
+            let replay_payload_hash =
+                Self::replay_payload_hash(&usr_processed, &sys_processed, false);
+
+            if !all_logs.is_empty() && all_logs.len() <= replay_cache_event_log_cap {
+                let key = ReplayCacheKey::new(
+                    start_hash.clone(),
+                    sender.bytes.to_vec(),
+                    seq_num as i64,
+                    replay_payload_hash,
+                );
+                let entry = ReplayCacheEntry::new(all_logs, state_hash.clone());
+                cache.put(key, entry);
+                tracing::debug!(
+                    "[CACHE] Stored replay cache entry for sender seq={}",
+                    seq_num
+                );
+            } else if !all_logs.is_empty() {
+                tracing::debug!(
+                    "[CACHE] Skipped replay cache store for sender seq={} (event_log={})",
+                    seq_num,
+                    all_logs.len()
+                );
+            }
+        }
+
+        // Cache state hash mapping for skip-replay optimization
+        if let Some(ref cache) = self.state_hash_cache {
+            cache.put(start_hash.clone(), state_hash.clone());
+            tracing::debug!("[CACHE] Stored state hash mapping");
+        }
+        log_mem_step("after_cache_updates");
+
+        // Reuse the same spawned runtime for bonds query to avoid a second runtime init.
+        let bonds = runtime_ops.compute_bonds(&state_hash).await?;
+        log_mem_step("after_compute_bonds");
+        drop(runtime_ops);
+        log_mem_step("after_drop_runtime_ops");
+
+        Ok((state_hash, usr_processed, sys_processed, bonds))
     }
 
     pub async fn compute_genesis(
@@ -186,13 +568,97 @@ impl RuntimeManager {
         invalid_blocks: Option<HashMap<BlockHash, Validator>>,
         is_genesis: bool, // FIXME have a better way of knowing this. Pass the replayDeploy function maybe? - OLD
     ) -> Result<StateHash, CasperError> {
+        let sender = block_data.sender.clone();
+        let seq_num = block_data.seq_num;
+        let replay_payload_hash = Self::replay_payload_hash(&terms, &system_deploys, is_genesis);
+
+        // Step 1: Check state-hash cache.
+        //
+        // IMPORTANT:
+        // `StateHashCache` is keyed only by pre-state, while mergeable channels are keyed by
+        // (post-state, creator, seq-num). Returning early here can skip writing mergeable data
+        // for a distinct block that shares the same pre-state, which later breaks
+        // parent-post-state/index reconstruction with "Missing mergeable entry ...".
+        //
+        // We only fast-return on cache hit if mergeable entry already exists for this block key.
+        // For empty blocks we can safely synthesize and persist an empty mergeable entry.
+        // Otherwise, fall through to full replay to materialize mergeable data.
+        if let Some(ref cache) = self.state_hash_cache {
+            if let Some(cached_post) = cache.get(start_hash) {
+                let mergeable_key = MergeableKey {
+                    state_hash: StateHashSerde(cached_post.clone()),
+                    creator: sender.bytes.clone(),
+                    seq_num,
+                };
+                let mergeable_key_encoded = bincode::serialize(&mergeable_key).map_err(|e| {
+                    CasperError::KvStoreError(KvStoreError::SerializationError(e.to_string()))
+                })?;
+
+                if self
+                    .mergeable_store
+                    .contains_key(mergeable_key_encoded.clone())?
+                {
+                    tracing::info!(
+                        "[CACHE] StateHashCache hit: mergeable entry present, skipping full replay"
+                    );
+                    return Ok(cached_post);
+                }
+
+                let no_user_deploys = terms.is_empty();
+                let no_system_deploys = system_deploys.is_empty();
+                if no_user_deploys && no_system_deploys {
+                    let pre_state_hash = Blake2b256Hash::from_bytes_prost(start_hash);
+                    let post_state_hash = Blake2b256Hash::from_bytes_prost(&cached_post);
+                    self.save_mergeable_channels(
+                        post_state_hash,
+                        sender.bytes.clone(),
+                        seq_num,
+                        Vec::new(),
+                        &pre_state_hash,
+                    )?;
+                    tracing::warn!(
+                        "[CACHE] StateHashCache hit without mergeable entry for empty block (seq={}); synthesized empty mergeable metadata",
+                        seq_num
+                    );
+                    return Ok(cached_post);
+                }
+
+                tracing::warn!(
+                    "[CACHE] StateHashCache hit without mergeable entry for seq={}; falling back to full replay",
+                    seq_num
+                );
+            }
+        }
+
+        // Step 2: Check replay cache (deterministic replay delta)
+        let replay_cache_key = ReplayCacheKey::new(
+            start_hash.clone(),
+            sender.bytes.to_vec(),
+            seq_num as i64,
+            replay_payload_hash,
+        );
+        if let Some(ref cache) = self.replay_cache {
+            if let Some(entry) = cache.get(&replay_cache_key) {
+                tracing::info!("[CACHE] ReplayCache hit for sender seq={}", seq_num);
+
+                // Rig the replay runtime with cached event log
+                let replay_runtime = self.spawn_replay_runtime().await;
+                let rspace_events: Vec<_> = entry
+                    .event_log
+                    .iter()
+                    .map(crate::rust::util::event_converter::to_rspace_event)
+                    .collect();
+                replay_runtime.rig(rspace_events)?;
+
+                return Ok(entry.post_state);
+            }
+        }
+
+        // Step 3: Full replay (cache miss)
         let invalid_blocks = invalid_blocks.unwrap_or_default();
         let replay_runtime = self.spawn_replay_runtime().await;
         let runtime_ops = RuntimeOps::new(replay_runtime);
         let mut replay_runtime_ops = ReplayRuntimeOps::new(runtime_ops);
-
-        let sender = block_data.sender.clone();
-        let seq_num = block_data.seq_num;
 
         let (state_hash, mergeable_chs) = replay_runtime_ops
             .replay_compute_state(
@@ -207,6 +673,7 @@ impl RuntimeManager {
 
         // Convert from final to diff values and persist mergeable (number) channels for post-state hash
         let pre_state_hash = Blake2b256Hash::from_bytes_prost(&start_hash);
+        let post_state = state_hash.to_bytes_prost();
 
         self.save_mergeable_channels(
             state_hash.clone(),
@@ -217,7 +684,12 @@ impl RuntimeManager {
         )
         .unwrap_or_else(|e| panic!("Failed to save mergeable channels: {:?}", e));
 
-        Ok(state_hash.to_bytes_prost())
+        // Cache the result for future replays
+        if let Some(ref cache) = self.state_hash_cache {
+            cache.put(start_hash.clone(), post_state.clone());
+        }
+
+        Ok(post_state)
     }
 
     pub async fn capture_results(
@@ -235,9 +707,21 @@ impl RuntimeManager {
         &self,
         start_hash: &StateHash,
     ) -> Result<Vec<Validator>, CasperError> {
+        if let Some(cached) = self.active_validators_cache.get(start_hash) {
+            return Ok(cached.clone());
+        }
+
         let runtime = self.spawn_runtime().await;
         let mut runtime_ops = RuntimeOps::new(runtime);
         let computed = runtime_ops.get_active_validators(start_hash).await?;
+
+        let max_entries = Self::max_active_validators_cache_entries();
+        if self.active_validators_cache.len() >= max_entries {
+            Self::evict_one_dashmap_entry(&self.active_validators_cache);
+        }
+        self.active_validators_cache
+            .insert(start_hash.clone(), computed.clone());
+
         Ok(computed)
     }
 
@@ -263,7 +747,7 @@ impl RuntimeManager {
     pub async fn get_data(&self, hash: StateHash, channel: &Par) -> Result<Vec<Par>, CasperError> {
         let mut runtime = self.spawn_runtime().await;
 
-        runtime.reset(&Blake2b256Hash::from_bytes_prost(&hash));
+        runtime.reset(&Blake2b256Hash::from_bytes_prost(&hash))?;
 
         let runtime_ops = RuntimeOps::new(runtime);
         let computed = runtime_ops.get_data_par(channel);
@@ -277,7 +761,7 @@ impl RuntimeManager {
     ) -> Result<Vec<(Vec<BindPattern>, Par)>, CasperError> {
         let mut runtime = self.spawn_runtime().await;
 
-        runtime.reset(&Blake2b256Hash::from_bytes_prost(&hash));
+        runtime.reset(&Blake2b256Hash::from_bytes_prost(&hash))?;
 
         let runtime_ops = RuntimeOps::new(runtime);
         let computed = runtime_ops.get_continuation_par(channels);
@@ -298,34 +782,70 @@ impl RuntimeManager {
         post_state_hash: &Blake2b256Hash,
         mergeable_chs: &Vec<NumberChannelsDiff>,
     ) -> Result<BlockIndex, CasperError> {
-        // Use entry API to atomically handle get-or-compute pattern
-        match self.block_index_cache.entry(block_hash.clone()) {
-            dashmap::mapref::entry::Entry::Occupied(entry) => {
-                // Cache hit - return cached value
-                Ok(entry.get().clone())
-            }
-            dashmap::mapref::entry::Entry::Vacant(entry) => {
-                // Cache miss - compute the BlockIndex
-                let block_index = crate::rust::merging::block_index::new(
-                    block_hash,
-                    usr_processed_deploys,
-                    sys_processed_deploys,
-                    pre_state_hash,
-                    post_state_hash,
-                    &self.history_repo,
-                    mergeable_chs,
-                )?;
-
-                // Insert and return the computed value
-                entry.insert(block_index.clone());
-                Ok(block_index)
-            }
+        if let Some(cached) = self.block_index_cache.get(block_hash) {
+            metrics::gauge!(BLOCK_INDEX_CACHE_SIZE_METRIC, "source" => CASPER_METRICS_SOURCE)
+                .set(self.block_index_cache.len() as f64);
+            return Ok(cached.clone());
         }
+
+        // Cache miss - compute the BlockIndex.
+        let block_index = crate::rust::merging::block_index::new(
+            block_hash,
+            usr_processed_deploys,
+            sys_processed_deploys,
+            pre_state_hash,
+            post_state_hash,
+            &self.history_repo,
+            mergeable_chs,
+        )?;
+
+        // Keep index cache bounded for long-running validators.
+        // Avoid DashMap re-entrant calls while holding an entry guard.
+        let max_entries = Self::max_block_index_cache_entries();
+        if self.block_index_cache.len() >= max_entries {
+            Self::evict_one_dashmap_entry(&self.block_index_cache);
+        }
+
+        self.block_index_cache
+            .insert(block_hash.clone(), block_index.clone());
+        metrics::gauge!(BLOCK_INDEX_CACHE_SIZE_METRIC, "source" => CASPER_METRICS_SOURCE)
+            .set(self.block_index_cache.len() as f64);
+        Ok(block_index)
     }
 
     /// Remove BlockIndex from cache (used during finalization)
     pub fn remove_block_index_cache(&self, block_hash: &BlockHash) {
         self.block_index_cache.remove(block_hash);
+        metrics::gauge!(BLOCK_INDEX_CACHE_SIZE_METRIC, "source" => CASPER_METRICS_SOURCE)
+            .set(self.block_index_cache.len() as f64);
+    }
+
+    pub fn get_cached_parents_post_state(
+        &self,
+        key: &ParentsPostStateCacheKey,
+    ) -> Option<ParentsPostStateCacheVal> {
+        let result = self
+            .parents_post_state_cache
+            .get(key)
+            .map(|entry| entry.value().clone());
+        metrics::gauge!(PARENTS_POST_STATE_CACHE_SIZE_METRIC, "source" => CASPER_METRICS_SOURCE)
+            .set(self.parents_post_state_cache.len() as f64);
+        result
+    }
+
+    pub fn put_cached_parents_post_state(
+        &self,
+        key: ParentsPostStateCacheKey,
+        value: ParentsPostStateCacheVal,
+    ) {
+        // Keep cache bounded with simple eviction strategy.
+        let max_entries = Self::max_parents_post_state_cache_entries();
+        if self.parents_post_state_cache.len() >= max_entries {
+            Self::evict_one_dashmap_entry(&self.parents_post_state_cache);
+        }
+        self.parents_post_state_cache.insert(key, value);
+        metrics::gauge!(PARENTS_POST_STATE_CACHE_SIZE_METRIC, "source" => CASPER_METRICS_SOURCE)
+            .set(self.parents_post_state_cache.len() as f64);
     }
 
     /**
@@ -340,7 +860,7 @@ impl RuntimeManager {
         let state_hash = Blake2b256Hash::from_bytes_prost(state_hash_bs);
         let mergeable_key = MergeableKey {
             state_hash: StateHashSerde(state_hash.to_bytes_prost()),
-            creator,
+            creator: creator.clone(),
             seq_num,
         };
 
@@ -362,12 +882,39 @@ impl RuntimeManager {
                     .collect::<Vec<_>>();
                 Ok(res_map)
             }
-
-            None => Err(CasperError::RuntimeError(format!(
-                "Mergeable store invalid state hash {}",
-                state_hash.bytes().encode_hex::<String>()
-            ))),
+            None => {
+                let msg = format!(
+                    "Missing mergeable entry for state {} (creator={}, seq={})",
+                    state_hash.bytes().encode_hex::<String>(),
+                    creator.encode_hex::<String>(),
+                    seq_num
+                );
+                tracing::error!("{}", msg);
+                Err(CasperError::KvStoreError(KvStoreError::KeyNotFound(msg)))
+            }
         }
+    }
+
+    /// Delete mergeable channels entry keyed by (post-state-hash, creator, seq-num).
+    /// Returns `true` if the entry existed prior to deletion.
+    pub fn delete_mergeable_channels(
+        &self,
+        state_hash_bs: &StateHash,
+        creator: prost::bytes::Bytes,
+        seq_num: i32,
+    ) -> Result<bool, CasperError> {
+        let mergeable_key = MergeableKey {
+            state_hash: StateHashSerde(state_hash_bs.clone()),
+            creator,
+            seq_num,
+        };
+        let encoded_key =
+            bincode::serialize(&mergeable_key).expect("Failed to serialize mergeable key");
+        let existed = self.mergeable_store.contains_key(encoded_key.clone())?;
+        if existed {
+            self.mergeable_store.delete(vec![encoded_key])?;
+        }
+        Ok(existed)
     }
 
     /**
@@ -432,16 +979,36 @@ impl RuntimeManager {
         pre_state_hash: &Blake2b256Hash,
     ) -> Vec<NumberChannelsDiff> {
         let history_repo = self.history_repo.clone();
-        let get_data_func = move |ch: &Blake2b256Hash| {
-            history_repo
-                .get_history_reader(pre_state_hash)
-                .and_then(|reader| reader.get_data(ch))
-        };
+        let reader = history_repo
+            .get_history_reader(pre_state_hash)
+            .unwrap_or_else(|e| panic!("Failed to get history reader for pre-state hash: {:?}", e));
 
-        let get_num_func = RholangMergingLogic::convert_to_read_number(get_data_func);
+        // Build a one-shot base-value map to avoid repeatedly creating history readers per key.
+        let unique_channels = channels_data
+            .iter()
+            .flat_map(|m| m.keys().cloned())
+            .collect::<std::collections::BTreeSet<_>>();
+        let mut initial_values: BTreeMap<Blake2b256Hash, i64> = BTreeMap::new();
+        for ch in unique_channels {
+            let data = reader
+                .get_data(&ch)
+                .unwrap_or_else(|e| panic!("Error getting data for channel {:?}: {:?}", ch, e));
+            assert!(
+                data.len() <= 1,
+                "To calculate difference on a number channel, single value is expected, found {:?}",
+                data
+            );
+            let value = data
+                .first()
+                .map(|datum| RholangMergingLogic::get_number_with_rnd(&datum.a).0)
+                .unwrap_or(0);
+            initial_values.insert(ch, value);
+        }
 
         // Calculate difference values from final values on number channels
-        RholangMergingLogic::calculate_num_channel_diff(channels_data, get_num_func)
+        RholangMergingLogic::calculate_num_channel_diff(channels_data, move |ch| {
+            initial_values.get(ch).copied()
+        })
     }
 
     /**
@@ -451,7 +1018,7 @@ impl RuntimeManager {
      * the time. For some situations, we can just use the value directly for better performance.
      */
     pub fn empty_state_hash_fixed() -> StateHash {
-        hex::decode("cb75e7f94e8eac21f95c524a07590f2583fbdaba6fb59291cf52fa16a14c784d")
+        hex::decode("8baa451071791021dcc8461478b960cffc78372e0d1479988daa852fa3685083")
             .unwrap()
             .into()
     }
@@ -464,6 +1031,9 @@ impl RuntimeManager {
         mergeable_tag_name: Par,
         external_services: ExternalServices,
     ) -> RuntimeManager {
+        let replay_cache_size = Self::max_replay_cache_entries();
+        let state_hash_cache_size = Self::max_state_hash_cache_entries();
+
         RuntimeManager {
             space: rspace,
             replay_space: replay_rspace,
@@ -471,6 +1041,12 @@ impl RuntimeManager {
             mergeable_store,
             mergeable_tag_name,
             block_index_cache: Arc::new(DashMap::new()),
+            active_validators_cache: Arc::new(DashMap::new()),
+            parents_post_state_cache: Arc::new(DashMap::new()),
+            replay_cache: (replay_cache_size > 0)
+                .then(|| Arc::new(InMemoryReplayCache::new(replay_cache_size))),
+            state_hash_cache: (state_hash_cache_size > 0)
+                .then(|| Arc::new(StateHashCache::new(state_hash_cache_size))),
             external_services,
         }
     }
@@ -481,7 +1057,12 @@ impl RuntimeManager {
         mergeable_tag_name: Par,
         external_services: ExternalServices,
     ) -> RuntimeManager {
-        let (rt_manager, _) = Self::create_with_history(store, mergeable_store, mergeable_tag_name, external_services);
+        let (rt_manager, _) = Self::create_with_history(
+            store,
+            mergeable_store,
+            mergeable_tag_name,
+            external_services,
+        );
         rt_manager
     }
 
@@ -492,7 +1073,7 @@ impl RuntimeManager {
         external_services: ExternalServices,
     ) -> (RuntimeManager, RhoHistoryRepository) {
         let (rspace, replay_rspace) =
-             RSpace::create_with_replay(store, Arc::new(Box::new(Matcher)))
+            RSpace::create_with_replay(store, Arc::new(Box::new(Matcher)))
                 .expect("Failed to create RSpaceWithReplay");
 
         let history_repo = rspace.history_repository.clone();

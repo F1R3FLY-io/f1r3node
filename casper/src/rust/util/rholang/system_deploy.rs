@@ -17,7 +17,7 @@ pub trait SystemDeployTrait: Send + Sync {
     type Output: Extractor<Self::Output>;
     type Result;
 
-    fn source() -> String;
+    fn source() -> &'static str;
 
     fn process_result(
         value: <Self::Output as Extractor<Self::Output>>::RustType,

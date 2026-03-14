@@ -46,7 +46,7 @@ COPY rust-toolchain.toml ./
 
 # Create directory structure and copy only Cargo.toml files from all workspace members
 # This allows us to cache dependencies separately from source code
-RUN mkdir -p models crypto rholang rholang/src/main/tree_sitter shared casper comm rspace++ rspace++/libs/rspace_rhotypes block-storage graphz node node-cli
+RUN mkdir -p models crypto rholang rholang/src/main/tree_sitter shared casper comm rspace++ rspace++/libs/rspace_rhotypes block-storage graphz node
 
 # Now copy all source code (this layer invalidates when source changes)
 # Copy in dependency order to maximize cache hits - base dependencies first
@@ -59,26 +59,32 @@ COPY rspace++/ ./rspace++/
 COPY casper/ ./casper/
 COPY comm/ ./comm/
 COPY rholang/ ./rholang/
-COPY node-cli/ ./node-cli/
 COPY node/ ./node/
 
 # Configure pkg-config for cross-compilation to find target OpenSSL libraries
 # xx-apt installs target libs in the xx sysroot, we need to tell pkg-config where they are
-# Enable AES/SSE2 CPU features for gxhash dependency (required by PathMap crate)
-RUN export TARGET_TRIPLE=$(xx-cargo --print-target-triple) && \
+# Enable AES CPU features for gxhash dependency (required by PathMap crate).
+# +sse2 is x86-only; on aarch64 only +aes is valid (avoids warning spam on ARM hosts).
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
+    --mount=type=cache,target=/build/build \
+    export TARGET_TRIPLE=$(xx-cargo --print-target-triple) && \
     export PKG_CONFIG_SYSROOT_DIR=$(xx-info sysroot) && \
     export PKG_CONFIG_PATH=$(xx-info sysroot)/usr/lib/$(xx-info triple)/pkgconfig:$(xx-info sysroot)/usr/share/pkgconfig && \
     export PKG_CONFIG_ALLOW_CROSS=1 && \
-    export RUSTFLAGS="-C target-feature=+aes,+sse2" && \
+    case "${TARGET_TRIPLE}" in \
+        aarch64*) export RUSTFLAGS="-C target-feature=+aes" ;; \
+        *) export RUSTFLAGS="-C target-feature=+aes,+sse2" ;; \
+    esac && \
     xx-cargo build --release -p node --target-dir ./build && \
     xx-verify ./build/${TARGET_TRIPLE}/release/node && \
     cp ./build/${TARGET_TRIPLE}/release/node /build/node_binary && \
     chmod +x /build/node_binary
 
 # ============================================================================
-# Stage 2: Runtime - Minimal image with only runtime dependencies
+# Stage 2: Runtime base - Install runtime dependencies (cached independently)
 # ============================================================================
-FROM debian:bookworm-slim
+FROM debian:bookworm-slim AS runtime-base
 
 # Install runtime dependencies
 # Note: grpcurl and jq for healthcheck (matching build.sbt healthcheck)
@@ -86,6 +92,7 @@ RUN apt-get update && apt-get install -y \
     ca-certificates \
     libssl3 \
     libc6 \
+    libjemalloc2 \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
@@ -111,6 +118,11 @@ RUN GRPCURL_VERSION="1.8.9" && \
     esac && \
     curl -L "https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-${JQ_ARCH}" -o /usr/local/bin/jq && \
     chmod +x /usr/local/bin/jq || true
+
+# ============================================================================
+# Stage 3: Runtime - Final image, starts at WORKDIR with artifacts from builder
+# ============================================================================
+FROM runtime-base
 
 # Use existing daemon user (matching build.sbt: daemonUser in Docker := "daemon")
 # Note: daemon user already exists in debian:12-slim, so we just ensure it has the right UID
@@ -172,4 +184,3 @@ ENTRYPOINT ["/opt/docker/bin/docker-entrypoint.sh"]
 
 # Default command (matching build.sbt: ExecCmd("CMD", "run"))
 CMD ["run"]
-

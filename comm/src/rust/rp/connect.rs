@@ -179,12 +179,26 @@ impl ConnectionsCell {
     }
 }
 
-/// Clear connections by sending heartbeats and removing failed peers
+/// Clear connections by sending heartbeats and removing failed peers.
+///
+/// Performs the full cleanup cycle matching Scala's `clearConnections`:
+/// 1. Sends heartbeats to the first N peers
+/// 2. Removes failed peers from ConnectionsCell
+/// 3. Removes failed peers from KademliaStore (via node_discovery), EXCEPT the
+///    bootstrap peer which is pinned to prevent a discovery death spiral
+/// 4. Disconnects gRPC channels for ALL failed peers (including bootstrap)
+///
+/// The bootstrap peer is kept in the routing table so `findAndConnect` can
+/// re-establish the connection on the next discovery cycle. Removing it is
+/// irreversible and strands the node if no other peers are known.
+///
+/// Returns tuple of (number of failed peers, list of failed peers).
 pub async fn clear_connections<T: TransportLayer>(
     connections_cell: &ConnectionsCell,
     conf: &RPConf,
     transport: &T,
-) -> Result<usize, CommError> {
+    node_discovery: &dyn crate::rust::discovery::node_discovery::NodeDiscovery,
+) -> Result<(usize, Vec<PeerNode>), CommError> {
     let connections = connections_cell.read()?;
     let num_to_ping = conf.clear_connections.num_of_connections_pinged;
     let to_ping = connections.take(num_to_ping);
@@ -221,9 +235,38 @@ pub async fn clear_connections<T: TransportLayer>(
         })
         .collect();
 
+    // Bootstrap peer is pinned in KademliaStore so the node can always
+    // rediscover it via findAndConnect.  Removing it from the routing
+    // table is irreversible and strands the node if no other peers are
+    // known.  The bootstrap is still removed from ConnectionsCell and
+    // its gRPC channel is disconnected (the TCP connection IS broken).
+    let bootstrap_key = conf.bootstrap.as_ref().map(|b| &b.id.key);
+    let removable_peers: Vec<&PeerNode> = failed_peers
+        .iter()
+        .filter(|p| bootstrap_key != Some(&p.id.key))
+        .collect();
+
+    if failed_peers.len() > removable_peers.len() {
+        tracing::debug!("Heartbeat to bootstrap peer failed, retaining in routing table");
+    }
+
     // Log removal of failed peers
     for peer in &failed_peers {
         info!("Removing peer {} from connections", peer);
+    }
+
+    // Remove non-bootstrap failed peers from Kademlia routing table
+    for peer in &removable_peers {
+        if let Err(e) = node_discovery.remove_peer(peer) {
+            warn!("Failed to remove peer {} from Kademlia: {}", peer, e);
+        }
+    }
+
+    // Disconnect gRPC channels for ALL failed peers (including bootstrap)
+    for peer in &failed_peers {
+        if let Err(e) = transport.disconnect(peer).await {
+            warn!("Failed to disconnect peer {}: {}", peer, e);
+        }
     }
 
     // Update connections: remove all pinged peers, then add back successful ones
@@ -239,7 +282,7 @@ pub async fn clear_connections<T: TransportLayer>(
         updated_connections.report_conn()?;
     }
 
-    Ok(failed_count)
+    Ok((failed_count, failed_peers))
 }
 
 /// Reset connections by removing all current connections

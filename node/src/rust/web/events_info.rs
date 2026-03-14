@@ -111,8 +111,8 @@ pub async fn events_info_handler(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use shared::rust::shared::f1r3fly_event::DeployEvent;
     use serde_json::json;
+    use shared::rust::shared::f1r3fly_event::DeployEvent;
 
     fn create_test_deploy(id: &str) -> DeployEvent {
         DeployEvent::new(id.to_string(), 100, "deployer1".to_string(), false)
@@ -137,7 +137,7 @@ mod tests {
         let payload = &result["payload"];
         assert_eq!(payload["block-hash"], "hash123");
         assert_eq!(payload["parent-hashes"], json!(["parent1"]));
-        assert_eq!(payload["seq-number"], 42);
+        assert_eq!(payload["seq-num"], 42);
         // Verify deploy event structure
         assert_eq!(payload["deploys"][0]["id"], "deploy1");
         assert_eq!(payload["deploys"][0]["cost"], 100);
@@ -187,7 +187,7 @@ mod tests {
         // Verify full block metadata fields
         assert_eq!(payload["parent-hashes"], json!(["parent1"]));
         assert_eq!(payload["creator"], "creator1");
-        assert_eq!(payload["seq-number"], 1);
+        assert_eq!(payload["seq-num"], 1);
     }
 
     #[test]

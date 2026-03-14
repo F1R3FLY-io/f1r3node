@@ -2,6 +2,13 @@
 
 set -e
 
+if command -v clang >/dev/null 2>&1; then
+  export CC="${CC:-clang}"
+fi
+if command -v clang++ >/dev/null 2>&1; then
+  export CXX="${CXX:-clang++}"
+fi
+
 cd rspace++/
 cargo test --release
 

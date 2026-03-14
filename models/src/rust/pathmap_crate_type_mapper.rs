@@ -1,5 +1,7 @@
+use super::pathmap_integration::{
+    create_pathmap_from_elements, PathMapCreationResult, RholangPathMap,
+};
 use crate::rhoapi::{EPathMap, Var};
-use super::pathmap_integration::{RholangPathMap, PathMapCreationResult, create_pathmap_from_elements};
 
 pub struct PathMapCrateTypeMapper;
 

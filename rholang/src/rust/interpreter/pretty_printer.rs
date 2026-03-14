@@ -443,7 +443,11 @@ impl PrettyPrinter {
                     let pathmap = zipper.pathmap.as_ref().expect("zipper pathmap was None");
                     let elements = self.build_vec(&pathmap.ps);
                     let remainder_string = self.build_remainder_string(&pathmap.remainder);
-                    let zipper_type = if zipper.is_write_zipper { "WriteZipper" } else { "ReadZipper" };
+                    let zipper_type = if zipper.is_write_zipper {
+                        "WriteZipper"
+                    } else {
+                        "ReadZipper"
+                    };
 
                     let pathmap_repr = if pathmap.remainder.is_some() && !elements.is_empty() {
                         format!("{{|{}{}|}}", elements, remainder_string)
@@ -458,8 +462,10 @@ impl PrettyPrinter {
                         "[]".to_string()
                     } else {
                         use models::rust::path_map_encoder::SExpr;
-                        
-                        let path_segments: Vec<String> = zipper.current_path.iter()
+
+                        let path_segments: Vec<String> = zipper
+                            .current_path
+                            .iter()
                             .map(|segment| {
                                 // Decode S-expression to get readable format
                                 SExpr::decode(segment)
@@ -486,7 +492,10 @@ impl PrettyPrinter {
                     };
 
                     // Format: ReadZipper(at: ["books", "fiction"], {| ... |})
-                    Ok(format!("{}(at: {}, {})", zipper_type, current_path_repr, pathmap_repr))
+                    Ok(format!(
+                        "{}(at: {}, {})",
+                        zipper_type, current_path_repr, pathmap_repr
+                    ))
                 }
 
                 ExprInstance::EVarBody(EVar { v }) => Ok(self.build_string_from_var(

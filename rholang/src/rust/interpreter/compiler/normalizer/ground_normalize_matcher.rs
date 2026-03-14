@@ -44,8 +44,7 @@ pub fn normalize_ground<'ast>(proc: &NewProc<'ast>) -> Result<Expr, InterpreterE
 #[cfg(test)]
 mod tests {
     use crate::rust::interpreter::{
-        compiler::normalizer::ground_normalize_matcher::normalize_ground,
-        errors::InterpreterError,
+        compiler::normalizer::ground_normalize_matcher::normalize_ground, errors::InterpreterError,
     };
     use models::rhoapi::expr::ExprInstance;
     use rholang_parser::ast::Proc;

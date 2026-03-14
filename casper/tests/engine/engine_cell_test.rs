@@ -43,7 +43,9 @@ impl Engine for TestEngine {
         Ok(())
     }
 
-    fn with_casper(&self) -> Option<Arc<dyn casper::rust::casper::MultiParentCasper + Send + Sync>> {
+    fn with_casper(
+        &self,
+    ) -> Option<Arc<dyn casper::rust::casper::MultiParentCasper + Send + Sync>> {
         // TestEngine returns None to simulate NoopEngine behavior (no casper instance)
         // In real scenarios, engines either:
         // - Return None (like NoopEngine) when they don't wrap casper
@@ -86,7 +88,9 @@ impl Engine for FailingEngine {
         }
     }
 
-    fn with_casper(&self) -> Option<Arc<dyn casper::rust::casper::MultiParentCasper + Send + Sync>> {
+    fn with_casper(
+        &self,
+    ) -> Option<Arc<dyn casper::rust::casper::MultiParentCasper + Send + Sync>> {
         // TestEngine returns None to simulate NoopEngine behavior (no casper instance)
         // In real scenarios, engines either:
         // - Return None (like NoopEngine) when they don't wrap casper

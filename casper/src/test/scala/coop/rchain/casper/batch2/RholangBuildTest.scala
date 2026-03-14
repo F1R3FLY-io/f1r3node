@@ -7,9 +7,9 @@ import coop.rchain.casper.helper.TestNode._
 import coop.rchain.casper.util.ConstructDeploy
 import coop.rchain.casper.util.GenesisBuilder._
 import coop.rchain.casper.util.RSpaceUtil._
-import coop.rchain.casper.util.rholang.RegistrySigGen
+import coop.rchain.casper.util.rholang.Tools
 import coop.rchain.crypto.signatures.Secp256k1
-import coop.rchain.rholang.interpreter.util.RevAddress
+import coop.rchain.rholang.interpreter.util.VaultAddress
 import coop.rchain.shared.{Base16, RChainScheduler}
 import coop.rchain.shared.scalatestcontrib._
 import org.scalatest.{FlatSpec, Matchers}
@@ -51,10 +51,7 @@ class RholangBuildTest extends FlatSpec with Matchers {
           _ <- getDataAtPrivateChannel[Effect](
                 signedBlock,
                 Base16.encode(
-                  RegistrySigGen.generateUnforgeableNameId(
-                    deploy.pk,
-                    deploy.data.timestamp
-                  )
+                  Tools.unforgeableNameRng(deploy.pk, deploy.data.timestamp).next()
                 )
               ).map(
                 _ shouldBe Seq(
@@ -66,11 +63,13 @@ class RholangBuildTest extends FlatSpec with Matchers {
   }
 
   "Our build system" should "execute the genesis block" ignore effectTest {
-    val REV_ADDRESS_COUNT = 16000
+    val VAULT_ADDRESS_COUNT = 16000
 
-    val vaults = (1 to REV_ADDRESS_COUNT)
+    val vaults = (1 to VAULT_ADDRESS_COUNT)
       .map(i => (Secp256k1.newKeyPair, i))
-      .map { case ((_, publicKey), i) => Vault(RevAddress.fromPublicKey(publicKey).get, i.toLong) }
+      .map {
+        case ((_, publicKey), i) => Vault(VaultAddress.fromPublicKey(publicKey).get, i.toLong)
+      }
       .toSeq
     val (keyPairs, genesisVaults, genesis) = buildGenesisParameters()
     val genesisParams                      = (keyPairs, genesisVaults, genesis.copy(vaults = vaults))

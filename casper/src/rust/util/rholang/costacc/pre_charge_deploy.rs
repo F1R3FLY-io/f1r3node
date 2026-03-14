@@ -24,7 +24,7 @@ impl SystemDeployTrait for PreChargeDeploy {
     type Output = (RhoBoolean, Either<RhoString, RhoNil>);
     type Result = ();
 
-    fn source() -> String {
+    fn source() -> &'static str {
         r#"
           new rl(`rho:registry:lookup`),
           poSCh,
@@ -33,12 +33,11 @@ impl SystemDeployTrait for PreChargeDeploy {
           sysAuthToken(`sys:casper:authToken`),
           return(`sys:casper:return`)
           in {
-            rl!(`rho:rchain:pos`, *poSCh) |
+            rl!(`rho:system:pos`, *poSCh) |
             for(@(_, PoS) <- poSCh) {
                 @PoS!("chargeDeploy", *initialDeployerId, *chargeAmount, *sysAuthToken, *return)
             }
         }"#
-        .to_string()
     }
 
     fn process_result(value: (bool, Either<String, ()>)) -> Either<SystemDeployUserError, ()> {

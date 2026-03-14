@@ -412,6 +412,7 @@ fn rho_spec_deploy() -> Signed<DeployData> {
         phlo_limit: i64::MAX,
         valid_after_block_number: 0,
         shard_id: SHARD_ID.to_string(),
+        expiration_timestamp: None,
     };
 
     Signed::create(deploy_data, Box::new(Secp256k1), sk).expect("Failed to sign RhoSpec deploy")

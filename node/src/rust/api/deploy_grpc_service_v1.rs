@@ -3,7 +3,7 @@
 //! This module provides a gRPC service for deploy functionality,
 //! allowing clients to deploy contracts, query blocks, and perform various blockchain operations.
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use crate::rust::web::version_info::get_version_info_str;
 use block_storage::rust::key_value_block_store::KeyValueBlockStore;
@@ -30,6 +30,7 @@ use models::casper::{
     PrivateNamePreviewQuery, ReportQuery, Status, VersionInfo, VisualizeDagQuery,
 };
 use models::servicemodelapi::ServiceError;
+use tokio::time::{sleep, Duration};
 use tracing::error;
 
 trait IntoServiceError {
@@ -42,6 +43,41 @@ impl IntoServiceError for eyre::Report {
             messages: vec![self.to_string()],
         }
     }
+}
+
+impl IntoServiceError for casper::rust::api::block_report_api::BlockReportError {
+    fn into_service_error(self) -> ServiceError {
+        ServiceError {
+            messages: vec![self.to_string()],
+        }
+    }
+}
+
+const FIND_DEPLOY_RETRY_INTERVAL_MS_ENV: &str = "F1R3_GRPC_FIND_DEPLOY_RETRY_INTERVAL_MS";
+const FIND_DEPLOY_MAX_ATTEMPTS_ENV: &str = "F1R3_GRPC_FIND_DEPLOY_MAX_ATTEMPTS";
+const DEFAULT_FIND_DEPLOY_RETRY_INTERVAL_MS: u64 = 100;
+const DEFAULT_FIND_DEPLOY_MAX_ATTEMPTS: u8 = 80;
+
+fn find_deploy_retry_interval_ms() -> u64 {
+    static VALUE: OnceLock<u64> = OnceLock::new();
+    *VALUE.get_or_init(|| {
+        shared::rust::env::var_or_filtered(
+            FIND_DEPLOY_RETRY_INTERVAL_MS_ENV,
+            DEFAULT_FIND_DEPLOY_RETRY_INTERVAL_MS,
+            |value: &u64| *value > 0,
+        )
+    })
+}
+
+fn find_deploy_max_attempts() -> u8 {
+    static VALUE: OnceLock<u8> = OnceLock::new();
+    *VALUE.get_or_init(|| {
+        shared::rust::env::var_or_filtered(
+            FIND_DEPLOY_MAX_ATTEMPTS_ENV,
+            DEFAULT_FIND_DEPLOY_MAX_ATTEMPTS,
+            |value: &u8| *value > 0,
+        )
+    })
 }
 
 /// Deploy gRPC Service V1 implementation
@@ -60,6 +96,7 @@ pub struct DeployGrpcServiceV1Impl {
     rp_conf_cell: comm::rust::rp::rp_conf::RPConfCell,
     connections_cell: ConnectionsCell,
     node_discovery: Arc<dyn NodeDiscovery + Send + Sync>,
+    block_enricher: Option<Arc<dyn crate::rust::web::block_info_enricher::BlockEnricher>>,
 }
 
 impl DeployGrpcServiceV1Impl {
@@ -77,6 +114,7 @@ impl DeployGrpcServiceV1Impl {
         rp_conf_cell: comm::rust::rp::rp_conf::RPConfCell,
         connections_cell: ConnectionsCell,
         node_discovery: Arc<dyn NodeDiscovery + Send + Sync>,
+        block_enricher: Option<Arc<dyn crate::rust::web::block_info_enricher::BlockEnricher>>,
     ) -> Self {
         Self {
             api_max_blocks_limit,
@@ -92,6 +130,7 @@ impl DeployGrpcServiceV1Impl {
             rp_conf_cell,
             connections_cell,
             node_discovery,
+            block_enricher,
         }
     }
 
@@ -202,7 +241,14 @@ impl DeployService for DeployGrpcServiceV1Impl {
         request: tonic::Request<BlockQuery>,
     ) -> Result<tonic::Response<BlockResponse>, tonic::Status> {
         match BlockAPI::get_block(&self.engine_cell, &request.into_inner().hash).await {
-            Ok(block_info) => Self::create_success_block_response(block_info),
+            Ok(block_info) => {
+                let enriched = if let Some(ref enricher) = self.block_enricher {
+                    enricher.enrich(block_info).await
+                } else {
+                    block_info
+                };
+                Self::create_success_block_response(enriched)
+            }
             Err(e) => {
                 error!("Deploy service method error get_block");
                 Self::create_error_block_response(e.into_service_error())
@@ -498,19 +544,46 @@ impl DeployService for DeployGrpcServiceV1Impl {
         request: tonic::Request<FindDeployQuery>,
     ) -> Result<tonic::Response<FindDeployResponse>, tonic::Status> {
         let request = request.into_inner();
-        match BlockAPI::find_deploy(&self.engine_cell, &request.deploy_id.to_vec()).await {
-            Ok(block_info) => Ok(tonic::Response::new(FindDeployResponse {
-                message: Some(
-                    models::casper::v1::find_deploy_response::Message::BlockInfo(block_info),
-                ),
-            })),
-            Err(e) => {
-                error!("Deploy service method error find_deploy");
-                Ok(tonic::Response::new(FindDeployResponse {
-                    message: Some(models::casper::v1::find_deploy_response::Message::Error(
-                        e.into_service_error(),
-                    )),
-                }))
+        let retry_interval_ms = find_deploy_retry_interval_ms();
+        let max_attempts = find_deploy_max_attempts();
+
+        let mut attempt = 1;
+        loop {
+            match BlockAPI::find_deploy(&self.engine_cell, &request.deploy_id.to_vec()).await {
+                Ok(block_info) => {
+                    return Ok(tonic::Response::new(FindDeployResponse {
+                        message: Some(
+                            models::casper::v1::find_deploy_response::Message::BlockInfo(
+                                block_info,
+                            ),
+                        ),
+                    }))
+                }
+                Err(e) => {
+                    let not_found = e
+                        .downcast_ref::<casper::rust::api::block_api::DeployNotFoundError>()
+                        .is_some();
+                    if !not_found || attempt >= max_attempts {
+                        error!("Deploy service method error find_deploy");
+                        return Ok(tonic::Response::new(FindDeployResponse {
+                            message: Some(
+                                models::casper::v1::find_deploy_response::Message::Error(
+                                    e.into_service_error(),
+                                ),
+                            ),
+                        }));
+                    }
+
+                    tracing::debug!(
+                        ?attempt,
+                        ?max_attempts,
+                        ?retry_interval_ms,
+                        ?request,
+                        "Waiting for deploy to become visible in block DAG"
+                    );
+                    sleep(Duration::from_millis(retry_interval_ms)).await;
+                    attempt += 1;
+                }
             }
         }
     }
@@ -556,15 +629,22 @@ impl DeployService for DeployGrpcServiceV1Impl {
         &self,
         request: tonic::Request<LastFinalizedBlockQuery>,
     ) -> Result<tonic::Response<LastFinalizedBlockResponse>, tonic::Status> {
-        let _request = request.into_inner(); // maybe this parameter is should be removed in future, left for compatibility with Scala version
+        let _request = request.into_inner();
         match BlockAPI::last_finalized_block(&self.engine_cell).await {
-            Ok(block_info) => Ok(tonic::Response::new(LastFinalizedBlockResponse {
-                message: Some(
-                    models::casper::v1::last_finalized_block_response::Message::BlockInfo(
-                        block_info,
+            Ok(block_info) => {
+                let enriched = if let Some(ref enricher) = self.block_enricher {
+                    enricher.enrich(block_info).await
+                } else {
+                    block_info
+                };
+                Ok(tonic::Response::new(LastFinalizedBlockResponse {
+                    message: Some(
+                        models::casper::v1::last_finalized_block_response::Message::BlockInfo(
+                            enriched,
+                        ),
                     ),
-                ),
-            })),
+                }))
+            }
             Err(e) => {
                 error!("Deploy service method error last_finalized_block");
                 Ok(tonic::Response::new(LastFinalizedBlockResponse {
@@ -764,25 +844,47 @@ impl DeployService for DeployGrpcServiceV1Impl {
         &self,
         _request: tonic::Request<()>,
     ) -> Result<tonic::Response<StatusResponse>, tonic::Status> {
-        let rp_conf = self.rp_conf_cell.read()
+        let rp_conf = self
+            .rp_conf_cell
+            .read()
             .map_err(|e| tonic::Status::internal(format!("Failed to read RPConf: {}", e)))?;
         let address = rp_conf.local.to_address();
 
-        let peers = match self.connections_cell.read() {
-            Ok(connections) => connections.len() as i32,
+        let connections = match self.connections_cell.read() {
+            Ok(conns) => conns,
             Err(e) => {
                 error!("Deploy service method error status");
                 return Err(tonic::Status::internal(e.to_string()));
             }
         };
 
-        let nodes = match self.node_discovery.peers() {
-            Ok(peers) => peers.len() as i32,
+        let discovered_nodes = match self.node_discovery.peers() {
+            Ok(peers) => peers,
             Err(e) => {
                 error!("Deploy service method error status");
                 return Err(tonic::Status::internal(e.to_string()));
             }
         };
+
+        let peers = connections.len() as i32;
+        let nodes = discovered_nodes.len() as i32;
+
+        // Create a set of connected peer IDs for quick lookup
+        let connected_ids: std::collections::HashSet<_> =
+            connections.iter().map(|p| p.id.key.clone()).collect();
+
+        // Convert PeerNode to PeerInfo protobuf message
+        let peer_list: Vec<models::casper::PeerInfo> = discovered_nodes
+            .iter()
+            .map(|node| models::casper::PeerInfo {
+                address: node.to_address(),
+                node_id: node.id.to_string(),
+                host: node.endpoint.host.clone(),
+                protocol_port: node.endpoint.tcp_port as i32,
+                discovery_port: node.endpoint.udp_port as i32,
+                is_connected: connected_ids.contains(&node.id.key),
+            })
+            .collect();
 
         let status = Status {
             version: Some(VersionInfo {
@@ -795,6 +897,7 @@ impl DeployService for DeployGrpcServiceV1Impl {
             peers,
             nodes,
             min_phlo_price: self.min_phlo_price,
+            peer_list,
         };
 
         Ok(tonic::Response::new(StatusResponse {

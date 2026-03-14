@@ -47,7 +47,11 @@ impl LspGrpcServiceImpl {
 
     /// Format SourceSpan as 0-based "line:col" format for error messages
     fn format_source_pos_as_0_based(span: &rholang_parser::SourceSpan) -> String {
-        format!("{}:{}", span.start.line.saturating_sub(1), span.start.col.saturating_sub(1))
+        format!(
+            "{}:{}",
+            span.start.line.saturating_sub(1),
+            span.start.col.saturating_sub(1)
+        )
     }
 
     fn validation(
@@ -91,7 +95,7 @@ impl LspGrpcServiceImpl {
         let mut items = Vec::new();
         let mut current = String::new();
         let mut brace_depth = 0;
-        
+
         for ch in message.chars() {
             match ch {
                 '{' => {
@@ -114,12 +118,12 @@ impl LspGrpcServiceImpl {
         if !current.trim().is_empty() {
             items.push(current.trim().to_string());
         }
-        
+
         // Regex to match "var_name at SourceSpan { start: SourcePos { line: X, col: Y }, ..."
         // Be flexible with whitespace
         let var_span_re = Regex::new(r"(\w+)\s+at\s+SourceSpan\s*\{\s*start:\s*SourcePos\s*\{\s*line:\s*(\d+)\s*,\s*col:\s*(\d+)")
             .expect("Failed to compile var_span_regex");
-        
+
         for item in items {
             if let Some(captures) = var_span_re.captures(&item) {
                 if let (Some(var_name), Some(line_str), Some(col_str)) =
@@ -230,7 +234,10 @@ impl LspGrpcServiceImpl {
                     source_span.start.line,
                     source_span.start.col,
                     source_span.end.line,
-                    source_span.end.col.max(source_span.start.col + var_name.len()),
+                    source_span
+                        .end
+                        .col
+                        .max(source_span.start.col + var_name.len()),
                     message,
                 )
             }
@@ -252,7 +259,10 @@ impl LspGrpcServiceImpl {
                 name_source_span.start.line,
                 name_source_span.start.col,
                 name_source_span.end.line,
-                name_source_span.end.col.max(name_source_span.start.col + var_name.len()),
+                name_source_span
+                    .end
+                    .col
+                    .max(name_source_span.start.col + var_name.len()),
                 error.to_string(),
             ),
             InterpreterError::UnexpectedReuseOfNameContextFree {
@@ -260,7 +270,8 @@ impl LspGrpcServiceImpl {
                 second_use: _,
                 ..
             } => {
-                let message = "Receiving on the same channels is currently not allowed (at 0:0).".to_string();
+                let message =
+                    "Receiving on the same channels is currently not allowed (at 0:0).".to_string();
                 // Use synthetic 0:0 position (1:1 in 1-based) for validation
                 self.validation(1, 1, 1, 2, message)
             }
@@ -279,7 +290,10 @@ impl LspGrpcServiceImpl {
                     process_source_span.start.line,
                     process_source_span.start.col,
                     process_source_span.end.line,
-                    process_source_span.end.col.max(process_source_span.start.col + var_name.len()),
+                    process_source_span
+                        .end
+                        .col
+                        .max(process_source_span.start.col + var_name.len()),
                     message,
                 )
             }
@@ -298,23 +312,29 @@ impl LspGrpcServiceImpl {
                     second_use.start.line,
                     second_use.start.col,
                     second_use.end.line,
-                    second_use.end.col.max(second_use.start.col + var_name.len()),
+                    second_use
+                        .end
+                        .col
+                        .max(second_use.start.col + var_name.len()),
                     message,
                 )
             }
             InterpreterError::ReceiveOnSameChannelsError { source_span: _ } => {
-                let message = "Receiving on the same channels is currently not allowed (at 0:0).".to_string();
+                let message =
+                    "Receiving on the same channels is currently not allowed (at 0:0).".to_string();
                 // Use synthetic 0:0 position (1:1 in 1-based) for validation
                 self.validation(1, 1, 1, 2, message)
             }
             InterpreterError::SyntaxError(_message) => {
                 // Format as "Syntax error: Syntax error in code: {source}"
-                let formatted_message = format!("Syntax error: Syntax error in code: {}", source.trim());
+                let formatted_message =
+                    format!("Syntax error: Syntax error in code: {}", source.trim());
                 self.default_validation(source, formatted_message)
             }
             InterpreterError::ParserError(_message) => {
                 // Format as "Syntax error: Syntax error in code: {source}"
-                let formatted_message = format!("Syntax error: Syntax error in code: {}", source.trim());
+                let formatted_message =
+                    format!("Syntax error: Syntax error in code: {}", source.trim());
                 self.default_validation(source, formatted_message)
             }
             InterpreterError::LexerError(_message) => {

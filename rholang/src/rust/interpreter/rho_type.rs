@@ -5,7 +5,7 @@ use models::rhoapi::ETuple;
 use models::rhoapi::GPrivate;
 use models::rhoapi::GSysAuthToken;
 use models::rhoapi::GUnforgeable;
-use models::rhoapi::{expr::ExprInstance, Expr, GDeployerId, GDeployId, Par};
+use models::rhoapi::{expr::ExprInstance, Expr, GDeployId, GDeployerId, Par};
 use models::rust::rholang::implicits::{single_expr, single_unforgeable};
 use rspace_plus_plus::rspace::history::Either;
 
@@ -194,9 +194,7 @@ pub struct RhoDeployId;
 impl RhoDeployId {
     pub fn create_par(bytes: Vec<u8>) -> Par {
         Par::default().with_unforgeables(vec![GUnforgeable {
-            unf_instance: Some(UnfInstance::GDeployIdBody(GDeployId {
-                sig: bytes,
-            })),
+            unf_instance: Some(UnfInstance::GDeployIdBody(GDeployId { sig: bytes })),
         }])
     }
 

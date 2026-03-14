@@ -62,23 +62,36 @@ pub struct CasperConf {
     /// Disable late block filtering in DagMerger.
     /// When true (default), all blocks are included in merged state regardless of when
     /// they were observed. This prevents deploy loss during network partitions.
-    #[serde(rename = "disable-late-block-filtering", default = "default_disable_late_block_filtering")]
+    #[serde(
+        rename = "disable-late-block-filtering",
+        default = "default_disable_late_block_filtering"
+    )]
     pub disable_late_block_filtering: bool,
 
     /// Enable background garbage collection for mergeable channels.
     /// When enabled, uses safe reachability-based GC (required for multi-parent mode).
-    /// When disabled (default), uses immediate deletion on finalization (legacy behavior).
-    #[serde(rename = "enable-mergeable-channel-gc", default = "default_enable_mergeable_channel_gc")]
+    /// When disabled (default), mergeable data is retained.
+    #[serde(
+        rename = "enable-mergeable-channel-gc",
+        default = "default_enable_mergeable_channel_gc"
+    )]
     pub enable_mergeable_channel_gc: bool,
 
     /// Interval for garbage collecting mergeable channels (only when GC enabled).
     /// Background process that safely deletes mergeable data when provably unreachable.
-    #[serde(rename = "mergeable-channels-gc-interval", deserialize_with = "de_duration", default = "default_mergeable_channels_gc_interval")]
+    #[serde(
+        rename = "mergeable-channels-gc-interval",
+        deserialize_with = "de_duration",
+        default = "default_mergeable_channels_gc_interval"
+    )]
     pub mergeable_channels_gc_interval: Duration,
 
     /// Depth buffer for mergeable channels garbage collection (only when GC enabled).
     /// Additional safety margin beyond max-parent-depth before deleting data.
-    #[serde(rename = "mergeable-channels-gc-depth-buffer", default = "default_mergeable_channels_gc_depth_buffer")]
+    #[serde(
+        rename = "mergeable-channels-gc-depth-buffer",
+        default = "default_mergeable_channels_gc_depth_buffer"
+    )]
     pub mergeable_channels_gc_depth_buffer: i32,
 }
 

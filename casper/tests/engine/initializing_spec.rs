@@ -4,7 +4,10 @@ use rspace_plus_plus::rspace::state::instances::rspace_exporter_store::RSpaceExp
 use std::collections::HashSet;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 use tokio::sync::mpsc;
 
 use crypto::rust::{
@@ -22,6 +25,7 @@ use prost::Message;
 use shared::rust::shared::f1r3fly_events::{EventPublisher, EventPublisherFactory};
 
 use crate::engine::setup::TestFixture;
+use casper::rust::engine::engine::transition_to_initializing;
 use casper::rust::engine::engine_cell::EngineCell;
 use casper::rust::engine::initializing::Initializing;
 use casper::rust::engine::lfs_tuple_space_requester;
@@ -138,57 +142,57 @@ impl InitializingSpec {
         );
         let genesis_exporter_arc = Arc::new(genesis_exporter_impl);
 
-        // Get history and data items from genesis block (two chunks, as in Scala)
-        let (history_items1, data_items1, last_path1) = genesis_export(
-            genesis_exporter_arc.clone(),
-            start_path1.clone(),
-            &fixture.exporter_params,
-        )
-        .expect("Failed to export history and data items 1");
-        let (history_items2, data_items2, last_path2) = genesis_export(
-            genesis_exporter_arc.clone(),
-            last_path1.clone(),
-            &fixture.exporter_params,
-        )
-        .expect("Failed to export history and data items 2");
+        // Build all StoreItems requests/responses dynamically until exporter indicates completion.
+        // The number of chunks can change when genesis tuplespace shape changes.
+        let mut store_request_messages = Vec::new();
+        let mut store_response_messages = Vec::new();
+        let mut next_start_path = start_path1.clone();
+        let mut seen_paths = HashSet::new();
 
-        // Store request messages for two chunks
-        let store_request_message1 = StoreItemsMessageRequest {
-            start_path: start_path1.clone(),
-            skip: 0,
-            take: chunk_size,
-        };
-        let store_request_message2 = StoreItemsMessageRequest {
-            start_path: last_path1.clone(),
-            skip: 0,
-            take: chunk_size,
-        };
+        loop {
+            if !seen_paths.insert(next_start_path.clone()) {
+                break;
+            }
 
-        // Store response messages for two chunks
-        let store_response_message1 = StoreItemsMessage {
-            start_path: start_path1,
-            last_path: last_path1.clone(),
-            history_items: history_items1
-                .into_iter()
-                .map(|(hash, bytes)| (hash, Bytes::from(bytes)))
-                .collect(),
-            data_items: data_items1
-                .into_iter()
-                .map(|(hash, bytes)| (hash, Bytes::from(bytes)))
-                .collect(),
-        };
-        let store_response_message2 = StoreItemsMessage {
-            start_path: last_path1,
-            last_path: last_path2,
-            history_items: history_items2
-                .into_iter()
-                .map(|(hash, bytes)| (hash, prost::bytes::Bytes::from(bytes)))
-                .collect(),
-            data_items: data_items2
-                .into_iter()
-                .map(|(hash, bytes)| (hash, prost::bytes::Bytes::from(bytes)))
-                .collect(),
-        };
+            let request = StoreItemsMessageRequest {
+                start_path: next_start_path.clone(),
+                skip: 0,
+                take: chunk_size,
+            };
+
+            let (history_items, data_items, last_path) = genesis_export(
+                genesis_exporter_arc.clone(),
+                next_start_path.clone(),
+                &fixture.exporter_params,
+            )
+            .expect("Failed to export history and data items");
+
+            let response = StoreItemsMessage {
+                start_path: next_start_path.clone(),
+                last_path: last_path.clone(),
+                history_items: history_items
+                    .into_iter()
+                    .map(|(hash, bytes)| (hash, Bytes::from(bytes)))
+                    .collect(),
+                data_items: data_items
+                    .into_iter()
+                    .map(|(hash, bytes)| (hash, Bytes::from(bytes)))
+                    .collect(),
+            };
+
+            store_request_messages.push(request);
+            store_response_messages.push(response);
+
+            if last_path.is_empty() || last_path == next_start_path {
+                break;
+            }
+            next_start_path = last_path;
+
+            assert!(
+                store_request_messages.len() < 1024,
+                "Too many tuple-space chunks while preparing initializing_spec test"
+            );
+        }
 
         // Block request message
         let block_request_message = BlockRequest {
@@ -215,41 +219,45 @@ impl InitializingSpec {
             .unwrap()
             .clone();
 
-        let store_msg1_clone = store_response_message1.clone();
-        let store_msg2_clone = store_response_message2.clone();
+        let store_msgs_clone = store_response_messages.clone();
         let genesis_clone = genesis.clone();
 
         let enqueue_responses = async move {
             // Write directly to tuple space channel (equivalent to stateResponseQueue.enqueue1)
-            let _ = tuple_space_tx.send(store_msg1_clone);
-            let _ = tuple_space_tx.send(store_msg2_clone);
+            for store_msg in store_msgs_clone {
+                tuple_space_tx
+                    .send(store_msg)
+                    .await
+                    .expect("Failed to enqueue tuple space response");
+            }
             // Write directly to block message channel (equivalent to blockResponseQueue.enqueue1)
-            let _ = block_message_tx.send(genesis_clone);
+            block_message_tx
+                .send(genesis_clone)
+                .await
+                .expect("Failed to enqueue block response");
         };
 
         let local_for_expected = fixture.local.clone();
-        let expected_requests = vec![
-            packet_with_content(
-                &local_for_expected,
-                &fixture.network_id,
-                store_request_message1.to_proto(),
-            ),
-            packet_with_content(
-                &local_for_expected,
-                &fixture.network_id,
-                store_request_message2.to_proto(),
-            ),
-            packet_with_content(
-                &local_for_expected,
-                &fixture.network_id,
-                block_request_message.to_proto(),
-            ),
-            packet_with_content(
-                &local_for_expected,
-                &fixture.network_id,
-                models::casper::ForkChoiceTipRequestProto::default(),
-            ),
-        ];
+        let mut expected_requests: Vec<_> = store_request_messages
+            .iter()
+            .map(|request| {
+                packet_with_content(
+                    &local_for_expected,
+                    &fixture.network_id,
+                    request.clone().to_proto(),
+                )
+            })
+            .collect();
+        expected_requests.push(packet_with_content(
+            &local_for_expected,
+            &fixture.network_id,
+            block_request_message.to_proto(),
+        ));
+        expected_requests.push(packet_with_content(
+            &local_for_expected,
+            &fixture.network_id,
+            models::casper::ForkChoiceTipRequestProto::default(),
+        ));
 
         let test = async {
             engine_cell.set(initializing_engine.clone()).await;
@@ -379,9 +387,9 @@ async fn create_initializing_engine(
     engine_cell: Arc<EngineCell>,
 ) -> Result<Arc<Initializing<TransportLayerStub>>, String> {
     // Create engine-specific channels (each Initializing instance needs its own)
-    let (block_tx, block_rx) = mpsc::unbounded_channel::<BlockMessage>();
-    let (tuple_tx, tuple_rx) = mpsc::unbounded_channel::<StoreItemsMessage>();
-    let (block_processing_queue_tx, _block_processing_queue_rx) = mpsc::unbounded_channel();
+    let (block_tx, block_rx) = mpsc::channel::<BlockMessage>(50);
+    let (tuple_tx, tuple_rx) = mpsc::channel::<StoreItemsMessage>(50);
+    let (block_processing_queue_tx, _block_processing_queue_rx) = mpsc::channel(1024);
 
     // Use all stores and managers from fixture (matching Scala's Setup pattern)
     Ok(Arc::new(Initializing::new(
@@ -417,4 +425,167 @@ async fn create_initializing_engine(
 #[tokio::test]
 async fn make_transition_to_running_once_approved_block_received() {
     InitializingSpec::make_transition_to_running_once_approved_block_received().await;
+}
+
+/// Test that verifies the fix for the race condition where a slow validator
+/// misses the ApprovedBlock during genesis ceremony. The fix is to proactively
+/// request the ApprovedBlock when entering Initializing state, rather than
+/// waiting for it to arrive (which may never happen if it was already broadcast
+/// and dropped while the node was still in GenesisValidator state).
+#[tokio::test]
+async fn proactively_request_approved_block_on_init() {
+    use casper::rust::engine::engine::Engine;
+    use models::casper::ApprovedBlockRequestProto;
+    use models::routing::protocol::Message as ProtocolMessage;
+    use prost::Message;
+
+    let fixture = TestFixture::new().await;
+
+    InitializingSpec::before_each(&fixture);
+
+    let the_init = Arc::new(|| {
+        Box::pin(async { Ok(()) }) as Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>>
+    });
+
+    let engine_cell = Arc::new(EngineCell::init());
+
+    let initializing_engine = create_initializing_engine(&fixture, the_init, engine_cell.clone())
+        .await
+        .expect("Failed to create Initializing engine");
+
+    // Clear any previous transport requests
+    fixture.transport_layer.reset();
+    fixture
+        .transport_layer
+        .set_responses(|_peer, _protocol| Ok(()));
+
+    // Call init - this should proactively request ApprovedBlock
+    initializing_engine
+        .init()
+        .await
+        .expect("init should succeed");
+
+    // Verify that an ApprovedBlockRequest was sent to bootstrap
+    let requests = fixture.transport_layer.get_all_requests();
+
+    // Build expected content for comparison
+    let expected_proto = ApprovedBlockRequestProto {
+        identifier: "".to_string(),
+        trim_state: true,
+    };
+    let expected_content = prost::bytes::Bytes::from(expected_proto.encode_to_vec());
+
+    assert!(
+        !requests.is_empty(),
+        "Initializing.init should send a request to bootstrap"
+    );
+
+    let found_approved_block_request = requests.iter().any(|req| {
+        if let Some(ProtocolMessage::Packet(packet)) = &req.msg.message {
+            packet.content == expected_content
+        } else {
+            false
+        }
+    });
+
+    assert!(
+        found_approved_block_request,
+        "Initializing.init should send ApprovedBlockRequest. Requests sent: {:?}",
+        requests.iter().map(|r| &r.msg).collect::<Vec<_>>()
+    );
+
+    InitializingSpec::after_each(&fixture);
+}
+
+#[test]
+fn transition_to_initializing_invokes_init_immediately() {
+    use models::casper::ApprovedBlockRequestProto;
+    use models::routing::protocol::Message as ProtocolMessage;
+    use prost::Message;
+
+    std::thread::Builder::new()
+        .stack_size(16 * 1024 * 1024)
+        .spawn(|| {
+            tokio::runtime::Runtime::new().unwrap().block_on(async {
+                let fixture = TestFixture::new().await;
+
+                InitializingSpec::before_each(&fixture);
+
+                let init_called = Arc::new(AtomicBool::new(false));
+                let init_called_ref = init_called.clone();
+                let the_init = Arc::new(move || {
+                    let init_called_ref = init_called_ref.clone();
+                    Box::pin(async move {
+                        init_called_ref.store(true, Ordering::SeqCst);
+                        Ok(())
+                    }) as Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>>
+                });
+
+                let engine_cell = Arc::new(EngineCell::init());
+                let heartbeat_signal_ref = casper::rust::heartbeat_signal::new_heartbeat_signal_ref();
+
+                fixture.transport_layer.reset();
+                fixture
+                    .transport_layer
+                    .set_responses(|_peer, _protocol| Ok(()));
+
+                transition_to_initializing(
+                    &fixture.block_processing_queue_tx,
+                    &fixture.blocks_in_processing,
+                    &fixture.casper_shard_conf,
+                    &Some(fixture.validator_id.clone()),
+                    the_init,
+                    true,
+                    false,
+                    &fixture.transport_layer,
+                    &fixture.rp_conf_ask,
+                    &fixture.connections_cell,
+                    &fixture.last_approved_block,
+                    &fixture.block_store,
+                    &fixture.block_dag_storage,
+                    &fixture.deploy_storage,
+                    &fixture.casper_buffer_storage,
+                    &fixture.rspace_state_manager,
+                    fixture.event_publisher.clone(),
+                    fixture.block_retriever.clone(),
+                    &engine_cell,
+                    &fixture.runtime_manager,
+                    &fixture.estimator,
+                    &heartbeat_signal_ref,
+                )
+                .await
+                .expect("transition_to_initializing should succeed");
+
+                assert!(
+                    init_called.load(Ordering::SeqCst),
+                    "transition_to_initializing should call init() immediately"
+                );
+
+                let requests = fixture.transport_layer.get_all_requests();
+                let expected_proto = ApprovedBlockRequestProto {
+                    identifier: "".to_string(),
+                    trim_state: true,
+                };
+                let expected_content = prost::bytes::Bytes::from(expected_proto.encode_to_vec());
+
+                let found_approved_block_request = requests.iter().any(|req| {
+                    if let Some(ProtocolMessage::Packet(packet)) = &req.msg.message {
+                        packet.content == expected_content
+                    } else {
+                        false
+                    }
+                });
+
+                assert!(
+                    found_approved_block_request,
+                    "transition_to_initializing should trigger ApprovedBlockRequest via immediate init; requests: {:?}",
+                    requests.iter().map(|r| &r.msg).collect::<Vec<_>>()
+                );
+
+                InitializingSpec::after_each(&fixture);
+            })
+        })
+        .unwrap()
+        .join()
+        .unwrap();
 }

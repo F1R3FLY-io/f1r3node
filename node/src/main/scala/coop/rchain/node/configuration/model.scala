@@ -20,6 +20,8 @@ final case class NodeConf(
     storage: Storage,
     casper: CasperConf,
     metrics: Metrics,
+    openai: Option[OpenAIConf],
+    ollama: Option[OllamaConf],
     devMode: Boolean,
     dev: DevConf,
     // This field is dynamic and computed according to profile and is not used directly in client code.
@@ -95,6 +97,21 @@ final case class Metrics(
 
 final case class DevConf(
     deployerPrivateKey: Option[String]
+)
+
+final case class OpenAIConf(
+    apiKey: String,
+    enabled: Boolean,
+    validateApiKey: Boolean,
+    validationTimeoutSec: Int
+)
+
+final case class OllamaConf(
+    enabled: Boolean,
+    baseUrl: String,
+    defaultModel: String,
+    validateConnection: Boolean,
+    timeoutSec: Int
 )
 
 sealed trait Command

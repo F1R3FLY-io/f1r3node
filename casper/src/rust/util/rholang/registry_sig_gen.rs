@@ -3,11 +3,8 @@
 use std::fmt;
 
 use crypto::rust::{
-    hash::blake2b256::Blake2b256,
-    private_key::PrivateKey,
-    public_key::PublicKey,
-    signatures::secp256k1::Secp256k1,
-    signatures::signatures_alg::SignaturesAlg,
+    hash::blake2b256::Blake2b256, private_key::PrivateKey, public_key::PublicKey,
+    signatures::secp256k1::Secp256k1, signatures::signatures_alg::SignaturesAlg,
 };
 use models::rhoapi::{expr::ExprInstance, Expr, Par};
 use models::rust::utils::{new_etuple_par, new_gint_par};

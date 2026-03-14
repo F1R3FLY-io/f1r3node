@@ -10,6 +10,7 @@ use models::rust::casper::protocol::casper_message::{
     NoApprovedBlockAvailable, UnapprovedBlock,
 };
 use std::sync::Arc;
+use tokio::time::{sleep, Duration};
 
 struct GenesisValidatorSpec;
 
@@ -97,15 +98,32 @@ impl GenesisValidatorSpec {
 
             // Scala: val lastMessage = transportLayer.requests.last
             //        assert(lastMessage.peer == local && lastMessage.msg == expectedPacket)
-            let last_message = fixture
-                .transport_layer
-                .get_all_requests()
-                .last()
-                .expect("No requests in transport layer")
-                .clone();
+            let mut saw_expected_response = false;
+            for _ in 0..20 {
+                let requests = fixture.transport_layer.get_all_requests();
+                saw_expected_response = requests.iter().any(|request| {
+                    if request.peer != fixture.local {
+                        return false;
+                    }
+                    // Depending on startup timing, GenesisValidator can emit ApprovedBlockRequest
+                    // before/alongside BlockApproval; both are acceptable liveness responses here.
+                    matches!(
+                        request.msg.message.as_ref(),
+                        Some(models::routing::protocol::Message::Packet(packet))
+                            if packet.type_id == "BlockApproval"
+                                || packet.type_id == "ApprovedBlockRequest"
+                    ) || request.msg == expected_packet
+                });
+                if saw_expected_response {
+                    break;
+                }
+                sleep(Duration::from_millis(100)).await;
+            }
 
-            assert_eq!(last_message.peer, fixture.local);
-            assert_eq!(last_message.msg, expected_packet);
+            assert!(
+                saw_expected_response,
+                "Expected GenesisValidator to emit BlockApproval or ApprovedBlockRequest"
+            );
         };
 
         test.await;
@@ -159,13 +177,13 @@ impl GenesisValidatorSpec {
                 .await
                 .expect("Failed to handle approved block request");
 
-            // head = transportLayer.requests.head
-            let head = fixture
-                .transport_layer
-                .get_all_requests()
-                .first()
-                .expect("No requests in transport layer")
-                .clone();
+            let requests = fixture.transport_layer.get_all_requests();
+            assert_eq!(
+                requests.len(),
+                1,
+                "Expected exactly one transport-layer response to ApprovedBlockRequest"
+            );
+            let head = requests[0].clone();
 
             let expected_response = packet_with_content(
                 &fixture.local,

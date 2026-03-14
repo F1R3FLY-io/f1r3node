@@ -4,6 +4,7 @@ use async_stream::stream;
 use async_trait::async_trait;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::hash::Hash;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -14,6 +15,9 @@ use models::rust::casper::pretty_printer::PrettyPrinter;
 use models::rust::casper::protocol::casper_message::{ApprovedBlock, BlockMessage};
 
 use crate::rust::errors::CasperError;
+use crate::rust::metrics_constants::{
+    CASPER_METRICS_SOURCE, INIT_BLOCK_MESSAGE_QUEUE_PENDING_METRIC,
+};
 use crate::rust::util::proto_util;
 
 // Last Finalized State processor for receiving blocks.
@@ -273,7 +277,7 @@ struct StreamProcessor<'a, T: BlockRequesterOps> {
     requester: &'a mut T,
     st: Arc<Mutex<ST<BlockHash>>>,
     latest_messages: HashSet<BlockHash>,
-    response_hash_sender: mpsc::UnboundedSender<BlockHash>,
+    response_hash_sender: mpsc::Sender<BlockHash>,
 }
 
 impl<'a, T: BlockRequesterOps> StreamProcessor<'a, T> {
@@ -281,7 +285,7 @@ impl<'a, T: BlockRequesterOps> StreamProcessor<'a, T> {
         requester: &'a mut T,
         st: Arc<Mutex<ST<BlockHash>>>,
         latest_messages: HashSet<BlockHash>,
-        response_hash_sender: mpsc::UnboundedSender<BlockHash>,
+        response_hash_sender: mpsc::Sender<BlockHash>,
     ) -> Self {
         Self {
             requester,
@@ -603,9 +607,12 @@ impl<'a, T: BlockRequesterOps> StreamProcessor<'a, T> {
                 existing_hashes.len()
             );
             for hash in existing_hashes.iter() {
-                self.response_hash_sender.send(hash.clone()).map_err(|_| {
-                    CasperError::StreamError("Failed to enqueue existing hash".to_string())
-                })?;
+                self.response_hash_sender
+                    .send(hash.clone())
+                    .await
+                    .map_err(|_| {
+                        CasperError::StreamError("Failed to enqueue existing hash".to_string())
+                    })?;
             }
         }
 
@@ -661,7 +668,8 @@ impl<'a, T: BlockRequesterOps> StreamProcessor<'a, T> {
 pub async fn stream<'a, T: BlockRequesterOps>(
     approved_block: &'a ApprovedBlock,
     initial_response_messages: &'a VecDeque<BlockMessage>,
-    response_message_receiver: mpsc::UnboundedReceiver<BlockMessage>,
+    response_message_receiver: mpsc::Receiver<BlockMessage>,
+    response_queue_pending: Arc<AtomicUsize>,
     initial_minimum_height: i64,
     request_timeout: Duration,
     block_ops: &'a mut T,
@@ -694,7 +702,7 @@ pub async fn stream<'a, T: BlockRequesterOps>(
     // Queue to trigger processing of requests. `True` to resend requests.
     let (request_tx, request_rx) = mpsc::channel(2);
     // Response queue for existing blocks in the store.
-    let (response_hash_tx, response_hash_rx) = mpsc::unbounded_channel();
+    let (response_hash_tx, response_hash_rx) = mpsc::channel(1024);
 
     // Light the fire! / Starts the first request for block
     // - `false` means don't resend already requested blocks
@@ -721,6 +729,7 @@ pub async fn stream<'a, T: BlockRequesterOps>(
         response_hash_rx,
         &initial_response_messages,
         response_message_receiver,
+        response_queue_pending,
         request_timeout,
         max_request_timeout,
     )
@@ -743,9 +752,10 @@ async fn create_stream_with_processor<'a, T: BlockRequesterOps>(
     mut processor: StreamProcessor<'a, T>,
     mut request_queue: mpsc::Receiver<bool>,
     request_queue_sender: mpsc::Sender<bool>,
-    mut response_hash_queue: mpsc::UnboundedReceiver<BlockHash>,
+    mut response_hash_queue: mpsc::Receiver<BlockHash>,
     initial_response_messages: &'a VecDeque<BlockMessage>,
-    mut response_message_receiver: mpsc::UnboundedReceiver<BlockMessage>,
+    mut response_message_receiver: mpsc::Receiver<BlockMessage>,
+    response_queue_pending: Arc<AtomicUsize>,
     request_timeout: Duration,
     max_request_timeout: Duration,
 ) -> Result<impl futures::stream::Stream<Item = ST<BlockHash>> + use<'a, T>, CasperError> {
@@ -766,7 +776,9 @@ async fn create_stream_with_processor<'a, T: BlockRequesterOps>(
 
     // Process all initial messages immediately and merge with regular message stream
     // This ensures proper ordering and efficient processing of pre-existing messages
-    let (initial_messages_tx, mut initial_messages_rx) = mpsc::unbounded_channel();
+    let initial_messages_channel_capacity = std::cmp::max(1, initial_response_messages.len());
+    let (initial_messages_tx, mut initial_messages_rx) =
+        mpsc::channel(initial_messages_channel_capacity);
 
     // Enqueue all initial messages for processing - this preserves order and integrates with normal flow
     if !initial_response_messages.is_empty() {
@@ -775,7 +787,7 @@ async fn create_stream_with_processor<'a, T: BlockRequesterOps>(
             initial_response_messages.len()
         );
         for initial_message in initial_response_messages {
-            if let Err(_) = initial_messages_tx.send(initial_message) {
+            if let Err(_) = initial_messages_tx.send(initial_message.clone()).await {
                 tracing::error!("Failed to enqueue initial message - channel closed");
                 return Err(CasperError::StreamError(
                     "Failed to setup initial messages".to_string(),
@@ -899,10 +911,10 @@ async fn create_stream_with_processor<'a, T: BlockRequesterOps>(
                     let _permit = permit; // Hold permit during processing
 
                     tracing::info!("Processing initial response message {}",
-                        PrettyPrinter::build_string_block_message(initial_block, true));
+                        PrettyPrinter::build_string_block_message(&initial_block, true));
 
                     // Process initial block with same logic as regular response messages
-                    match processor.process_block(initial_block).await {
+                    match processor.process_block(&initial_block).await {
                         Ok(()) => {
                             consecutive_errors = 0; // Reset error counter on success
                         }
@@ -945,6 +957,17 @@ async fn create_stream_with_processor<'a, T: BlockRequesterOps>(
                 }
 
                 Some(block_message) = response_message_receiver.recv() => {
+                    let _ = response_queue_pending.fetch_update(
+                        Ordering::AcqRel,
+                        Ordering::Acquire,
+                        |curr| Some(curr.saturating_sub(1)),
+                    );
+                    metrics::gauge!(
+                        INIT_BLOCK_MESSAGE_QUEUE_PENDING_METRIC,
+                        "source" => CASPER_METRICS_SOURCE
+                    )
+                    .set(response_queue_pending.load(Ordering::Relaxed) as f64);
+
                     let permit = match response_semaphore.clone().acquire_owned().await {
                         Ok(permit) => permit,
                         Err(e) => {

@@ -1,35 +1,33 @@
-// See rspace/src/test/scala/coop/rchain/rspace/history/HistoryRepositorySpec.scala
+// See rspace/src/test/scala/coop/rchain/rspace/history/HistoryRepositorySpec.
+// scala
+
+use std::collections::{BTreeSet, HashSet};
+use std::sync::{Arc, Mutex};
 
 use rand::prelude::SliceRandom;
-use rspace_plus_plus::rspace::{
-    errors::{HistoryError, RootError},
-    hashing::blake2b256_hash::Blake2b256Hash,
-    history::{
-        history::HistoryInstances, history_repository::HistoryRepository,
-        history_repository_impl::HistoryRepositoryImpl, instances::radix_history::RadixHistory,
-        root_repository::RootRepository, roots_store::RootsStore,
-    },
-    hot_store_action::{
-        DeleteAction, DeleteContinuations, DeleteData, DeleteJoins, HotStoreAction, InsertAction,
-        InsertContinuations, InsertData, InsertJoins,
-    },
-    internal::{Datum, WaitingContinuation},
-    shared::{
-        in_mem_key_value_store::InMemoryKeyValueStore,
-        trie_exporter::{KeyHash, NodePath, TrieExporter, TrieNode, Value},
-        trie_importer::TrieImporter,
-    },
-    state::{rspace_exporter::RSpaceExporter, rspace_importer::RSpaceImporter},
-    trace::event::{Consume, Produce},
+use rspace_plus_plus::rspace::errors::{HistoryError, RootError};
+use rspace_plus_plus::rspace::hashing::blake2b256_hash::Blake2b256Hash;
+use rspace_plus_plus::rspace::history::history::HistoryInstances;
+use rspace_plus_plus::rspace::history::history_repository::HistoryRepository;
+use rspace_plus_plus::rspace::history::history_repository_impl::HistoryRepositoryImpl;
+use rspace_plus_plus::rspace::history::instances::radix_history::RadixHistory;
+use rspace_plus_plus::rspace::history::root_repository::RootRepository;
+use rspace_plus_plus::rspace::history::roots_store::RootsStore;
+use rspace_plus_plus::rspace::hot_store_action::{
+    DeleteAction, DeleteContinuations, DeleteData, DeleteJoins, HotStoreAction, InsertAction,
+    InsertContinuations, InsertData, InsertJoins,
 };
-use shared::rust::{
-    ByteVector,
-    store::key_value_store::{KeyValueStore, KvStoreError},
+use rspace_plus_plus::rspace::internal::{Datum, WaitingContinuation};
+use rspace_plus_plus::rspace::shared::in_mem_key_value_store::InMemoryKeyValueStore;
+use rspace_plus_plus::rspace::shared::trie_exporter::{
+    KeyHash, NodePath, TrieExporter, TrieNode, Value,
 };
-use std::{
-    collections::{BTreeSet, HashSet},
-    sync::{Arc, Mutex},
-};
+use rspace_plus_plus::rspace::shared::trie_importer::TrieImporter;
+use rspace_plus_plus::rspace::state::rspace_exporter::RSpaceExporter;
+use rspace_plus_plus::rspace::state::rspace_importer::RSpaceImporter;
+use rspace_plus_plus::rspace::trace::event::{Consume, Produce};
+use shared::rust::ByteVector;
+use shared::rust::store::key_value_store::{KeyValueStore, KvStoreError};
 
 use crate::history::history_action_tests::{random_blake, zeros_blake};
 
@@ -43,7 +41,7 @@ async fn history_repository_should_process_insert_one_datum() {
     };
 
     let next_repo =
-        repo.checkpoint(&vec![HotStoreAction::Insert(InsertAction::InsertData(insert_data))]);
+        repo.checkpoint(vec![HotStoreAction::Insert(InsertAction::InsertData(insert_data))]);
     let history_reader = next_repo.get_history_reader(&next_repo.root());
     let data = history_reader
         .unwrap()
@@ -77,7 +75,7 @@ async fn history_repository_should_allow_insert_of_joins_datum_continuation_on_s
         continuations: vec![test_continuation.clone()],
     };
 
-    let next_repo = repo.checkpoint(&vec![
+    let next_repo = repo.checkpoint(vec![
         HotStoreAction::Insert(InsertAction::InsertData(data)),
         HotStoreAction::Insert(InsertAction::InsertJoins(joins.clone())),
         HotStoreAction::Insert(InsertAction::InsertContinuations(continuations)),
@@ -147,7 +145,7 @@ async fn history_repository_should_process_insert_and_delete_of_thirty_mixed_ele
 
     let delete_elems: Vec<_> = [&data_delete[..], &joins_delete[..], &conts_delete[..]].concat();
 
-    let next_repo = repo.checkpoint(&elems);
+    let next_repo = repo.checkpoint(elems);
     let history_reader = next_repo.get_history_reader(&next_repo.root()).unwrap();
     let next_reader = history_reader.base();
 
@@ -195,7 +193,7 @@ async fn history_repository_should_process_insert_and_delete_of_thirty_mixed_ele
         .collect();
     assert_eq!(all_joins, expected_joins);
 
-    let deleted_repo = next_repo.checkpoint(&delete_elems);
+    let deleted_repo = next_repo.checkpoint(delete_elems);
     let history_reader = deleted_repo
         .get_history_reader(&deleted_repo.root())
         .unwrap();
@@ -278,7 +276,11 @@ async fn history_repository_should_not_allow_switching_to_a_not_existing_root() 
 
     match repo.reset(&zeros_blake()) {
         Err(HistoryError::RootError(RootError::UnknownRootError(err))) => {
-            assert_eq!(err, "unknown root")
+            assert!(
+                err.contains("unknown root"),
+                "Expected error containing 'unknown root', got: {}",
+                err
+            )
         }
         Ok(_) => assert!(false, "Expected a failure"),
         _ => assert!(false, "Wrong error thrown"),
@@ -295,24 +297,18 @@ async fn history_repository_should_record_next_root_as_valid() {
     };
 
     let next_repo =
-        repo.checkpoint(&vec![HotStoreAction::Insert(InsertAction::InsertData(insert_data))]);
+        repo.checkpoint(vec![HotStoreAction::Insert(InsertAction::InsertData(insert_data))]);
     let _ = repo.reset(&RadixHistory::empty_root_node_hash());
     let binding = next_repo.history();
     let next_repo_history = binding.lock().expect("Failed to acquire history lock");
     let _ = repo.reset(&next_repo_history.root());
 }
 
-fn test_channel_data_prefix() -> String {
-    "channel-data".to_string()
-}
+fn test_channel_data_prefix() -> String { "channel-data".to_string() }
 
-fn test_channel_joins_prefix() -> String {
-    "channel-joins".to_string()
-}
+fn test_channel_joins_prefix() -> String { "channel-joins".to_string() }
 
-fn test_channel_continuations_prefix() -> String {
-    "channel-continuations".to_string()
-}
+fn test_channel_continuations_prefix() -> String { "channel-continuations".to_string() }
 
 fn insert_datum(
     s: i32,
@@ -346,10 +342,10 @@ fn insert_continuation(
 }
 
 fn join(s: i32) -> Vec<Vec<String>> {
-    vec![
-        vec![format!("abc{}", s), format!("def{}", s)],
-        vec![format!("wer{}", s), format!("tre{}", s)],
-    ]
+    vec![vec![format!("abc{}", s), format!("def{}", s)], vec![
+        format!("wer{}", s),
+        format!("tre{}", s),
+    ]]
 }
 
 fn continuation(s: i32) -> WaitingContinuation<String, String> {
@@ -451,16 +447,12 @@ fn root_repository() -> RootRepository {
     }
 }
 
-fn create_inmem_cold_store() -> Arc<dyn KeyValueStore> {
-    Arc::new(InMemoryKeyValueStore::new())
-}
+fn create_inmem_cold_store() -> Arc<dyn KeyValueStore> { Arc::new(InMemoryKeyValueStore::new()) }
 
 struct EmptyExporter;
 
 impl RSpaceExporter for EmptyExporter {
-    fn get_root(&self) -> Result<KeyHash, RootError> {
-        todo!()
-    }
+    fn get_root(&self) -> Result<KeyHash, RootError> { todo!() }
 }
 
 impl TrieExporter for EmptyExporter {
@@ -483,21 +475,13 @@ impl TrieExporter for EmptyExporter {
 struct EmptyImporter;
 
 impl RSpaceImporter for EmptyImporter {
-    fn get_history_item(&self, _hash: KeyHash) -> Option<ByteVector> {
-        todo!()
-    }
+    fn get_history_item(&self, _hash: KeyHash) -> Option<ByteVector> { todo!() }
 }
 
 impl TrieImporter for EmptyImporter {
-    fn set_history_items(&self, _data: Vec<(KeyHash, Value)>) -> () {
-        todo!()
-    }
+    fn set_history_items(&self, _data: Vec<(KeyHash, Value)>) -> () { todo!() }
 
-    fn set_data_items(&self, _data: Vec<(KeyHash, Value)>) -> () {
-        todo!()
-    }
+    fn set_data_items(&self, _data: Vec<(KeyHash, Value)>) -> () { todo!() }
 
-    fn set_root(&self, _key: &KeyHash) -> () {
-        todo!()
-    }
+    fn set_root(&self, _key: &KeyHash) -> () { todo!() }
 }

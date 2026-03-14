@@ -7,9 +7,7 @@
 use block_storage::rust::dag::block_dag_key_value_storage::KeyValueDagRepresentation;
 use block_storage::rust::key_value_block_store::KeyValueBlockStore;
 use models::rust::block_hash::BlockHash;
-use rspace_plus_plus::rspace::hashing::blake2b256_hash::Blake2b256Hash;
 use shared::rust::store::key_value_store::KvStoreError;
-use shared::rust::store::key_value_typed_store::KeyValueTypedStore;
 
 use crate::rust::casper::CasperShardConf;
 use crate::rust::util::rholang::runtime_manager::RuntimeManager;
@@ -36,21 +34,23 @@ pub async fn collect_garbage(
         if is_safe_to_delete(dag, &block_hash, casper_shard_conf)? {
             // Get block to access its state hash
             if let Some(block) = block_store.get(&block_hash)? {
-                let state_hash =
-                    Blake2b256Hash::from_bytes_prost(&block.body.state.post_state_hash);
-
-                // Delete mergeable data
-                runtime_manager
+                let deleted = runtime_manager
                     .lock()
                     .await
-                    .mergeable_store
-                    .delete(vec![state_hash.bytes()])?;
+                    .delete_mergeable_channels(
+                        &block.body.state.post_state_hash,
+                        block.sender.clone(),
+                        block.seq_num,
+                    )
+                    .map_err(|e| KvStoreError::IoError(e.to_string()))?;
 
-                deleted_count += 1;
-                tracing::debug!(
-                    "GC: Deleted mergeable data for block {}",
-                    hex::encode(&block_hash)
-                );
+                if deleted {
+                    deleted_count += 1;
+                    tracing::debug!(
+                        "GC: Deleted mergeable data for block {}",
+                        hex::encode(&block_hash)
+                    );
+                }
             }
         }
     }
@@ -103,9 +103,7 @@ fn is_safe_to_delete(
     let latest_message_hashes = dag.latest_message_hashes();
 
     // For each validator's latest message, check if it's a descendant of any child (via main chain)
-    for entry in latest_message_hashes.iter() {
-        let latest_msg_hash = entry.value();
-
+    for (_, latest_msg_hash) in latest_message_hashes.iter() {
         if latest_msg_hash == block_hash {
             // Validator's latest is still this block
             return Ok(false);
@@ -113,8 +111,7 @@ fn is_safe_to_delete(
 
         // Check if latest message is descendant of any child (via main chain)
         let mut found_in_child_chain = false;
-        for child_hash in children.iter() {
-            let child_hash_ref = child_hash.key();
+        for child_hash_ref in children.iter() {
             if dag.is_in_main_chain(child_hash_ref, latest_msg_hash)? {
                 found_in_child_chain = true;
                 break;

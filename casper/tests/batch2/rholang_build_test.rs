@@ -83,11 +83,13 @@ async fn our_build_system_should_execute_the_genesis_block() {
     for i in 1..=REV_ADDRESS_COUNT {
         let (_, public_key) = secp256k1.new_key_pair();
         let rev_address =
-            rholang::rust::interpreter::util::rev_address::RevAddress::from_public_key(&public_key)
-                .expect("Failed to create RevAddress from public key");
+            rholang::rust::interpreter::util::vault_address::VaultAddress::from_public_key(
+                &public_key,
+            )
+            .expect("Failed to create RevAddress from public key");
 
         vaults.push(Vault {
-            rev_address,
+            vault_address: rev_address,
             initial_balance: i as u64,
         });
     }

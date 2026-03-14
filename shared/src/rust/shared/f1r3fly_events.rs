@@ -6,6 +6,7 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 use tokio::sync::broadcast;
+use tokio_stream::wrappers::BroadcastStream;
 
 pub use super::f1r3fly_event::F1r3flyEvent;
 
@@ -89,7 +90,7 @@ impl F1r3flyEvents {
     pub fn consume(&self) -> EventStream {
         EventStream {
             sender: self.sender.clone(),
-            receiver: self.sender.subscribe(),
+            inner: BroadcastStream::new(self.sender.subscribe()),
         }
     }
 
@@ -100,17 +101,18 @@ impl F1r3flyEvents {
     }
 }
 
-/// Stream implementation for consuming events
+/// Stream implementation for consuming events.
+/// Uses BroadcastStream internally which properly handles async wakeups.
 pub struct EventStream {
     sender: broadcast::Sender<F1r3flyEvent>, // required in order to create a new EventStream from current instance
-    receiver: broadcast::Receiver<F1r3flyEvent>,
+    inner: BroadcastStream<F1r3flyEvent>,
 }
 
 impl EventStream {
     pub fn new_subscribe(&self) -> Self {
         Self {
             sender: self.sender.clone(),
-            receiver: self.sender.subscribe(),
+            inner: BroadcastStream::new(self.sender.subscribe()),
         }
     }
 }
@@ -119,14 +121,18 @@ impl Stream for EventStream {
     type Item = F1r3flyEvent;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        use std::future::Future;
-        use std::pin::pin;
-
-        let mut future = pin!(self.receiver.recv());
-
-        match Future::poll(future.as_mut(), cx) {
-            Poll::Ready(Ok(item)) => Poll::Ready(Some(item)),
-            Poll::Ready(Err(_)) => Poll::Ready(None),
+        // Delegate to BroadcastStream which properly handles waker registration
+        // BroadcastStream returns Option<Result<T, BroadcastStreamRecvError>>
+        // We map errors to None (stream end) and unwrap Ok values
+        match Pin::new(&mut self.inner).poll_next(cx) {
+            Poll::Ready(Some(Ok(item))) => Poll::Ready(Some(item)),
+            Poll::Ready(Some(Err(_))) => {
+                // RecvError::Lagged means we missed some messages, but stream continues
+                // We could log this, but for now just skip and poll again
+                cx.waker().wake_by_ref();
+                Poll::Pending
+            }
+            Poll::Ready(None) => Poll::Ready(None),
             Poll::Pending => Poll::Pending,
         }
     }
@@ -182,27 +188,53 @@ mod tests {
 
     #[tokio::test]
     async fn test_publish_and_consume() {
-        // Create events publisher with capacity 2
-        let events = F1r3flyEvents::new(Some(2));
+        // Test that stream properly wakes up when event is published AFTER subscription.
+        // This tests the async wakeup path - the stream must wake immediately when
+        // an event is published, not wait for a timeout or other external trigger.
+        let start = std::time::Instant::now();
 
-        // Get stream first (before publishing)
-        let mut stream = events.consume();
+        let result = tokio::time::timeout(Duration::from_secs(2), async {
+            let events = Arc::new(F1r3flyEvents::new(Some(2)));
+            let mut stream = events.consume();
 
-        // Publish first event
-        let event1 = create_block_finalised_event();
-        events
-            .publish(event1.clone())
-            .expect("Failed to publish event");
+            // Publish event AFTER a delay (from another task)
+            // This forces the stream to wait asynchronously for the event
+            let events_clone = events.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                events_clone
+                    .publish(create_block_finalised_event())
+                    .expect("Failed to publish event");
+            });
 
-        // Consume first event
-        let received = stream.next().await.expect("No event available");
+            // This should wake up when event arrives (~50ms)
+            // If waker is broken, this hangs until timeout (2s)
+            let received = stream.next().await.expect("No event available");
 
-        match received {
-            F1r3flyEvent::BlockFinalised(BlockFinalised { block_hash, .. }) => {
-                assert_eq!(block_hash, "hash123");
+            match received {
+                F1r3flyEvent::BlockFinalised(BlockFinalised { block_hash, .. }) => {
+                    assert_eq!(block_hash, "hash123");
+                }
+                _ => panic!("Wrong event type received"),
             }
-            _ => panic!("Wrong event type received"),
-        }
+        })
+        .await;
+
+        let elapsed = start.elapsed();
+
+        assert!(
+            result.is_ok(),
+            "Test timed out after {:?} - stream.next() never woke up (waker bug)",
+            elapsed
+        );
+
+        // Should complete in ~50ms (the delay before publishing), not 2s
+        // Allow up to 500ms for slow CI environments
+        assert!(
+            elapsed < Duration::from_millis(500),
+            "Test took {:?} - expected ~50ms, waker may not be working correctly",
+            elapsed
+        );
     }
 
     #[tokio::test]

@@ -1,24 +1,21 @@
-
-use std::sync::Arc;
-use tokio::sync::Mutex;
-use tempfile::Builder;
 use models::rhoapi::Par;
-use rholang::rust::interpreter::external_services::ExternalServices;
-use rholang::rust::interpreter::ollama_service::OllamaService;
-use rholang::rust::interpreter::grpc_client_service::GrpcClientService;
-use rholang::rust::interpreter::rho_runtime::{self, RhoRuntimeImpl};
-use rholang::rust::interpreter::matcher::r#match::Matcher;
 use rholang::rust::interpreter::errors::InterpreterError;
-use rholang::rust::interpreter::storage::storage_printer;
-use rspace_plus_plus::rspace::shared::rspace_store_manager::mk_rspace_store_manager;
-use rspace_plus_plus::rspace::shared::lmdb_dir_store_manager::MB;
-use rspace_plus_plus::rspace::shared::key_value_store_manager::KeyValueStoreManager;
+use rholang::rust::interpreter::external_services::ExternalServices;
+use rholang::rust::interpreter::grpc_client_service::GrpcClientService;
+use rholang::rust::interpreter::matcher::r#match::Matcher;
+use rholang::rust::interpreter::ollama_service::OllamaService;
 use rholang::rust::interpreter::rho_runtime::RhoRuntime;
+use rholang::rust::interpreter::rho_runtime::{self, RhoRuntimeImpl};
+use rholang::rust::interpreter::storage::storage_printer;
+use rspace_plus_plus::rspace::shared::key_value_store_manager::KeyValueStoreManager;
+use rspace_plus_plus::rspace::shared::lmdb_dir_store_manager::MB;
+use rspace_plus_plus::rspace::shared::rspace_store_manager::mk_rspace_store_manager;
+use std::sync::Arc;
+use tempfile::Builder;
+use tokio::sync::Mutex;
 
-async fn with_runtime_and_mock_ollama<F, Fut>(
-    mock_service: OllamaService,
-    f: F,
-) where
+async fn with_runtime_and_mock_ollama<F, Fut>(mock_service: OllamaService, f: F)
+where
     F: FnOnce(RhoRuntimeImpl) -> Fut,
     Fut: std::future::Future<Output = ()>,
 {
@@ -60,10 +57,7 @@ fn storage_contents(runtime: &RhoRuntimeImpl) -> String {
     storage_printer::pretty_print(runtime)
 }
 
-async fn execute(
-    runtime: &mut RhoRuntimeImpl,
-    term: &str,
-) -> Result<(), InterpreterError> {
+async fn execute(runtime: &mut RhoRuntimeImpl, term: &str) -> Result<(), InterpreterError> {
     let result = runtime.evaluate_with_term(term).await?;
     if !result.errors.is_empty() {
         return Err(result.errors.into_iter().next().unwrap());
@@ -71,16 +65,10 @@ async fn execute(
     Ok(())
 }
 
-
-
 #[tokio::test]
 async fn ollama_chat_should_return_mock_response() {
     let mock_response = "Echo: What is 2+2?";
-    let mock_service = OllamaService::new_mock(
-        mock_response.to_string(),
-        "".to_string(),
-        vec![]
-    );
+    let mock_service = OllamaService::new_mock(mock_response.to_string(), "".to_string(), vec![]);
 
     with_runtime_and_mock_ollama(mock_service, |mut runtime| async move {
         let term = r#"
@@ -90,22 +78,22 @@ async fn ollama_chat_should_return_mock_response() {
         "#;
 
         execute(&mut runtime, term).await.expect("Execution failed");
-        
+
         let storage = storage_contents(&runtime);
         println!("Storage: {}", storage);
-        
-        assert!(storage.contains(mock_response), "Storage does not contain expected mock response");
-    }).await;
+
+        assert!(
+            storage.contains(mock_response),
+            "Storage does not contain expected mock response"
+        );
+    })
+    .await;
 }
 
 #[tokio::test]
 async fn ollama_generate_should_return_mock_response() {
     let mock_response = "Generated Poem";
-    let mock_service = OllamaService::new_mock(
-        "".to_string(),
-        mock_response.to_string(),
-        vec![]
-    );
+    let mock_service = OllamaService::new_mock("".to_string(), mock_response.to_string(), vec![]);
 
     with_runtime_and_mock_ollama(mock_service, |mut runtime| async move {
         let term = r#"
@@ -115,20 +103,17 @@ async fn ollama_generate_should_return_mock_response() {
         "#;
 
         execute(&mut runtime, term).await.expect("Execution failed");
-        
+
         let storage = storage_contents(&runtime);
         assert!(storage.contains(mock_response));
-    }).await;
+    })
+    .await;
 }
 
 #[tokio::test]
 async fn ollama_models_should_return_list() {
     let mock_models = vec!["model1".to_string(), "model2".to_string()];
-    let mock_service = OllamaService::new_mock(
-        "".to_string(),
-        "".to_string(),
-        mock_models.clone()
-    );
+    let mock_service = OllamaService::new_mock("".to_string(), "".to_string(), mock_models.clone());
 
     with_runtime_and_mock_ollama(mock_service, |mut runtime| async move {
         let term = r#"
@@ -138,10 +123,11 @@ async fn ollama_models_should_return_list() {
         "#;
 
         execute(&mut runtime, term).await.expect("Execution failed");
-        
+
         let storage = storage_contents(&runtime);
         println!("Storage Models: {}", storage);
         assert!(storage.contains("model1"));
         assert!(storage.contains("model2"));
-    }).await;
+    })
+    .await;
 }

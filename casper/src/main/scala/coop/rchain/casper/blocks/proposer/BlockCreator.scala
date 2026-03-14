@@ -38,7 +38,8 @@ object BlockCreator {
   def create[F[_]: Concurrent: Log: Time: BlockStore: DeployStorage: Metrics: RuntimeManager: Span](
       s: CasperSnapshot[F],
       validatorIdentity: ValidatorIdentity,
-      dummyDeployOpt: Option[(PrivateKey, String)] = None
+      dummyDeployOpt: Option[(PrivateKey, String)] = None,
+      allowEmptyBlocks: Boolean = false
   )(implicit runtimeManager: RuntimeManager[F]): F[BlockCreatorResult] =
     Span[F].trace(ProcessDeploysAndCreateBlockMetricsSource) {
       val selfId         = ByteString.copyFrom(validatorIdentity.publicKey.bytes)
@@ -47,17 +48,82 @@ object BlockCreator {
       val parents        = s.parents
       val justifications = s.justifications
 
-      def prepareUserDeploys(blockNumber: Long): F[Set[Signed[DeployData]]] =
+      def prepareUserDeploys(
+          blockNumber: Long,
+          currentTimeMillis: Long
+      ): F[Set[Signed[DeployData]]] =
         for {
           unfinalized         <- DeployStorage[F].readAll
           earliestBlockNumber = blockNumber - s.onChainState.shardConf.deployLifespan
+
+          // Categorize deploys for logging
+          futureDeploys = unfinalized.filter(d => !notFutureDeploy(blockNumber, d.data))
+          blockExpiredDeploys = unfinalized.filter(
+            d => !notExpiredDeploy(earliestBlockNumber, d.data)
+          )
+          timeExpiredDeploys = unfinalized.filter(d => d.data.isExpiredAt(currentTimeMillis))
+
+          // Combined expired deploys (block-based OR time-based)
+          allExpiredDeploys = blockExpiredDeploys ++ timeExpiredDeploys
+
           valid = unfinalized.filter(
             d =>
               notFutureDeploy(blockNumber, d.data) &&
-                notExpiredDeploy(earliestBlockNumber, d.data)
+                notExpiredDeploy(earliestBlockNumber, d.data) &&
+                !d.data.isExpiredAt(currentTimeMillis)
           )
           // this is required to prevent resending the same deploy several times by validator
-          validUnique = valid -- s.deploysInScope
+          validUnique    = valid -- s.deploysInScope
+          alreadyInScope = valid.intersect(s.deploysInScope)
+
+          // Log deploy selection details when there are any deploys in the pool
+          _ <- if (unfinalized.nonEmpty || s.deploysInScope.nonEmpty)
+                Log[F].info(
+                  s"Deploy selection for block #$blockNumber: " +
+                    s"pool=${unfinalized.size}, " +
+                    s"future=${futureDeploys.size} (validAfterBlockNumber >= $blockNumber), " +
+                    s"blockExpired=${blockExpiredDeploys.size} (validAfterBlockNumber <= $earliestBlockNumber), " +
+                    s"timeExpired=${timeExpiredDeploys.size} (expirationTimestamp <= $currentTimeMillis), " +
+                    s"valid=${valid.size}, " +
+                    s"alreadyInScope=${alreadyInScope.size}, " +
+                    s"selected=${validUnique.size}"
+                )
+              else ().pure[F]
+
+          // Log details for filtered-out deploys (to help debug why deploys aren't included)
+          _ <- futureDeploys.toList.traverse_(
+                d =>
+                  Log[F].warn(
+                    s"Deploy ${Base16.encode(d.sig.toByteArray.take(8))}... FILTERED (future): " +
+                      s"validAfterBlockNumber=${d.data.validAfterBlockNumber} >= currentBlock=$blockNumber"
+                  )
+              )
+          _ <- blockExpiredDeploys.toList.traverse_(
+                d =>
+                  Log[F].warn(
+                    s"Deploy ${Base16.encode(d.sig.toByteArray.take(8))}... FILTERED (block-expired): " +
+                      s"validAfterBlockNumber=${d.data.validAfterBlockNumber} <= earliestBlock=$earliestBlockNumber"
+                  )
+              )
+          _ <- timeExpiredDeploys.toList.traverse_(
+                d =>
+                  Log[F].warn(
+                    s"Deploy ${Base16.encode(d.sig.toByteArray.take(8))}... FILTERED (time-expired): " +
+                      s"expirationTimestamp=${d.data.expirationTimestamp} <= currentTime=$currentTimeMillis"
+                  )
+              )
+          // Remove all expired deploys from storage to prevent them from triggering future proposals
+          _ <- if (allExpiredDeploys.nonEmpty)
+                Log[F].info(s"Removing ${allExpiredDeploys.size} expired deploy(s) from storage") *>
+                  DeployStorage[F].remove(allExpiredDeploys.toList)
+              else ().pure[F]
+          _ <- alreadyInScope.toList.traverse_(
+                d =>
+                  Log[F].warn(
+                    s"Deploy ${Base16.encode(d.sig.toByteArray.take(8))}... FILTERED (already in scope): " +
+                      s"deploy already exists in DAG within lifespan window"
+                  )
+              )
         } yield validUnique
 
       def prepareSlashingDeploys(seqNum: Int): F[Seq[SlashDeploy]] =
@@ -101,11 +167,23 @@ object BlockCreator {
         }
 
       val createBlockProcess = for {
+        // Capture current time once to ensure consistency between deploy filtering and block timestamp.
+        // This prevents race condition where a deploy could pass filtering but expire before block creation.
+        now <- Time[F].currentMillis
+        // Ensure the block timestamp is strictly after all parent timestamps. This
+        // prevents InvalidTimestamp validation failures caused by clock skew between
+        // validators (a parent created by a validator whose clock is slightly ahead
+        // would have a timestamp greater than our local `now`).
+        blockTimestamp: Long = {
+          val parentTs    = parents.map(_.header.timestamp)
+          val maxParentTs = if (parentTs.isEmpty) 0L else parentTs.max
+          math.max(now, maxParentTs + 1)
+        }
         _ <- Log[F].info(
               s"Creating block #${nextBlockNum} (seqNum ${nextSeqNum})"
             )
         shardId         = s.onChainState.shardConf.shardName
-        userDeploys     <- prepareUserDeploys(nextBlockNum)
+        userDeploys     <- prepareUserDeploys(nextBlockNum, blockTimestamp)
         dummyDeploys    = prepareDummyDeploy(nextBlockNum, shardId)
         slashingDeploys <- prepareSlashingDeploys(nextSeqNum)
         // make sure closeBlock is the last system Deploy
@@ -113,12 +191,15 @@ object BlockCreator {
           SystemDeployUtil
             .generateCloseDeployRandomSeed(selfId, nextSeqNum)
         )
-        deploys = userDeploys -- s.deploysInScope ++ dummyDeploys
-        r <- if (deploys.nonEmpty || slashingDeploys.nonEmpty)
+        deploys       = userDeploys -- s.deploysInScope ++ dummyDeploys
+        invalidBlocks = s.invalidBlocks
+        blockData     = BlockData(blockTimestamp, nextBlockNum, validatorIdentity.publicKey, nextSeqNum)
+        r <- if (allowEmptyBlocks || deploys.nonEmpty || slashingDeploys.nonEmpty)
+              // When allowEmptyBlocks is true (heartbeat enabled), always create blocks.
+              // They will always have system deploys (CloseBlockDeploy), making them valid.
+              // Empty blocks are necessary for liveness during periods of no user activity.
+              // When false (default), use original behavior: only create blocks with user deploys.
               for {
-                now           <- Time[F].currentMillis
-                invalidBlocks = s.invalidBlocks
-                blockData     = BlockData(now, nextBlockNum, validatorIdentity.publicKey, nextSeqNum)
                 checkpointData <- InterpreterUtil.computeDeploysCheckpoint(
                                    parents,
                                    deploys.toSeq,

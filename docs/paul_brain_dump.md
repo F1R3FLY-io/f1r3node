@@ -47,7 +47,7 @@
   * Eventually, to deal with exotic hardware F1r3fly can take the best advantage of, you'll need to master [bare-metal Kubernetes](https://deploy.equinix.com/blog/guide-to-running-kubernetes-on-bare-metal/).
   * The reproducible development environment provides [Minikube](https://minikube.sigs.k8s.io/docs/), a _very_ good local single-node Kubernetes "cluster."
   * The reproducible development environment provides [Dhall](ihttps://dhall-lang.org/) and its YAML-generating CLI.
-  * The project repository includes [dhall-kubernetes](https://github.com/dhall-lang/dhall-kubernetes) as a Git submodule. This may be useful for developing rich deployments.
+  * [dhall-kubernetes](https://github.com/dhall-lang/dhall-kubernetes) may be useful for developing rich deployments.
   * Study other stateful services that can be deployed to Kubernetes, including other blockchains.
     * Strongly consider developing a F1r3fly [Operator](https://operatorframework.io/)
       * Using the [kubernetes-client](https://github.com/joan38/kubernetes-client)

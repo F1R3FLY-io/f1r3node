@@ -9,12 +9,10 @@ use crate::rust::{
         engine::{self, Engine},
         engine_cell::EngineCell,
     },
-    metrics_constants::{
-        RUNNING_METRICS_SOURCE,
-        BLOCK_HASH_RECEIVED_METRIC,
-        BLOCK_REQUEST_RECEIVED_METRIC,
-    },
     errors::CasperError,
+    metrics_constants::{
+        BLOCK_HASH_RECEIVED_METRIC, BLOCK_REQUEST_RECEIVED_METRIC, RUNNING_METRICS_SOURCE,
+    },
 };
 use async_trait::async_trait;
 use comm::rust::{
@@ -22,6 +20,7 @@ use comm::rust::{
     rp::{connect::ConnectionsCell, rp_conf::RPConf},
     transport::transport_layer::TransportLayer,
 };
+use dashmap::DashSet;
 use models::rust::{
     block_hash::BlockHash,
     casper::{
@@ -44,7 +43,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::{
     collections::HashSet,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, OnceLock},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -103,8 +102,7 @@ pub async fn update_fork_choice_tips_if_stuck<T: TransportLayer + Send + Sync>(
 
         // Check if any latest message is recent
         let mut has_recent_latest_message = false;
-        for entry in latest_messages.iter() {
-            let block_hash = entry.value();
+        for (_, block_hash) in latest_messages.iter() {
             if let Ok(Some(block)) = casper.block_store().get(block_hash) {
                 let block_timestamp = block.header.timestamp;
                 if (now - block_timestamp) < delay_threshold.as_millis() as i64 {
@@ -155,7 +153,8 @@ impl<T: TransportLayer + Send + Sync + 'static> Engine for Running<T> {
     async fn handle(&self, peer: PeerNode, msg: CasperMessage) -> Result<(), CasperError> {
         match msg {
             CasperMessage::BlockHashMessage(h) => {
-                metrics::counter!(BLOCK_HASH_RECEIVED_METRIC, "source" => RUNNING_METRICS_SOURCE).increment(1);
+                metrics::counter!(BLOCK_HASH_RECEIVED_METRIC, "source" => RUNNING_METRICS_SOURCE)
+                    .increment(1);
                 self.handle_block_hash_message(peer, h, |hash| self.ignore_casper_message(hash))
                     .await
             }
@@ -180,9 +179,30 @@ impl<T: TransportLayer + Send + Sync + 'static> Engine for Running<T> {
                         PrettyPrinter::build_string_block_message(&b, true),
                         peer.endpoint.host
                     );
+                    let block_hash = b.block_hash.clone();
+                    if !self.blocks_in_processing.insert(block_hash.clone()) {
+                        tracing::debug!(
+                            "Skipping BlockMessage {} enqueue because it is already queued/in-processing",
+                            PrettyPrinter::build_string_bytes(&block_hash)
+                        );
+                        return Ok(());
+                    }
+                    let max_in_flight = max_blocks_in_processing();
+                    if self.blocks_in_processing.len() > max_in_flight {
+                        self.blocks_in_processing.remove(&block_hash);
+                        tracing::warn!(
+                            "Dropping BlockMessage {} because in-flight block cap {} is reached",
+                            PrettyPrinter::build_string_bytes(&block_hash),
+                            max_in_flight
+                        );
+                        return Ok(());
+                    }
                     self.block_processing_queue_tx
                         .send((self.casper.clone(), b))
+                        .await
                         .map_err(|e| {
+                            // Roll back pre-enqueue mark if queue send fails.
+                            self.blocks_in_processing.remove(&block_hash);
                             CasperError::RuntimeError(format!(
                                 "Failed to send block to queue: {}",
                                 e
@@ -299,8 +319,8 @@ impl<T: TransportLayer + Send + Sync + 'static> Engine for Running<T> {
 // based on discussion with Steven for TestFixture compatibility - avoids ?Sized issues
 pub struct Running<T: TransportLayer + Send + Sync> {
     block_processing_queue_tx:
-        mpsc::UnboundedSender<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
-    blocks_in_processing: Arc<Mutex<HashSet<BlockHash>>>,
+        mpsc::Sender<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
+    blocks_in_processing: Arc<DashSet<BlockHash>>,
     casper: Arc<dyn MultiParentCasper + Send + Sync>,
     approved_block: ApprovedBlock,
     // Scala: theInit: F[Unit] - lazy async computation
@@ -314,13 +334,27 @@ pub struct Running<T: TransportLayer + Send + Sync> {
     block_retriever: BlockRetriever<T>,
 }
 
+const MAX_BLOCKS_IN_PROCESSING_DEFAULT: usize = 512;
+const MAX_BLOCKS_IN_PROCESSING_ENV: &str = "F1R3_MAX_BLOCKS_IN_PROCESSING";
+static MAX_BLOCKS_IN_PROCESSING: OnceLock<usize> = OnceLock::new();
+
+fn max_blocks_in_processing() -> usize {
+    *MAX_BLOCKS_IN_PROCESSING.get_or_init(|| {
+        std::env::var(MAX_BLOCKS_IN_PROCESSING_ENV)
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .filter(|v| *v > 0)
+            .unwrap_or(MAX_BLOCKS_IN_PROCESSING_DEFAULT)
+    })
+}
+
 impl<T: TransportLayer + Send + Sync> Running<T> {
     pub fn new(
-        block_processing_queue_tx: mpsc::UnboundedSender<(
+        block_processing_queue_tx: mpsc::Sender<(
             Arc<dyn MultiParentCasper + Send + Sync>,
             BlockMessage,
         )>,
-        blocks_in_processing: Arc<Mutex<HashSet<BlockHash>>>,
+        blocks_in_processing: Arc<DashSet<BlockHash>>,
         casper: Arc<dyn MultiParentCasper + Send + Sync>,
         approved_block: ApprovedBlock,
         the_init: Arc<
@@ -346,13 +380,7 @@ impl<T: TransportLayer + Send + Sync> Running<T> {
     }
 
     fn ignore_casper_message(&self, hash: BlockHash) -> Result<bool, CasperError> {
-        let blocks_in_processing = self
-            .blocks_in_processing
-            .lock()
-            .map_err(|_| {
-                CasperError::RuntimeError("Failed to lock blocks_in_processing".to_string())
-            })?
-            .contains(&hash);
+        let blocks_in_processing = self.blocks_in_processing.contains(&hash);
         let buffer_contains = self.casper.buffer_contains(&hash);
         let dag_contains = self.casper.dag_contains(&hash);
         Ok(blocks_in_processing || buffer_contains || dag_contains)
@@ -465,7 +493,7 @@ impl<T: TransportLayer + Send + Sync> Running<T> {
         let latest_messages = self.casper.block_dag().await?.latest_message_hashes();
         let tips: Vec<BlockHash> = latest_messages
             .iter()
-            .map(|entry| entry.value().clone())
+            .map(|(_, hash)| hash.clone())
             .collect::<HashSet<_>>()
             .into_iter()
             .collect();

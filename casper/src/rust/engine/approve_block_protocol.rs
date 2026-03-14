@@ -143,6 +143,11 @@ impl ApproveBlockProtocolFactory {
         connections_cell: Arc<ConnectionsCell>,
         conf: Arc<RPConf>,
     ) -> Result<ApproveBlockProtocolImpl<T>, CasperError> {
+        tracing::info!(
+            required_sigs = required_sigs,
+            "Bootstrap configured required_sigs"
+        );
+
         let now = Self::current_millis();
         let timestamp = deploy_timestamp.unwrap_or(now as i64);
 

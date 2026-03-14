@@ -1,13 +1,15 @@
 // See casper/src/main/scala/coop/rchain/casper/engine/Initializing.scala
 
 use async_trait::async_trait;
+use dashmap::DashSet;
 use futures::stream::StreamExt;
 use std::{
-    collections::{BTreeMap, HashMap, HashSet, VecDeque},
+    collections::{BTreeMap, HashSet, VecDeque},
     future::Future,
     pin::Pin,
+    sync::atomic::{AtomicUsize, Ordering},
     sync::{Arc, Mutex},
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tokio::sync::mpsc;
 use tokio::time::sleep;
@@ -45,6 +47,12 @@ use shared::rust::{
 use crate::rust::block_status::ValidBlock;
 use crate::rust::engine::lfs_tuple_space_requester::StatePartPath;
 use crate::rust::estimator::Estimator;
+use crate::rust::metrics_constants::{
+    CASPER_INIT_APPROVED_BLOCK_RECEIVED_METRIC, CASPER_INIT_ATTEMPTS_METRIC,
+    CASPER_INIT_RETRY_NO_APPROVED_BLOCK_METRIC, CASPER_INIT_TIME_TO_APPROVED_BLOCK_METRIC,
+    CASPER_INIT_TIME_TO_RUNNING_METRIC, CASPER_METRICS_SOURCE,
+    INIT_BLOCK_MESSAGE_QUEUE_PENDING_METRIC, INIT_TUPLE_SPACE_QUEUE_PENDING_METRIC,
+};
 use crate::rust::validate::Validate;
 use crate::rust::{
     casper::{CasperShardConf, MultiParentCasper},
@@ -81,23 +89,27 @@ pub struct Initializing<T: TransportLayer + Send + Sync + Clone + 'static> {
     // Block processing queue - matches Scala's blockProcessingQueue: Queue[F, (Casper[F], BlockMessage)]
     // Using trait object to support different MultiParentCasper implementations
     block_processing_queue_tx:
-        mpsc::UnboundedSender<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
-    blocks_in_processing: Arc<Mutex<HashSet<BlockHash>>>,
+        mpsc::Sender<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
+    blocks_in_processing: Arc<DashSet<BlockHash>>,
     casper_shard_conf: CasperShardConf,
     validator_id: Option<ValidatorIdentity>,
     the_init: Arc<
         dyn Fn() -> Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>> + Send + Sync,
     >,
-    block_message_rx: Arc<Mutex<Option<mpsc::UnboundedReceiver<BlockMessage>>>>,
-    tuple_space_rx: Arc<Mutex<Option<mpsc::UnboundedReceiver<StoreItemsMessage>>>>,
+    block_message_rx: Arc<Mutex<Option<mpsc::Receiver<BlockMessage>>>>,
+    tuple_space_rx: Arc<Mutex<Option<mpsc::Receiver<StoreItemsMessage>>>>,
     // Senders to enqueue messages from `handle` (producer side)
-    pub block_message_tx: Arc<Mutex<Option<mpsc::UnboundedSender<BlockMessage>>>>,
-    pub tuple_space_tx: Arc<Mutex<Option<mpsc::UnboundedSender<StoreItemsMessage>>>>,
+    pub block_message_tx: Arc<Mutex<Option<mpsc::Sender<BlockMessage>>>>,
+    pub tuple_space_tx: Arc<Mutex<Option<mpsc::Sender<StoreItemsMessage>>>>,
+    block_message_queue_pending: Arc<AtomicUsize>,
+    tuple_space_queue_pending: Arc<AtomicUsize>,
     trim_state: bool,
     disable_state_exporter: bool,
 
     // TEMP: flag for single call for process approved block (Scala: `val startRequester = Ref.unsafe(true)`)
     start_requester: Arc<Mutex<bool>>,
+    init_started_at: Arc<Mutex<Option<Instant>>>,
+    no_approved_block_retries: Arc<Mutex<u64>>,
     /// Event publisher for F1r3fly events
     event_publisher: F1r3flyEvents,
 
@@ -124,20 +136,20 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
         deploy_storage: KeyValueDeployStorage,
         casper_buffer_storage: CasperBufferKeyValueStorage,
         rspace_state_manager: RSpaceStateManager,
-        block_processing_queue_tx: mpsc::UnboundedSender<(
+        block_processing_queue_tx: mpsc::Sender<(
             Arc<dyn MultiParentCasper + Send + Sync>,
             BlockMessage,
         )>,
-        blocks_in_processing: Arc<Mutex<HashSet<BlockHash>>>,
+        blocks_in_processing: Arc<DashSet<BlockHash>>,
         casper_shard_conf: CasperShardConf,
         validator_id: Option<ValidatorIdentity>,
         the_init: Arc<
             dyn Fn() -> Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>> + Send + Sync,
         >,
-        block_message_tx: mpsc::UnboundedSender<BlockMessage>,
-        block_message_rx: mpsc::UnboundedReceiver<BlockMessage>,
-        tuple_space_tx: mpsc::UnboundedSender<StoreItemsMessage>,
-        tuple_space_rx: mpsc::UnboundedReceiver<StoreItemsMessage>,
+        block_message_tx: mpsc::Sender<BlockMessage>,
+        block_message_rx: mpsc::Receiver<BlockMessage>,
+        tuple_space_tx: mpsc::Sender<StoreItemsMessage>,
+        tuple_space_rx: mpsc::Receiver<StoreItemsMessage>,
         trim_state: bool,
         disable_state_exporter: bool,
         event_publisher: F1r3flyEvents,
@@ -147,7 +159,7 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
         estimator: Estimator,
         heartbeat_signal_ref: crate::rust::heartbeat_signal::HeartbeatSignalRef,
     ) -> Self {
-        Self {
+        let state = Self {
             transport_layer,
             rp_conf_ask,
             connections_cell,
@@ -166,23 +178,72 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
             tuple_space_rx: Arc::new(Mutex::new(Some(tuple_space_rx))),
             block_message_tx: Arc::new(Mutex::new(Some(block_message_tx))),
             tuple_space_tx: Arc::new(Mutex::new(Some(tuple_space_tx))),
+            block_message_queue_pending: Arc::new(AtomicUsize::new(0)),
+            tuple_space_queue_pending: Arc::new(AtomicUsize::new(0)),
             trim_state,
             disable_state_exporter,
             start_requester: Arc::new(Mutex::new(true)),
+            init_started_at: Arc::new(Mutex::new(None)),
+            no_approved_block_retries: Arc::new(Mutex::new(0)),
             event_publisher,
             block_retriever,
             engine_cell,
             runtime_manager,
             estimator: Arc::new(Mutex::new(Some(estimator))),
             heartbeat_signal_ref,
-        }
+        };
+        metrics::gauge!(
+            INIT_BLOCK_MESSAGE_QUEUE_PENDING_METRIC,
+            "source" => CASPER_METRICS_SOURCE
+        )
+        .set(0.0);
+        metrics::gauge!(
+            INIT_TUPLE_SPACE_QUEUE_PENDING_METRIC,
+            "source" => CASPER_METRICS_SOURCE
+        )
+        .set(0.0);
+        state
+    }
+
+    fn update_init_queue_metrics(&self) {
+        metrics::gauge!(
+            INIT_BLOCK_MESSAGE_QUEUE_PENDING_METRIC,
+            "source" => CASPER_METRICS_SOURCE
+        )
+        .set(self.block_message_queue_pending.load(Ordering::Relaxed) as f64);
+        metrics::gauge!(
+            INIT_TUPLE_SPACE_QUEUE_PENDING_METRIC,
+            "source" => CASPER_METRICS_SOURCE
+        )
+        .set(self.tuple_space_queue_pending.load(Ordering::Relaxed) as f64);
     }
 }
 
 #[async_trait]
 impl<T: TransportLayer + Send + Sync + Clone + 'static> Engine for Initializing<T> {
     async fn init(&self) -> Result<(), CasperError> {
-        (self.the_init)().await
+        metrics::counter!(
+            CASPER_INIT_ATTEMPTS_METRIC,
+            "source" => CASPER_METRICS_SOURCE
+        )
+        .increment(1);
+        {
+            let mut started_at = self.init_started_at.lock().map_err(|_| {
+                CasperError::RuntimeError("Failed to acquire init_started_at lock".to_string())
+            })?;
+            if started_at.is_none() {
+                *started_at = Some(Instant::now());
+            }
+        }
+        (self.the_init)().await?;
+        // Proactively request ApprovedBlock on init to handle the race condition where
+        // the ApprovedBlock was broadcast while this node was still in GenesisValidator state
+        // (verifying the UnapprovedBlock). Without this, the node could get stuck forever
+        // waiting for an ApprovedBlock that was already sent and dropped.
+        self.transport_layer
+            .request_approved_block(&self.rp_conf_ask, Some(self.trim_state))
+            .await
+            .map_err(CasperError::CommError)
     }
 
     async fn handle(&self, peer: PeerNode, msg: CasperMessage) -> Result<(), CasperError> {
@@ -201,7 +262,25 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> Engine for Initializing<
                 .await
             }
             CasperMessage::NoApprovedBlockAvailable(no_approved_block_available) => {
+                let retry_count = {
+                    let mut retries = self.no_approved_block_retries.lock().map_err(|_| {
+                        CasperError::RuntimeError(
+                            "Failed to acquire no_approved_block_retries lock".to_string(),
+                        )
+                    })?;
+                    *retries += 1;
+                    *retries
+                };
+                metrics::counter!(
+                    CASPER_INIT_RETRY_NO_APPROVED_BLOCK_METRIC,
+                    "source" => CASPER_METRICS_SOURCE
+                )
+                .increment(1);
                 log_no_approved_block_available(&no_approved_block_available.node_identifier);
+                tracing::info!(
+                    retry_count = retry_count,
+                    "Retrying approved block request after NoApprovedBlockAvailable"
+                );
                 sleep(Duration::from_secs(10)).await;
                 self.transport_layer
                     .request_approved_block(&self.rp_conf_ask, Some(self.trim_state))
@@ -215,25 +294,28 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> Engine for Initializing<
                     peer
                 );
                 // Enqueue into tuple space channel for requester stream
-                let send_res = self
-                    .tuple_space_tx
-                    .lock()
-                    .unwrap()
-                    .as_ref()
-                    .map(|tx| tx.send(store_items_message));
-                match send_res {
-                    Some(Ok(())) => {}
-                    Some(Err(e)) => {
-                        tracing::warn!(
-                            "Failed to enqueue StoreItemsMessage into tuple_space channel: {:?}",
-                            e
-                        );
+                let sender = self.tuple_space_tx.lock().unwrap().as_ref().cloned();
+                if let Some(tx) = sender {
+                    match tx.send(store_items_message).await {
+                        Ok(()) => {
+                            let _ = self.tuple_space_queue_pending.fetch_update(
+                                Ordering::AcqRel,
+                                Ordering::Acquire,
+                                |curr| Some(curr + 1),
+                            );
+                            self.update_init_queue_metrics();
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "Failed to enqueue StoreItemsMessage into tuple_space channel: {:?}",
+                                e
+                            );
+                        }
                     }
-                    None => {
-                        tracing::warn!(
-                            "tuple_space_tx sender is None; tuple space channel not available (message not enqueued)"
-                        );
-                    }
+                } else {
+                    tracing::warn!(
+                        "tuple_space_tx sender is None; tuple space channel not available (message not enqueued)"
+                    );
                 }
                 Ok(())
             }
@@ -244,25 +326,28 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> Engine for Initializing<
                     peer
                 );
                 // Enqueue into block message channel for requester stream
-                let send_res = self
-                    .block_message_tx
-                    .lock()
-                    .unwrap()
-                    .as_ref()
-                    .map(|tx| tx.send(block_message));
-                match send_res {
-                    Some(Ok(())) => {}
-                    Some(Err(e)) => {
-                        tracing::warn!(
-                            "Failed to enqueue BlockMessage into block_message channel: {:?}",
-                            e
-                        );
+                let sender = self.block_message_tx.lock().unwrap().as_ref().cloned();
+                if let Some(tx) = sender {
+                    match tx.send(block_message).await {
+                        Ok(()) => {
+                            let _ = self.block_message_queue_pending.fetch_update(
+                                Ordering::AcqRel,
+                                Ordering::Acquire,
+                                |curr| Some(curr + 1),
+                            );
+                            self.update_init_queue_metrics();
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "Failed to enqueue BlockMessage into block_message channel: {:?}",
+                                e
+                            );
+                        }
                     }
-                    None => {
-                        tracing::warn!(
-                            "block_message_tx sender is None; block message channel not available (message not enqueued)"
-                        );
-                    }
+                } else {
+                    tracing::warn!(
+                        "block_message_tx sender is None; block message channel not available (message not enqueued)"
+                    );
                 }
                 Ok(())
             }
@@ -373,6 +458,32 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
         };
 
         if start {
+            metrics::counter!(
+                CASPER_INIT_APPROVED_BLOCK_RECEIVED_METRIC,
+                "source" => CASPER_METRICS_SOURCE
+            )
+            .increment(1);
+            let no_approved_block_retries =
+                *self.no_approved_block_retries.lock().map_err(|_| {
+                    CasperError::RuntimeError(
+                        "Failed to acquire no_approved_block_retries lock".to_string(),
+                    )
+                })?;
+            if let Some(started_at) = *self.init_started_at.lock().map_err(|_| {
+                CasperError::RuntimeError("Failed to acquire init_started_at lock".to_string())
+            })? {
+                let elapsed = started_at.elapsed();
+                metrics::histogram!(
+                    CASPER_INIT_TIME_TO_APPROVED_BLOCK_METRIC,
+                    "source" => CASPER_METRICS_SOURCE
+                )
+                .record(elapsed.as_secs_f64());
+                tracing::info!(
+                    retries = no_approved_block_retries,
+                    elapsed_ms = elapsed.as_millis(),
+                    "Approved block accepted during initialization"
+                );
+            }
             handle_approved_block(self, &approved_block).await?;
         }
         Ok(())
@@ -390,7 +501,7 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
     ///
     /// Rust approach (this implementation):
     /// - block_message_queue is Arc<Mutex<VecDeque>> (sync) for thread-safe access
-    /// - tuple_space_queue is mpsc::UnboundedSender (async channel sender)
+    /// - tuple_space_queue is mpsc::Sender (async channel sender)
     /// - For block messages: drains existing sync queue into new async channel, then uses that channel
     /// - For tuple space: uses existing sender directly
     ///
@@ -444,20 +555,30 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
         let tuple_space_requester =
             TupleSpaceRequester::new(&self.transport_layer, &self.rp_conf_ask);
 
+        // Keep LFS retry cadence configurable instead of hard-coding a long startup delay.
+        // Falls back to 5s when env var is absent or invalid.
+        let lfs_request_timeout = std::env::var("F1R3_LFS_REQUEST_TIMEOUT_MS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .map(Duration::from_millis)
+            .unwrap_or_else(|| Duration::from_secs(5));
+
         // **Scala equivalent**: Create both streams (blockRequestStream and tupleSpaceStream)
         let (block_request_stream_result, tuple_space_stream_result) = tokio::join!(
             lfs_block_requester::stream(
                 &approved_block,
                 &empty_queue,
                 response_message_rx,
+                self.block_message_queue_pending.clone(),
                 min_block_number_for_deploy_lifespan,
-                Duration::from_secs(30),
+                lfs_request_timeout,
                 &mut block_requester,
             ),
             lfs_tuple_space_requester::stream(
                 &approved_block,
                 tuple_space_rx,
-                Duration::from_secs(120),
+                self.tuple_space_queue_pending.clone(),
+                lfs_request_timeout,
                 tuple_space_requester,
                 self.rspace_state_manager.importer.clone(),
             )
@@ -489,8 +610,11 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
         };
 
         // **Scala equivalent**: `fs2.Stream(blockRequestAddDagStream, tupleSpaceLogStream).parJoinUnbounded.compile.drain`
-        // Run both futures in parallel until completion
-        let (final_state_result, _) = tokio::try_join!(block_request_future, tuple_space_future)?;
+        // Run both futures to completion; avoid canceling one branch if the other errors first.
+        let (final_state_result, tuple_space_result) =
+            tokio::join!(block_request_future, tuple_space_future);
+        let final_state_result = final_state_result?;
+        tuple_space_result?;
 
         // Now populate DAG with the final state (equivalent to evalMap in Scala)
         if let Some(st) = final_state_result {
@@ -780,17 +904,6 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
     ) -> Result<(), CasperError> {
         let ab = approved_block.candidate.block.clone();
 
-        // Scala: implicit val requestedBlocks: RequestedBlocks[F] = Ref.unsafe[F, Map[BlockHash, RequestState]](Map.empty)
-        let requested_blocks = Arc::new(Mutex::new(HashMap::new()));
-
-        // Scala: implicit val blockRetriever: BlockRetriever[F] = BlockRetriever.of[F]
-        let block_retriever_for_casper = BlockRetriever::new(
-            requested_blocks,
-            Arc::new(self.transport_layer.clone()),
-            self.connections_cell.clone(),
-            self.rp_conf_ask.clone(),
-        );
-
         // RuntimeManager is now Arc<Mutex<RuntimeManager>>, so we clone the Arc
         let runtime_manager = self.runtime_manager.clone();
 
@@ -803,7 +916,7 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
 
         // Pass Arc<Mutex<RuntimeManager>> directly to hash_set_casper
         let casper = crate::rust::casper::hash_set_casper(
-            block_retriever_for_casper,
+            self.block_retriever.clone(),
             self.event_publisher.clone(),
             runtime_manager,
             estimator,
@@ -844,6 +957,17 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
             &self.event_publisher,
         )
         .await?;
+
+        if let Some(started_at) = *self.init_started_at.lock().map_err(|_| {
+            CasperError::RuntimeError("Failed to acquire init_started_at lock".to_string())
+        })? {
+            let elapsed = started_at.elapsed();
+            metrics::histogram!(
+                CASPER_INIT_TIME_TO_RUNNING_METRIC,
+                "source" => CASPER_METRICS_SOURCE
+            )
+            .record(elapsed.as_secs_f64());
+        }
 
         tracing::info!(
             "create_casper_and_transition_to_running: transition_to_running completed successfully"

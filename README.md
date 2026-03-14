@@ -14,6 +14,8 @@
 - [Building](#building)
   - [Building Rust Node Docker Image](#building-rust-node-docker-image-recommended)
 - [Running](#running)
+  - [Docker Network](#docker-network-recommended)
+  - [Local Development (Pure Rust)](#local-development-pure-rust)
 - [Usage](#usage)
   - [F1r3fly Rust Client](#f1r3fly-rust-client)
   - [Evaluating Rholang Contracts](#evaluating-rholang-contracts)
@@ -361,6 +363,62 @@ cd docker && docker-compose -f standalone.yml up
 cd docker && docker-compose -f shard-with-autopropose.yml up
 ```
 
+### Local Development (Pure Rust)
+
+**Run the Rust node locally without Docker** - ideal for development and debugging.
+
+#### Prerequisites
+
+- [Development environment](#source-development) (Nix + direnv)
+- `just` command runner (included in nix flake)
+
+#### Quick Start
+
+```bash
+# Enter the development environment
+direnv allow  # or: nix develop
+
+# Build and run standalone node
+just run-standalone
+```
+
+#### Available Commands
+
+Run `just` to see all available commands:
+
+| Command | Description |
+|---------|-------------|
+| `just build` | Build node in release mode |
+| `just build-debug` | Build node in debug mode (faster compile) |
+| `just run-standalone` | Build and run standalone node |
+| `just run-standalone-debug` | Run in debug mode |
+| `just setup-standalone` | Set up data directory only |
+| `just clean-standalone` | Remove node data (fresh start) |
+| `just help` | Show node CLI help |
+| `just run-help` | Show 'run' subcommand options |
+
+#### Configuration
+
+Local configuration files are in [`run-local/`](run-local/):
+
+```
+run-local/
+├── conf/standalone.conf     # Node configuration
+├── genesis/standalone/      # Genesis files (bonds, wallets)
+└── data/standalone/         # Node data (gitignored)
+```
+
+See [`run-local/README.md`](run-local/README.md) for details.
+
+#### Fresh Start
+
+```bash
+just clean-standalone
+just run-standalone
+```
+
+---
+
 ### Local Development Node (Legacy - Hybrid)
 
 > **Note**: This uses the legacy hybrid Scala+Rust node. For production, use the pure Rust Docker image.
@@ -393,7 +451,7 @@ The F1r3fly Rust Client provides a comprehensive command-line interface for bloc
 | **Full Deploy**        | Deploy + propose in a single operation                       |
 | **Deploy & Wait**      | Deploy with automatic finalization checking                  |
 | **Exploratory Deploy** | Execute Rholang without blockchain commitment (read-only)    |
-| **Transfer**           | Send REV tokens between addresses                            |
+| **Transfer**           | Send tokens between addresses                                |
 | **Bond Validator**     | Add new validators to the network                            |
 | **Network Health**     | Check validator status and network consensus                 |
 | **Key Management**     | Generate public keys and key pairs for blockchain identities |
@@ -564,7 +622,7 @@ Join the F1r3fly community for real-time support, tutorials, and project updates
 
 ### Getting Help
 
-1. **Documentation**: Start with this README and the [Node CLI docs](node-cli/README.md)
+1. **Documentation**: Start with this README
 2. **Troubleshooting**: Check the [troubleshooting section](#troubleshooting)
 3. **Community**: Ask questions in Discord
 4. **Issues**: Report bugs in GitHub Issues

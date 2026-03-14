@@ -4,6 +4,7 @@ use futures::stream::StreamExt;
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio::sync::{Mutex, OnceCell};
 use tokio::task::JoinHandle;
@@ -23,12 +24,24 @@ use crate::rust::{
 };
 use models::routing::transport_layer_server::{TransportLayer, TransportLayerServer};
 use models::routing::{Chunk, TlRequest, TlResponse};
+use prost::Message;
 
 use super::limited_buffer::{FlumeLimitedBuffer, LimitedBufferObservable};
 use super::messages::{Send as CommSend, StreamMessage};
 use super::packet_ops::StreamCache;
 use super::ssl_session_server_interceptor::SslSessionServerInterceptor;
 use super::stream_handler::{Circuit, StreamError, StreamHandler, Streamed};
+use shared::rust::shared::recent_hash_filter::RecentHashFilter;
+
+/// Calculate a deterministic hash of bytes for gossip deduplication.
+fn calculate_hash(bytes: &[u8]) -> u64 {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    let mut hasher = DefaultHasher::new();
+    bytes.hash(&mut hasher);
+    hasher.finish()
+}
 
 // Circuit breaker parameters for thread-local storage
 thread_local! {
@@ -59,7 +72,14 @@ pub type MessageBuffers = (
     Arc<FlumeLimitedBuffer<CommSend>>,
     Arc<FlumeLimitedBuffer<StreamMessage>>,
     Arc<JoinHandle<()>>,
+    Arc<JoinHandle<()>>,
 );
+
+#[derive(Clone)]
+pub struct PeerBufferSlot {
+    pub once_cell: Arc<OnceCell<MessageBuffers>>,
+    pub last_seen_ms: u64,
+}
 
 /// Type alias for message handlers
 pub type MessageHandlers = (
@@ -83,18 +103,31 @@ pub struct TransportLayerService {
     network_id: String,
     rp_config: RPConf,
     max_stream_message_size: u64,
-    buffers_map: Arc<Mutex<HashMap<PeerNode, Arc<OnceCell<MessageBuffers>>>>>,
+    buffers_map: Arc<Mutex<HashMap<PeerNode, PeerBufferSlot>>>,
     message_handlers: MessageHandlers,
     cache: StreamCache,
     parallelism: usize,
+    /// Filter to avoid redundant gossip of already seen block hashes
+    recent_hash_filter: RecentHashFilter,
 }
+
+/// Default capacity for the recent hash filter
+const RECENT_HASH_FILTER_CAPACITY: usize = 8192;
+/// Inbound per-peer queue sizing tuned for catch-up bursts.
+/// Small values cause drops that can amplify missing-dependency churn.
+const INBOUND_TELL_BUFFER_SIZE: usize = 512;
+const INBOUND_BLOB_BUFFER_SIZE: usize = 128;
+const PEER_BUFFER_STALE_TTL_MS: u64 = 300_000;
+const PEER_BUFFER_CLEANUP_EVERY_REQUESTS: usize = 256;
+const PEER_BUFFER_HARD_MAX_ENTRIES: usize = 1024;
+static PEER_BUFFER_ACTIVITY_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 impl TransportLayerService {
     pub fn new(
         network_id: String,
         rp_config: RPConf,
         max_stream_message_size: u64,
-        buffers_map: Arc<Mutex<HashMap<PeerNode, Arc<OnceCell<MessageBuffers>>>>>,
+        buffers_map: Arc<Mutex<HashMap<PeerNode, PeerBufferSlot>>>,
         message_handlers: MessageHandlers,
         cache: StreamCache,
         parallelism: usize,
@@ -107,22 +140,33 @@ impl TransportLayerService {
             message_handlers,
             cache,
             parallelism,
+            recent_hash_filter: RecentHashFilter::new(RECENT_HASH_FILTER_CAPACITY),
         }
     }
 
     /// Get or create message buffers for a peer
     async fn get_buffers(&self, peer: &PeerNode) -> Result<MessageBuffers, CommError> {
+        self.maybe_cleanup_stale_peer_buffers().await;
+
         let (once_cell, is_new_peer) = {
             let mut buffers_map = self.buffers_map.lock().await;
+            let now_ms = Self::now_millis();
 
             // Check if peer already exists
-            if let Some(existing_once_cell) = buffers_map.get(peer) {
+            if let Some(slot) = buffers_map.get_mut(peer) {
                 // Peer exists
-                (existing_once_cell.clone(), false)
+                slot.last_seen_ms = now_ms;
+                (slot.once_cell.clone(), false)
             } else {
                 // Peer doesn't exist
                 let new_once_cell = Arc::new(OnceCell::new());
-                buffers_map.insert(peer.clone(), new_once_cell.clone());
+                buffers_map.insert(
+                    peer.clone(),
+                    PeerBufferSlot {
+                        once_cell: new_once_cell.clone(),
+                        last_seen_ms: now_ms,
+                    },
+                );
                 (new_once_cell, true)
             }
         };
@@ -132,14 +176,15 @@ impl TransportLayerService {
             tracing::info!("Creating inbound message queue for {}.", peer.to_address());
 
             // Create the actual buffers
-            let (tell_buffer, blob_buffer, task_handle) =
+            let (tell_buffer, blob_buffer, tell_task_handle, blob_task_handle) =
                 self.create_buffers_with_subscriptions().await;
 
             // Store in OnceCell
             let buffers = (
                 Arc::new(tell_buffer),
                 Arc::new(blob_buffer),
-                Arc::new(task_handle),
+                Arc::new(tell_task_handle),
+                Arc::new(blob_task_handle),
             );
             let _ = once_cell.set(buffers);
         }
@@ -148,17 +193,91 @@ impl TransportLayerService {
         // This will wait if another thread is creating them, or return immediately if they exist
         let buffers = once_cell
             .get_or_try_init(|| async {
-                let (tell_buffer, blob_buffer, task_handle) =
+                let (tell_buffer, blob_buffer, tell_task_handle, blob_task_handle) =
                     self.create_buffers_with_subscriptions().await;
                 Ok((
                     Arc::new(tell_buffer),
                     Arc::new(blob_buffer),
-                    Arc::new(task_handle),
+                    Arc::new(tell_task_handle),
+                    Arc::new(blob_task_handle),
                 ))
             })
             .await?;
 
         Ok(buffers.clone())
+    }
+
+    fn now_millis() -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0)
+    }
+
+    async fn maybe_cleanup_stale_peer_buffers(&self) {
+        let activity = PEER_BUFFER_ACTIVITY_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+        let should_periodic = activity % PEER_BUFFER_CLEANUP_EVERY_REQUESTS == 0;
+
+        let (evict_peers, pre_len) = {
+            let buffers_map = self.buffers_map.lock().await;
+            let pre_len = buffers_map.len();
+            if pre_len == 0 {
+                return;
+            }
+            if !should_periodic && pre_len < PEER_BUFFER_HARD_MAX_ENTRIES {
+                return;
+            }
+
+            let now_ms = Self::now_millis();
+            let mut stale_peers: Vec<PeerNode> = buffers_map
+                .iter()
+                .filter_map(|(peer, slot)| {
+                    let age = now_ms.saturating_sub(slot.last_seen_ms);
+                    (age >= PEER_BUFFER_STALE_TTL_MS).then(|| peer.clone())
+                })
+                .collect();
+
+            if stale_peers.is_empty() && pre_len > PEER_BUFFER_HARD_MAX_ENTRIES {
+                let mut by_oldest: Vec<(u64, PeerNode)> = buffers_map
+                    .iter()
+                    .map(|(peer, slot)| (slot.last_seen_ms, peer.clone()))
+                    .collect();
+                by_oldest.sort_by_key(|(last_seen_ms, _)| *last_seen_ms);
+                let overflow = pre_len.saturating_sub(PEER_BUFFER_HARD_MAX_ENTRIES);
+                stale_peers = by_oldest
+                    .into_iter()
+                    .take(overflow)
+                    .map(|(_, peer)| peer)
+                    .collect();
+            }
+
+            (stale_peers, pre_len)
+        };
+
+        if evict_peers.is_empty() {
+            return;
+        }
+
+        let mut evicted = 0usize;
+        let mut buffers_map = self.buffers_map.lock().await;
+        for peer in evict_peers {
+            if let Some(slot) = buffers_map.remove(&peer) {
+                if let Some((_, _, tell_task_handle, blob_task_handle)) = slot.once_cell.get() {
+                    tell_task_handle.abort();
+                    blob_task_handle.abort();
+                }
+                evicted += 1;
+            }
+        }
+
+        if evicted > 0 {
+            tracing::debug!(
+                "Evicted {} stale peer buffer slots (before={}, after={})",
+                evicted,
+                pre_len,
+                buffers_map.len()
+            );
+        }
     }
 
     /// Create buffers and set up background processing
@@ -168,10 +287,12 @@ impl TransportLayerService {
         FlumeLimitedBuffer<CommSend>,
         FlumeLimitedBuffer<StreamMessage>,
         tokio::task::JoinHandle<()>,
+        tokio::task::JoinHandle<()>,
     ) {
         // Create the buffers
-        let mut tell_buffer = FlumeLimitedBuffer::<CommSend>::drop_new(64);
-        let mut blob_buffer = FlumeLimitedBuffer::<StreamMessage>::drop_new(8);
+        let mut tell_buffer = FlumeLimitedBuffer::<CommSend>::drop_new(INBOUND_TELL_BUFFER_SIZE);
+        let mut blob_buffer =
+            FlumeLimitedBuffer::<StreamMessage>::drop_new(INBOUND_BLOB_BUFFER_SIZE);
 
         // Set up subscriptions
         let tell_subscription = tell_buffer
@@ -217,20 +338,8 @@ impl TransportLayerService {
                 .await;
         });
 
-        // Combine both cancellables
-        let combined_task = tokio::spawn(async move {
-            tokio::select! {
-                _ = tell_cancellable => {
-                    tracing::debug!("Tell buffer processing completed");
-                }
-                _ = blob_cancellable => {
-                    tracing::debug!("Blob buffer processing completed");
-                }
-            }
-        });
-
         // Return the buffers (they can still be pushed to via the sender)
-        (tell_buffer, blob_buffer, combined_task)
+        (tell_buffer, blob_buffer, tell_cancellable, blob_cancellable)
     }
 
     /// Get the tell buffer for a peer
@@ -238,7 +347,7 @@ impl TransportLayerService {
         &self,
         peer: &PeerNode,
     ) -> Result<Arc<FlumeLimitedBuffer<CommSend>>, CommError> {
-        let (tell_buffer, _, _) = self.get_buffers(peer).await?;
+        let (tell_buffer, _, _, _) = self.get_buffers(peer).await?;
         Ok(tell_buffer)
     }
 
@@ -247,7 +356,7 @@ impl TransportLayerService {
         &self,
         peer: &PeerNode,
     ) -> Result<Arc<FlumeLimitedBuffer<StreamMessage>>, CommError> {
-        let (_, blob_buffer, _) = self.get_buffers(peer).await?;
+        let (_, blob_buffer, _, _) = self.get_buffers(peer).await?;
         Ok(blob_buffer)
     }
 
@@ -329,11 +438,36 @@ impl TransportLayer for TransportLayerService {
         let peer = PeerNode::from_node(sender_node.clone())
             .map_err(|e| Status::internal(format!("Failed to convert to PeerNode: {}", e)))?;
 
-        // Create packet dropped message
-        let packet_dropped_msg = format!(
-            "Packet dropped, {} packet queue overflown.",
-            peer.endpoint.host
-        );
+        metrics::counter!(PACKETS_RECEIVED_METRIC, "source" => TRANSPORT_METRICS_SOURCE)
+            .increment(1);
+
+        // Determine if this is a gossip message (not a request/response)
+        // Only filter pure gossip announcements: BlockHashMessage and HasBlock
+        // Other messages (approvals, requests, handshakes, heartbeats) must pass through
+        let is_gossip = match &protocol.message {
+            Some(models::routing::protocol::Message::Packet(packet)) => {
+                packet.type_id == "BlockHashMessage" || packet.type_id == "HasBlock"
+            }
+            _ => false,
+        };
+
+        // Deduplicate redundant gossip - skip if we've seen this hash recently
+        // Only apply to gossip messages to avoid blocking legitimate requests/responses
+        if is_gossip {
+            let protocol_bytes = protocol.encode_to_vec();
+            let hash_tag = format!("{:x}", calculate_hash(&protocol_bytes));
+
+            if self.recent_hash_filter.seen_before(&hash_tag) {
+                tracing::debug!(
+                    "[GOSSIP] Suppressed redundant hash broadcast {} from {}",
+                    hash_tag,
+                    peer.endpoint.host
+                );
+                return Ok(Response::new(
+                    self.create_ack_response(&self.rp_config.local),
+                ));
+            }
+        }
 
         // Get target buffer
         let tell_buffer = self
@@ -342,9 +476,9 @@ impl TransportLayer for TransportLayerService {
             .map_err(|e| Status::internal(format!("Failed to get tell buffer: {}", e)))?;
 
         // Push message to buffer and handle result
+        // TODO(perf): protocol.clone() copies entire message which may contain block data.
+        // Consider using Arc<Protocol> or passing ownership if buffer can take it.
         let send_msg = CommSend::new(protocol.clone());
-        metrics::counter!(PACKETS_RECEIVED_METRIC, "source" => TRANSPORT_METRICS_SOURCE)
-            .increment(1);
 
         let response = if tell_buffer.push_next(send_msg) {
             // Successfully enqueued
@@ -353,6 +487,10 @@ impl TransportLayer for TransportLayerService {
             self.create_ack_response(&self.rp_config.local)
         } else {
             // Buffer full
+            let packet_dropped_msg = format!(
+                "Packet dropped, {} packet queue overflown.",
+                peer.endpoint.host
+            );
             metrics::counter!(PACKETS_DROPPED_METRIC, "source" => TRANSPORT_METRICS_SOURCE)
                 .increment(1);
             self.create_internal_server_error_response(packet_dropped_msg)
@@ -451,7 +589,7 @@ impl GrpcTransportReceiver {
         key_pem: String,
         max_message_size: i32,
         max_stream_message_size: u64,
-        buffers_map: Arc<Mutex<HashMap<PeerNode, Arc<OnceCell<MessageBuffers>>>>>,
+        buffers_map: Arc<Mutex<HashMap<PeerNode, PeerBufferSlot>>>,
         message_handlers: MessageHandlers,
         parallelism: usize,
         cache: StreamCache,

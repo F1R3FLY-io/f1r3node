@@ -6,6 +6,7 @@ use crate::helper::{
 };
 use block_storage::rust::key_value_block_store::KeyValueBlockStore;
 use block_storage::rust::test::indexed_block_dag_storage::IndexedBlockDagStorage;
+use casper::rust::safety::clique_oracle::CliqueOracle;
 use casper::rust::safety_oracle::{CliqueOracleImpl, SafetyOracle};
 use models::rust::{
     block_hash::BlockHash,
@@ -13,6 +14,7 @@ use models::rust::{
     validator::Validator,
 };
 use std::collections::HashMap;
+use std::time::Instant;
 
 fn create_block<'a>(
     bonds: &'a [Bond],
@@ -477,6 +479,122 @@ async fn clique_oracle_should_identify_no_majority_fork_safe_after_union() {
             .await
             .unwrap();
         assert!((fault_tolerance - 1.0).abs() < 0.01);
+    })
+    .await
+}
+
+#[tokio::test]
+#[ignore = "diagnostic: run manually for fast clique-oracle growth feedback"]
+async fn clique_oracle_growth_feedback_loop_stale_justification_chain() {
+    with_storage(|mut block_store, mut block_dag_storage| async move {
+        let validators = vec![
+            generate_validator(Some("Growth Validator One")),
+            generate_validator(Some("Growth Validator Two")),
+            generate_validator(Some("Growth Validator Three")),
+        ];
+        let bonds: Vec<Bond> = validators
+            .iter()
+            .map(|validator| Bond {
+                validator: validator.clone(),
+                stake: 10,
+            })
+            .collect();
+
+        let genesis = create_genesis_block(
+            &mut block_store,
+            &mut block_dag_storage,
+            None,
+            Some(bonds.clone()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+
+        let creator1 = create_block(&bonds, &genesis, &validators[0]);
+        let creator2 = create_block(&bonds, &genesis, &validators[1]);
+        let creator3 = create_block(&bonds, &genesis, &validators[2]);
+
+        let checkpoints = [24usize, 48usize, 96usize];
+        let mut latest_by_validator = vec![genesis.clone(), genesis.clone(), genesis.clone()];
+        let mut timing_samples: Vec<(usize, u128, f32)> = Vec::with_capacity(checkpoints.len());
+
+        for height in 1..=checkpoints[checkpoints.len() - 1] {
+            let creator_index = (height - 1) % validators.len();
+            let parent = &latest_by_validator[creator_index];
+
+            let mut justifications: HashMap<&Validator, &BlockMessage> = HashMap::new();
+            for (idx, validator) in validators.iter().enumerate() {
+                let justification = if idx == creator_index {
+                    &latest_by_validator[idx]
+                } else {
+                    &genesis
+                };
+                justifications.insert(validator, justification);
+            }
+
+            let next_block = match creator_index {
+                0 => creator1(
+                    &mut block_store,
+                    &mut block_dag_storage,
+                    parent,
+                    &justifications,
+                ),
+                1 => creator2(
+                    &mut block_store,
+                    &mut block_dag_storage,
+                    parent,
+                    &justifications,
+                ),
+                2 => creator3(
+                    &mut block_store,
+                    &mut block_dag_storage,
+                    parent,
+                    &justifications,
+                ),
+                _ => unreachable!("creator_index should be in [0, 2]"),
+            };
+            latest_by_validator[creator_index] = next_block;
+
+            if checkpoints.contains(&height) {
+                let dag = block_dag_storage.get_representation();
+                let target_hash = genesis.block_hash.clone();
+                let started = Instant::now();
+                let message_weight_map = CliqueOracle::get_corresponding_weight_map(&target_hash, &dag)
+                    .await
+                    .expect("weight map should be available for target");
+                let mut agreeing_weight_map = HashMap::new();
+                for (validator, weight) in &message_weight_map {
+                    if let Some(latest_hash) = dag.latest_message_hash(validator) {
+                        let in_main_chain = dag
+                            .is_in_main_chain(&target_hash, &latest_hash)
+                            .expect("main chain lookup should succeed");
+                        if in_main_chain {
+                            agreeing_weight_map.insert(validator.clone(), *weight);
+                        }
+                    }
+                }
+                let fault_tolerance = CliqueOracle::compute_output(
+                    &target_hash,
+                    &message_weight_map,
+                    &agreeing_weight_map,
+                    &dag,
+                )
+                .await
+                .expect("Clique oracle should compute fault tolerance");
+                timing_samples.push((height, started.elapsed().as_millis(), fault_tolerance));
+            }
+        }
+
+        assert_eq!(timing_samples.len(), checkpoints.len());
+        eprintln!("clique-oracle growth feedback (stale-justification chain):");
+        for (height, elapsed_ms, fault_tolerance) in timing_samples {
+            eprintln!(
+                "  height={height:>3} clique_oracle_ms={elapsed_ms} fault_tolerance={fault_tolerance:.4}"
+            );
+        }
     })
     .await
 }

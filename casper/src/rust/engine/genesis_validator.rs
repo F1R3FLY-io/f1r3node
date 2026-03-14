@@ -1,10 +1,11 @@
 // See casper/src/main/scala/coop/rchain/casper/engine/GenesisValidator.scala
 
 use async_trait::async_trait;
-use std::collections::{HashMap, HashSet};
+use dashmap::DashSet;
+use std::collections::{HashSet, VecDeque};
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use tokio::sync::mpsc;
 
@@ -40,8 +41,8 @@ use crate::rust::validator_identity::ValidatorIdentity;
 
 pub struct GenesisValidator<T: TransportLayer + Send + Sync + Clone + 'static> {
     block_processing_queue_tx:
-        mpsc::UnboundedSender<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
-    blocks_in_processing: Arc<Mutex<HashSet<BlockHash>>>,
+        mpsc::Sender<(Arc<dyn MultiParentCasper + Send + Sync>, BlockMessage)>,
+    blocks_in_processing: Arc<DashSet<BlockHash>>,
     casper_shard_conf: CasperShardConf,
     validator_id: ValidatorIdentity,
     block_approver: BlockApproverProtocol<T>,
@@ -63,11 +64,55 @@ pub struct GenesisValidator<T: TransportLayer + Send + Sync + Clone + 'static> {
     runtime_manager: Arc<tokio::sync::Mutex<RuntimeManager>>,
     estimator: Estimator,
 
-    // Scala equivalent: `private val seenCandidates = Cell.unsafe[F, Map[BlockHash, Boolean]](Map.empty)`
-    // Used by isRepeated() and ack() methods to track processed UnapprovedBlock candidates
-    seen_candidates: Arc<Mutex<HashMap<BlockHash, bool>>>,
+    // Bounded set of seen UnapprovedBlock candidates to avoid unbounded memory growth.
+    seen_candidates: Arc<Mutex<SeenCandidates>>,
     /// Shared reference to heartbeat signal for triggering immediate wake on deploy
     heartbeat_signal_ref: crate::rust::heartbeat_signal::HeartbeatSignalRef,
+}
+
+struct SeenCandidates {
+    set: HashSet<BlockHash>,
+    fifo: VecDeque<BlockHash>,
+    max_entries: usize,
+}
+
+impl SeenCandidates {
+    fn new(max_entries: usize) -> Self {
+        Self {
+            set: HashSet::new(),
+            fifo: VecDeque::new(),
+            max_entries,
+        }
+    }
+
+    fn contains(&self, hash: &BlockHash) -> bool {
+        self.set.contains(hash)
+    }
+
+    fn insert(&mut self, hash: BlockHash) {
+        if !self.set.insert(hash.clone()) {
+            return;
+        }
+        self.fifo.push_back(hash);
+        while self.set.len() > self.max_entries {
+            if let Some(oldest) = self.fifo.pop_front() {
+                self.set.remove(&oldest);
+            } else {
+                break;
+            }
+        }
+    }
+}
+
+fn genesis_seen_candidates_max_entries() -> usize {
+    static GENESIS_SEEN_CANDIDATES_MAX_ENTRIES: OnceLock<usize> = OnceLock::new();
+    *GENESIS_SEEN_CANDIDATES_MAX_ENTRIES.get_or_init(|| {
+        std::env::var("F1R3_GENESIS_SEEN_CANDIDATES_MAX_ENTRIES")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .filter(|v| *v > 0)
+            .unwrap_or(4096)
+    })
 }
 
 impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisValidator<T> {
@@ -77,11 +122,11 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisValidator<T> {
     /// to enable cloning from TestFixture and proper ownership transfer to Initializing.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        block_processing_queue_tx: mpsc::UnboundedSender<(
+        block_processing_queue_tx: mpsc::Sender<(
             Arc<dyn MultiParentCasper + Send + Sync>,
             BlockMessage,
         )>,
-        blocks_in_processing: Arc<Mutex<HashSet<BlockHash>>>,
+        blocks_in_processing: Arc<DashSet<BlockHash>>,
         casper_shard_conf: CasperShardConf,
         validator_id: ValidatorIdentity,
         block_approver: BlockApproverProtocol<T>,
@@ -121,18 +166,19 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisValidator<T> {
             rspace_state_manager,
             runtime_manager,
             estimator,
-            // Scala equivalent: `private val seenCandidates = Cell.unsafe[F, Map[BlockHash, Boolean]](Map.empty)`
-            seen_candidates: Arc::new(Mutex::new(HashMap::new())),
+            seen_candidates: Arc::new(Mutex::new(SeenCandidates::new(
+                genesis_seen_candidates_max_entries(),
+            ))),
             heartbeat_signal_ref,
         }
     }
 
     fn is_repeated(&self, hash: &BlockHash) -> bool {
-        self.seen_candidates.lock().unwrap().contains_key(hash)
+        self.seen_candidates.lock().unwrap().contains(hash)
     }
 
     fn ack(&self, hash: BlockHash) {
-        self.seen_candidates.lock().unwrap().insert(hash, true);
+        self.seen_candidates.lock().unwrap().insert(hash);
     }
 
     async fn handle_unapproved_block(

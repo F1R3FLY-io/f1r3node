@@ -28,9 +28,9 @@ use models::rust::casper::protocol::casper_message::{
     BlockMessage, Body, Bond, F1r3flyState, Header,
 };
 use prost::bytes;
-use rholang::rust::interpreter::util::rev_address::RevAddress;
+use rholang::rust::interpreter::util::vault_address::VaultAddress;
 
-use crate::util::rholang::resources::{mk_test_rnode_store_manager_shared, generate_scope_id};
+use crate::util::rholang::resources::{generate_scope_id, mk_test_rnode_store_manager_shared};
 
 pub type GenesisParameters = (
     Vec<(PrivateKey, PublicKey)>,
@@ -156,11 +156,6 @@ impl GenesisBuilder {
         }
     }
 
-    pub async fn create_genesis(&mut self) -> Result<BlockMessage, CasperError> {
-        let context = self.build_genesis_with_parameters(None).await?;
-        Ok(context.genesis_block)
-    }
-
     pub fn build_genesis_parameters_with_defaults(
         bonds_function: Option<fn(Vec<PublicKey>) -> HashMap<PublicKey, i64>>,
         validators_num: Option<usize>,
@@ -213,9 +208,9 @@ impl GenesisBuilder {
             .into_iter()
             .chain(bonds.iter().map(|(pk, _)| {
                 // Initial validator vaults contain 0 Rev
-                RevAddress::from_public_key(pk)
-                    .map(|rev_address| Vault {
-                        rev_address,
+                VaultAddress::from_public_key(pk)
+                    .map(|vault_address| Vault {
+                        vault_address,
                         initial_balance: 0,
                     })
                     .expect("GenesisBuilder: Failed to create rev address")
@@ -257,7 +252,7 @@ impl GenesisBuilder {
 
     fn predefined_vault(pubkey: &PublicKey) -> Vault {
         Vault {
-            rev_address: RevAddress::from_public_key(pubkey)
+            vault_address: VaultAddress::from_public_key(pubkey)
                 .expect("GenesisBuilder: Failed to create rev address"),
             initial_balance: 9000000,
         }
@@ -294,7 +289,7 @@ impl GenesisBuilder {
         );
 
         let (validator_key_pairs, genesis_vaults, mut genesis_parameters) = parameters.clone();
-        
+
         // If vaults were provided via with_vaults(), use them instead of default vaults
         if let Some(ref vaults) = self.vaults {
             genesis_parameters.vaults = vaults.clone();
@@ -318,7 +313,9 @@ impl GenesisBuilder {
                 .await
                 .expect("Failed to create RSpaceStore");
 
-            let m_store = crate::util::rholang::resources::mergeable_store_from_dyn(&mut *kvs_manager).await?;
+            let m_store =
+                crate::util::rholang::resources::mergeable_store_from_dyn(&mut *kvs_manager)
+                    .await?;
             let mut runtime_manager = RuntimeManager::create_with_store(
                 r_store,
                 m_store,
@@ -331,7 +328,9 @@ impl GenesisBuilder {
             let block_store = KeyValueBlockStore::create_from_kvm(&mut *kvs_manager).await?;
             block_store.put(genesis.block_hash.clone(), &genesis)?;
 
-            let block_dag_storage = crate::util::rholang::resources::block_dag_storage_from_dyn(&mut *kvs_manager).await?;
+            let block_dag_storage =
+                crate::util::rholang::resources::block_dag_storage_from_dyn(&mut *kvs_manager)
+                    .await?;
             block_dag_storage.insert(&genesis, false, true)?;
 
             genesis

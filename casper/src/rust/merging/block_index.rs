@@ -29,7 +29,7 @@ pub struct BlockIndex {
 }
 
 pub fn create_event_log_index(
-    events: Vec<Event>,
+    events: &[Event],
     history_repository: RhoHistoryRepository,
     pre_state_hash: &Blake2b256Hash,
     mergeable_chs: NumberChannelsDiff,
@@ -75,16 +75,20 @@ pub fn new(
     let sys_count = sys_processed_deploys.len();
     let deploy_count = usr_count + sys_count;
     let mrg_count = mergeable_chs.len();
-
-    // Number of deploys must match the size of mergeable channels maps
-    assert_eq!(
-        deploy_count, mrg_count,
-        "Cache of mergeable channels ({}) doesn't match deploys count ({}).",
-        mrg_count, deploy_count
-    );
+    if mrg_count != deploy_count {
+        let msg = format!(
+            "Mergeable channel count mismatch for block {}: mergeable_maps={}, deploys={}",
+            hex::encode(&block_hash[..std::cmp::min(10, block_hash.len())]),
+            mrg_count,
+            deploy_count
+        );
+        tracing::error!("{}", msg);
+        return Err(CasperError::RuntimeError(msg));
+    }
+    let aligned_mergeable_chs = mergeable_chs.clone();
 
     // Connect deploy with corresponding mergeable channels map
-    let (usr_mergeable_chs, sys_mergeable_chs) = mergeable_chs.split_at(usr_count);
+    let (usr_mergeable_chs, sys_mergeable_chs) = aligned_mergeable_chs.split_at(usr_count);
     let usr_deploys_with_mergeable: Vec<_> = usr_processed_deploys
         .iter()
         .zip(usr_mergeable_chs.iter())
@@ -99,18 +103,17 @@ pub fn new(
     for (deploy, merge_chs) in usr_deploys_with_mergeable {
         if !deploy.is_failed {
             let event_log_index = create_event_log_index(
-                deploy.deploy_log.clone(),
+                &deploy.deploy_log,
                 history_repository.clone(),
                 pre_state_hash,
                 merge_chs.clone(),
             );
 
-            let deploy_index = DeployIndex::new(
-                deploy.deploy.sig.clone(),
-                deploy.cost.cost,
-                deploy.deploy_log.clone(),
-                |_| event_log_index.clone(),
-            );
+            let deploy_index = DeployIndex {
+                deploy_id: deploy.deploy.sig.clone(),
+                cost: deploy.cost.cost,
+                event_log_index,
+            };
 
             usr_deploy_indices.push(deploy_index);
         }
@@ -143,14 +146,17 @@ pub fn new(
                 };
 
                 let event_log_index = create_event_log_index(
-                    event_list.clone(),
+                    event_list,
                     history_repository.clone(),
                     pre_state_hash,
                     merge_chs.clone(),
                 );
 
-                let deploy_index =
-                    DeployIndex::new(sig, cost, event_list.clone(), |_| event_log_index.clone());
+                let deploy_index = DeployIndex {
+                    deploy_id: sig,
+                    cost,
+                    event_log_index,
+                };
 
                 sys_deploy_indices.push(deploy_index);
             }

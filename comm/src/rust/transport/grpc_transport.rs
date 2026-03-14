@@ -1,10 +1,10 @@
 // See comm/src/main/scala/coop/rchain/comm/transport/GrpcTransport.scala
 
 use async_trait::async_trait;
+use std::time::Instant;
 use tonic::service::interceptor::InterceptedService;
 use tonic::transport::Channel;
 use tonic::{Request, Status};
-use std::time::Instant;
 
 use models::routing::tl_response::Payload;
 use models::routing::transport_layer_client::TransportLayerClient;

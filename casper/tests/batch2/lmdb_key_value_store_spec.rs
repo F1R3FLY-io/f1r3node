@@ -4,11 +4,13 @@ use lazy_static::lazy_static;
 use proptest::collection::hash_map;
 use proptest::prelude::*;
 use proptest::test_runner::Config as ProptestConfig;
-use rspace_plus_plus::rspace::shared::lmdb_dir_store_manager::{Db, LmdbDirStoreManager, LmdbEnvConfig};
+use rspace_plus_plus::rspace::shared::lmdb_dir_store_manager::{
+    Db, LmdbDirStoreManager, LmdbEnvConfig,
+};
 use std::collections::HashMap;
 
 use crate::util::in_memory_key_value_store_spec::KeyValueStoreSut;
-use crate::util::rholang::resources::{get_shared_lmdb_path, generate_scope_id};
+use crate::util::rholang::resources::{generate_scope_id, get_shared_lmdb_path};
 
 // Optimization: proptest! macro generates sync functions but our tests are async.
 // Creating a new Runtime for each test case is expensive (proptest runs 256 cases by default).
@@ -24,14 +26,15 @@ where
 {
     let scope_id = generate_scope_id();
     let scoped_db_id = format!("{}-test", scope_id);
-    
-    let db_config = LmdbEnvConfig::new("test-db".to_string(), 1024 * 1024 * 1024).with_max_dbs(10_000);
+
+    let db_config =
+        LmdbEnvConfig::new("test-db".to_string(), 1024 * 1024 * 1024).with_max_dbs(10_000);
     let mut db_mappings = HashMap::new();
     db_mappings.insert(Db::new(scoped_db_id.clone(), None), db_config);
 
     let shared_path = get_shared_lmdb_path();
     let kvm = LmdbDirStoreManager::new(shared_path, db_mappings);
-    
+
     let sut = KeyValueStoreSut::new_scoped(Box::new(kvm), scoped_db_id);
 
     f(sut).await?;
@@ -49,7 +52,7 @@ fn gen_data() -> impl Strategy<Value = HashMap<i64, String>> {
 // We limit test cases to 20 to stay within system limits while still getting property-based testing benefits.
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(20))]
-    
+
     #[test]
     fn lmdb_key_value_store_should_put_and_get_data_from_the_store(expected in gen_data()) {
         RUNTIME.block_on(async {
@@ -66,7 +69,7 @@ proptest! {
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(20))]
-    
+
     #[test]
     fn lmdb_key_value_store_should_put_and_get_all_data_from_the_store(expected in gen_data()) {
         RUNTIME.block_on(async {
@@ -83,7 +86,7 @@ proptest! {
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(20))]
-    
+
     #[test]
     fn lmdb_key_value_store_should_not_have_deleted_keys_in_the_store(input in gen_data()) {
         RUNTIME.block_on(async {
