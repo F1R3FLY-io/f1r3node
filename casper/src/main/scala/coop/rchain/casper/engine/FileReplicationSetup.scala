@@ -4,6 +4,7 @@ import cats.effect.Sync
 import cats.syntax.all._
 import coop.rchain.casper.{CasperShardConf, PrettyPrinter}
 import coop.rchain.casper.protocol.BlockMessage
+import coop.rchain.casper.util.OrphanFileCleanup
 import coop.rchain.comm.rp.Connect.{ConnectionsCell, RPConfAsk}
 import coop.rchain.comm.transport.TransportLayer
 import coop.rchain.shared.{Log, Time}
@@ -59,6 +60,26 @@ object FileReplicationSetup {
           _ <- Log[F].info(
                 s"[FileReplicationSetup] awaitFiles returned, stillMissing=${stillMissing.size}"
               )
+          // Write .meta.json with deployId for each successfully downloaded file.
+          // This enables the download finalization checker to verify via the DAG
+          // (BlockAPI.findDeploy + isFinalized) instead of bypassing the check.
+          downloaded = missingHashes.filterNot(stillMissing.contains)
+          _ <- downloaded.traverse_ { hash =>
+                val deployIdOpt = block.body.deploys.collectFirst {
+                  case pd if OrphanFileCleanup.extractFileHash(pd.deploy.data).contains(hash) =>
+                    pd.deploy.sig.toByteArray.map("%02x".format(_)).mkString
+                }
+                deployIdOpt.traverse_ { deployId =>
+                  Sync[F].delay {
+                    val metaPath = dataDir.resolve(s"$hash.meta.json")
+                    val json     = s"""{"deployId":"$deployId"}"""
+                    java.nio.file.Files.write(metaPath, json.getBytes("UTF-8"))
+                  } *> Log[F].info(
+                    s"[FileReplicationSetup] Wrote meta.json for ${hash.take(16)}... " +
+                      s"with deployId=${deployId.take(16)}..."
+                  )
+                }
+              }
         } yield stillMissing
     } yield (fileRequester, daCallback)
 }

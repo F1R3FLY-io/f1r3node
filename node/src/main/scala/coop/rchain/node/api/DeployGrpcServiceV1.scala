@@ -441,9 +441,27 @@ object DeployGrpcServiceV1 {
                       .flatMap {
                         case Right(_) =>
                           val updatedResult = output.result.copy(deployId = deployIdHex)
-                          Task.now(
-                            FileUploadResponse(FileUploadResponse.Message.Result(updatedResult))
-                          )
+                          // Persist deployId into the meta.json sidecar so the
+                          // finalization checker can look up the deploy in the DAG.
+                          val hash = output.result.fileHash
+                          Task
+                            .delay {
+                              val metaPath = uploadDir.resolve(s"$hash.meta.json")
+                              if (java.nio.file.Files.exists(metaPath)) {
+                                val json =
+                                  new String(java.nio.file.Files.readAllBytes(metaPath), "UTF-8")
+                                FileMetadata.fromJson(json).foreach { existing =>
+                                  val updated = existing.copy(deployId = deployIdHex)
+                                  java.nio.file.Files
+                                    .write(metaPath, FileMetadata.toJson(updated).getBytes("UTF-8"))
+                                }
+                              }
+                            }
+                            .flatMap { _ =>
+                              Task.now(
+                                FileUploadResponse(FileUploadResponse.Message.Result(updatedResult))
+                              )
+                            }
                         case Left(deployErr) =>
                           // Deploy rejected — clean up saved file
                           val hash = output.result.fileHash
@@ -501,15 +519,12 @@ object DeployGrpcServiceV1 {
         )
 
       /**
-        * Build a finalization checker that queries
-        * `FileRegistry!("lookup", hash)` on the Last Finalized Block's
-        * post-state via `exploratoryDeploy`.
-        * A non-Nil result means the file is registered in a finalized block.
+        * Build a finalization checker that verifies a file's registration
+        * deploy has been included in a finalized block.
         *
-        * Defense-in-depth: the hash is re-validated here even though
-        * `FileDownloadAPI.streamFile` already checks format, to prevent
-        * Rholang code injection if this method is ever called from a
-        * different context.
+        * Reads the `<hash>.meta.json` sidecar to obtain the `deployId`,
+        * then uses `BlockAPI.findDeploy` + `BlockAPI.isFinalized` to
+        * check finalization via the DAG — no Rholang VM needed.
         */
       private def checkFileFinalized(devMode: Boolean): String => Task[Boolean] = {
         val log = org.slf4j.LoggerFactory.getLogger("FileDownloadAPI")
@@ -518,28 +533,58 @@ object DeployGrpcServiceV1 {
             fileHash.matches("^[a-f0-9]{64}$"),
             s"Invalid hash for finalization check: $fileHash"
           )
-          BlockAPI
-            .exploratoryDeploy[F](
-              s"""new return, rl(`rho:registry:lookup`), fileRegistryCh in {
-                 |  rl!(`rho:id:m6rqma7yas7o6ieos45ai4dskmc6zugs9rmsp6i3zan8qe5hsfqsdt`, *fileRegistryCh) |
-                 |  for(@(_, FileRegistry) <- fileRegistryCh) {
-                 |    @FileRegistry!("lookup", "$fileHash", *return)
-                 |  }
-                 |}""".stripMargin,
-              none[String], // Use LFB (no specific block hash)
-              false,        // Use post-state
-              devMode
-            )
-            .toTask
-            .map {
-              case Right((pars, _)) =>
-                // If the result is non-empty and not Nil, the file is registered
-                pars.nonEmpty && pars.exists(p => p != coop.rchain.models.Par())
-              case Left(err) =>
-                log.error(
-                  s"[FileDownloadAPI] Finalization check failed for hash=${fileHash.take(16)}...: $err"
+          Task
+            .delay {
+              val metaPath = uploadDir.resolve(s"$fileHash.meta.json")
+              if (java.nio.file.Files.exists(metaPath)) {
+                val json = new String(java.nio.file.Files.readAllBytes(metaPath), "UTF-8")
+                FileMetadata.fromJson(json).toOption.flatMap { meta =>
+                  if (meta.deployId.nonEmpty) Some(meta.deployId) else None
+                }
+              } else None
+            }
+            .flatMap {
+              case None =>
+                // No deployId available. Both upload and P2P replication paths
+                // now write meta.json with a deployId, so this indicates an
+                // unexpected state (e.g. legacy file, manual placement, or
+                // replication error). Reject the download — require proper
+                // finalization proof via the DAG.
+                log.warn(
+                  s"[FileDownloadAPI] No deployId for hash=${fileHash.take(16)}..., " +
+                    s"cannot verify finalization — rejecting download"
                 )
-                false
+                Task.now(false)
+              case Some(deployIdHex) =>
+                val deployIdBytes = deployIdHex.unsafeHexToByteString
+                BlockAPI
+                  .findDeploy[F](deployIdBytes)
+                  .toTask
+                  .flatMap {
+                    case Right(blockInfo) =>
+                      BlockAPI
+                        .isFinalized[F](blockInfo.blockHash)
+                        .toTask
+                        .map {
+                          case Right(finalized) =>
+                            log.info(
+                              s"[FileDownloadAPI] Finalization check: hash=${fileHash.take(16)}..., deploy=${deployIdHex
+                                .take(16)}..., blockHash=${blockInfo.blockHash.take(16)}..., finalized=$finalized"
+                            )
+                            finalized
+                          case Left(err) =>
+                            log.error(
+                              s"[FileDownloadAPI] isFinalized failed for hash=${fileHash.take(16)}...: $err"
+                            )
+                            false
+                        }
+                    case Left(err) =>
+                      log.warn(
+                        s"[FileDownloadAPI] Deploy not found in DAG for hash=${fileHash
+                          .take(16)}..., deployId=${deployIdHex.take(16)}...: $err"
+                      )
+                      Task.now(false)
+                  }
             }
       }
     }

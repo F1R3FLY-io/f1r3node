@@ -13,7 +13,8 @@ final case class FileMetadata(
     fileSize: Long,
     uploaderPubKey: String,
     timestamp: Long,
-    hash: String
+    hash: String,
+    deployId: String = ""
 )
 
 object FileMetadata {
