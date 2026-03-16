@@ -32,8 +32,7 @@ tonic = { workspace = true }
 prost = { workspace = true }
 tonic-prost = { workspace = true }
 colored = "3.0"
-# TODO: Pin to a commit on master once rholang-rs PR #90 is merged
-rholang-parser = { git = "https://github.com/F1R3FLY-io/rholang-rs", branch = "feat/numeric-types" }
+rholang-parser = { git = "https://github.com/F1R3FLY-io/rholang-rs", rev = "d25f953a" }
 rustyline = "13.0"
 rpassword = "7.4"
 tracing = { workspace = true }

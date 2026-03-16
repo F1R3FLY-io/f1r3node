@@ -41,8 +41,7 @@ indexmap = "2.8.0"
 rayon = "1.10.0"
 tempfile = "3.19.1"
 clap = { version = "4.5", features = ["derive"] }
-# TODO: Pin to a commit on master once rholang-rs PR #90 is merged
-rholang-parser = { git = "https://github.com/F1R3FLY-io/rholang-rs", branch = "feat/numeric-types" }
+rholang-parser = { git = "https://github.com/F1R3FLY-io/rholang-rs", rev = "d25f953a" }
 validated = "1.0.0"
 smallvec = { version = "1.15.1", features = [
 	"union",
