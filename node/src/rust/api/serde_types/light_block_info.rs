@@ -3,6 +3,7 @@
 //! This module provides custom JSON serialization for protobuf-generated types
 //! that don't have serde derives by default.
 
+use super::base64_bytes;
 use models::casper::{BondInfo, JustificationInfo, LightBlockInfo, RejectedDeployInfo};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use utoipa::ToSchema;
@@ -20,12 +21,12 @@ pub struct LightBlockInfoSerde {
     pub sig_algorithm: String,
     #[serde(rename = "shardId")]
     pub shard_id: String,
-    #[serde(rename = "extraBytes")]
-    pub extra_bytes: Vec<u8>, // Raw bytes
+    #[serde(rename = "extraBytes", with = "base64_bytes")]
+    pub extra_bytes: Vec<u8>,
     pub version: i64,
     pub timestamp: i64,
-    #[serde(rename = "headerExtraBytes")]
-    pub header_extra_bytes: Vec<u8>, // Raw bytes
+    #[serde(rename = "headerExtraBytes", with = "base64_bytes")]
+    pub header_extra_bytes: Vec<u8>,
     #[serde(rename = "parentsHashList")]
     pub parents_hash_list: Vec<String>,
     #[serde(rename = "blockNumber")]
@@ -34,8 +35,8 @@ pub struct LightBlockInfoSerde {
     pub pre_state_hash: String,
     #[serde(rename = "postStateHash")]
     pub post_state_hash: String,
-    #[serde(rename = "bodyExtraBytes")]
-    pub body_extra_bytes: Vec<u8>, // Raw bytes
+    #[serde(rename = "bodyExtraBytes", with = "base64_bytes")]
+    pub body_extra_bytes: Vec<u8>,
     pub bonds: Vec<BondInfoJson>,
     #[serde(rename = "blockSize")]
     pub block_size: String,
@@ -266,14 +267,22 @@ mod tests {
     }
 
     #[test]
+    fn test_bytes_fields_serialize_as_base64() {
+        let original = create_test_light_block_info();
+        let json = light_block_info_to_json(original).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(parsed["extraBytes"], "AQID");
+        assert_eq!(parsed["headerExtraBytes"], "BAUG");
+        assert_eq!(parsed["bodyExtraBytes"], "BwgJ");
+    }
+
+    #[test]
     fn test_light_block_info_serialization() {
         let original = create_test_light_block_info();
 
-        // Test JSON serialization
         let json = light_block_info_to_json(original.clone()).unwrap();
-        println!("Serialized JSON: {}", json);
 
-        // Test JSON deserialization
         let deserialized = light_block_info_from_json(&json);
 
         // Verify all fields match
