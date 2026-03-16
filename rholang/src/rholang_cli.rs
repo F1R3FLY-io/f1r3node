@@ -86,7 +86,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .take()
         .unwrap_or_else(|| mk_unique_temp_dir("rholangcli_data-"));
 
-    let runtime = tokio::runtime::Builder::new_current_thread()
+    let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
 
@@ -96,7 +96,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let matcher: Arc<
             Box<dyn rspace_plus_plus::rspace::r#match::Match<BindPattern, ListParWithRandom>>,
         > = Arc::new(Box::new(matcher_impl));
-        let mut additional_system_processes: Vec<Definition> = vec![];
+
+        // Add MeTTa system processes (when mettatron feature is enabled)
+        let mut additional_system_processes: Vec<Definition> = {
+            #[cfg(feature = "mettatron")]
+            { rholang::rust::interpreter::system_processes::metta_contracts() }
+            #[cfg(not(feature = "mettatron"))]
+            { Vec::new() }
+        };
 
         let mut rho_runtime = create_runtime_from_kv_store(
             stores,

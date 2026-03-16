@@ -1,7 +1,7 @@
 use super::pathmap_integration::{
     create_pathmap_from_elements, PathMapCreationResult, RholangPathMap,
 };
-use crate::rhoapi::{EPathMap, Var};
+use crate::rhoapi::{EPathMap, Par, Var};
 
 pub struct PathMapCrateTypeMapper;
 
@@ -19,7 +19,7 @@ impl PathMapCrateTypeMapper {
         remainder: Option<Var>,
     ) -> EPathMap {
         // Extract all values (flattened) from the trie as elements for proto EPathMap
-        let mut ps = Vec::new();
+        let mut ps: Vec<Par> = Vec::new();
         for (_, par) in map.iter() {
             ps.push(par.clone());
         }

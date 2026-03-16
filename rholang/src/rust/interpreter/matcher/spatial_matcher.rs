@@ -15,6 +15,9 @@ use super::par_count::ParCount;
 use super::sub_pars::sub_pars;
 use crate::list_match;
 
+#[cfg(feature = "mettatron")]
+use mettatron::{decode_space_bytes_to_pars, decode_large_exprs_bytes_to_pars};
+
 list_match!(
     Par,
     (Par, Par),
@@ -630,6 +633,135 @@ impl SpatialMatcher<Expr, Expr> for SpatialMatcherContext {
             ) => self
                 .spatial_match(t1.unwrap(), p1.unwrap())
                 .and_then(|_| self.spatial_match(t2.unwrap(), p2.unwrap())),
+
+            (
+                Some(EPathmapBody(t_pathmap)),
+                Some(EPathmapBody(ref p_pathmap)),
+            ) => {
+                let mut t_elements = t_pathmap.ps.clone();
+                t_elements.sort();
+                t_elements.dedup();
+                let mut p_elements = p_pathmap.ps.clone();
+                p_elements.sort();
+                p_elements.dedup();
+                let rem = &p_pathmap.remainder;
+
+                let is_wildcard = matches!(
+                    rem,
+                    Some(Var {
+                        var_instance: Some(Wildcard(_)),
+                    })
+                );
+
+                let remainder_var_opt = match rem {
+                    Some(Var {
+                        var_instance: Some(FreeVar(level)),
+                    }) => Some(*level),
+                    _ => None,
+                };
+
+                let merger = |p: Par, r: Vec<Par>| {
+                    p.with_exprs(vec![new_epathmap_expr(r, Vec::new(), false, None)])
+                };
+
+                self.list_match_single_(
+                    t_elements,
+                    p_elements,
+                    &merger,
+                    remainder_var_opt,
+                    is_wildcard,
+                )
+            }
+
+            // Lazy auto-deserialization: when a GByteArray with MTTS magic bytes
+            // is matched against a PathMap pattern, decode the space bytes on demand.
+            // This avoids decoding when bytes are simply bound to a variable.
+            #[cfg(feature = "mettatron")]
+            (Some(GByteArray(ref bytes)), Some(EPathmapBody(ref p_pathmap)))
+                if bytes.len() >= 4 && &bytes[0..4] == b"MTTS" =>
+            {
+                let decoded_pars = match decode_space_bytes_to_pars(bytes) {
+                    Ok(pars) => pars,
+                    Err(_) => return None,
+                };
+                let mut t_elements = decoded_pars;
+                t_elements.sort();
+                t_elements.dedup();
+                let mut p_elements = p_pathmap.ps.clone();
+                p_elements.sort();
+                p_elements.dedup();
+                let rem = &p_pathmap.remainder;
+
+                let is_wildcard = matches!(
+                    rem,
+                    Some(Var {
+                        var_instance: Some(Wildcard(_)),
+                    })
+                );
+
+                let remainder_var_opt = match rem {
+                    Some(Var {
+                        var_instance: Some(FreeVar(level)),
+                    }) => Some(*level),
+                    _ => None,
+                };
+
+                let merger = |p: Par, r: Vec<Par>| {
+                    p.with_exprs(vec![new_epathmap_expr(r, Vec::new(), false, None)])
+                };
+
+                self.list_match_single_(
+                    t_elements,
+                    p_elements,
+                    &merger,
+                    remainder_var_opt,
+                    is_wildcard,
+                )
+            }
+
+            // Lazy auto-deserialization: MTTL magic bytes (large expressions with arity >= 64)
+            #[cfg(feature = "mettatron")]
+            (Some(GByteArray(ref bytes)), Some(EPathmapBody(ref p_pathmap)))
+                if bytes.len() >= 4 && &bytes[0..4] == b"MTTL" =>
+            {
+                let decoded_pars = match decode_large_exprs_bytes_to_pars(bytes) {
+                    Ok(pars) => pars,
+                    Err(_) => return None,
+                };
+                let mut t_elements = decoded_pars;
+                t_elements.sort();
+                t_elements.dedup();
+                let mut p_elements = p_pathmap.ps.clone();
+                p_elements.sort();
+                p_elements.dedup();
+                let rem = &p_pathmap.remainder;
+
+                let is_wildcard = matches!(
+                    rem,
+                    Some(Var {
+                        var_instance: Some(Wildcard(_)),
+                    })
+                );
+
+                let remainder_var_opt = match rem {
+                    Some(Var {
+                        var_instance: Some(FreeVar(level)),
+                    }) => Some(*level),
+                    _ => None,
+                };
+
+                let merger = |p: Par, r: Vec<Par>| {
+                    p.with_exprs(vec![new_epathmap_expr(r, Vec::new(), false, None)])
+                };
+
+                self.list_match_single_(
+                    t_elements,
+                    p_elements,
+                    &merger,
+                    remainder_var_opt,
+                    is_wildcard,
+                )
+            }
 
             _ => None,
         }

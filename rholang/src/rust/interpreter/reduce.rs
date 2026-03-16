@@ -58,6 +58,13 @@ use super::substitute::Substitute;
 use super::unwrap_option_safe;
 use super::util::GeneratedMessage;
 use models::rust::pathmap_crate_type_mapper::PathMapCrateTypeMapper;
+#[cfg(feature = "mettatron")]
+use mettatron::{
+    decode_large_exprs_bytes_to_pars,
+    decode_space_bytes_to_pars, metta_run_error_expr,
+    metta_state_to_pathmap_par, pathmap_par_to_metta_state,
+    pathmap_par_to_metta_state_lenient, run_state_async, MettaState,
+};
 
 /// Minimum remaining stack space (in bytes) before growing.
 /// When the current stack has less than this amount remaining, a new stack segment is allocated.
@@ -3081,19 +3088,98 @@ impl DebruijnInterpreter {
         }
 
         impl<'a> RunMethod<'a> {
-            fn run(&self, base_expr: &Expr, _other_expr: &Expr) -> Result<Expr, InterpreterError> {
-                match base_expr.expr_instance.clone().unwrap() {
-                    ExprInstance::EPathmapBody(base_pathmap) => {
-                        // For run method, we ignore the other parameter and return self
-                        self.outer.cost.charge(union_cost(1))?;
+            fn run(&self, base_expr: &Expr, other_expr: &Expr) -> Result<Expr, InterpreterError> {
+                match (base_expr.expr_instance.clone().unwrap(), other_expr.expr_instance.clone().unwrap()) {
+                    #[cfg(feature = "mettatron")]
+                    (ExprInstance::EPathmapBody(accumulated_pathmap), ExprInstance::EPathmapBody(compiled_pathmap)) => {
+                        // Charge cost for method call
+                        self.outer.cost.charge(method_call_cost())?;
 
-                        // Simply return the base PathMap unchanged
-                        Ok(Expr {
-                            expr_instance: Some(ExprInstance::EPathmapBody(base_pathmap)),
-                        })
+                        // Check if accumulated PathMap is empty
+                        let is_empty = accumulated_pathmap.ps.is_empty();
+
+                        // Convert accumulated PathMap to Par for deserialization
+                        let accumulated_par = Par::default().with_exprs(vec![Expr {
+                            expr_instance: Some(ExprInstance::EPathmapBody(accumulated_pathmap)),
+                        }]);
+
+                        // Convert compiled PathMap to Par for deserialization
+                        let compiled_par = Par::default().with_exprs(vec![Expr {
+                            expr_instance: Some(ExprInstance::EPathmapBody(compiled_pathmap)),
+                        }]);
+
+                        // Deserialize accumulated state (handle empty PathMap case)
+                        // Uses lenient deserialization for the accumulated state to handle
+                        // user-reconstructed PathMaps with missing multiplicity bytes.
+                        let accumulated_state = if is_empty {
+                            // Empty PathMap {||} means empty MettaState
+                            MettaState::new_empty()
+                        } else {
+                            match pathmap_par_to_metta_state_lenient(&accumulated_par) {
+                                Ok(state) => state,
+                                Err(e) => return Ok(metta_run_error_expr(
+                                    "invalid_accumulated_state",
+                                    &format!("Failed to deserialize accumulated state: {}", e),
+                                )),
+                            }
+                        };
+
+                        // Deserialize compiled state (strict — compiled state should always
+                        // come from metta_compile and be well-formed)
+                        let compiled_state = match pathmap_par_to_metta_state(&compiled_par) {
+                            Ok(state) => state,
+                            Err(e) => return Ok(metta_run_error_expr(
+                                "invalid_compiled_state",
+                                &format!("Failed to deserialize compiled state: {}", e),
+                            )),
+                        };
+
+                        // Run MeTTa evaluation with parallel execution using run_state_async.
+                        // Uses block_in_place to move off the async executor thread, then block_on
+                        // to execute the async evaluation synchronously within a blocking context.
+                        // This enables parallel evaluation of independent MeTTa expressions while
+                        // preserving the synchronous interface required by Rholang.
+                        let result_state = match tokio::task::block_in_place(|| {
+                            tokio::runtime::Handle::current().block_on(async {
+                                run_state_async(accumulated_state, &compiled_state).await
+                            })
+                        }) {
+                            Ok(state) => state,
+                            Err(e) => return Ok(metta_run_error_expr(
+                                "evaluation_failed",
+                                &format!("MeTTa evaluation failed: {}", e),
+                            )),
+                        };
+
+                        // Convert result back to PathMap Par
+                        let result_par = metta_state_to_pathmap_par(&result_state);
+
+                        // Extract the PathMap from result Par
+                        if let Some(Expr { expr_instance: Some(ExprInstance::EPathmapBody(result_pathmap)) }) = result_par.exprs.first() {
+                            Ok(Expr {
+                                expr_instance: Some(ExprInstance::EPathmapBody(result_pathmap.clone())),
+                            })
+                        } else {
+                            Ok(metta_run_error_expr(
+                                "extraction_failed",
+                                "Failed to extract PathMap from result",
+                            ))
+                        }
                     }
 
-                    other => Err(InterpreterError::MethodNotDefined {
+                    #[cfg(not(feature = "mettatron"))]
+                    (ExprInstance::EPathmapBody(_), ExprInstance::EPathmapBody(_)) => {
+                        Err(InterpreterError::ReduceError(
+                            "MeTTa evaluation requires the 'mettatron' feature to be enabled".to_string()
+                        ))
+                    }
+
+                    (ExprInstance::EPathmapBody(_), other) => Err(InterpreterError::MethodNotDefined {
+                        method: format!("run: expected PathMap argument, got {}", get_type(other.clone())),
+                        other_type: get_type(other),
+                    }),
+
+                    (other, _) => Err(InterpreterError::MethodNotDefined {
                         method: String::from("run"),
                         other_type: get_type(other),
                     }),
@@ -5889,6 +5975,11 @@ impl DebruijnInterpreter {
                             Ok((size, new_gint_par(size, Vec::new(), false)))
                         }
 
+                        ExprInstance::EPathmapBody(epathmap) => {
+                            let size = epathmap.ps.len() as i64;
+                            Ok((size, new_gint_par(size, Vec::new(), false)))
+                        }
+
                         other => Err(InterpreterError::MethodNotDefined {
                             method: String::from("size"),
                             other_type: get_type(other),
@@ -5942,6 +6033,10 @@ impl DebruijnInterpreter {
                         ExprInstance::GByteArray(bytes) => Ok(new_gint_expr(bytes.len() as i64)),
 
                         ExprInstance::EListBody(elist) => Ok(new_gint_expr(elist.ps.len() as i64)),
+
+                        ExprInstance::EPathmapBody(epathmap) => {
+                            Ok(new_gint_expr(epathmap.ps.len() as i64))
+                        }
 
                         other => Err(InterpreterError::MethodNotDefined {
                             method: String::from("length"),
@@ -6205,6 +6300,20 @@ impl DebruijnInterpreter {
                             }]))
                         }
 
+                        ExprInstance::EPathmapBody(epathmap) => {
+                            let ps = epathmap.ps;
+                            self.outer.cost.charge(to_list_cost(ps.len() as i64))?;
+
+                            Ok(Par::default().with_exprs(vec![Expr {
+                                expr_instance: Some(ExprInstance::EListBody(EList {
+                                    ps,
+                                    locally_free: Vec::new(),
+                                    connective_used: false,
+                                    remainder: None,
+                                })),
+                            }]))
+                        }
+
                         other => Err(InterpreterError::MethodNotDefined {
                             method: String::from("to_list"),
                             other_type: get_type(other),
@@ -6292,6 +6401,19 @@ impl DebruijnInterpreter {
                                         elist.connective_used,
                                         elist.locally_free,
                                         elist.remainder,
+                                    )),
+                                )),
+                            }]))
+                        }
+
+                        ExprInstance::EPathmapBody(epathmap) => {
+                            Ok(Par::default().with_exprs(vec![Expr {
+                                expr_instance: Some(ExprInstance::ESetBody(
+                                    ParSetTypeMapper::par_set_to_eset(ParSet::new(
+                                        epathmap.ps,
+                                        epathmap.connective_used,
+                                        epathmap.locally_free,
+                                        epathmap.remainder,
                                     )),
                                 )),
                             }]))
@@ -6488,6 +6610,383 @@ impl DebruijnInterpreter {
         Box::new(ToStringMethod { outer: self })
     }
 
+    fn first_method<'a>(&'a self) -> Box<dyn Method + 'a> {
+        struct FirstMethod<'a> {
+            outer: &'a DebruijnInterpreter,
+        }
+
+        impl<'a> FirstMethod<'a> {
+            fn first(&self, base_expr: Expr) -> Result<Par, InterpreterError> {
+                match base_expr.expr_instance {
+                    Some(ExprInstance::EListBody(elist)) => {
+                        elist.ps.into_iter().next().ok_or_else(|| {
+                            InterpreterError::MethodNotDefined {
+                                method: String::from("first"),
+                                other_type: String::from("empty list"),
+                            }
+                        })
+                    }
+                    Some(other) => Err(InterpreterError::MethodNotDefined {
+                        method: String::from("first"),
+                        other_type: get_type(other),
+                    }),
+                    None => Err(InterpreterError::MethodNotDefined {
+                        method: String::from("first"),
+                        other_type: String::from("None"),
+                    }),
+                }
+            }
+        }
+
+        impl<'a> Method for FirstMethod<'a> {
+            fn apply(
+                &self,
+                p: Par,
+                args: Vec<Par>,
+                env: &Env<Par>,
+            ) -> Result<Par, InterpreterError> {
+                if !args.is_empty() {
+                    return Err(InterpreterError::MethodArgumentNumberMismatch {
+                        method: String::from("first"),
+                        expected: 0,
+                        actual: args.len(),
+                    });
+                }
+                let base_expr = self.outer.eval_single_expr(&p, env)?;
+                self.outer.cost.charge(lookup_cost())?;
+                self.first(base_expr)
+            }
+        }
+
+        Box::new(FirstMethod { outer: self })
+    }
+
+    fn last_method<'a>(&'a self) -> Box<dyn Method + 'a> {
+        struct LastMethod<'a> {
+            outer: &'a DebruijnInterpreter,
+        }
+
+        impl<'a> LastMethod<'a> {
+            fn last(&self, base_expr: Expr) -> Result<Par, InterpreterError> {
+                match base_expr.expr_instance {
+                    Some(ExprInstance::EListBody(elist)) => {
+                        elist.ps.into_iter().last().ok_or_else(|| {
+                            InterpreterError::MethodNotDefined {
+                                method: String::from("last"),
+                                other_type: String::from("empty list"),
+                            }
+                        })
+                    }
+                    Some(other) => Err(InterpreterError::MethodNotDefined {
+                        method: String::from("last"),
+                        other_type: get_type(other),
+                    }),
+                    None => Err(InterpreterError::MethodNotDefined {
+                        method: String::from("last"),
+                        other_type: String::from("None"),
+                    }),
+                }
+            }
+        }
+
+        impl<'a> Method for LastMethod<'a> {
+            fn apply(
+                &self,
+                p: Par,
+                args: Vec<Par>,
+                env: &Env<Par>,
+            ) -> Result<Par, InterpreterError> {
+                if !args.is_empty() {
+                    return Err(InterpreterError::MethodArgumentNumberMismatch {
+                        method: String::from("last"),
+                        expected: 0,
+                        actual: args.len(),
+                    });
+                }
+                let base_expr = self.outer.eval_single_expr(&p, env)?;
+                self.outer.cost.charge(lookup_cost())?;
+                self.last(base_expr)
+            }
+        }
+
+        Box::new(LastMethod { outer: self })
+    }
+
+    fn current_path_method<'a>(&'a self) -> Box<dyn Method + 'a> {
+        struct CurrentPathMethod<'a> {
+            outer: &'a DebruijnInterpreter,
+        }
+
+        impl<'a> CurrentPathMethod<'a> {
+            fn current_path(&self, base_expr: Expr) -> Result<Par, InterpreterError> {
+                match base_expr.expr_instance {
+                    Some(ExprInstance::EZipperBody(zipper)) => {
+                        let segments: Vec<Par> = zipper
+                            .current_path
+                            .iter()
+                            .map(|seg| {
+                                models::rust::sexpr_to_par::SExprToPar::decode_segment(seg)
+                                    .unwrap_or_else(|_| {
+                                        // Fallback: treat raw bytes as a string
+                                        Par::default().with_exprs(vec![Expr {
+                                            expr_instance: Some(ExprInstance::GString(
+                                                String::from_utf8_lossy(seg).to_string(),
+                                            )),
+                                        }])
+                                    })
+                            })
+                            .collect();
+                        Ok(Par::default().with_exprs(vec![Expr {
+                            expr_instance: Some(ExprInstance::EListBody(EList {
+                                ps: segments,
+                                locally_free: Vec::new(),
+                                connective_used: false,
+                                remainder: None,
+                            })),
+                        }]))
+                    }
+                    Some(other) => Err(InterpreterError::MethodNotDefined {
+                        method: String::from("currentPath"),
+                        other_type: get_type(other),
+                    }),
+                    None => Err(InterpreterError::MethodNotDefined {
+                        method: String::from("currentPath"),
+                        other_type: String::from("None"),
+                    }),
+                }
+            }
+        }
+
+        impl<'a> Method for CurrentPathMethod<'a> {
+            fn apply(
+                &self,
+                p: Par,
+                args: Vec<Par>,
+                env: &Env<Par>,
+            ) -> Result<Par, InterpreterError> {
+                if !args.is_empty() {
+                    return Err(InterpreterError::MethodArgumentNumberMismatch {
+                        method: String::from("currentPath"),
+                        expected: 0,
+                        actual: args.len(),
+                    });
+                }
+                let base_expr = self.outer.eval_single_expr(&p, env)?;
+                self.outer.cost.charge(lookup_cost())?;
+                self.current_path(base_expr)
+            }
+        }
+
+        Box::new(CurrentPathMethod { outer: self })
+    }
+
+    fn paths_method<'a>(&'a self) -> Box<dyn Method + 'a> {
+        struct PathsMethod<'a> {
+            outer: &'a DebruijnInterpreter,
+        }
+
+        impl<'a> PathsMethod<'a> {
+            fn paths(&self, base_expr: Expr) -> Result<Par, InterpreterError> {
+                match base_expr.expr_instance {
+                    Some(ExprInstance::EPathmapBody(epathmap)) => {
+                        let pathmap_result =
+                            PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap(&epathmap);
+                        let rholang_pathmap = pathmap_result.map;
+
+                        let path_pars: Vec<Par> = rholang_pathmap
+                            .iter()
+                            .map(|(key_bytes, _)| {
+                                let segments =
+                                    models::rust::pathmap_zipper::unflatten_segments(&key_bytes);
+                                let decoded_segments: Vec<Par> = segments
+                                    .iter()
+                                    .map(|seg| {
+                                        models::rust::sexpr_to_par::SExprToPar::decode_segment(seg)
+                                            .unwrap_or_else(|_| {
+                                                Par::default().with_exprs(vec![Expr {
+                                                    expr_instance: Some(ExprInstance::GString(
+                                                        String::from_utf8_lossy(seg).to_string(),
+                                                    )),
+                                                }])
+                                            })
+                                    })
+                                    .collect();
+                                Par::default().with_exprs(vec![Expr {
+                                    expr_instance: Some(ExprInstance::EListBody(EList {
+                                        ps: decoded_segments,
+                                        locally_free: Vec::new(),
+                                        connective_used: false,
+                                        remainder: None,
+                                    })),
+                                }])
+                            })
+                            .collect();
+
+                        Ok(Par::default().with_exprs(vec![Expr {
+                            expr_instance: Some(ExprInstance::EListBody(EList {
+                                ps: path_pars,
+                                locally_free: Vec::new(),
+                                connective_used: false,
+                                remainder: None,
+                            })),
+                        }]))
+                    }
+                    Some(other) => Err(InterpreterError::MethodNotDefined {
+                        method: String::from("paths"),
+                        other_type: get_type(other),
+                    }),
+                    None => Err(InterpreterError::MethodNotDefined {
+                        method: String::from("paths"),
+                        other_type: String::from("None"),
+                    }),
+                }
+            }
+        }
+
+        impl<'a> Method for PathsMethod<'a> {
+            fn apply(
+                &self,
+                p: Par,
+                args: Vec<Par>,
+                env: &Env<Par>,
+            ) -> Result<Par, InterpreterError> {
+                if !args.is_empty() {
+                    return Err(InterpreterError::MethodArgumentNumberMismatch {
+                        method: String::from("paths"),
+                        expected: 0,
+                        actual: args.len(),
+                    });
+                }
+                let base_expr = self.outer.eval_single_expr(&p, env)?;
+                self.outer.cost.charge(lookup_cost())?;
+                self.paths(base_expr)
+            }
+        }
+
+        Box::new(PathsMethod { outer: self })
+    }
+
+    #[cfg(feature = "mettatron")]
+    fn decode_space_method<'a>(&'a self) -> Box<dyn Method + 'a> {
+        struct DecodeSpaceMethod<'a> {
+            outer: &'a DebruijnInterpreter,
+        }
+
+        impl<'a> DecodeSpaceMethod<'a> {
+            fn decode_space(&self, base_expr: Expr) -> Result<Par, InterpreterError> {
+                match base_expr.expr_instance {
+                    Some(ExprInstance::GByteArray(bytes)) => {
+                        let pars = decode_space_bytes_to_pars(&bytes).map_err(|e| {
+                            InterpreterError::MethodNotDefined {
+                                method: String::from("decodeSpace"),
+                                other_type: format!("decode error: {}", e),
+                            }
+                        })?;
+                        Ok(Par::default().with_exprs(vec![Expr {
+                            expr_instance: Some(ExprInstance::EPathmapBody(EPathMap {
+                                ps: pars,
+                                locally_free: Vec::new(),
+                                connective_used: false,
+                                remainder: None,
+                            })),
+                        }]))
+                    }
+                    Some(other) => Err(InterpreterError::MethodNotDefined {
+                        method: String::from("decodeSpace"),
+                        other_type: get_type(other),
+                    }),
+                    None => Err(InterpreterError::MethodNotDefined {
+                        method: String::from("decodeSpace"),
+                        other_type: String::from("None"),
+                    }),
+                }
+            }
+        }
+
+        impl<'a> Method for DecodeSpaceMethod<'a> {
+            fn apply(
+                &self,
+                p: Par,
+                args: Vec<Par>,
+                env: &Env<Par>,
+            ) -> Result<Par, InterpreterError> {
+                if !args.is_empty() {
+                    return Err(InterpreterError::MethodArgumentNumberMismatch {
+                        method: String::from("decodeSpace"),
+                        expected: 0,
+                        actual: args.len(),
+                    });
+                }
+                let base_expr = self.outer.eval_single_expr(&p, env)?;
+                self.outer.cost.charge(lookup_cost())?;
+                self.decode_space(base_expr)
+            }
+        }
+
+        Box::new(DecodeSpaceMethod { outer: self })
+    }
+
+    #[cfg(feature = "mettatron")]
+    fn decode_large_exprs_method<'a>(&'a self) -> Box<dyn Method + 'a> {
+        struct DecodeLargeExprsMethod<'a> {
+            outer: &'a DebruijnInterpreter,
+        }
+
+        impl<'a> DecodeLargeExprsMethod<'a> {
+            fn decode_large_exprs(&self, base_expr: Expr) -> Result<Par, InterpreterError> {
+                match base_expr.expr_instance {
+                    Some(ExprInstance::GByteArray(bytes)) => {
+                        let pars =
+                            decode_large_exprs_bytes_to_pars(&bytes).map_err(|e| {
+                                InterpreterError::MethodNotDefined {
+                                    method: String::from("decodeLargeExprs"),
+                                    other_type: format!("decode error: {}", e),
+                                }
+                            })?;
+                        Ok(Par::default().with_exprs(vec![Expr {
+                            expr_instance: Some(ExprInstance::EPathmapBody(EPathMap {
+                                ps: pars,
+                                locally_free: Vec::new(),
+                                connective_used: false,
+                                remainder: None,
+                            })),
+                        }]))
+                    }
+                    Some(other) => Err(InterpreterError::MethodNotDefined {
+                        method: String::from("decodeLargeExprs"),
+                        other_type: get_type(other),
+                    }),
+                    None => Err(InterpreterError::MethodNotDefined {
+                        method: String::from("decodeLargeExprs"),
+                        other_type: String::from("None"),
+                    }),
+                }
+            }
+        }
+
+        impl<'a> Method for DecodeLargeExprsMethod<'a> {
+            fn apply(
+                &self,
+                p: Par,
+                args: Vec<Par>,
+                env: &Env<Par>,
+            ) -> Result<Par, InterpreterError> {
+                if !args.is_empty() {
+                    return Err(InterpreterError::MethodArgumentNumberMismatch {
+                        method: String::from("decodeLargeExprs"),
+                        expected: 0,
+                        actual: args.len(),
+                    });
+                }
+                let base_expr = self.outer.eval_single_expr(&p, env)?;
+                self.outer.cost.charge(lookup_cost())?;
+                self.decode_large_exprs(base_expr)
+            }
+        }
+
+        Box::new(DecodeLargeExprsMethod { outer: self })
+    }
+
     fn method_table<'a>(&'a self) -> HashMap<String, Box<dyn Method + 'a>> {
         let mut table = HashMap::new();
         table.insert("nth".to_string(), self.nth_method());
@@ -6546,6 +7045,19 @@ impl DebruijnInterpreter {
         table.insert("toSet".to_string(), self.to_set_method());
         table.insert("toMap".to_string(), self.to_map_method());
         table.insert("toString".to_string(), self.to_string_method());
+        table.insert("first".to_string(), self.first_method());
+        table.insert("last".to_string(), self.last_method());
+        table.insert("currentPath".to_string(), self.current_path_method());
+        table.insert("paths".to_string(), self.paths_method());
+        // MeTTaTron environment deserialization methods (feature-gated)
+        #[cfg(feature = "mettatron")]
+        {
+            table.insert("decodeSpace".to_string(), self.decode_space_method());
+            table.insert(
+                "decodeLargeExprs".to_string(),
+                self.decode_large_exprs_method(),
+            );
+        }
         table
     }
 

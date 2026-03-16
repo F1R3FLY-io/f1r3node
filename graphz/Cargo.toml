@@ -10,5 +10,8 @@ futures = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 eyre = { workspace = true }
 
+[lints]
+workspace = true
+
 [dev-dependencies]
 tokio-test = "0.4" 

@@ -38,6 +38,9 @@ eyre = { workspace = true }
 pem = "3.0"
 openssl = "0.10"
 
+[lints]
+workspace = true
+
 [dev-dependencies]
 proptest = "1.0"
 tempfile = "3.8.0"

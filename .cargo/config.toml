@@ -1,6 +1,7 @@
-# Cargo configuration for f1r3fly project
+# Cargo configuration for f1r3node
 #
-# This file contains build configuration and compiler flags for the entire workspace.
+# This configuration sets default build flags required by transitive dependencies
+# (specifically gxhash via MORK/PathMap) which require AES and SSE2 CPU intrinsics.
 
 [env]
 # Set minimum thread stack size to 8MB for test threads.
@@ -14,6 +15,7 @@ RUST_MIN_STACK = "8388608"
 [build]
 # Enable native CPU features for gxhash (requires AES and SSE2 intrinsics)
 rustflags = ["-C", "target-cpu=native"]
+
 
 # Suppress future-incompatibility warnings from dependencies
 #

@@ -12,6 +12,12 @@ use super::rho_type::{
     RhoSysAuthToken, RhoUri,
 };
 use super::util::vault_address::VaultAddress;
+#[cfg(feature = "mettatron")]
+use mettatron::{
+    backend::compile as metta_compile_src,
+    metta_state_to_pathmap_par,
+    metta_error_to_par
+};
 use crypto::rust::hash::blake2b256::Blake2b256;
 use crypto::rust::hash::keccak256::Keccak256;
 use crypto::rust::hash::sha_256::Sha256Hasher;
@@ -190,6 +196,11 @@ impl FixedChannels {
     pub fn deploy_data() -> Par {
         byte_name(31)
     }
+
+    #[cfg(feature = "mettatron")]
+    pub fn metta_compile() -> Par {
+        byte_name(200)
+    }
 }
 
 pub struct BodyRefs;
@@ -220,6 +231,8 @@ impl BodyRefs {
     pub const OLLAMA_GENERATE: i64 = 27;
     pub const OLLAMA_MODELS: i64 = 28;
     pub const DEPLOY_DATA: i64 = 29;
+    #[cfg(feature = "mettatron")]
+    pub const METTA_COMPILE: i64 = 200;
 }
 
 pub fn non_deterministic_ops() -> HashSet<i64> {
@@ -1200,6 +1213,68 @@ impl SystemProcesses {
         Ok(vec![])
     }
 
+    /// MeTTa compiler handler - Compatible with !? operator
+    ///
+    /// # Service
+    /// URN: `rho:metta:compile`
+    /// Channel: 200
+    /// Arity: 2 (return channel + source code)
+    ///
+    /// # Usage with !? operator (recommended)
+    /// ```rholang
+    /// for (@state <- @"rho:metta:compile" !? ("(+ 1 2)")) {
+    ///   stdoutAck!(state, *ack)
+    /// }
+    /// ```
+    ///
+    /// # Explicit usage (desugared form)
+    /// ```rholang
+    /// new return in {
+    ///   @"rho:metta:compile"!(*return, "(+ 1 2)") |
+    ///   for (@state <- return) {
+    ///     stdoutAck!(state, *ack)
+    ///   }
+    /// }
+    /// ```
+    #[cfg(feature = "mettatron")]
+    pub async fn metta_compile(
+        &mut self,
+        contract_args: (Vec<ListParWithRandom>, bool, Vec<Par>),
+    ) -> Result<Vec<Par>, InterpreterError> {
+        let Some((produce, _, _, args)) = self.is_contract_call().unapply(contract_args) else {
+            return Err(illegal_argument_error("metta_compile"));
+        };
+
+        let [return_channel, source] = args.as_slice() else {
+            return Err(illegal_argument_error("metta_compile"));
+        };
+
+        let mut src = self.pretty_printer.build_string_from_message(source);
+
+        // Strip outer quotes if present (pretty printer adds quotes for string literals)
+        if src.starts_with('"') && src.ends_with('"') && src.len() >= 2 {
+            src = src[1..src.len()-1].to_string();
+        }
+
+        // Direct Rust call - no FFI, no unsafe code!
+        // Compile MeTTa source to MettaState
+        let state = match metta_compile_src(&src) {
+            Ok(s) => s,
+            Err(e) => {
+                let error_par = metta_error_to_par(&e.to_string());
+                produce(&vec![error_par.clone()], return_channel).await?;
+                return Ok(vec![error_par]);
+            }
+        };
+
+        // Convert MettaState to PathMap Par
+        let result_par = metta_state_to_pathmap_par(&state);
+        let result = vec![result_par];
+
+        produce(&result, return_channel).await?;
+        Ok(result)
+    }
+
     /// Execution abort system process.
     ///
     /// Terminates the current Rholang computation immediately when called.
@@ -1672,6 +1747,27 @@ pub fn test_framework_contracts() -> Vec<Definition> {
                     Box::pin(
                         async move { sp.casper_invalid_blocks_set(args, &invalid_blocks).await },
                     )
+                })
+            }),
+            remainder: None,
+        },
+    ]
+}
+
+/// MeTTa compiler contracts for Rholang integration
+#[cfg(feature = "mettatron")]
+pub fn metta_contracts() -> Vec<Definition> {
+    vec![
+        Definition {
+            urn: "rho:metta:compile".to_string(),
+            fixed_channel: byte_name(200),
+            arity: 2,
+            body_ref: BodyRefs::METTA_COMPILE,
+            handler: Box::new(|ctx| {
+                let sp = ctx.system_processes.clone();
+                Box::new(move |args| {
+                    let mut sp = sp.clone();
+                    Box::pin(async move { sp.metta_compile(args).await })
                 })
             }),
             remainder: None,

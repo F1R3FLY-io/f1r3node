@@ -13,8 +13,239 @@ use models::{
     },
 };
 use shared::rust::shared::{printer::Printer, string_ops::wrap_with_braces};
+#[cfg(feature = "mettatron")]
+use mettatron::pathmap_par_integration::{par_to_environment, metta_value_to_par};
 
 use super::errors::InterpreterError;
+
+// ============================================================================
+// MeTTa Byte Array Detection and Formatting Helpers
+// ============================================================================
+
+#[cfg(feature = "mettatron")]
+// Magic numbers for MeTTa Environment byte arrays
+// These identify byte arrays as MeTTa-specific data
+#[allow(dead_code)]
+const METTA_SPACE_MAGIC: &[u8] = b"MTTS";          // MeTTa Space
+#[cfg(feature = "mettatron")]
+#[allow(dead_code)]
+const METTA_LARGE_EXPRS_MAGIC: &[u8] = b"MTTL";    // MeTTa Large Expressions (arity >= 64)
+
+#[cfg(feature = "mettatron")]
+#[allow(dead_code)]
+/// Detect if byte array might be MeTTa space format
+/// Format: [magic: 4 bytes "MTTS"][sym_table_len: 8][sym_table_bytes][path_count: 8][path1_len: 4][path1_bytes][multiplicity1: 8]...
+fn is_metta_space_bytes(bs: &[u8]) -> bool {
+    // Must have magic + sym_table_len + path_count (4 + 8 + 8 = 20 bytes minimum)
+    if bs.len() < 20 {
+        return false;
+    }
+
+    // Check for magic number at start
+    if &bs[0..4] != METTA_SPACE_MAGIC {
+        return false;
+    }
+
+    let sym_table_len = u64::from_be_bytes([
+        bs[4], bs[5], bs[6], bs[7],
+        bs[8], bs[9], bs[10], bs[11],
+    ]) as usize;
+
+    // Sanity check: symbol table size should be reasonable
+    if sym_table_len > bs.len() || 12 + sym_table_len + 8 > bs.len() {
+        return false;
+    }
+
+    let mut offset = 12 + sym_table_len; // Skip magic (4) + sym_table_len (8) + sym_table_bytes
+
+    let path_count = u64::from_be_bytes([
+        bs[offset], bs[offset+1], bs[offset+2], bs[offset+3],
+        bs[offset+4], bs[offset+5], bs[offset+6], bs[offset+7],
+    ]);
+    offset += 8;
+
+    // Sanity check: path count should be reasonable
+    if path_count > 10000 {
+        return false;
+    }
+
+    for _ in 0..path_count {
+        if offset + 4 > bs.len() {
+            return false;
+        }
+
+        let path_len = u32::from_be_bytes([
+            bs[offset], bs[offset+1],
+            bs[offset+2], bs[offset+3],
+        ]) as usize;
+        offset += 4;
+
+        // path bytes + 8 bytes for inline multiplicity
+        if offset + path_len + 8 > bs.len() {
+            return false;
+        }
+
+        offset += path_len + 8; // Skip path bytes + multiplicity
+    }
+
+    // Should consume exactly all bytes
+    offset == bs.len()
+}
+
+#[cfg(feature = "mettatron")]
+#[allow(dead_code)]
+/// Detect if byte array might be MeTTa large expressions format
+/// Format: [magic: 4 bytes "MTTL"][count: 8 bytes BE][expr1_len: 4 bytes BE][expr1_bytes][multiplicity1: 8 bytes]...
+/// Large expressions are those with arity >= 64 (exceeding MORK's 63-arity limit)
+fn is_metta_large_exprs_bytes(bs: &[u8]) -> bool {
+    // Must have magic + count (4 + 8 = 12 bytes minimum)
+    if bs.len() < 12 {
+        return false;
+    }
+
+    // Check for magic number at start
+    if &bs[0..4] != METTA_LARGE_EXPRS_MAGIC {
+        return false;
+    }
+
+    let count = u64::from_be_bytes([
+        bs[4], bs[5], bs[6], bs[7],
+        bs[8], bs[9], bs[10], bs[11],
+    ]);
+
+    // Sanity check: count should be reasonable (< 10,000 entries)
+    if count > 10000 {
+        return false;
+    }
+
+    let mut offset = 12; // Skip magic (4) + count (8)
+    for _ in 0..count {
+        if offset + 4 > bs.len() {
+            return false;
+        }
+
+        let expr_len = u32::from_be_bytes([
+            bs[offset], bs[offset+1],
+            bs[offset+2], bs[offset+3],
+        ]) as usize;
+        offset += 4;
+
+        // Sanity check: expression length should be reasonable (< 100KB)
+        // expr bytes + 8 bytes for inline multiplicity
+        if expr_len > 100_000 || offset + expr_len + 8 > bs.len() {
+            return false;
+        }
+
+        offset += expr_len + 8; // Skip expr bytes + multiplicity
+    }
+
+    // Should consume exactly all bytes
+    offset == bs.len()
+}
+
+#[cfg(feature = "mettatron")]
+/// Check if a Par represents a MeTTa environment list
+/// Environment structure: EList(EList("space", ...), EList("large_exprs", ...))
+fn is_metta_environment(par: &Par) -> bool {
+    // Check if this is an EList with exactly 2 elements: [space, large_exprs]
+    if par.exprs.len() != 1 {
+        return false;
+    }
+
+    if let Some(ExprInstance::EListBody(ref elist)) = par.exprs[0].expr_instance {
+        if elist.ps.len() != 2 {
+            return false;
+        }
+
+        // Check first element is EList("space", ...)
+        let first_is_space = if elist.ps[0].exprs.len() == 1 {
+            if let Some(ExprInstance::EListBody(ref inner)) = elist.ps[0].exprs[0].expr_instance {
+                if inner.ps.len() == 2 && inner.ps[0].exprs.len() == 1 {
+                    if let Some(ExprInstance::GString(ref s)) = inner.ps[0].exprs[0].expr_instance {
+                        s == "space"
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+
+        // Check second element is EList("large_exprs", ...)
+        let second_is_large_exprs = if elist.ps[1].exprs.len() == 1 {
+            if let Some(ExprInstance::EListBody(ref inner)) = elist.ps[1].exprs[0].expr_instance {
+                if inner.ps.len() == 2 && inner.ps[0].exprs.len() == 1 {
+                    if let Some(ExprInstance::GString(ref s)) = inner.ps[0].exprs[0].expr_instance {
+                        s == "large_exprs"
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+
+        first_is_space && second_is_large_exprs
+    } else {
+        false
+    }
+}
+
+#[cfg(feature = "mettatron")]
+/// Format MeTTa environment list by deserializing and displaying its contents.
+/// Decodes atoms from MTTS/MTTL byte arrays into readable s-expressions.
+fn format_metta_environment(env_par: &Par) -> String {
+    match par_to_environment(env_par) {
+        Ok(env) => {
+            // Decode all atoms to MeTTa values and convert to Pars for display
+            let atoms = env.get_all_atoms();
+            let pp = PrettyPrinter::new();
+
+            let space_str = if atoms.is_empty() {
+                "{||}".to_string()
+            } else {
+                let mut pp = pp;
+                let formatted: Vec<String> = atoms
+                    .iter()
+                    .map(|atom| {
+                        let par = metta_value_to_par(atom);
+                        pp.build_string_from_message(&par)
+                    })
+                    .collect();
+                format!("{{|{}|}}", formatted.join(", "))
+            };
+
+            // Check for large expressions (arity >= 64)
+            let wide_atom_count = env.get_wide_atom_count();
+            let has_large_exprs = wide_atom_count > 0;
+
+            if has_large_exprs {
+                let large_exprs_str = format!("{{count: {}}}", wide_atom_count);
+                format!(
+                    "[[\"space\", {}], [\"large_exprs\", {}]]",
+                    space_str, large_exprs_str
+                )
+            } else {
+                format!("[[\"space\", {}]]", space_str)
+            }
+        }
+        Err(e) => {
+            format!("{{<deserialization error: {}>}}", e)
+        }
+    }
+}
+
+// ============================================================================
 
 #[derive(Clone)]
 pub struct PrettyPrinter {
@@ -528,7 +759,11 @@ impl PrettyPrinter {
                         args_string
                     ))
                 }
-                ExprInstance::GByteArray(bs) => Ok(hex::encode(bs)),
+                ExprInstance::GByteArray(bs) => {
+                    // Just show hex encoding for byte arrays
+                    // MeTTa environments will be formatted at the ETuple level instead
+                    Ok(hex::encode(bs))
+                },
             },
             // TODO: Figure out if we can prevent prost from generating - OLD
             None => Ok(String::from("Nil")),
@@ -792,7 +1027,11 @@ impl PrettyPrinter {
         } else if let Some(m) = m.downcast_ref::<Match>() {
             let result = format!(
                 "match {} {{\n{}{}",
-                self.build_string_from_message(&m.target),
+                self.build_string_from_message(
+                    m.target
+                        .as_ref()
+                        .expect("Match target field was None, should be Some")
+                ),
                 self.indent_string().repeat(indent + 1),
                 m.cases.iter().enumerate().fold(
                     Ok(String::new()),
@@ -857,6 +1096,12 @@ impl PrettyPrinter {
                 None => Ok(String::new()),
             }
         } else if let Some(p) = m.downcast_ref::<Par>() {
+            // Check if this is a MeTTa environment tuple - if so, use custom formatting
+            #[cfg(feature = "mettatron")]
+            if is_metta_environment(p) {
+                return Ok(format_metta_environment(p));
+            }
+
             if self.is_empty_par(p) {
                 Ok(String::from("Nil"))
             } else {
