@@ -421,10 +421,7 @@ impl CliqueOracle {
 
             Ok(result)
         } else {
-            tracing::warn!(
-                "Fault tolerance for non existing message {:?} requested.",
-                target_msg
-            );
+            tracing::warn!(?target_msg, "Fault tolerance for non existing message requested.");
             Ok(MIN_FAULT_TOLERANCE)
         }
     }
