@@ -202,7 +202,7 @@ fn is_metta_environment(par: &Par) -> bool {
 }
 
 #[cfg(feature = "mettatron")]
-/// Format MeTTa environment tuple by deserializing and displaying its contents.
+/// Format MeTTa environment list by deserializing and displaying its contents.
 /// Decodes atoms from MTTS/MTTL byte arrays into readable s-expressions.
 fn format_metta_environment(env_par: &Par) -> String {
     match par_to_environment(env_par) {
@@ -232,11 +232,11 @@ fn format_metta_environment(env_par: &Par) -> String {
             if has_large_exprs {
                 let large_exprs_str = format!("{{count: {}}}", wide_atom_count);
                 format!(
-                    "((\"space\", {}), (\"large_exprs\", {}))",
+                    "[[\"space\", {}], [\"large_exprs\", {}]]",
                     space_str, large_exprs_str
                 )
             } else {
-                format!("((\"space\", {}))", space_str)
+                format!("[[\"space\", {}]]", space_str)
             }
         }
         Err(e) => {
