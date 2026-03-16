@@ -64,21 +64,26 @@ object FileReplicationSetup {
           // This enables the download finalization checker to verify via the DAG
           // (BlockAPI.findDeploy + isFinalized) instead of bypassing the check.
           downloaded = missingHashes.filterNot(stillMissing.contains)
+          _ <- Log[F].info(
+                s"[FileReplicationSetup] Processing downloaded files: ${downloaded.mkString(", ")}"
+              )
           _ <- downloaded.traverse_ { hash =>
                 val deployIdOpt = block.body.deploys.collectFirst {
                   case pd if OrphanFileCleanup.extractFileHash(pd.deploy.data).contains(hash) =>
                     pd.deploy.sig.toByteArray.map("%02x".format(_)).mkString
                 }
-                deployIdOpt.traverse_ { deployId =>
-                  Sync[F].delay {
-                    val metaPath = dataDir.resolve(s"$hash.meta.json")
-                    val json     = s"""{"deployId":"$deployId"}"""
-                    java.nio.file.Files.write(metaPath, json.getBytes("UTF-8"))
-                  } *> Log[F].info(
-                    s"[FileReplicationSetup] Wrote meta.json for ${hash.take(16)}... " +
-                      s"with deployId=${deployId.take(16)}..."
-                  )
-                }
+                Log[F].info(s"[FileReplicationSetup] Found deployIdOpt=$deployIdOpt for hash=${hash
+                  .take(16)}... (deploys in block=${block.body.deploys.size})") *>
+                  deployIdOpt.traverse_ { deployId =>
+                    Sync[F].delay {
+                      val metaPath = dataDir.resolve(s"$hash.meta.json")
+                      val json     = s"""{"deployId":"$deployId"}"""
+                      java.nio.file.Files.write(metaPath, json.getBytes("UTF-8"))
+                    } *> Log[F].info(
+                      s"[FileReplicationSetup] Wrote meta.json for ${hash.take(16)}... " +
+                        s"with deployId=${deployId.take(16)}..."
+                    )
+                  }
               }
         } yield stillMissing
     } yield (fileRequester, daCallback)
