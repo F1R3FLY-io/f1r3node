@@ -97,7 +97,11 @@ case class TestNode[F[_]: Timer](
     eventPublisherEffect: EventPublisher[F],
     finalizationInProgressRef: Ref[F, Boolean],
     heartbeatSignalRefEffect: Ref[F, Option[HeartbeatSignal[F]]],
-    fileRequesterEffect: FileRequester[F]
+    fileRequesterEffect: FileRequester[F],
+    // Shared map: validator public key (ByteString) → file-replication directory
+    // Populated after all nodes are created in networkF, used by daFetchFiles
+    // to copy files from the block proposer's directory.
+    peerFileDirsRef: Ref[F, Map[ByteString, Path]]
 )(implicit concurrentF: Concurrent[F]) {
   // Scalatest `assert` macro needs some member of the Assertions trait.
   // An (inferior) alternative would be to inherit the trait...
@@ -161,8 +165,35 @@ case class TestNode[F[_]: Timer](
     enableMergeableChannelGC = false,
     mergeableChannelsGCDepthBuffer = 10,
     disableLateBlockFiltering = false,
-    disableValidatorProgressCheck = false
+    disableValidatorProgressCheck = false,
+    fileReplicationDir = Some(dataDir.resolve("file-replication"))
   )
+
+  // DA-gated file availability: copy missing files directly from the block proposer's
+  // file-replication directory. This simulates P2P file replication within TestNode's
+  // synchronous block processing model.
+  private val daFetchFilesF: (BlockMessage, List[String]) => F[List[String]] =
+    (block, missingHashes) => {
+      import java.nio.file.{Files, StandardCopyOption}
+      peerFileDirsRef.get.flatMap { dirs =>
+        dirs.get(block.sender) match {
+          case Some(senderFileDir) =>
+            Sync[F].delay {
+              val localDir = dataDir.resolve("file-replication")
+              missingHashes.filterNot { hash =>
+                val src = senderFileDir.resolve(hash)
+                if (Files.exists(src)) {
+                  Files.copy(src, localDir.resolve(hash), StandardCopyOption.REPLACE_EXISTING)
+                  true
+                } else false
+              }
+            }
+          case None =>
+            // Sender not in our map (e.g. genesis block) — return all as missing
+            missingHashes.pure[F]
+        }
+      }
+    }
 
   implicit val casperEff = new MultiParentCasperImpl[F](
     validatorId,
@@ -170,8 +201,8 @@ case class TestNode[F[_]: Timer](
     genesis,
     finalizationInProgressRef,
     heartbeatSignalRefEffect,
-    _ => Sync[F].unit,                   // No-op onBlockFinalized for tests
-    (_, _) => List.empty[String].pure[F] // No-op daFetchFiles for tests
+    _ => Sync[F].unit, // No-op onBlockFinalized for tests
+    daFetchFilesF
   )
 
   implicit val rspaceMan = RSpaceStateManagerTestImpl()
@@ -442,6 +473,11 @@ object TestNode {
     val peers       = names.map(peerNode(_, 40400))
     val logicalTime = new LogicalTime[F]
 
+    // Shared map: validator public key → file-replication directory.
+    // Created empty here; populated in evalMap after all nodes exist.
+    // Used by each node's daFetchFiles to copy files from the block sender.
+    val peerFileDirsRef = Ref.unsafe[F, Map[ByteString, Path]](Map.empty)
+
     val nodesF =
       names
         .zip(peers)
@@ -460,7 +496,8 @@ object TestNode {
               synchronyConstraintThreshold,
               maxNumberOfParents,
               maxParentDepth,
-              isReadOnly
+              isReadOnly,
+              peerFileDirsRef
             )
         }
         .map(_.toVector)
@@ -484,6 +521,16 @@ object TestNode {
                     )
                 )
             }
+        // Populate the shared peerFileDirs map with each validator's file-replication dir
+        _ <- peerFileDirsRef.set(
+              nodes.flatMap { node =>
+                node.validatorIdOpt.map { vi =>
+                  ByteString.copyFrom(vi.publicKey.bytes) -> node.dataDir.resolve(
+                    "file-replication"
+                  )
+                }
+              }.toMap
+            )
       } yield nodes
     }
   }
@@ -498,7 +545,8 @@ object TestNode {
       synchronyConstraintThreshold: Double,
       maxNumberOfParents: Int,
       maxParentDepth: Option[Int],
-      isReadOnly: Boolean
+      isReadOnly: Boolean,
+      peerFileDirsRef: Ref[F, Map[ByteString, Path]]
   )(implicit s: Scheduler): Resource[F, TestNode[F]] = {
     val tle                = new TransportLayerTestImpl[F]()
     val tls                = new TransportLayerServerTestImpl[F](currentPeerNode)
@@ -649,7 +697,8 @@ object TestNode {
                    metricEffect = metricEff,
                    finalizationInProgressRef = finalizationInProgress,
                    heartbeatSignalRefEffect = heartbeatSignalRef,
-                   fileRequesterEffect = fileRequester
+                   fileRequesterEffect = fileRequester,
+                   peerFileDirsRef = peerFileDirsRef
                  )
                } yield node
              })
