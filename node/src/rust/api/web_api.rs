@@ -83,6 +83,9 @@ pub trait WebApi {
     /// Find a deploy by ID
     async fn find_deploy(&self, deploy_id: String) -> Result<LightBlockInfoSerde>;
 
+    /// Find a deploy by ID, returning minimal response
+    async fn find_deploy_minimal(&self, deploy_id: String) -> Result<DeployLookupResponse>;
+
     /// Perform exploratory deploy
     async fn exploratory_deploy(
         &self,
@@ -354,6 +357,11 @@ where
         }
     }
 
+    async fn find_deploy_minimal(&self, deploy_id: String) -> Result<DeployLookupResponse> {
+        let full = self.find_deploy(deploy_id).await?;
+        Ok(DeployLookupResponse::from(full))
+    }
+
     async fn exploratory_deploy(
         &self,
         term: String,
@@ -568,6 +576,41 @@ pub struct ApiStatus {
 pub struct VersionInfo {
     pub api: String,
     pub node: String,
+}
+
+/// Minimal deploy lookup response containing only essential fields
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct DeployLookupResponse {
+    #[serde(rename = "blockHash")]
+    pub block_hash: String,
+    #[serde(rename = "blockNumber")]
+    pub block_number: i64,
+    pub timestamp: i64,
+    pub sender: String,
+    #[serde(rename = "seqNum")]
+    pub seq_num: i64,
+    pub sig: String,
+    #[serde(rename = "sigAlgorithm")]
+    pub sig_algorithm: String,
+    #[serde(rename = "shardId")]
+    pub shard_id: String,
+    pub version: i64,
+}
+
+impl From<LightBlockInfoSerde> for DeployLookupResponse {
+    fn from(info: LightBlockInfoSerde) -> Self {
+        Self {
+            block_hash: info.block_hash,
+            block_number: info.block_number,
+            timestamp: info.timestamp,
+            sender: info.sender,
+            seq_num: info.seq_num,
+            sig: info.sig,
+            sig_algorithm: info.sig_algorithm,
+            shard_id: info.shard_id,
+            version: info.version,
+        }
+    }
 }
 
 // Error types
@@ -848,6 +891,212 @@ mod tests {
     use models::rhoapi::{
         Bundle, EList, EMap, ESet, ETuple, GDeployId, GDeployerId, GPrivate, KeyValuePair,
     };
+
+    #[test]
+    fn test_deploy_lookup_response_from_light_block_info() {
+        let light_block = LightBlockInfoSerde {
+            block_hash: "7bf8abc123".to_string(),
+            sender: "0487def456".to_string(),
+            seq_num: 17453,
+            sig: "3044abcdef".to_string(),
+            sig_algorithm: "secp256k1".to_string(),
+            shard_id: "root".to_string(),
+            extra_bytes: vec![],
+            version: 1,
+            timestamp: 1770028092477,
+            header_extra_bytes: vec![],
+            parents_hash_list: vec!["parent1".to_string(), "parent2".to_string()],
+            block_number: 52331,
+            pre_state_hash: "preState123".to_string(),
+            post_state_hash: "postState456".to_string(),
+            body_extra_bytes: vec![],
+            bonds: vec![
+                super::super::serde_types::light_block_info::BondInfoJson {
+                    validator: "validator1".to_string(),
+                    stake: 100,
+                },
+                super::super::serde_types::light_block_info::BondInfoJson {
+                    validator: "validator2".to_string(),
+                    stake: 200,
+                },
+            ],
+            block_size: "4096".to_string(),
+            deploy_count: 5,
+            fault_tolerance: 0.5,
+            justifications: vec![
+                super::super::serde_types::light_block_info::JustificationInfoJson {
+                    validator: "validator1".to_string(),
+                    latest_block_hash: "latestBlockHash1".to_string(),
+                },
+            ],
+            rejected_deploys: vec![],
+        };
+
+        let result = DeployLookupResponse::from(light_block);
+
+        assert_eq!(result.block_hash, "7bf8abc123");
+        assert_eq!(result.block_number, 52331);
+        assert_eq!(result.timestamp, 1770028092477);
+        assert_eq!(result.sender, "0487def456");
+        assert_eq!(result.seq_num, 17453);
+        assert_eq!(result.sig, "3044abcdef");
+        assert_eq!(result.sig_algorithm, "secp256k1");
+        assert_eq!(result.shard_id, "root");
+        assert_eq!(result.version, 1);
+    }
+
+    #[test]
+    fn test_deploy_lookup_response_excludes_heavy_fields() {
+        let response = DeployLookupResponse {
+            block_hash: "hash".to_string(),
+            block_number: 1,
+            timestamp: 123,
+            sender: "sender".to_string(),
+            seq_num: 1,
+            sig: "sig".to_string(),
+            sig_algorithm: "secp256k1".to_string(),
+            shard_id: "root".to_string(),
+            version: 1,
+        };
+
+        let json = serde_json::to_value(&response).unwrap();
+
+        // Should contain only the 9 minimal fields
+        assert!(json.get("blockHash").is_some());
+        assert!(json.get("blockNumber").is_some());
+        assert!(json.get("timestamp").is_some());
+        assert!(json.get("sender").is_some());
+        assert!(json.get("seqNum").is_some());
+        assert!(json.get("sig").is_some());
+        assert!(json.get("sigAlgorithm").is_some());
+        assert!(json.get("shardId").is_some());
+        assert!(json.get("version").is_some());
+
+        // Should NOT contain heavy fields
+        assert!(json.get("bonds").is_none());
+        assert!(json.get("justifications").is_none());
+        assert!(json.get("parentsHashList").is_none());
+        assert!(json.get("preStateHash").is_none());
+        assert!(json.get("postStateHash").is_none());
+        assert!(json.get("faultTolerance").is_none());
+        assert!(json.get("deployCount").is_none());
+        assert!(json.get("blockSize").is_none());
+    }
+
+    #[test]
+    fn test_deploy_lookup_response_handles_empty_string_fields() {
+        let mut light_block = LightBlockInfoSerde {
+            block_hash: "7bf8abc123".to_string(),
+            sender: "0487def456".to_string(),
+            seq_num: 17453,
+            sig: "3044abcdef".to_string(),
+            sig_algorithm: "secp256k1".to_string(),
+            shard_id: "root".to_string(),
+            extra_bytes: vec![],
+            version: 1,
+            timestamp: 1770028092477,
+            header_extra_bytes: vec![],
+            parents_hash_list: vec![],
+            block_number: 52331,
+            pre_state_hash: String::new(),
+            post_state_hash: String::new(),
+            body_extra_bytes: vec![],
+            bonds: vec![],
+            block_size: String::new(),
+            deploy_count: 0,
+            fault_tolerance: 0.0,
+            justifications: vec![],
+            rejected_deploys: vec![],
+        };
+        light_block.block_hash = String::new();
+        light_block.sender = String::new();
+        light_block.sig = String::new();
+        light_block.sig_algorithm = String::new();
+        light_block.shard_id = String::new();
+
+        let result = DeployLookupResponse::from(light_block);
+
+        assert_eq!(result.block_hash, "");
+        assert_eq!(result.sender, "");
+        assert_eq!(result.sig, "");
+        assert_eq!(result.sig_algorithm, "");
+        assert_eq!(result.shard_id, "");
+    }
+
+    #[test]
+    fn test_deploy_lookup_response_handles_zero_numeric_fields() {
+        let light_block = LightBlockInfoSerde {
+            block_hash: "hash".to_string(),
+            sender: "sender".to_string(),
+            seq_num: 0,
+            sig: "sig".to_string(),
+            sig_algorithm: "secp256k1".to_string(),
+            shard_id: "root".to_string(),
+            extra_bytes: vec![],
+            version: 0,
+            timestamp: 0,
+            header_extra_bytes: vec![],
+            parents_hash_list: vec![],
+            block_number: 0,
+            pre_state_hash: String::new(),
+            post_state_hash: String::new(),
+            body_extra_bytes: vec![],
+            bonds: vec![],
+            block_size: String::new(),
+            deploy_count: 0,
+            fault_tolerance: 0.0,
+            justifications: vec![],
+            rejected_deploys: vec![],
+        };
+
+        let result = DeployLookupResponse::from(light_block);
+
+        assert_eq!(result.block_number, 0);
+        assert_eq!(result.timestamp, 0);
+        assert_eq!(result.seq_num, 0);
+        assert_eq!(result.version, 0);
+    }
+
+    #[test]
+    fn test_deploy_lookup_response_correct_regardless_of_bonds_list_size() {
+        let large_bonds: Vec<super::super::serde_types::light_block_info::BondInfoJson> =
+            (1..=1000)
+                .map(|i| super::super::serde_types::light_block_info::BondInfoJson {
+                    validator: format!("validator{}", i),
+                    stake: i,
+                })
+                .collect();
+
+        let light_block = LightBlockInfoSerde {
+            block_hash: "7bf8abc123".to_string(),
+            sender: "0487def456".to_string(),
+            seq_num: 17453,
+            sig: "3044abcdef".to_string(),
+            sig_algorithm: "secp256k1".to_string(),
+            shard_id: "root".to_string(),
+            extra_bytes: vec![],
+            version: 1,
+            timestamp: 1770028092477,
+            header_extra_bytes: vec![],
+            parents_hash_list: vec![],
+            block_number: 52331,
+            pre_state_hash: String::new(),
+            post_state_hash: String::new(),
+            body_extra_bytes: vec![],
+            bonds: large_bonds,
+            block_size: String::new(),
+            deploy_count: 0,
+            fault_tolerance: 0.0,
+            justifications: vec![],
+            rejected_deploys: vec![],
+        };
+
+        let result = DeployLookupResponse::from(light_block);
+
+        // Response should be the same regardless of bonds size
+        assert_eq!(result.block_hash, "7bf8abc123");
+        assert_eq!(result.block_number, 52331);
+    }
 
     #[test]
     fn test_deploy_request_serialization() {
