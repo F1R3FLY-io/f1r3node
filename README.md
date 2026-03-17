@@ -74,7 +74,7 @@ docker pull f1r3flyindustries/f1r3fly-rust-node:latest
 docker compose -f docker/standalone.yml up
 
 # Or start a multi-validator network (for testing consensus)
-docker compose -f docker/shard-with-autopropose.yml up
+docker compose -f docker/shard.yml up
 ```
 
 #### Port Configuration
@@ -89,12 +89,11 @@ docker compose -f docker/shard-with-autopropose.yml up
 
 #### Data Persistence
 
-The network automatically creates a `docker/data/` directory for blockchain state.
+The compose files use named Docker volumes for blockchain state. Data persists across restarts.
 
 **Fresh Start** - Reset to genesis:
 ```bash
-docker compose -f docker/standalone.yml down
-rm -rf docker/data/
+docker compose -f docker/standalone.yml down -v
 docker compose -f docker/standalone.yml up
 ```
 
@@ -318,24 +317,26 @@ docker compose -f docker/standalone.yml down
 **Multi-Validator Network** (for testing consensus):
 ```bash
 # Start the shard network (3 validators + bootstrap + observer)
-docker compose -f docker/shard-with-autopropose.yml up
+docker compose -f docker/shard.yml up
 
 # Start in background
-docker compose -f docker/shard-with-autopropose.yml up -d
+docker compose -f docker/shard.yml up -d
 
 # View logs
-docker compose -f docker/shard-with-autopropose.yml logs -f
+docker compose -f docker/shard.yml logs -f
 
 # Stop the network
-docker compose -f docker/shard-with-autopropose.yml down
+docker compose -f docker/shard.yml down
 ```
 
 **Fresh Start**: Reset to genesis state:
 ```bash
-# Stop network and remove all blockchain data
-docker compose -f docker/standalone.yml down  # or shard-with-autopropose.yml
-rm -rf docker/data/
-docker compose -f docker/standalone.yml up    # or shard-with-autopropose.yml
+# Stop network and remove all blockchain data (named volumes)
+docker compose -f docker/standalone.yml down -v
+docker compose -f docker/standalone.yml up
+# Or for shard:
+docker compose -f docker/shard.yml down -v
+docker compose -f docker/shard.yml up
 ```
 
 **Observer Node** (optional - read-only access):
@@ -346,21 +347,17 @@ docker compose -f docker/observer.yml up
 
 ### Build and Run Rust Node
 
-**Build the Rust node image and start the cluster**:
+**Build the Rust node image and run locally**:
 
 ```bash
-# Build the Rust node image and start standalone
-./node/docker-commands.sh build-local && cd docker && docker-compose -f standalone.yml up
+# Build local image
+./node/docker-commands.sh build-local
+
+# Start standalone with local image
+F1R3FLY_RUST_IMAGE=f1r3fly-rust-node:local docker compose -f docker/standalone.yml up
 
 # Or start the full shard network
-./node/docker-commands.sh build-local && cd docker && docker-compose -f shard-with-autopropose.yml up
-```
-
-**If image is already built**:
-```bash
-cd docker && docker-compose -f standalone.yml up
-# OR
-cd docker && docker-compose -f shard-with-autopropose.yml up
+F1R3FLY_RUST_IMAGE=f1r3fly-rust-node:local docker compose -f docker/shard.yml up
 ```
 
 ### Local Development (Pure Rust)
@@ -594,7 +591,7 @@ kill -9 <PID>
 ### Development Setup
 
 1. **Environment**: Follow [source installation](#source) instructions
-2. **Docker**: Use `docker/shard-with-autopropose.yml` for testing
+2. **Docker**: Use `docker/shard.yml` for testing
 3. **Client**: Use [F1r3fly Rust Client](https://github.com/F1R3FLY-io/rust-client) for interaction
 
 ### Contribution Workflow
