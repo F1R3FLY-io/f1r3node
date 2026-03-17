@@ -1922,6 +1922,11 @@ impl DebruijnInterpreter {
                                     "Modulo by zero".to_string(),
                                 ));
                             }
+                            if lhs == i64::MIN && rhs == -1 {
+                                return Err(InterpreterError::ReduceError(
+                                    "Arithmetic overflow in modulo".to_string(),
+                                ));
+                            }
                             Ok(Expr {
                                 expr_instance: Some(ExprInstance::GInt(lhs % rhs)),
                             })
@@ -2096,7 +2101,7 @@ impl DebruijnInterpreter {
                         (ExprInstance::GInt(lhs), ExprInstance::GInt(rhs)) => {
                             self.cost.charge(subtraction_cost())?;
                             Ok(Expr {
-                                expr_instance: Some(ExprInstance::GInt(lhs - rhs)),
+                                expr_instance: Some(ExprInstance::GInt(lhs.wrapping_sub(rhs))),
                             })
                         }
 
