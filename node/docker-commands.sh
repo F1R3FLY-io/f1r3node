@@ -35,12 +35,13 @@ docker_build() {
 }
 
 # Build for local use (publishLocal equivalent)
+# Tags with :local to distinguish from registry-pulled :latest
 docker_build_local() {
     echo "Building Docker image for local use..."
     docker build \
         --file node/Dockerfile \
-        --tag "${IMAGE_NAME}:latest" \
-        --tag "${FULL_IMAGE_NAME}:latest" \
+        --tag "${IMAGE_NAME}:local" \
+        --tag "${FULL_IMAGE_NAME}:local" \
         .
 }
 

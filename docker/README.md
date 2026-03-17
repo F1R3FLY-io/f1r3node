@@ -1,124 +1,142 @@
 # F1R3FLY Docker Network
 
-## Quick Start
+## Quick Start (Docker Only)
 
-### Standalone Node (Recommended for Development)
-The standalone setup runs a **single-validator node** optimized for fast development with instant finalization. This is the simplest way to get started.
+Pull the latest image and start a multi-validator shard:
 
-**Start standalone node:**
 ```bash
-docker-compose -f standalone.yml up --pull always -d
+docker compose -f shard.yml pull
+docker compose -f shard.yml up -d
 ```
 
-**Follow logs:**
+Wait for genesis (~2-3 minutes). All validators must transition to Running state:
 ```bash
-docker-compose -f standalone.yml logs -f
+docker compose -f shard.yml logs -f | grep "Making a transition to Running state"
 ```
 
-**Stop standalone node:**
+Once all validators report Running, press `Ctrl+C`. The network is ready.
+
+**Stop:**
 ```bash
-docker-compose -f standalone.yml down
+docker compose -f shard.yml down
 ```
 
-### Multi-Validator Network
-For testing multi-node consensus and advanced scenarios, use the full shard network with one bootstrap, 3 validators and observer.
-
-**Start the Network:**
+**Stop and wipe all data (fresh restart):**
 ```bash
-docker-compose -f shard-with-autopropose.yml up --pull always -d
+docker compose -f shard.yml down -v
 ```
 
-**Wait for Genesis (2-3 minutes):**
+## Build from Source
 
-All nodes need to complete the genesis ceremony and transition to running state before the network is ready.
+Requires Nix or a Rust toolchain. Build a local Docker image:
 ```bash
-# Monitor all nodes until they output 'Making a transition to Running state.'
-docker-compose -f shard-with-autopropose.yml logs -f | grep "Making a transition to Running state"
+./node/docker-commands.sh build-local
 ```
 
-Once you see this message from all validators, the network is ready. Press `Ctrl+C` to stop watching logs.
-
-**Automated startup SLA check (recommended for CI/smoke):**
+Then start with the local image:
 ```bash
-./scripts/ci/check-casper-init-sla.sh docker/shard-with-autopropose.yml 180
+F1R3FLY_RUST_IMAGE=f1r3fly-rust-node:local docker compose -f shard.yml up -d
 ```
 
-This check now validates both:
-- validator log transition to `Running` within the SLA, and
-- init metrics (`casper_init_attempts`, `casper_init_approved_block_received`, `casper_init_transition_to_running`, `casper_init_time_to_running_count`).
+## Standalone Node (Single Validator)
 
-Optional tuning:
+For local development with instant finalization:
 ```bash
-METRICS_CHECK_SECONDS=45 ./scripts/ci/check-casper-init-sla.sh docker/shard-with-autopropose.yml 180
+docker compose -f standalone.yml up -d
+docker compose -f standalone.yml logs -f
+docker compose -f standalone.yml down -v
 ```
 
-On smoke failures, collect a local debug bundle:
+## Compose Files
+
+| File | Description |
+|------|-------------|
+| `shard.yml` | Full shard: bootstrap + 3 validators + observer + Prometheus + Grafana |
+| `standalone.yml` | Single standalone node for development |
+| `validator4.yml` | Additional validator joining existing shard |
+| `observer.yml` | Additional read-only node joining existing shard |
+
+## Configuration
+
+All compose files use `conf/default.conf` for validators/observers and `conf/bootstrap.conf` for the bootstrap node. Per-role behavior is controlled via CLI flags in the compose commands.
+
+| Config File | Used By | Key Difference |
+|-------------|---------|----------------|
+| `conf/default.conf` | Validators, Observer | `ceremony-master-mode = false` |
+| `conf/bootstrap.conf` | Bootstrap | `ceremony-master-mode = true` (includes default.conf) |
+| `conf/standalone-dev.conf` | Standalone | `standalone = true`, `fault-tolerance-threshold = 0.0` |
+
+Key settings in `default.conf`:
+- `fault-tolerance-threshold = 0.99` (near-unanimous finalization)
+- `synchrony-constraint-threshold = 0.67` (2/3 BFT requirement)
+- `enable-mergeable-channel-gc = true` (safe for Rust)
+- `heartbeat.enabled = true` (keeps finalization moving)
+
+## Port Mapping
+
+| Node | Protocol | gRPC Ext | gRPC Int | HTTP | Discovery | Admin |
+|------|----------|----------|----------|------|-----------|-------|
+| Bootstrap | 40400 | 40401 | 40402 | 40403 | 40404 | 40405 |
+| Validator1 | 40410 | 40411 | 40412 | 40413 | 40414 | 40415 |
+| Validator2 | 40420 | 40421 | 40422 | 40423 | 40424 | 40425 |
+| Validator3 | 40430 | 40431 | 40432 | 40433 | 40434 | 40435 |
+| Validator4 | 40440 | 40441 | 40442 | 40443 | 40444 | 40445 |
+| Observer | 40450 | 40451 | 40452 | 40453 | 40454 | 40455 |
+
+## CI/Smoke Testing
+
+Automated startup SLA check:
 ```bash
-./scripts/ci/collect-casper-init-artifacts.sh docker/shard-with-autopropose.yml /tmp/casper-init-artifacts
+./scripts/ci/check-casper-init-sla.sh docker/shard.yml 180
 ```
-The bundle includes `summary.txt` with per-node running-transition evidence and init counters.
-For validator nodes, `summary.txt` also includes `validator_init_gate: PASS|FAIL` based on the same required init metrics as the SLA smoke script.
 
-**Follow logs for all services in the shard:**
+Debug bundle on failure:
 ```bash
-docker-compose -f shard-with-autopropose.yml logs -f
+./scripts/ci/collect-casper-init-artifacts.sh docker/shard.yml /tmp/casper-init-artifacts
 ```
 
-**Follow logs for a specific node:**
+## Smoke Test
+
+Verify the shard is working end-to-end using the [rust-client](https://github.com/F1R3FLY-io/rust-client) smoke test:
+
 ```bash
-# For validator1
-docker-compose -f shard-with-autopropose.yml logs -f validator1
+# Clone rust-client (if not already present)
+git clone https://github.com/F1R3FLY-io/rust-client.git ../rust-client
 
-# For validator2
-docker-compose -f shard-with-autopropose.yml logs -f validator2
-
-# For validator3
-docker-compose -f shard-with-autopropose.yml logs -f validator3
-
-# For bootstrap node
-docker-compose -f shard-with-autopropose.yml logs -f boot
-
-# For observer
-docker-compose -f shard-with-autopropose.yml logs -f readonly
+# Run smoke test against the running shard (default: localhost:40411)
+cd ../rust-client
+./scripts/smoke_test.sh localhost 40411 40413 40451
 ```
 
-**Stop the Network:**
-```bash
-docker-compose -f shard-with-autopropose.yml down
-```
+The smoke test builds the rust-client binary and runs 30+ commands covering:
+- Deploy / propose / finalize workflow
+- Token transfers with finalization verification
+- Node status, blocks, metrics
+- PoS queries (epoch info, validator status)
+- Block streaming (watch-blocks)
+- Load testing with concurrent transfers
 
-### Fresh Restart
-When the network runs, a `data/` directory is created to store blockchain state and node data. 
+Results are logged to `logs/smoke_test_*.log` with pass/fail counters.
 
-**To completely reset the network to genesis state:**
-```bash
-# Remove all blockchain data 
-rm -rf data/
-```
+## Monitoring
 
-**Warning**: Removing the `data/` directory will permanently delete all blockchain history, blocks, and state.
+Prometheus and Grafana are included in `shard.yml` and start automatically with the shard.
 
-## Adding Validator
-
-See: https://github.com/F1R3FLY-io/rust-client/blob/main/VALIDATOR4_BONDING_GUIDE.md
+- Prometheus: http://localhost:9090
+- Grafana: http://localhost:3000 (admin/admin)
 
 ## Genesis Configuration
 
-### Wallets.txt - Funded Accounts
-The following wallets are included in `genesis/wallets.txt` and **have funds available on network startup**:
-- **Bootstrap Node** - Has initial REV balance for network operations
-- **Validator_1** - Funded for transaction fees and operations  
-- **Validator_2** - Funded for transaction fees and operations
-- **Validator_3** - Funded for transaction fees and operations
-- **Autopropose Wallet** - Funded for automated contract deployments and gas fees
+### Wallets (genesis/wallets.txt)
+- **Bootstrap Node** - Initial REV balance for network operations
+- **Validator 1-3** - Funded for transaction fees and operations
 
-### Bonds.txt - Network Validators
-The following validators are included in `genesis/bonds.txt` and participate in consensus:
-- **Validator_1** - Bonded with 1000 stake
-- **Validator_2** - Bonded with 1000 stake  
-- **Validator_3** - Bonded with 1000 stake
+### Bonds (genesis/bonds.txt)
+- **Validator 1** - Bonded with 1000 stake
+- **Validator 2** - Bonded with 1000 stake
+- **Validator 3** - Bonded with 1000 stake
 
-**Note**: Bootstrap node and Validator_4 are **not** in bonds.txt and do not participate in consensus validation.
+Bootstrap and Validator 4 are **not** in bonds.txt and do not validate.
 
 ## Interact with Node
 
@@ -126,40 +144,31 @@ Rust client: https://github.com/F1R3FLY-io/rust-client
 
 ## Wallet Information
 
-### Standalone Node
-Uses the same credentials as Bootstrap Node:
-- **Private Key**: `5f668a7ee96d944a4494cc947e4005e172d7ab3461ee5538f1f2a45a835e9657`
-- **Public Key**: `04ffc016579a68050d655d55df4e09f04605164543e257c8e6df10361e6068a5336588e9b355ea859c5ab4285a5ef0efdf62bc28b80320ce99e26bb1607b3ad93d`
-- **ETH**: `fac7dde9d0fa1df6355bd1382fe75ba0c50e8840`
-- **REV**: `1111AtahZeefej4tvVR6ti9TJtv8yxLebT31SCEVDCKMNikBk5r3g`
-- **Initial Balance**: 50,000,000,000,000,000 REV
-- **Bond Amount**: 1,000 REV
-
-### Bootstrap Node
+### Standalone / Bootstrap Node
 - **Private Key**: `5f668a7ee96d944a4494cc947e4005e172d7ab3461ee5538f1f2a45a835e9657`
 - **Public Key**: `04ffc016579a68050d655d55df4e09f04605164543e257c8e6df10361e6068a5336588e9b355ea859c5ab4285a5ef0efdf62bc28b80320ce99e26bb1607b3ad93d`
 - **ETH**: `fac7dde9d0fa1df6355bd1382fe75ba0c50e8840`
 - **REV**: `1111AtahZeefej4tvVR6ti9TJtv8yxLebT31SCEVDCKMNikBk5r3g`
 
-### Validator_1
+### Validator 1
 - **Private Key**: `357cdc4201a5650830e0bc5a03299a30038d9934ba4c7ab73ec164ad82471ff9`
 - **Public Key**: `04fa70d7be5eb750e0915c0f6d19e7085d18bb1c22d030feb2a877ca2cd226d04438aa819359c56c720142fbc66e9da03a5ab960a3d8b75363a226b7c800f60420`
 - **ETH**: `a77c116ce0ebe1331487638233bb52ba6b277da7`
 - **REV**: `111127RX5ZgiAdRaQy4AWy57RdvAAckdELReEBxzvWYVvdnR32PiHA`
 
-### Validator_2
+### Validator 2
 - **Private Key**: `2c02138097d019d263c1d5383fcaddb1ba6416a0f4e64e3a617fe3af45b7851d`
 - **Public Key**: `04837a4cff833e3157e3135d7b40b8e1f33c6e6b5a4342b9fc784230ca4c4f9d356f258debef56ad4984726d6ab3e7709e1632ef079b4bcd653db00b68b2df065f`
 - **ETH**: `df00c6395a23e9b2b8780de9a93c9522512947c3`
 - **REV**: `111129p33f7vaRrpLqK8Nr35Y2aacAjrR5pd6PCzqcdrMuPHzymczH`
 
-### Validator_3
+### Validator 3
 - **Private Key**: `b67533f1f99c0ecaedb7d829e430b1c0e605bda10f339f65d5567cb5bd77cbcb`
 - **Public Key**: `0457febafcc25dd34ca5e5c025cd445f60e5ea6918931a54eb8c3a204f51760248090b0c757c2bdad7b8c4dca757e109f8ef64737d90712724c8216c94b4ae661c`
 - **ETH**: `ca778c4ecf5c6eb285a86cedd4aaf5167f4eae13`
 - **REV**: `1111LAd2PWaHsw84gxarNx99YVK2aZhCThhrPsWTV7cs1BPcvHftP`
 
-### Validator_4
+### Validator 4
 - **Private Key**: `5ff3514bf79a7d18e8dd974c699678ba63b7762ce8d78c532346e52f0ad219cd`
 - **Public Key**: `04d26c6103d7269773b943d7a9c456f9eb227e0d8b1fe30bccee4fca963f4446e3385d99f6386317f2c1ad36b9e6b0d5f97bb0a0041f05781c60a5ebca124a251d`
 - **ETH**: `0cab9328d6d896e5159a1f70bc377e261ded7414`
