@@ -10,7 +10,7 @@ use crate::rust::{
     api::{
         serde_types::{block_info::BlockInfoSerde, light_block_info::LightBlockInfoSerde},
         web_api::{
-            DataAtNameByBlockHashRequest, PrepareRequest, PrepareResponse,
+            DataAtNameByBlockHashRequest, DeployLookupResponse, PrepareRequest, PrepareResponse,
             RhoDataResponse,
         },
     },
@@ -184,7 +184,8 @@ pub async fn get_blocks_by_depth_handler(
         ("view" = Option<String>, Query, description = "Response view: 'minimal' for reduced payload"),
     ),
     responses(
-        (status = 200, description = "Deploy information", body = LightBlockInfoSerde),
+        (status = 200, description = "Deploy information (full view)", body = LightBlockInfoSerde),
+        (status = 200, description = "Deploy information (minimal view, when ?view=minimal)", body = DeployLookupResponse),
         (status = 400, description = "Bad request or deploy not found")
     ),
     tag = "WebAPI"
