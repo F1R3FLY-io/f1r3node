@@ -944,3 +944,59 @@ Downloads are **free** — no phlo is charged. The uploader's one-time storage f
 6. Download file from Observer C via `downloadFile` gRPC — verify bytes match. Attempt the same call on Validator A or B — verify it returns `"File download can only be executed on a read-only RNode."`
 7. Delete the file (owner deploy). Verify caller's ID is removed from the deployers array. Verify physical file is deleted after finalization. Verify `downloadFile` returns `NOT_FOUND`.
 8. Repeat with 10GB file on a high-bandwidth test network — verify end-to-end finalization within target time
+
+---
+
+## Client Implementation Guide (General)
+
+To integrate F1R3FLY's streaming file capabilities into a client application (e.g., Rust, Java, Python), follow these general gRPC flow patterns.
+
+### 1. Uploading a File (`uploadFile`)
+
+Uploading a file requires generating a synthetic deploy on the client side, then opening a client-streaming gRPC call to `uploadFile`.
+
+**Steps:**
+1. **Compute File Identity**: Calculate the total bytes of the file (`fileSize`) and its Blake2b-256 hash (`fileHash`).
+2. **Construct Rholang Term**: Construct the exact Rholang execution term that the node will place on-chain.
+   ```rholang
+   new ret, file(`rho:io:file`) in {
+     file!("register", "<fileHash>", <fileSize>, "<fileName>", *ret)
+   }
+   ```
+3. **Sign the Deploy**: Use the standard `DeployData` signing process for your language SDK to sign the term. This yields the public key (`deployer`), timestamp, signature (`sig`), and algorithm (`sigAlgorithm`).
+4. **Construct `FileUploadMetadata`**: Map the deploy data and file properties into the initialization message.
+   - Set `phloPrice`, `phloLimit`, `validAfterBlockNumber`, and `shardId`. Ensure `phloLimit` covers both `baseRegisterPhlo` (default 300) and `fileSize * phloPerStorageByte` (default 1).
+   - Set `fileHash`, `fileSize`, `fileName`, and the plain-text `term`.
+5. **Open gRPC Stream (`DeployService.uploadFile`)**:
+   - **First Chunk**: Must contain solely the `FileUploadMetadata` as the `metadata` oneof field. Send this chunk immediately.
+   - **Data Chunks**: Read the source file sequentially and send it in 1MB to 4MB chunks using the `data` oneof field.
+6. **Complete Stream**: Close the sending side of the stream.
+7. **Read Response**: The node will return a `FileUploadResponse`. On success, it contains `FileUploadResult` with the `fileHash` and the generated tracking `deployId`.
+
+### 2. Waiting for Finalization
+
+Files are only permanently available for download or execution *after* the block containing their registration deploy is finalized.
+
+1. Repeatedly poll `DeployService.findDeploy(deployId)`.
+2. Once it returns a `LightBlockInfo`, extract the `blockHash`.
+3. Repeatedly poll `DeployService.isFinalized(blockHash)` or wait via block event streams.
+4. When `isFinalized` returns `true`, the file is safely registered on-chain.
+
+### 3. Downloading a File (`downloadFile`)
+
+Downloading works solely on *read-only (observer) nodes*. It is a server-streaming gRPC call.
+
+**Steps:**
+1. **Open connection** to the observer node's external gRPC port.
+2. **Send `FileDownloadRequest`**: Provide the `fileHash`. For interrupted downloads, you can provide an `offset` (resume byte index).
+3. **Consume Response Stream (`stream FileDownloadChunk`)**:
+   - Iterate over the incoming stream.
+   - The first message may contain `metadata` (file total size/hash).
+   - Subsequent messages contain `data` chunks (up to 4MB). Append these chunks locally to a file or stream.
+4. **Completion**: The stream ends cleanly when all bytes are sent.
+
+### 4. Deleting a File
+
+File deletion relies on invoking the `FileRegistry` contract on-chain. There is no special file deletion gRPC endpoint; just use the standard `doDeploy`.
+
+Construct a Rholang term that looks up the `FileRegistry`, obtains your owner `AuthKey`, and issues the `delete` command. Send this deploy via `DeployService.doDeploy()`. See **Layer 3.3** for the full Rholang snippet.
