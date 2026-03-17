@@ -1152,6 +1152,13 @@ impl PrettyPrinter {
     }
 }
 
+fn twos_complement_to_decimal(bytes: &[u8]) -> String {
+    if bytes.is_empty() {
+        return "0".to_string();
+    }
+    num_bigint::BigInt::from_signed_bytes_be(bytes).to_string()
+}
+
 // rholang/src/test/scala/coop/rchain/rholang/interpreter/PrettyPrinterTest.scala
 #[cfg(test)]
 mod tests {
@@ -1351,11 +1358,4 @@ mod tests {
         let target = r#"{"a" : 1, "b" : 2, "c" : 3}"#;
         assert_eq!(result, target);
     }
-}
-
-fn twos_complement_to_decimal(bytes: &[u8]) -> String {
-    if bytes.is_empty() {
-        return "0".to_string();
-    }
-    num_bigint::BigInt::from_signed_bytes_be(bytes).to_string()
 }

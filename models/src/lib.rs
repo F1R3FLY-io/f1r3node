@@ -456,6 +456,9 @@ impl Hash for expr::ExprInstance {
     }
 }
 
+// Relies on numerator/denominator always being in lowest terms (GCD-normalized).
+// Both repos use num_rational::BigRational which normalizes on every operation,
+// so 2/4 is always stored as 1/2 before serialization to proto bytes.
 impl PartialEq for GBigRational {
     fn eq(&self, other: &Self) -> bool {
         self.numerator == other.numerator && self.denominator == other.denominator

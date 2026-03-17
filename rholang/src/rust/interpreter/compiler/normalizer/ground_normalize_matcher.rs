@@ -13,6 +13,8 @@ pub fn normalize_ground<'ast>(proc: &NewProc<'ast>) -> Result<Expr, InterpreterE
 
         NewProc::LongLiteral(value) => Ok(new_gint_expr(*value)),
 
+        // Parser currently emits i8/i16/i32/i64 (all <= 64 bits).
+        // The BigInt fallback is defensive for future bit widths (e.g., i128).
         NewProc::SignedIntLiteral { value, bits } => {
             let parsed: i64 = value.parse().map_err(|_| {
                 InterpreterError::NormalizerError(format!(

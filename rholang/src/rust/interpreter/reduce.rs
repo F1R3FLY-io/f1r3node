@@ -1876,6 +1876,13 @@ impl DebruijnInterpreter {
                             make_bigrat_expr(divide_big_rationals(&r1, &r2), "division")
                         }
                         (ExprInstance::GFixedPoint(fp1), ExprInstance::GFixedPoint(fp2)) => {
+                            if fp1.scale != fp2.scale {
+                                return Err(InterpreterError::OperatorExpectedError {
+                                    op: "/".to_string(),
+                                    expected: format!("FixedPoint(p{})", fp1.scale),
+                                    other_type: format!("FixedPoint(p{})", fp2.scale),
+                                });
+                            }
                             self.cost.charge(bigint_division_cost(fp1.unscaled.len(), fp2.unscaled.len()))?;
                             if is_zero_twos_complement(&fp2.unscaled) {
                                 return Err(InterpreterError::ReduceError(
@@ -1965,13 +1972,9 @@ impl DebruijnInterpreter {
                                     "Modulo by zero".to_string(),
                                 ));
                             }
-                            let ten = num_bigint::BigInt::from(10);
-                            let scale_factor =
-                                num_traits::pow::pow(ten, fp1.scale as usize);
                             let ua = bytes_to_bigint(&fp1.unscaled);
                             let ub = bytes_to_bigint(&fp2.unscaled);
-                            let quotient = (&ua * &scale_factor) / &ub;
-                            let remainder = ua - (&quotient * &ub) / scale_factor;
+                            let remainder = &ua % &ub;
                             make_fixedpoint_expr(
                                 models::rhoapi::GFixedPoint {
                                     unscaled: bigint_to_bytes(&remainder),
@@ -2033,7 +2036,6 @@ impl DebruijnInterpreter {
                         }
 
                         (ExprInstance::GFixedPoint(fp1), ExprInstance::GFixedPoint(fp2)) => {
-                            self.cost.charge(bigint_sum_cost(fp1.unscaled.len(), fp2.unscaled.len()))?;
                             if fp1.scale != fp2.scale {
                                 return Err(InterpreterError::OperatorExpectedError {
                                     op: "+".to_string(),
@@ -2041,6 +2043,7 @@ impl DebruijnInterpreter {
                                     other_type: format!("FixedPoint(p{})", fp2.scale),
                                 });
                             }
+                            self.cost.charge(bigint_sum_cost(fp1.unscaled.len(), fp2.unscaled.len()))?;
                             make_fixedpoint_expr(
                                 models::rhoapi::GFixedPoint {
                                     unscaled: add_twos_complement(&fp1.unscaled, &fp2.unscaled),
@@ -2119,7 +2122,6 @@ impl DebruijnInterpreter {
                         }
 
                         (ExprInstance::GFixedPoint(fp1), ExprInstance::GFixedPoint(fp2)) => {
-                            self.cost.charge(bigint_subtraction_cost(fp1.unscaled.len(), fp2.unscaled.len()))?;
                             if fp1.scale != fp2.scale {
                                 return Err(InterpreterError::OperatorExpectedError {
                                     op: "-".to_string(),
@@ -2127,6 +2129,7 @@ impl DebruijnInterpreter {
                                     other_type: format!("FixedPoint(p{})", fp2.scale),
                                 });
                             }
+                            self.cost.charge(bigint_subtraction_cost(fp1.unscaled.len(), fp2.unscaled.len()))?;
                             make_fixedpoint_expr(
                                 models::rhoapi::GFixedPoint {
                                     unscaled: subtract_twos_complement(
@@ -7283,11 +7286,16 @@ fn get_unforgeable_type(inf_instance: &UnfInstance) -> String {
 }
 
 fn par_contains_nan_double(par: &Par) -> bool {
-    par.exprs.iter().any(|e| {
-        matches!(
-            &e.expr_instance,
-            Some(ExprInstance::GDouble(bits)) if f64::from_bits(*bits).is_nan()
-        )
+    par.exprs.iter().any(|e| match &e.expr_instance {
+        Some(ExprInstance::GDouble(bits)) => f64::from_bits(*bits).is_nan(),
+        Some(ExprInstance::EListBody(list)) => list.ps.iter().any(par_contains_nan_double),
+        Some(ExprInstance::ETupleBody(tuple)) => tuple.ps.iter().any(par_contains_nan_double),
+        Some(ExprInstance::ESetBody(set)) => set.ps.iter().any(par_contains_nan_double),
+        Some(ExprInstance::EMapBody(map)) => map.kvs.iter().any(|kv| {
+            kv.key.as_ref().map_or(false, par_contains_nan_double)
+                || kv.value.as_ref().map_or(false, par_contains_nan_double)
+        }),
+        _ => false,
     })
 }
 
@@ -7447,6 +7455,7 @@ fn multiply_fixed_points(
     a: &models::rhoapi::GFixedPoint,
     b: &models::rhoapi::GFixedPoint,
 ) -> models::rhoapi::GFixedPoint {
+    debug_assert_eq!(a.scale, b.scale, "multiply_fixed_points called with mismatched scales");
     // Scale-preserving: (ua * ub) / 10^scale, using floor division
     let ua = bytes_to_bigint(&a.unscaled);
     let ub = bytes_to_bigint(&b.unscaled);
@@ -7471,6 +7480,7 @@ fn divide_fixed_points(
     a: &models::rhoapi::GFixedPoint,
     b: &models::rhoapi::GFixedPoint,
 ) -> models::rhoapi::GFixedPoint {
+    debug_assert_eq!(a.scale, b.scale, "divide_fixed_points called with mismatched scales");
     let ten = num_bigint::BigInt::from(10);
     let factor = num_traits::pow::pow(ten, b.scale as usize);
     let scaled = bytes_to_bigint(&a.unscaled) * factor;

@@ -376,10 +376,12 @@ async fn fixedpoint_arithmetic() {
     assert_ok_expr!(r, e, binop_expr!(mult, fixed(1, 1), fixed(1, 1)), fixed_expr(0, 1));
     // 10.0 / 3.0 = 3.3 (shifted integer division, scale preserved)
     assert_ok_expr!(r, e, binop_expr!(div, fixed(100, 1), fixed(30, 1)), fixed_expr(33, 1));
-    // C99 identity: 10.0 % 3.0 = 0.1 (quotient=33, remainder=100-(33*30)/10=1)
-    assert_ok_expr!(r, e, binop_expr!(modulo, fixed(100, 1), fixed(30, 1)), fixed_expr(1, 1));
+    // 10.0 % 3.0 = 1.0 (unscaled: 100 % 30 = 10)
+    assert_ok_expr!(r, e, binop_expr!(modulo, fixed(100, 1), fixed(30, 1)), fixed_expr(10, 1));
     // Exact division: 6.0 % 3.0 = 0.0
     assert_ok_expr!(r, e, binop_expr!(modulo, fixed(60, 1), fixed(30, 1)), fixed_expr(0, 1));
+    // Regression: 1.50 % 1.00 = 0.50 (unscaled: 150 % 100 = 50)
+    assert_ok_expr!(r, e, binop_expr!(modulo, fixed(150, 2), fixed(100, 2)), fixed_expr(50, 2));
     assert_ok_expr!(r, e, neg_expr!(fixed(150, 2)), fixed_expr(-150, 2));
 }
 
@@ -389,6 +391,7 @@ async fn fixedpoint_scale_mismatch_errors() {
     assert_err_contains!(r, e, binop_expr!(plus, fixed(10, 1), fixed(10, 2)), "is not defined on FixedPoint(p2)");
     assert_err_contains!(r, e, binop_expr!(minus, fixed(10, 1), fixed(10, 2)), "is not defined on FixedPoint(p2)");
     assert_err_contains!(r, e, binop_expr!(mult, fixed(10, 1), fixed(10, 2)), "is not defined on FixedPoint(p2)");
+    assert_err_contains!(r, e, binop_expr!(div, fixed(10, 1), fixed(10, 2)), "is not defined on FixedPoint(p2)");
     assert_err_contains!(r, e, binop_expr!(lt, fixed(10, 1), fixed(10, 2)), "is not defined on FixedPoint(p2)");
     assert_err_contains!(r, e, binop_expr!(modulo, fixed(10, 1), fixed(10, 2)), "is not defined on FixedPoint(p2)");
 }

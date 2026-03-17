@@ -178,6 +178,29 @@ async fn float_nan_equality_follows_ieee754() {
 }
 
 #[tokio::test]
+async fn float_nan_nested_in_list_follows_ieee754() {
+    with_runtime("float-nan-nested-", |mut runtime| async move {
+        eval_ok(
+            &mut runtime,
+            r#"
+            new x in {
+                x!(0.0f64 / 0.0f64) |
+                for (@nan <- x) {
+                    @0!([nan] == [nan]) |
+                    @1!([nan] != [nan])
+                }
+            }
+            "#,
+        )
+        .await;
+
+        assert!(has_par_with_bool(&channel_data(&runtime, int_channel(0)), false));
+        assert!(has_par_with_bool(&channel_data(&runtime, int_channel(1)), true));
+    })
+    .await
+}
+
+#[tokio::test]
 async fn float_nan_comparisons_return_false() {
     with_runtime("float-nan-cmp-", |mut runtime| async move {
         eval_ok(
@@ -323,11 +346,29 @@ async fn fixedpoint_arithmetic_produces_correct_values() {
 }
 
 #[tokio::test]
+async fn fixedpoint_modulo_regression() {
+    with_runtime("fp-mod-", |mut runtime| async move {
+        eval_ok(
+            &mut runtime,
+            r#"@0!(1.50p2 % 1.00p2) | @1!(10.0p1 % 3.0p1)"#,
+        )
+        .await;
+
+        let storage = rholang::rust::interpreter::storage::storage_printer::pretty_print(&runtime);
+        assert!(storage.contains("0.50p2"));
+        assert!(storage.contains("1.0p1"));
+    })
+    .await
+}
+
+#[tokio::test]
 async fn fixedpoint_scale_mismatch_is_error() {
     with_runtime("fp-scale-", |mut runtime| async move {
         eval_err(&mut runtime, r#"@0!(1.5p1 + 2.50p2)"#).await;
         eval_err(&mut runtime, r#"@0!(1.5p1 - 2.50p2)"#).await;
         eval_err(&mut runtime, r#"@0!(1.5p1 * 2.50p2)"#).await;
+        eval_err(&mut runtime, r#"@0!(1.5p1 / 2.50p2)"#).await;
+        eval_err(&mut runtime, r#"@0!(1.5p1 % 2.50p2)"#).await;
         eval_err(&mut runtime, r#"@0!(1.5p1 < 2.50p2)"#).await;
     })
     .await
