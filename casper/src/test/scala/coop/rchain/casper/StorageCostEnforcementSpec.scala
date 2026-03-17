@@ -50,9 +50,9 @@ class StorageCostEnforcementSpec extends FlatSpec with Matchers {
     Base16.encode(sigBytes)
   }
 
-  private def fileRegisterTerm(fileSize: Long, nodeSigHex: String): String =
+  private def fileRegisterTerm(fileSize: Long): String =
     s"""new ret, file(`rho:io:file`) in {
-       |  file!("register", "$testFileHash", $fileSize, "$testFileName", "$nodeSigHex", *ret) |
+       |  file!("register", "$testFileHash", $fileSize, "$testFileName", *ret) |
        |  for(@result <- ret) {
        |    @"result"!(result)
        |  }
@@ -62,13 +62,12 @@ class StorageCostEnforcementSpec extends FlatSpec with Matchers {
 
   "A deploy invoking rho:io:file register with valid validator sig" should
     "succeed and deduct storage-proportional phlo" in effectTest {
-    val fileSize   = 1024L
-    val nodeSigHex = makeNodeSigHex(testFileHash, fileSize)
+    val fileSize = 1024L
 
     TestNode.standaloneEff(genesis).use { node =>
       for {
         deploy <- ConstructDeploy.sourceDeployNowF[Effect](
-                   fileRegisterTerm(fileSize, nodeSigHex),
+                   fileRegisterTerm(fileSize),
                    phloLimit = 100000,
                    shardId = SHARD_ID
                  )
@@ -87,13 +86,12 @@ class StorageCostEnforcementSpec extends FlatSpec with Matchers {
   }
 
   it should "fail with OutOfPhlo when phlo limit is below storage cost" in effectTest {
-    val fileSize   = 10000L
-    val nodeSigHex = makeNodeSigHex(testFileHash, fileSize)
+    val fileSize = 10000L
 
     TestNode.standaloneEff(genesis).use { node =>
       for {
         deploy <- ConstructDeploy.sourceDeployNowF[Effect](
-                   fileRegisterTerm(fileSize, nodeSigHex),
+                   fileRegisterTerm(fileSize),
                    phloLimit = 500, // Not enough for 10000 storage + eval overhead
                    shardId = SHARD_ID
                  )
@@ -111,14 +109,12 @@ class StorageCostEnforcementSpec extends FlatSpec with Matchers {
   it should "charge proportionally: larger file costs more" in effectTest {
     val smallFileSize = 1024L
     val largeFileSize = 10000L
-    val smallSigHex   = makeNodeSigHex(testFileHash, smallFileSize)
-    val largeSigHex   = makeNodeSigHex(testFileHash, largeFileSize)
 
     for {
       smallCost <- TestNode.standaloneEff(genesis).use { node =>
                     for {
                       deploy <- ConstructDeploy.sourceDeployNowF[Effect](
-                                 fileRegisterTerm(smallFileSize, smallSigHex),
+                                 fileRegisterTerm(smallFileSize),
                                  phloLimit = 100000,
                                  shardId = SHARD_ID
                                )
@@ -133,7 +129,7 @@ class StorageCostEnforcementSpec extends FlatSpec with Matchers {
       largeCost <- TestNode.standaloneEff(genesis).use { node =>
                     for {
                       deploy <- ConstructDeploy.sourceDeployNowF[Effect](
-                                 fileRegisterTerm(largeFileSize, largeSigHex),
+                                 fileRegisterTerm(largeFileSize),
                                  phloLimit = 100000,
                                  shardId = SHARD_ID
                                )
@@ -154,55 +150,11 @@ class StorageCostEnforcementSpec extends FlatSpec with Matchers {
     }
   }
 
-  // --- Invalid signature: no storage charge ---
-
-  "A deploy with invalid signature" should "succeed but cost less (no storage charge)" in effectTest {
-    val fileSize    = 5000L
-    val validSigHex = makeNodeSigHex(testFileHash, fileSize)
-    val badSigHex   = "ff" * 64
-
-    for {
-      validCost <- TestNode.standaloneEff(genesis).use { node =>
-                    for {
-                      deploy <- ConstructDeploy.sourceDeployNowF[Effect](
-                                 fileRegisterTerm(fileSize, validSigHex),
-                                 phloLimit = 100000,
-                                 shardId = SHARD_ID
-                               )
-                      r              <- node.createBlock(deploy)
-                      Created(block) = r
-                    } yield {
-                      block.body.deploys.head.isFailed shouldBe false
-                      block.body.deploys.head.cost.cost
-                    }
-                  }
-
-      badCost <- TestNode.standaloneEff(genesis).use { node =>
-                  for {
-                    deploy <- ConstructDeploy.sourceDeployNowF[Effect](
-                               fileRegisterTerm(fileSize, badSigHex),
-                               phloLimit = 100000,
-                               shardId = SHARD_ID
-                             )
-                    r              <- node.createBlock(deploy)
-                    Created(block) = r
-                  } yield {
-                    block.body.deploys.head.isFailed shouldBe false
-                    block.body.deploys.head.cost.cost
-                  }
-                }
-    } yield {
-      // Valid sig includes storage charge; bad sig does not.
-      // The difference should be >= fileSize (the storage charge amount).
-      (validCost - badCost) should be >= fileSize
-    }
-  }
-
   it should "fail when phlo limit is extremely low (1 phlo)" in effectTest {
     TestNode.standaloneEff(genesis).use { node =>
       for {
         deploy <- ConstructDeploy.sourceDeployNowF[Effect](
-                   fileRegisterTerm(1024L, "ff" * 64),
+                   fileRegisterTerm(1024L),
                    phloLimit = 1,
                    shardId = SHARD_ID
                  )
@@ -218,8 +170,7 @@ class StorageCostEnforcementSpec extends FlatSpec with Matchers {
   // --- Baseline: file register costs more than Nil ---
 
   "A plain Nil deploy" should "cost less than a file-register deploy" in effectTest {
-    val fileSize   = 1024L
-    val nodeSigHex = makeNodeSigHex(testFileHash, fileSize)
+    val fileSize = 1024L
 
     for {
       nilCost <- TestNode.standaloneEff(genesis).use { node =>
@@ -237,7 +188,7 @@ class StorageCostEnforcementSpec extends FlatSpec with Matchers {
       fileCost <- TestNode.standaloneEff(genesis).use { node =>
                    for {
                      deploy <- ConstructDeploy.sourceDeployNowF[Effect](
-                                fileRegisterTerm(fileSize, nodeSigHex),
+                                fileRegisterTerm(fileSize),
                                 phloLimit = 100000,
                                 shardId = SHARD_ID
                               )

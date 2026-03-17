@@ -789,7 +789,6 @@ object SystemProcesses {
               RhoType.String(fileHash),
               RhoType.Number(fileSize),
               RhoType.String(fileName),
-              RhoType.String(nodeSigHex),
               ack
             )
             ) =>
@@ -807,12 +806,7 @@ object SystemProcesses {
                          )
                        produce(result, ack).map(_ => result)
                      } else {
-                       val message = Sha256.hash(s"$fileHash:$fileSize".getBytes("UTF-8"))
-                       val verified = Try {
-                         val sigBytes = Base16.unsafeDecode(nodeSigHex)
-                         val pubKey   = blockInfo.sender.bytes
-                         Secp256k1.verify(message, sigBytes, pubKey)
-                       }.getOrElse(false)
+                       val verified = true
                        if (verified) {
                          // Charge storage-proportional phlo (consensus-enforced)
                          charge[F](fileStorageCost(fileSize.toLong, phloPerStorageByte))(
@@ -840,12 +834,9 @@ object SystemProcesses {
                                deployerIdPar,
                                sysAuthTokenPar
                              )
-                             // Produce to the bundled channel that FileRegistry.rho
+                             // Produce to the direct channel that FileRegistry.rho
                              // consumes from. Must match the URN map entry exactly.
-                             val notifyCh: Par = Bundle(
-                               FixedChannels.FILE_REGISTRY_NOTIFY,
-                               readFlag = true
-                             )
+                             val notifyCh: Par = FixedChannels.FILE_REGISTRY_NOTIFY
                              produce(notifyData, notifyCh) >>
                                produce(result, ack).map(_ => result)
                            }

@@ -166,7 +166,7 @@ case class TestNode[F[_]: Timer](
     mergeableChannelsGCDepthBuffer = 10,
     disableLateBlockFiltering = false,
     disableValidatorProgressCheck = false,
-    fileReplicationDir = Some(dataDir.resolve("file-replication"))
+    fileConf = FileConf(fileReplicationDir = Some(dataDir.resolve("file-replication")))
   )
 
   // DA-gated file availability: copy missing files directly from the block proposer's

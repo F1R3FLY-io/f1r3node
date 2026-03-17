@@ -535,7 +535,7 @@ object RhoRuntime {
     Definition[F](
       "rho:io:file",
       FixedChannels.FILE_IO,
-      6,
+      5,
       BodyRefs.FILE_REGISTER, { ctx =>
         ctx.systemProcesses
           .fileRegister(ctx.blockData, ctx.deployData, ctx.cost, ctx.phloPerStorageByte)
@@ -589,10 +589,7 @@ object RhoRuntime {
     // Data channel for fileRegister→FileRegistry delegation.
     // Read-only bundle: FileRegistry.rho consumes (reads), system process produces
     // to the raw GPrivate channel via produce() which bypasses bundle checks.
-    "rho:io:file:registerNotify" -> Bundle(
-      FixedChannels.FILE_REGISTRY_NOTIFY,
-      readFlag = true
-    )
+    "rho:io:file:registerNotify" -> FixedChannels.FILE_REGISTRY_NOTIFY
   )
 
   def setupReducer[F[_]: Concurrent: Parallel: _cost: Log: Metrics: Span](

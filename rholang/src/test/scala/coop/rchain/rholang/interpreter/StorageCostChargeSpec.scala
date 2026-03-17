@@ -38,13 +38,7 @@ class StorageCostChargeSpec extends FlatSpec with Matchers {
   private val testFileSize = 1024L
   private val testFileName = "test.bin"
 
-  /** Sign "$fileHash:$fileSize" with the proposer's Secp256k1 private key. */
-  private def makeNodeSigHex(fileHash: String, fileSize: Long): String = {
-    val rawMessage = s"$fileHash:$fileSize".getBytes("UTF-8")
-    val hash32     = Sha256.hash(rawMessage)
-    val sigBytes   = Secp256k1.sign(hash32, proposerPrivKey)
-    Base16.encode(sigBytes)
-  }
+  // Signature requirements removed
 
   private def blockDataForProposer: BlockData =
     BlockData(
@@ -68,13 +62,11 @@ class StorageCostChargeSpec extends FlatSpec with Matchers {
       }
       .runSyncUnsafe(maxDuration)
 
-  "fileRegister with valid Secp256k1 sig" should "return (true, fileHash) and charge storage phlo" in {
-    val nodeSigHex = makeNodeSigHex(testFileHash, testFileSize)
-
+  "fileRegister" should "return (true, fileHash) and charge storage phlo" in {
     // Deploy that captures the result tuple into @"result"
     val rho =
       s"""new ret, file(`rho:io:file`) in {
-         |  file!("register", "$testFileHash", $testFileSize, "$testFileName", "$nodeSigHex", *ret) |
+         |  file!("register", "$testFileHash", $testFileSize, "$testFileName", *ret) |
          |  for(@(success, msg) <- ret) {
          |    @"result"!((success, msg))
          |  }
@@ -90,11 +82,9 @@ class StorageCostChargeSpec extends FlatSpec with Matchers {
   }
 
   it should "fail with OutOfPhlo when phlo limit < storage cost" in {
-    val nodeSigHex = makeNodeSigHex(testFileHash, testFileSize)
-
     val rho =
       s"""new ret, file(`rho:io:file`) in {
-         |  file!("register", "$testFileHash", $testFileSize, "$testFileName", "$nodeSigHex", *ret) |
+         |  file!("register", "$testFileHash", $testFileSize, "$testFileName", *ret) |
          |  for(@(success, msg) <- ret) {
          |    @"result"!((success, msg))
          |  }
@@ -105,44 +95,12 @@ class StorageCostChargeSpec extends FlatSpec with Matchers {
     result.errors should not be empty
   }
 
-  "fileRegister with invalid signature" should "not apply storage charge" in {
-    val largeFileSize = 5000L
-    val badSigHex     = "ff" * 64
-    val validSigHex   = makeNodeSigHex(testFileHash, largeFileSize)
-
-    val badRho =
-      s"""new ret, file(`rho:io:file`) in {
-         |  file!("register", "$testFileHash", $largeFileSize, "$testFileName", "$badSigHex", *ret) |
-         |  for(@(success, msg) <- ret) {
-         |    @"result"!((success, msg))
-         |  }
-         |}""".stripMargin
-
-    val validRho =
-      s"""new ret, file(`rho:io:file`) in {
-         |  file!("register", "$testFileHash", $largeFileSize, "$testFileName", "$validSigHex", *ret) |
-         |  for(@(success, msg) <- ret) {
-         |    @"result"!((success, msg))
-         |  }
-         |}""".stripMargin
-
-    val (badResult, badCost)     = evaluateWithBlockData(badRho)
-    val (validResult, validCost) = evaluateWithBlockData(validRho)
-    badResult.errors shouldBe empty
-    validResult.errors shouldBe empty
-
-    // Valid-sig cost includes charge(fileStorageCost(5000)); invalid does not.
-    // The difference should be >= the file size, proving storage charge was not applied.
-    (validCost.value - badCost.value) should be >= largeFileSize
-  }
-
   "fileRegister with large file (10000 bytes)" should "charge at least 10000 phlo" in {
-    val largeSize  = 10000L
-    val nodeSigHex = makeNodeSigHex(testFileHash, largeSize)
+    val largeSize = 10000L
 
     val rho =
       s"""new ret, file(`rho:io:file`) in {
-         |  file!("register", "$testFileHash", $largeSize, "$testFileName", "$nodeSigHex", *ret) |
+         |  file!("register", "$testFileHash", $largeSize, "$testFileName", *ret) |
          |  for(@(success, msg) <- ret) {
          |    @"result"!((success, msg))
          |  }
@@ -155,15 +113,13 @@ class StorageCostChargeSpec extends FlatSpec with Matchers {
     spentCost.value should be >= largeSize
   }
 
-  "fileRegister with valid sig" should "charge proportionally to file size" in {
+  "fileRegister" should "charge proportionally to file size" in {
     val smallSize = 1024L
     val largeSize = 10000L
-    val smallSig  = makeNodeSigHex(testFileHash, smallSize)
-    val largeSig  = makeNodeSigHex(testFileHash, largeSize)
 
     val smallRho =
       s"""new ret, file(`rho:io:file`) in {
-         |  file!("register", "$testFileHash", $smallSize, "$testFileName", "$smallSig", *ret) |
+         |  file!("register", "$testFileHash", $smallSize, "$testFileName", *ret) |
          |  for(@(success, msg) <- ret) {
          |    @"result"!((success, msg))
          |  }
@@ -171,7 +127,7 @@ class StorageCostChargeSpec extends FlatSpec with Matchers {
 
     val largeRho =
       s"""new ret, file(`rho:io:file`) in {
-         |  file!("register", "$testFileHash", $largeSize, "$testFileName", "$largeSig", *ret) |
+         |  file!("register", "$testFileHash", $largeSize, "$testFileName", *ret) |
          |  for(@(success, msg) <- ret) {
          |    @"result"!((success, msg))
          |  }

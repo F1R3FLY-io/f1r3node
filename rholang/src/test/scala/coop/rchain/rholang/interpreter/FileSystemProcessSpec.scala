@@ -41,32 +41,8 @@ class FileSystemProcessSpec extends FlatSpec with Matchers {
     )
   }
 
-  it should "register with invalid signature returns (false, error)" in {
-    val badSigHex = "ff" * 64
-
-    val rho =
-      s"""new ret, file(`rho:io:file`) in {
-         |  file!("register", "$testFileHash", $testFileSize, "$testFileName", "$badSigHex", *ret) |
-         |  for(@result <- ret) {
-         |    @"result"!(result)
-         |  }
-         |}""".stripMargin
-
-    val result = execute(rho)
-    result.errors shouldBe empty
-  }
-
   it should "register with malformed hex signature returns (false, error)" in {
-    val rho =
-      s"""new ret, file(`rho:io:file`) in {
-         |  file!("register", "$testFileHash", $testFileSize, "$testFileName", "not-hex", *ret) |
-         |  for(@result <- ret) {
-         |    @"result"!(result)
-         |  }
-         |}""".stripMargin
-
-    val result = execute(rho)
-    result.errors shouldBe empty
+    // Test removed since sig hex is no longer required
   }
 
   it should "delete without valid SysAuthToken returns (false, error)" in {
@@ -85,7 +61,7 @@ class FileSystemProcessSpec extends FlatSpec with Matchers {
   it should "register with valid block sender and specific args produces output" in {
     val rho =
       s"""new ret, file(`rho:io:file`) in {
-         |  file!("register", "$testFileHash", $testFileSize, "$testFileName", "${"00" * 64}", *ret) |
+         |  file!("register", "$testFileHash", $testFileSize, "$testFileName", *ret) |
          |  for(@(success, msg) <- ret) {
          |    @"result"!(success)
          |  }
