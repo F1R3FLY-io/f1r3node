@@ -1657,6 +1657,21 @@ async fn check_replay_data_should_throw_error_if_replay_data_contains_elements()
     assert!(res.is_err());
 }
 
+// Verify is_replay flag matches correct behavior.
+// RSpace (normal execution) must return false.
+// ReplayRSpace (block validation) must return true so that
+// non-deterministic system processes use cached results instead
+// of re-executing external calls (e.g. OpenAI API).
+#[tokio::test]
+async fn replay_rspace_is_replay_returns_true() {
+    let (space, replay_space) = fixture().await;
+    assert!(!space.is_replay(), "RSpace.is_replay() should return false during normal execution");
+    assert!(
+        replay_space.is_replay(),
+        "ReplayRSpace.is_replay() should return true during block replay validation"
+    );
+}
+
 type StateSetup =
     (RSpace<String, Pattern, String, String>, ReplayRSpace<String, Pattern, String, String>);
 
