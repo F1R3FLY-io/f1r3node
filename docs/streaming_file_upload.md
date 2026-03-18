@@ -191,8 +191,8 @@ The system internally constructs a `DeployDataProto`:
 // This ensures deployer = client (not the node), so FileRegistry uses the client's identity.
 
 // Client-side (SDK):
-val syntheticTerm = s"""new ret, file(`rho:io:file`) in { 
-  file!("register", "$fileHash", $fileSize, "${metadata.fileName}", *ret) 
+val syntheticTerm = s"""new ret, file(`rho:io:file`) in {
+  file!("register", "$fileHash", $fileSize, "${metadata.fileName}", *ret)
 }"""
 val deployData = DeployData(term = syntheticTerm, timestamp = ..., phloPrice = ..., ...)
 val signed = Signed(deployData, Secp256k1, clientPrivateKey)
@@ -295,7 +295,7 @@ message FilePacket {
 
 The requesting validator:
 1. Opens a `.tmp` file for the incoming data
-2. Streams chunks to disk (same direct I/O as Layer 1), tracking `bytesReceived`
+2. Streams chunks to disk (same direct I/O as Layer 1, using **16MB chunks** by default), tracking `bytesReceived`
 3. **Aborts immediately** if `bytesReceived > expectedFileSize` from the block's deploy — drops the connection and deletes `.tmp` (prevents remote disk exhaustion via infinite garbage streams)
 4. Computes Blake2b-256 hash incrementally
 5. Verifies hash matches the expected `fileHash` from the block's deploy
@@ -656,8 +656,7 @@ Client workflow:
 
 | Module | File(s) | Change Type | Description |
 |--------|---------|-------------|-------------|
-| `rholang` | `FileSystemProcess.scala` | **NEW** | System process: register (charges storage), delete (blind physical disk delete, requires `SysAuthToken`) |
-| `rholang` | `SystemProcesses.scala` | **MODIFY** | Register `rho:io:file` channel |
+| `rholang` | `SystemProcesses.scala` | **MODIFY** | `fileRegister` and `fileDelete` system process handlers for `rho:io:file` channel (charges storage phlo, blind physical disk delete — requires `SysAuthToken`); registers URN map entry |
 | `rholang` | `Runtime.scala` | **MODIFY** | Wire `fileReplicationDir` into system processes |
 | `casper` | `FileRegistry.rho` | **NEW** | On-chain ownership contract (`fileHash -> { deployers: [...] }`), array reference counting for deduplication, AuthKey-gated delete, `SysAuthToken` security gate |
 | `models` | `DeployServiceV1.proto` | **MODIFY** | `downloadFile` RPC (observer-only, alongside `exploratoryDeploy`), `FileDownloadRequest`, `FileDownloadChunk`, `FileDownloadMetadata` |
@@ -730,21 +729,24 @@ Validator A proposes B1 (with 10GB file)
 
 #### Configuration (`defaults.conf`)
 
+File-sync timeout and DA backpressure settings are defined in the top-level `file-upload` section (not a nested `consensus.da` block):
+
 ```hocon
-f1r3fly {
-  consensus {
-    da {
-      # Maximum time to wait for file data before marking block as DA-failed
-      file-fetch-timeout = 10 minutes
+file-upload {
+  # Maximum time to wait for P2P file transfers to complete before rejecting a block.
+  # Tune based on your largest expected file and slowest network link:
+  #   6 GB @ 100 Mbps  ≈  8 min → 30 minutes is safe
+  #   6 GB @  10 Mbps  ≈ 80 min → 2 hours needed
+  #  10 GB @  10 Mbps  ≈ 2.2 hr → increase to 3 hours
+  file-sync-timeout = 2 hours
 
-      # Maximum concurrent inbound file downloads from the block proposer
-      max-concurrent-downloads = 8
+  # DA consensus: maximum total referenced file size (bytes) across
+  # all file-registration deploys in a single block.
+  max-file-data-size-per-block = 53687091200  # 50 GB
 
-      # Maximum concurrent P2P file syncs (validator-to-validator).
-      # Limits I/O contention with client downloads. MVP-safe conservative value.
-      max-concurrent-p2p-file-syncs = 4
-    }
-  }
+  # DA consensus: maximum number of file-registration deploys
+  # allowed in a single block.
+  max-file-deploys-per-block = 10
 }
 ```
 
@@ -802,21 +804,41 @@ The `phloPrice` (set by the client in `FileUploadMetadata`) determines the token
 
 ### 5.2 Configuration
 
-```hocon
-f1r3fly {
-  file-upload {
-    # Cost per byte of file stored (in phlo units)
-    # Default: 1 phlo per byte
-    # At phloPrice=1, a 10GB file costs ~10.7 billion phlo
-    phlo-per-storage-byte = 1
+All file-upload settings live in the top-level `file-upload` section of `defaults.conf`:
 
-    # Fixed base cost for the register operation (in phlo units)
-    base-register-phlo = 300
-  }
+```hocon
+file-upload {
+  # 16 MB chunks for P2P file sync (default was 4 MB)
+  chunk-size = 16777216
+
+  # Sub-directory under data-dir where uploaded files are stored
+  replication-dir = "file-replication"
+
+  # Cost per byte of file stored (in phlo units)
+  phlo-per-storage-byte = 1
+
+  # Fixed base cost for the register operation (in phlo units)
+  base-register-phlo = 300
+
+  # Maximum simultaneous downloads from a single IP
+  max-concurrent-downloads-per-ip = 4
+
+  # Maximum time to wait for P2P file transfers before rejecting a block
+  file-sync-timeout = 2 hours
+
+  # Maximum size of a single uploaded file (bytes). Default: 10 GB
+  max-file-size = 10737418240
+
+  # Maximum entries in the per-IP download rate-limiter LRU cache
+  max-download-cache-entries = 10000
+
+  # DA consensus: max total referenced file size per block
+  max-file-data-size-per-block = 53687091200  # 50 GB
+
+  # DA consensus: max file-registration deploys per block
+  max-file-deploys-per-block = 10
 }
 ```
-
-CLI flag: `--file-upload-phlo-per-storage-byte <value>`
 
 ### 5.3 Enforcement Points
 
@@ -842,18 +864,19 @@ This ensures the client gets fast feedback without wasting mempool space.
 During block execution, the `rho:io:file` `register` system process charges phlo through the standard Rholang cost accounting (`CostAccounting.charge()`):
 
 ```scala
-// In FileSystemProcess.scala — register handler
-def registerFile(hash: String, size: Long, fileName: String, nodeSigHex: String): F[Par] = {
-  // 1. Verify `nodeSigHex` over "$hash:$size" using the block proposer's public key (context.blockProposer)
-  //    This cryptographic envelope proves the proposer physically verified the file metadata.
+// In SystemProcesses.scala — fileRegister handler
+// Signature verification was removed (commit 4465d78); the system process
+// trusts that the deploy was already validated by Layer 1 admission control.
+def fileRegister(hash: String, size: Long, fileName: String): F[Par] = {
   val storageCost = Cost(size * phloPerStorageByte)
 
   for {
-    // 2. Charge proportional storage costs (deducts from deploy's phloLimit)
+    // 1. Charge proportional storage costs (deducts from deploy's phloLimit)
     _ <- costAccounting.charge(storageCost)
     
-    // 3. System process natively injects a call to FileRegistry!("register") and passes the internal sysAuthToken
-    _ <- callFileRegistryRegister(hash, fileName, context.deployer, sysAuthToken) 
+    // 2. System process produces delegation data to FILE_REGISTRY_NOTIFY channel;
+    //    FileRegistry.rho consumes it and records the on-chain registration.
+    _ <- produceToFileRegistryNotify(hash, fileName, context.deployer, sysAuthToken) 
   } yield Par()
 }
 ```
@@ -882,7 +905,7 @@ Downloads are **free** — no phlo is charged. The uploader's one-time storage f
 | `node` | `FileUploadCosts.scala` | **NEW** | Constants and cost calculation logic (`BASE_REGISTER_PHLO`, `phloPerStorageByte`) |
 | `node` | `Options.scala` | **MODIFY** | Add `--file-upload-phlo-per-storage-byte` CLI flag |
 | `node` | `defaults.conf` | **MODIFY** | Add `file-upload.phlo-per-storage-byte` and `file-upload.base-register-phlo` |
-| `rholang` | `FileSystemProcess.scala` | **MODIFY** | Charge storage phlo via `CostAccounting.charge()` during `register` |
+| `rholang` | `SystemProcesses.scala` | **MODIFY** | Charge storage phlo via `CostAccounting.charge()` during `register` |
 | `models` | `DeployServiceV1.proto` | **MODIFY** | Add `storagePhloCost` and `totalPhloCharged` fields to `FileUploadResult` |
 
 ---
@@ -893,29 +916,33 @@ Downloads are **free** — no phlo is charged. The uploader's one-time storage f
 
 | File | Module | Purpose |
 |------|--------|---------|
-| `FileUploadAPI.scala` | `node` | Core upload logic: streaming write, hashing, synthetic deploy |
+| `FileUploadAPI.scala` | `node` | Core upload logic: O(1) streaming state machine, hashing, synthetic deploy |
 | `FileMetadata.scala` | `node` | File metadata data class and JSON persistence |
 | `FileUploadCosts.scala` | `node` | Storage cost constants and calculation logic |
-| `FileSystemProcess.scala` | `rholang` | System process: register (charges phlo), delete (blind physical delete) |
+| `FileDownloadAPI.scala` | `node` | File download streaming logic with finalization check |
+| `FileReplicationSetup.scala` | `casper` | DRY helper that wires `FileRequester` + `OrphanFileCleanup` into each engine state |
+| `SystemProcesses.scala (fileRegister/fileDelete)` | `rholang` | System process handlers: register (charges phlo), delete (blind physical delete) |
 
 ### Modified Modules/Files
 
 | File | Module | Key Changes |
 |------|--------|-------------|
 | `DeployServiceV1.proto` | `models` | `uploadFile`/`downloadFile` RPCs (both in `DeployService`; `downloadFile` is observer-only), file messages, `FileUploadResult` cost fields |
-| `DeployGrpcServiceV1.scala` | `node` | Upload handler; `downloadFile` handler (delegates to `BlockAPI.downloadFile`, observer-only gate) |
+| `DeployGrpcServiceV1.scala` | `node` | Upload handler; `downloadFile` handler with `checkFileFinalized()` (delegates to `FileDownloadAPI`, observer-only gate) |
 | `BlockAPI.scala` | `node` | `uploadFile` + `getDeployerHashList` methods |
 | `Options.scala` | `node` | File upload/download CLI flags, `phlo-per-storage-byte` |
-| `defaults.conf` | `node` | File upload/download + consensus DA config |
+| `defaults.conf` | `node` | Consolidated `file-upload` config section (chunk-size, replication-dir, costs, rate-limits, DA backpressure, `file-sync-timeout`, `max-file-size`, `max-download-cache-entries`) |
+| `model.scala` | `node` | `FileUploadConf` and `FileConf` case classes grouping file-related configuration |
 | `CommMessages.scala` | `comm` | `FileRequest`, `FilePacket` P2P messages |
 | `TransportLayer.scala` | `comm` | File request/response streaming handler |
-| `MultiParentCasperImpl.scala` | `casper` | DA-gated block validation, file sync before execution |
+| `MultiParentCasperImpl.scala` | `casper` | DA-gated block validation, file sync before execution; `deployLifespan = 250` (from 50) to prevent OrphanFileCleanup race during large P2P replication |
 | `Proposer.scala` | `casper` | DA-aware parent selection |
 | `Validate.scala` | `casper` | File availability validation check |
-| `BlockCreator.scala` | `casper` | File-aware deploy selection backpressure |
-| `CasperConf.scala` | `casper` | DA config |
-| `SystemProcesses.scala` | `rholang` | Register `rho:io:file` channel |
-| `Runtime.scala` | `rholang` | Wire file dir into system processes |
+| `BlockCreator.scala` | `casper` | File-aware deploy selection backpressure (uses `foldLeft` instead of mutable `var`) |
+| `CasperConf.scala` | `casper` | DA config; `FileConf` nested in `CasperShardConf` |
+| `OrphanFileCleanup.scala` | `casper` | Tightened `FileHashPattern` regex; cleans up `.part` files on timeout |
+| `SystemProcesses.scala` | `rholang` | Register `rho:io:file` channel; `fileRegister` no longer requires `nodeSigHex` |
+| `Runtime.scala` | `rholang` | Wire file dir + `phloPerStorageByte` into system processes via `ProcessContext` |
 | `NodeRuntime.scala` | `node` | Pass config to runtime |
 
 ---
@@ -956,7 +983,7 @@ To integrate F1R3FLY's streaming file capabilities into a client application (e.
 Uploading a file requires generating a synthetic deploy on the client side, then opening a client-streaming gRPC call to `uploadFile`.
 
 **Steps:**
-1. **Compute File Identity**: Calculate the total bytes of the file (`fileSize`) and its Blake2b-256 hash (`fileHash`).
+1. **Compute File Identity**: Calculate the total bytes of the file (`fileSize`) and its Blake2b-256 hash (`fileHash`). File size must not exceed `max-file-size` (default 10 GB).
 2. **Construct Rholang Term**: Construct the exact Rholang execution term that the node will place on-chain.
    ```rholang
    new ret, file(`rho:io:file`) in {
