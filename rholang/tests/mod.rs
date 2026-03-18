@@ -6,6 +6,8 @@ mod deploy_data_spec;
 mod getsubtrie_spec;
 mod interpreter_spec;
 mod matcher;
+mod numeric_types_spec;
+mod rholang_numeric_eval_spec;
 mod reduce_spec;
 mod replay_memory_profile_spec;
 mod setsubtrie_spec;

@@ -135,6 +135,102 @@ pub fn modulo_cost() -> Cost {
     Cost::create(9, "modulo")
 }
 
+pub fn bigint_sum_cost(a_len: usize, b_len: usize) -> Cost {
+    let work = std::cmp::max(a_len, b_len) as i64 + 1;
+    Cost::create(std::cmp::max(work, sum_cost().value), "bigint sum")
+}
+
+pub fn bigint_subtraction_cost(a_len: usize, b_len: usize) -> Cost {
+    let work = std::cmp::max(a_len, b_len) as i64 + 1;
+    Cost::create(std::cmp::max(work, subtraction_cost().value), "bigint subtraction")
+}
+
+pub fn bigint_multiplication_cost(a_len: usize, b_len: usize) -> Cost {
+    let work = (a_len as i64) * (b_len as i64);
+    Cost::create(std::cmp::max(work, multiplication_cost().value), "bigint multiplication")
+}
+
+pub fn bigint_division_cost(a_len: usize, b_len: usize) -> Cost {
+    let work = (a_len as i64) * (b_len as i64);
+    Cost::create(std::cmp::max(work, division_cost().value), "bigint division")
+}
+
+pub fn bigint_modulo_cost(a_len: usize, b_len: usize) -> Cost {
+    let work = (a_len as i64) * (b_len as i64);
+    Cost::create(std::cmp::max(work, modulo_cost().value), "bigint modulo")
+}
+
+pub fn bigint_negation_cost(len: usize) -> Cost {
+    Cost::create(std::cmp::max(len as i64, 1), "bigint negation")
+}
+
+pub fn bigint_comparison_cost(a_len: usize, b_len: usize) -> Cost {
+    let work = std::cmp::max(a_len, b_len) as i64;
+    Cost::create(std::cmp::max(work, comparison_cost().value), "bigint comparison")
+}
+
+pub fn bigrat_sum_cost(num_a: usize, den_a: usize, num_b: usize, den_b: usize) -> Cost {
+    let max_len = std::cmp::max(std::cmp::max(num_a, den_a), std::cmp::max(num_b, den_b)) as i64;
+    let cross_mul = max_len * max_len;
+    let gcd_cost = max_len;
+    let work = 4 * cross_mul + gcd_cost;
+    Cost::create(std::cmp::max(work, sum_cost().value), "bigrat sum")
+}
+
+pub fn bigrat_subtraction_cost(num_a: usize, den_a: usize, num_b: usize, den_b: usize) -> Cost {
+    let max_len = std::cmp::max(std::cmp::max(num_a, den_a), std::cmp::max(num_b, den_b)) as i64;
+    let cross_mul = max_len * max_len;
+    let gcd_cost = max_len;
+    let work = 4 * cross_mul + gcd_cost;
+    Cost::create(std::cmp::max(work, subtraction_cost().value), "bigrat subtraction")
+}
+
+pub fn bigrat_multiplication_cost(
+    num_a: usize,
+    den_a: usize,
+    num_b: usize,
+    den_b: usize,
+) -> Cost {
+    let num_work = (num_a as i64) * (num_b as i64);
+    let den_work = (den_a as i64) * (den_b as i64);
+    let max_len = std::cmp::max(std::cmp::max(num_a, den_a), std::cmp::max(num_b, den_b)) as i64;
+    let gcd_cost = max_len;
+    let work = num_work + den_work + gcd_cost;
+    Cost::create(
+        std::cmp::max(work, multiplication_cost().value),
+        "bigrat multiplication",
+    )
+}
+
+pub fn bigrat_division_cost(num_a: usize, den_a: usize, num_b: usize, den_b: usize) -> Cost {
+    let cross_a = (num_a as i64) * (den_b as i64);
+    let cross_b = (den_a as i64) * (num_b as i64);
+    let max_len = std::cmp::max(std::cmp::max(num_a, den_a), std::cmp::max(num_b, den_b)) as i64;
+    let gcd_cost = max_len;
+    let work = cross_a + cross_b + gcd_cost;
+    Cost::create(std::cmp::max(work, division_cost().value), "bigrat division")
+}
+
+pub fn bigrat_negation_cost(num_len: usize) -> Cost {
+    Cost::create(std::cmp::max(num_len as i64, 1), "bigrat negation")
+}
+
+pub fn bigrat_comparison_cost(
+    num_a: usize,
+    den_a: usize,
+    num_b: usize,
+    den_b: usize,
+) -> Cost {
+    let cross_work = std::cmp::max(
+        (num_a as i64) * (den_b as i64),
+        (num_b as i64) * (den_a as i64),
+    );
+    Cost::create(
+        std::cmp::max(cross_work, comparison_cost().value),
+        "bigrat comparison",
+    )
+}
+
 // operations on collections
 // source: https://docs.scala-lang.org/overviews/collections/performance-characteristics.html
 pub fn lookup_cost() -> Cost {
