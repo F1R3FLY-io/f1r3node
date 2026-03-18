@@ -1,3 +1,4 @@
+use super::base64_bytes;
 use models::casper::BlockEventInfo;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -14,7 +15,7 @@ pub struct BlockEventInfoSerde {
     pub deploys: Vec<DeployInfoWithEventDataSerde>,
     #[serde(rename = "systemDeploys")]
     pub system_deploys: Vec<SystemDeployInfoWithEventSerde>,
-    #[serde(rename = "postStateHash")]
+    #[serde(rename = "postStateHash", with = "base64_bytes")]
     pub post_state_hash: Vec<u8>,
 }
 

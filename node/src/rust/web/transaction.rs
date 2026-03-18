@@ -282,6 +282,20 @@ where
         Arc<DashMap<String, Shared<BoxFuture<'static, Result<TransactionResponse, String>>>>>,
 }
 
+impl<TA, TS> Clone for CacheTransactionAPI<TA, TS>
+where
+    TA: TransactionAPI,
+    TS: KeyValueTypedStore<String, TransactionResponse> + Send + Sync + 'static,
+{
+    fn clone(&self) -> Self {
+        Self {
+            transaction_api: self.transaction_api.clone(),
+            store: self.store.clone(),
+            block_defer_map: self.block_defer_map.clone(),
+        }
+    }
+}
+
 impl<TA, TS> CacheTransactionAPI<TA, TS>
 where
     TA: TransactionAPI + Send + Sync + 'static,

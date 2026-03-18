@@ -96,6 +96,7 @@ pub struct DeployGrpcServiceV1Impl {
     rp_conf_cell: comm::rust::rp::rp_conf::RPConfCell,
     connections_cell: ConnectionsCell,
     node_discovery: Arc<dyn NodeDiscovery + Send + Sync>,
+    block_enricher: Option<Arc<dyn crate::rust::web::block_info_enricher::BlockEnricher>>,
 }
 
 impl DeployGrpcServiceV1Impl {
@@ -113,6 +114,7 @@ impl DeployGrpcServiceV1Impl {
         rp_conf_cell: comm::rust::rp::rp_conf::RPConfCell,
         connections_cell: ConnectionsCell,
         node_discovery: Arc<dyn NodeDiscovery + Send + Sync>,
+        block_enricher: Option<Arc<dyn crate::rust::web::block_info_enricher::BlockEnricher>>,
     ) -> Self {
         Self {
             api_max_blocks_limit,
@@ -128,6 +130,7 @@ impl DeployGrpcServiceV1Impl {
             rp_conf_cell,
             connections_cell,
             node_discovery,
+            block_enricher,
         }
     }
 
@@ -238,7 +241,14 @@ impl DeployService for DeployGrpcServiceV1Impl {
         request: tonic::Request<BlockQuery>,
     ) -> Result<tonic::Response<BlockResponse>, tonic::Status> {
         match BlockAPI::get_block(&self.engine_cell, &request.into_inner().hash).await {
-            Ok(block_info) => Self::create_success_block_response(block_info),
+            Ok(block_info) => {
+                let enriched = if let Some(ref enricher) = self.block_enricher {
+                    enricher.enrich(block_info).await
+                } else {
+                    block_info
+                };
+                Self::create_success_block_response(enriched)
+            }
             Err(e) => {
                 error!("Deploy service method error get_block");
                 Self::create_error_block_response(e.into_service_error())
@@ -619,15 +629,22 @@ impl DeployService for DeployGrpcServiceV1Impl {
         &self,
         request: tonic::Request<LastFinalizedBlockQuery>,
     ) -> Result<tonic::Response<LastFinalizedBlockResponse>, tonic::Status> {
-        let _request = request.into_inner(); // maybe this parameter is should be removed in future, left for compatibility with Scala version
+        let _request = request.into_inner();
         match BlockAPI::last_finalized_block(&self.engine_cell).await {
-            Ok(block_info) => Ok(tonic::Response::new(LastFinalizedBlockResponse {
-                message: Some(
-                    models::casper::v1::last_finalized_block_response::Message::BlockInfo(
-                        block_info,
+            Ok(block_info) => {
+                let enriched = if let Some(ref enricher) = self.block_enricher {
+                    enricher.enrich(block_info).await
+                } else {
+                    block_info
+                };
+                Ok(tonic::Response::new(LastFinalizedBlockResponse {
+                    message: Some(
+                        models::casper::v1::last_finalized_block_response::Message::BlockInfo(
+                            enriched,
+                        ),
                     ),
-                ),
-            })),
+                }))
+            }
             Err(e) => {
                 error!("Deploy service method error last_finalized_block");
                 Ok(tonic::Response::new(LastFinalizedBlockResponse {

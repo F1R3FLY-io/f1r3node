@@ -475,16 +475,7 @@ impl CliqueOracle {
             Ok(agreeing_map)
         }
 
-        let target_msg_not_in_dag = {
-            let error_message = format!(
-                "Fault tolerance for non existing message {:?} requested.",
-                target_msg
-            );
-            tracing::error!("{}", error_message);
-            Ok(MIN_FAULT_TOLERANCE)
-        };
-
-        let do_compute = async {
+        if dag.contains(target_msg) {
             tracing::debug!("Calculating fault tolerance for {:?}.", target_msg);
             let full_weight_map =
                 CliqueOracle::get_corresponding_weight_map(target_msg, dag).await?;
@@ -499,12 +490,9 @@ impl CliqueOracle {
             .await?;
 
             Ok(result)
-        };
-
-        if dag.contains(target_msg) {
-            do_compute.await
         } else {
-            target_msg_not_in_dag
+            tracing::warn!(?target_msg, "Fault tolerance for non existing message requested.");
+            Ok(MIN_FAULT_TOLERANCE)
         }
     }
 }

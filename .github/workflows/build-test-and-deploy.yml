@@ -1,4 +1,4 @@
-name: Build, Test, and Deploy
+name: Build, Test, and Deploy (Rust)
 
 on:
   workflow_dispatch:
