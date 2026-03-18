@@ -433,7 +433,7 @@ new rl(`rho:registry:lookup`), fileRegistryCh,
     authKeyCh, fileHandleCh, deleteCh
 in {
   // 1. Resolve FileRegistry from the global registry
-  rl!(`rho:file:registry`, *fileRegistryCh) |
+  rl!(`rho:id:m6rqma7yas7o6ieos45ai4dskmc6zugs9rmsp6i3zan8qe5hsfqsdt`, *fileRegistryCh) |
   for (@(_, FileRegistry) <- fileRegistryCh) {
 
     // 2. Get current deployerId from runtime (unforgeable, cannot be spoofed)
@@ -978,6 +978,12 @@ Downloads are **free** — no phlo is charged. The uploader's one-time storage f
 
 To integrate F1R3FLY's streaming file capabilities into a client application (e.g., Rust, Java, Python), follow these general gRPC flow patterns.
 
+> **Key constant**: The `FileRegistry` contract lives at a fixed on-chain address:
+> ```
+> rho:id:m6rqma7yas7o6ieos45ai4dskmc6zugs9rmsp6i3zan8qe5hsfqsdt
+> ```
+> This URI is derived from the public key used to register the contract at genesis (see `FileRegistry.rho` header). It is **the same for all files, all deployers, and all nodes** — it is the contract address, not a file identifier. You never need to generate a new one.
+
 ### 1. Uploading a File (`uploadFile`)
 
 Uploading a file requires generating a synthetic deploy on the client side, then opening a client-streaming gRPC call to `uploadFile`.
@@ -1000,18 +1006,80 @@ Uploading a file requires generating a synthetic deploy on the client side, then
 6. **Complete Stream**: Close the sending side of the stream.
 7. **Read Response**: The node will return a `FileUploadResponse`. On success, it contains `FileUploadResult` with the `fileHash` and the generated tracking `deployId`.
 
-### 2. Waiting for Finalization
+#### Python Example (using `f1r3fly` SDK)
 
-Files are only permanently available for download or execution *after* the block containing their registration deploy is finalized.
+```python
+from f1r3fly.client import F1r3flyClient
+from f1r3fly.util import blake2b_256_hex, create_file_upload_metadata
 
-1. Repeatedly poll `DeployService.findDeploy(deployId)`.
-2. Once it returns a `LightBlockInfo`, extract the `blockHash`.
-3. Repeatedly poll `DeployService.isFinalized(blockHash)` or wait via block event streams.
-4. When `isFinalized` returns `true`, the file is safely registered on-chain.
+data = open("my-file.bin", "rb").read()
+file_hash = blake2b_256_hex(data)
+file_size = len(data)
+
+metadata = create_file_upload_metadata(
+    key=private_key,
+    file_hash=file_hash,
+    file_size=file_size,
+    file_name="my-file.bin",
+    phlo_price=1,
+    phlo_limit=500_000_000,
+    valid_after_block_no=current_block_number - 1,
+    shard_id="root",
+)
+
+with F1r3flyClient(host, grpc_port) as client:
+    result = client.upload_file(metadata, data)
+    # result.fileHash  → Blake2b-256 content hash
+    # result.deployId  → deploy signature for tracking
+```
+
+### 2. Tracking a Deploy (Finding the Block)
+
+After uploading (or deleting), you receive a `deployId`. Use it to find which block contains the deploy and whether it has been finalized.
+
+**Steps:**
+1. Poll `DeployService.findDeploy(deployId)` until it returns a `LightBlockInfo` — this means the deploy has been included in a block.
+2. Extract `blockHash` from the returned `LightBlockInfo`.
+3. Poll `DeployService.isFinalized(blockHash)` until it returns `true` — this means the block is permanently committed.
+
+> **Why does this matter?** Files are only downloadable after the block containing the `register` deploy is finalized. Delete operations also only take physical effect after finalization.
+
+#### Python Example
+
+```python
+import time
+from f1r3fly.client import F1r3flyClient, F1r3flyClientException
+
+def wait_for_deploy_in_block(client, deploy_id, timeout=120):
+    """Poll findDeploy until the deploy is included in a block."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            block_info = client.find_deploy(deploy_id)
+            return block_info  # has .blockHash, .blockNumber, etc.
+        except F1r3flyClientException:
+            time.sleep(3)
+    raise TimeoutError(f"Deploy not found in a block within {timeout}s")
+
+def wait_for_finalization(client, block_hash, timeout=120):
+    """Poll isFinalized until the block is finalized."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if client.is_finalized(block_hash):
+            return True
+        time.sleep(3)
+    raise TimeoutError(f"Block not finalized within {timeout}s")
+
+# Usage after upload:
+with F1r3flyClient(host, grpc_port) as client:
+    block_info = wait_for_deploy_in_block(client, result.deployId)
+    wait_for_finalization(client, block_info.blockHash)
+    # File is now downloadable!
+```
 
 ### 3. Downloading a File (`downloadFile`)
 
-Downloading works solely on *read-only (observer) nodes*. It is a server-streaming gRPC call.
+Downloading works solely on *read-only (observer) nodes*. It is a server-streaming gRPC call. The file must be registered in a finalized block.
 
 **Steps:**
 1. **Open connection** to the observer node's external gRPC port.
@@ -1022,8 +1090,132 @@ Downloading works solely on *read-only (observer) nodes*. It is a server-streami
    - Subsequent messages contain `data` chunks (up to 4MB). Append these chunks locally to a file or stream.
 4. **Completion**: The stream ends cleanly when all bytes are sent.
 
-### 4. Deleting a File
+#### Python Example
 
-File deletion relies on invoking the `FileRegistry` contract on-chain. There is no special file deletion gRPC endpoint; just use the standard `doDeploy`.
+```python
+from f1r3fly.pb.DeployServiceV1_pb2 import FileDownloadRequest
 
-Construct a Rholang term that looks up the `FileRegistry`, obtains your owner `AuthKey`, and issues the `delete` command. Send this deploy via `DeployService.doDeploy()`. See **Layer 3.3** for the full Rholang snippet.
+with F1r3flyClient(observer_host, observer_grpc_port) as client:
+    request = FileDownloadRequest(fileHash=file_hash, offset=0)
+    response_stream = client._deploy_stub.downloadFile(request, timeout=600)
+
+    chunks = []
+    for chunk in response_stream:
+        which = chunk.WhichOneof('chunk')
+        if which == 'data':
+            chunks.append(chunk.data)
+
+    downloaded_bytes = b''.join(chunks)
+```
+
+### 4. Deleting a File (`doDeploy`)
+
+File deletion uses the standard `doDeploy` gRPC endpoint — there is no special file deletion RPC. You submit a Rholang script that:
+
+1. **Looks up** the `FileRegistry` contract from the on-chain registry (using its fixed URI)
+2. **Obtains** your owner `AuthKey` (proves you are an owner of the file)
+3. **Calls** `delete` on the file handle
+
+> **Important:** Only the file's owner can delete it. If Alice uploaded a file, only a deploy signed by Alice's key can delete it. If multiple users uploaded the same file (deduplication), each user can remove their own reference. The physical file is only deleted after **all** owners have removed their references.
+
+#### Full Rholang Delete Script
+
+This is the exact script used by the integration tests (substitute `<fileHash>` with your file's Blake2b-256 hash):
+
+```rholang
+new rl(`rho:registry:lookup`), fileRegistryCh, deployData(`rho:deploy:data`), deployDataCh,
+    authKeyCh, fileHandleCh, deleteCh, deployerIdOps(`rho:system:deployerId:ops`), pubKeyCh,
+    stdout(`rho:io:stdout`)
+in {
+  // 1. Resolve FileRegistry from the on-chain registry (FIXED address — same for all files)
+  rl!(`rho:id:m6rqma7yas7o6ieos45ai4dskmc6zugs9rmsp6i3zan8qe5hsfqsdt`, *fileRegistryCh) |
+  for (@(_, FileRegistry) <- fileRegistryCh) {
+
+    // 2. Get deploy context (unforgeable, bound by runtime to current deployer)
+    deployData!(*deployDataCh) |
+    for (_, deployerId, _ <- deployDataCh) {
+      deployerIdOps!("pubKeyBytes", *deployerId, *pubKeyCh) |
+      for (@pubKeyBytes <- pubKeyCh) {
+
+        // 3. Obtain owner AuthKey (returns Nil if caller is not an owner)
+        @FileRegistry!("ownerAuthKey", "<fileHash>", *deployerId, *authKeyCh) |
+        for (@authKey <- authKeyCh) {
+          if (authKey != Nil) {
+
+            // 4. Look up the per-file handle
+            @FileRegistry!("lookup", "<fileHash>", *fileHandleCh) |
+            for (@fileHandle <- fileHandleCh) {
+              if (fileHandle != Nil) {
+
+                // 5. Delete — gated by AuthKey
+                @fileHandle!("delete", pubKeyBytes, authKey, *deleteCh) |
+                for (@deleteResult <- deleteCh) {
+                  // deleteResult = (true, fileHash) on success
+                  //                (false, errorMsg) on failure
+                  stdout!(("DELETE_RESULT", deleteResult))
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+#### Python Example
+
+```python
+def make_delete_script(file_hash: str) -> str:
+    """Generate a Rholang script that deletes a file via the FileRegistry contract."""
+    return f"""
+new rl(`rho:registry:lookup`), fileRegistryCh, deployData(`rho:deploy:data`), deployDataCh,
+    authKeyCh, fileHandleCh, deleteCh, deployerIdOps(`rho:system:deployerId:ops`), pubKeyCh,
+    stdout(`rho:io:stdout`)
+in {{
+  rl!(`rho:id:m6rqma7yas7o6ieos45ai4dskmc6zugs9rmsp6i3zan8qe5hsfqsdt`, *fileRegistryCh) |
+  for (@(_, FileRegistry) <- fileRegistryCh) {{
+    deployData!(*deployDataCh) |
+    for (_, deployerId, _ <- deployDataCh) {{
+      deployerIdOps!("pubKeyBytes", *deployerId, *pubKeyCh) |
+      for (@pubKeyBytes <- pubKeyCh) {{
+        @FileRegistry!("ownerAuthKey", "{file_hash}", *deployerId, *authKeyCh) |
+        for (@authKey <- authKeyCh) {{
+          if (authKey != Nil) {{
+            @FileRegistry!("lookup", "{file_hash}", *fileHandleCh) |
+            for (@fileHandle <- fileHandleCh) {{
+              if (fileHandle != Nil) {{
+                @fileHandle!("delete", pubKeyBytes, authKey, *deleteCh) |
+                for (@deleteResult <- deleteCh) {{
+                  stdout!(("DELETE_RESULT", deleteResult))
+                }}
+              }}
+            }}
+          }}
+        }}
+      }}
+    }}
+  }}
+}}
+"""
+
+# Submit the delete deploy via the standard doDeploy endpoint
+rho_script = make_delete_script(file_hash)
+deploy_id = node.deploy_string(rho_script, owner_private_key, phlo_limit=500_000_000)
+
+# Track the delete deploy the same way as an upload deploy
+block_info = wait_for_deploy_in_block(client, deploy_id)
+wait_for_finalization(client, block_info.blockHash)
+# File is now deleted — downloadFile will return NOT_FOUND
+```
+
+### 5. Quick Reference — Full Lifecycle
+
+| Step | Operation | gRPC Method | Key Input | Key Output |
+|------|-----------|-------------|-----------|------------|
+| 1 | Upload | `uploadFile` (client-streaming) | File bytes + metadata | `fileHash`, `deployId` |
+| 2 | Track upload | `findDeploy` → `isFinalized` | `deployId` → `blockHash` | Block inclusion + finality |
+| 3 | Download | `downloadFile` (server-streaming, **observer-only**) | `fileHash` | File bytes |
+| 4 | Delete | `doDeploy` (standard deploy) | Rholang delete script | `deployId` |
+| 5 | Track delete | `findDeploy` → `isFinalized` | `deployId` → `blockHash` | Physical file removed |
