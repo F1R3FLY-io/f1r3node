@@ -3,7 +3,7 @@
 use prost::Message;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::sync::OnceLock;
 
 use models::casper::{ApprovedBlockProto, BlockMessageProto};
@@ -20,7 +20,6 @@ pub struct KeyValueBlockStore {
 }
 
 thread_local! {
-    static DEPLOY_SIG_CACHE: RefCell<DeploySigCache> = RefCell::new(DeploySigCache::default());
     static BLOCK_PROTO_DECOMPRESS_BUFFER: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
     static DEPLOY_SIG_DECOMPRESS_BUFFER: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
 }
@@ -32,6 +31,7 @@ impl KeyValueBlockStore {
     const DECOMPRESS_BUFFER_RETAIN_BYTES_ENV: &str = "F1R3_BLOCK_PROTO_DECODE_BUFFER_BYTES";
     const DEPLOY_SIG_CACHE_MAX_ENTRIES_DEFAULT: usize = 1024;
     const DEPLOY_SIG_CACHE_MAX_ENTRIES_ENV: &str = "F1R3_BLOCK_STORE_DEPLOY_SIG_CACHE_MAX_ENTRIES";
+    const MIN_DEPLOY_SIG_BYTES: usize = 32;
 
     pub fn new(
         store: Arc<dyn KeyValueStore>,
@@ -118,6 +118,12 @@ impl KeyValueBlockStore {
                 ))
             })?;
             let sig = deploy.sig;
+            if sig.len() < Self::MIN_DEPLOY_SIG_BYTES {
+                return Err(KvStoreError::SerializationError(Self::error_block(
+                    block_hash.clone(),
+                    format!("Invalid deploy signature length: {}", sig.len()),
+                )));
+            }
             if deploy_sigs.contains(&sig) {
                 has_any = true;
             }
@@ -128,7 +134,7 @@ impl KeyValueBlockStore {
     }
 
     /// Fetch deploy signatures for a block without decoding a full BlockMessage.
-    /// Uses the same bounded thread-local cache as `has_any_deploy_sig`.
+    /// Uses the same bounded shared cache as `has_any_deploy_sig`.
     pub fn deploy_sigs(
         &self,
         block_hash: &BlockHash,
@@ -152,6 +158,12 @@ impl KeyValueBlockStore {
                     "Missing deploy field".to_string(),
                 ))
             })?;
+            if deploy.sig.len() < Self::MIN_DEPLOY_SIG_BYTES {
+                return Err(KvStoreError::SerializationError(Self::error_block(
+                    block_hash.clone(),
+                    format!("Invalid deploy signature length: {}", deploy.sig.len()),
+                )));
+            }
             block_deploy_sigs.push(deploy.sig);
         }
 
@@ -306,17 +318,16 @@ impl KeyValueBlockStore {
         block_hash: &[u8],
         deploy_sigs: &HashSet<Vec<u8>>,
     ) -> Option<bool> {
-        DEPLOY_SIG_CACHE.with(|cache| {
-            let cache = cache.borrow();
-            cache
-                .entries
-                .get(block_hash)
-                .map(|cached_sigs| cached_sigs.iter().any(|sig| deploy_sigs.contains(sig)))
-        })
+        let cache = Self::deploy_sig_cache().lock().ok()?;
+        cache
+            .entries
+            .get(block_hash)
+            .map(|cached_sigs| cached_sigs.iter().any(|sig| deploy_sigs.contains(sig)))
     }
 
     fn cached_deploy_sigs(block_hash: &[u8]) -> Option<Vec<Vec<u8>>> {
-        DEPLOY_SIG_CACHE.with(|cache| cache.borrow().entries.get(block_hash).cloned())
+        let cache = Self::deploy_sig_cache().lock().ok()?;
+        cache.entries.get(block_hash).cloned()
     }
 
     fn cache_deploy_sigs(block_hash: Vec<u8>, deploy_sigs: Vec<Vec<u8>>) {
@@ -324,8 +335,7 @@ impl KeyValueBlockStore {
         if max_entries == 0 {
             return;
         }
-        DEPLOY_SIG_CACHE.with(|cache| {
-            let mut cache = cache.borrow_mut();
+        if let Ok(mut cache) = Self::deploy_sig_cache().lock() {
             if !cache.entries.contains_key(&block_hash) {
                 cache.order.push_back(block_hash.clone());
                 while cache.order.len() > max_entries {
@@ -335,7 +345,12 @@ impl KeyValueBlockStore {
                 }
             }
             cache.entries.insert(block_hash, deploy_sigs);
-        });
+        }
+    }
+
+    fn deploy_sig_cache() -> &'static Mutex<DeploySigCache> {
+        static CACHE: OnceLock<Mutex<DeploySigCache>> = OnceLock::new();
+        CACHE.get_or_init(|| Mutex::new(DeploySigCache::default()))
     }
 
     fn decode_buffer_retain_bytes() -> usize {
@@ -478,6 +493,14 @@ mod tests {
             todo!()
         }
 
+        fn iterate_while(
+            &self,
+            _f: &mut dyn FnMut(shared::rust::ByteBuffer, shared::rust::ByteBuffer)
+                -> Result<bool, KvStoreError>,
+        ) -> Result<(), KvStoreError> {
+            todo!()
+        }
+
         fn clone_box(&self) -> Box<dyn KeyValueStore> {
             todo!()
         }
@@ -520,6 +543,13 @@ mod tests {
         }
 
         fn iterate(&self, _f: fn(ByteBuffer, ByteBuffer)) -> Result<(), KvStoreError> {
+            todo!()
+        }
+
+        fn iterate_while(
+            &self,
+            _f: &mut dyn FnMut(ByteBuffer, ByteBuffer) -> Result<bool, KvStoreError>,
+        ) -> Result<(), KvStoreError> {
             todo!()
         }
 

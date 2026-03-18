@@ -121,17 +121,17 @@ pub fn merge<
 
     // Get base mergeable channel results
     // Sort keys for deterministic ordering across instances
-    let mut all_channel_keys: Vec<Blake2b256Hash> = Vec::new();
+    let mut all_channel_keys_set: std::collections::HashSet<Blake2b256Hash> =
+        std::collections::HashSet::new();
     for branch in &branches {
         for item in branch {
             let item_channels = mergeable_channels(item);
             for (channel_hash, _) in item_channels.iter() {
-                if !all_channel_keys.contains(channel_hash) {
-                    all_channel_keys.push(channel_hash.clone());
-                }
+                all_channel_keys_set.insert(channel_hash.clone());
             }
         }
     }
+    let mut all_channel_keys: Vec<Blake2b256Hash> = all_channel_keys_set.into_iter().collect();
     // Sort channel keys for deterministic processing order
     all_channel_keys.sort();
 

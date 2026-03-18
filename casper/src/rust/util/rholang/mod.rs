@@ -1,5 +1,6 @@
 pub mod costacc;
 pub mod interpreter_util;
+pub mod mem_profiler;
 pub mod registry_sig_gen;
 pub mod replay_cache;
 pub mod replay_failure;

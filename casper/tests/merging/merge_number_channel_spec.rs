@@ -165,7 +165,9 @@ async fn test_case(
         let eval_results = join_all(futures).await;
         let end_checkpoint = runtime.create_checkpoint();
         let (log_vec, num_chan_abs) = eval_results.into_iter().unzip::<_, _, Vec<_>, Vec<_>>();
-        let num_chan_diffs = rm.convert_number_channels_to_diff(num_chan_abs, &pre_state);
+        let num_chan_diffs = rm
+            .convert_number_channels_to_diff(num_chan_abs, &pre_state)
+            .expect("convert_number_channels_to_diff should succeed");
 
         let event_log_indices: Vec<DeployIndex> = log_vec
             .iter()
