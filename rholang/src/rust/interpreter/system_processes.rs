@@ -952,8 +952,9 @@ impl SystemProcesses {
             let service_guard = self.openai_service.lock().await;
             service_guard.clone()
         };
+        let audio_path = format!("audio_{}.mp3", uuid::Uuid::new_v4());
         let audio_bytes = match openai_service
-            .create_audio_speech(&input, "audio.mp3")
+            .create_audio_speech(&input, &audio_path)
             .await
         {
             Ok(bytes) => bytes,
@@ -1030,7 +1031,7 @@ impl SystemProcesses {
         if let Err(e) = produce(&output, ack).await {
             return Err(InterpreterError::NonDeterministicProcessFailure {
                 cause: Box::new(e),
-                output_not_produced: vec![],
+                output_not_produced: output.iter().map(|p| p.encode_to_vec()).collect(),
             });
         }
         Ok(output)
@@ -1086,7 +1087,7 @@ impl SystemProcesses {
         if let Err(e) = produce(&output, ack).await {
             return Err(InterpreterError::NonDeterministicProcessFailure {
                 cause: Box::new(e),
-                output_not_produced: vec![],
+                output_not_produced: output.iter().map(|p| p.encode_to_vec()).collect(),
             });
         }
         Ok(output)
@@ -1140,7 +1141,7 @@ impl SystemProcesses {
         if let Err(e) = produce(&output, ack).await {
             return Err(InterpreterError::NonDeterministicProcessFailure {
                 cause: Box::new(e),
-                output_not_produced: vec![],
+                output_not_produced: output.iter().map(|p| p.encode_to_vec()).collect(),
             });
         }
         Ok(output)

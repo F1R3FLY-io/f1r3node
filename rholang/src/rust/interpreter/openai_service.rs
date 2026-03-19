@@ -349,12 +349,13 @@ impl OpenAIService {
                         response.headers
                     )));
                 }
-                let bytes = std::fs::read(output_path).map_err(|e| {
+                let bytes = tokio::fs::read(&output_path).await.map_err(|e| {
                     InterpreterError::OpenAIError(format!(
                         "Failed to read audio file {}: {}",
                         output_path, e
                     ))
                 })?;
+                let _ = tokio::fs::remove_file(&output_path).await;
                 Ok(bytes)
             }
             Self::NoOp => {

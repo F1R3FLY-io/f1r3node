@@ -50,6 +50,8 @@ impl COMM {
         //         b.persistent,
         //     ))
         // });
+        // Note: this sort uses (channel_hash, hash, persistent) for COMM event identity,
+        // which differs from Produce::Ord (hash-only). Do not replace with .sort().
         produce_refs.sort_by(|a, b| {
             a.channel_hash
                 .cmp(&b.channel_hash)
