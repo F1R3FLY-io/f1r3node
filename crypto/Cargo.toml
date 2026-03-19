@@ -3,6 +3,10 @@ name = "crypto"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = []
+schnorr_secp256k1_experimental = ["k256/schnorr"]
+
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
@@ -15,7 +19,7 @@ ed25519-dalek = { version = "2.1.1", features = ["rand_core"] }
 ff = "0.13.1"
 getrandom = "0.2.16"
 hex = { workspace = true }
-k256 = "0.13.4"
+k256 = { version = "0.13.4", features = ["ecdsa"] }
 tracing = { workspace = true }
 nanorand = "0.7.0"
 num-bigint = "0.4.6"
