@@ -18,6 +18,7 @@
   - [Local Development (Pure Rust)](#local-development-pure-rust)
 - [Usage](#usage)
   - [F1r3fly Rust Client](#f1r3fly-rust-client)
+  - [Smoke Test](#smoke-test)
   - [Evaluating Rholang Contracts](#evaluating-rholang-contracts)
   - [F1r3flyFS](#f1r3flyfs)
 - [Configuration](#configuration-file)
@@ -86,6 +87,7 @@ docker compose -f docker/shard.yml up
 | 40402 | gRPC Internal   | Internal gRPC API        |
 | 40403 | HTTP API        | REST/HTTP API endpoints  |
 | 40404 | Peer Discovery  | Node discovery service   |
+| 40405 | Admin           | Admin/metrics endpoint   |
 
 #### Data Persistence
 
@@ -317,10 +319,11 @@ docker compose -f docker/standalone.yml down
 **Multi-Validator Network** (for testing consensus):
 ```bash
 # Start the shard network (3 validators + bootstrap + observer)
-docker compose -f docker/shard.yml up
-
-# Start in background
 docker compose -f docker/shard.yml up -d
+
+# Wait for genesis (~2-3 min). All validators must reach Running state:
+docker compose -f docker/shard.yml logs -f --tail=500 | grep "Making a transition to Running state"
+# Press Ctrl+C once all validators report Running. The network is ready.
 
 # View logs
 docker compose -f docker/shard.yml logs -f
@@ -470,6 +473,17 @@ cargo run -- deploy -f ./rho_examples/stdout.rho
 # Check network status
 cargo run -- status
 ```
+
+### Smoke Test
+
+Verify the shard is working end-to-end using the [rust-client](https://github.com/F1R3FLY-io/rust-client) smoke test:
+
+```bash
+cd rust-client
+./scripts/smoke_test.sh localhost 40412 40413 40452
+```
+
+The smoke test covers deploy/propose/finalize, token transfers, node status, PoS queries, block streaming, and load testing. See [docker/README.md](docker/README.md#smoke-test) for details.
 
 ### Evaluating Rholang Contracts
 

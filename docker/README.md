@@ -11,7 +11,7 @@ docker compose -f shard.yml up -d
 
 Wait for genesis (~2-3 minutes). All validators must transition to Running state:
 ```bash
-docker compose -f shard.yml logs -f | grep "Making a transition to Running state"
+docker compose -f shard.yml logs -f --tail=500 | grep "Making a transition to Running state"
 ```
 
 Once all validators report Running, press `Ctrl+C`. The network is ready.
@@ -105,7 +105,7 @@ git clone https://github.com/F1R3FLY-io/rust-client.git ../rust-client
 
 # Run smoke test against the running shard (default: localhost:40411)
 cd ../rust-client
-./scripts/smoke_test.sh localhost 40411 40413 40451
+./scripts/smoke_test.sh localhost 40412 40413 40452
 ```
 
 The smoke test builds the rust-client binary and runs 30+ commands covering:
