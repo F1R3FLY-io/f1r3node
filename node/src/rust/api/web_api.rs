@@ -10,6 +10,10 @@ use casper::rust::engine::engine_cell::EngineCell;
 use casper::rust::ProposeFunction;
 use comm::rust::discovery::node_discovery::NodeDiscovery;
 use comm::rust::rp::connect::ConnectionsCell;
+#[cfg(feature = "schnorr_secp256k1_experimental")]
+use crypto::rust::signatures::{
+    frost_secp256k1::FrostSecp256k1, schnorr_secp256k1::SchnorrSecp256k1,
+};
 use crypto::rust::{
     public_key::PublicKey, signatures::signatures_alg::SignaturesAlg, signatures::signed::Signed,
 };
@@ -652,6 +656,10 @@ fn to_signed_deploy(request: &DeployRequest) -> Result<Signed<DeployData>> {
     let sig_alg: Box<dyn SignaturesAlg> = match request.sig_algorithm.as_str() {
         "secp256k1" => Box::new(crypto::rust::signatures::secp256k1::Secp256k1),
         "ed25519" => Box::new(crypto::rust::signatures::ed25519::Ed25519),
+        #[cfg(feature = "schnorr_secp256k1_experimental")]
+        "schnorr-secp256k1" => Box::new(SchnorrSecp256k1),
+        #[cfg(feature = "schnorr_secp256k1_experimental")]
+        "frost-secp256k1" => Box::new(FrostSecp256k1),
         _ => {
             return Err(eyre!(
                 "Signature algorithm not supported: {}",
@@ -1059,13 +1067,15 @@ mod tests {
 
     #[test]
     fn test_deploy_lookup_response_correct_regardless_of_bonds_list_size() {
-        let large_bonds: Vec<super::super::serde_types::light_block_info::BondInfoJson> =
-            (1..=1000)
-                .map(|i| super::super::serde_types::light_block_info::BondInfoJson {
+        let large_bonds: Vec<super::super::serde_types::light_block_info::BondInfoJson> = (1
+            ..=1000)
+            .map(
+                |i| super::super::serde_types::light_block_info::BondInfoJson {
                     validator: format!("validator{}", i),
                     stake: i,
-                })
-                .collect();
+                },
+            )
+            .collect();
 
         let light_block = LightBlockInfoSerde {
             block_hash: "7bf8abc123".to_string(),

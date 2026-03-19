@@ -3,6 +3,10 @@ name = "models"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = []
+schnorr_secp256k1_experimental = ["crypto/schnorr_secp256k1_experimental"]
+
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
