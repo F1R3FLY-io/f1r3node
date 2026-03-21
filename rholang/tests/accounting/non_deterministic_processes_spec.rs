@@ -1,7 +1,4 @@
-// See rholang/src/test/scala/coop/rchain/rholang/interpreter/accounting/NonDeterministicProcessesSpec.scala
-// Ported from Scala PR #140
-//
-// Tests for replay consistency of non-deterministic processes (OpenAI, gRPC, Ollama)
+// Tests for replay consistency of non-deterministic processes (OpenAI, gRPC, Ollama).
 // Ensures that replays produce consistent costs and error handling for non-deterministic operations.
 
 use crypto::rust::hash::blake2b512_random::Blake2b512Random;
@@ -55,8 +52,7 @@ fn create_test_external_services_grpc(grpc_mock: GrpcClientMockConfig) -> Extern
     }
 }
 
-/// Evaluate a term and then replay it, returning both results
-/// This is a simplified test that only checks play execution
+/// Evaluate a term (play only), returning the result
 async fn evaluate_with_mock_service(
     term: &str,
     external_services: ExternalServices,
@@ -83,6 +79,102 @@ async fn evaluate_with_mock_service(
         .evaluate(term, initial_phlo, HashMap::new(), rand)
         .await
         .expect("Evaluation failed")
+}
+
+/// Evaluate a term then replay it, returning (play_result, replay_result).
+/// Evaluate-and-replay pattern for non-deterministic process testing:
+///   1. Play: evaluate on normal runtime
+///   2. Checkpoint: capture root hash + event log
+///   3. Rig: reset replay runtime to root, load event log
+///   4. Replay: evaluate same term on replay runtime
+///   5. Verify: check_replay_data ensures all events were consumed
+async fn evaluate_and_replay(
+    term: &str,
+    initial_phlo: Cost,
+    external_services: ExternalServices,
+) -> (EvaluateResult, EvaluateResult) {
+    let mut kvm = InMemoryStoreManager::new();
+    let store = kvm.r_space_stores().await.unwrap();
+    let (mut runtime, mut replay_runtime, _): (
+        RhoRuntimeImpl,
+        RhoRuntimeImpl,
+        Arc<
+            Box<
+                dyn HistoryRepository<Par, BindPattern, ListParWithRandom, TaggedContinuation>
+                    + Send
+                    + Sync
+                    + 'static,
+            >,
+        >,
+    ) = create_runtimes_with_services(store, false, &mut Vec::new(), external_services).await;
+
+    let rand = Blake2b512Random::create_from_bytes(&[]);
+
+    // Play phase
+    let play_result = runtime
+        .evaluate(term, initial_phlo.clone(), HashMap::new(), rand.clone())
+        .await
+        .expect("Play evaluation failed");
+
+    // Checkpoint: captures root hash and event log
+    let checkpoint = runtime.create_checkpoint();
+
+    // Rig replay runtime with the event log from play
+    replay_runtime
+        .reset(&checkpoint.root)
+        .expect("Replay reset failed");
+    replay_runtime
+        .rig(checkpoint.log)
+        .expect("Replay rig failed");
+
+    // Replay phase: same term, same phlo, same rand
+    let replay_result = replay_runtime
+        .evaluate(term, initial_phlo, HashMap::new(), rand)
+        .await
+        .expect("Replay evaluation failed");
+
+    // Verify all replay events were consumed
+    replay_runtime
+        .check_replay_data()
+        .expect("Replay data check failed: unconsumed events remain");
+
+    (play_result, replay_result)
+}
+
+/// Assert that play and replay produce consistent results
+fn assert_replay_consistency(
+    play_result: &EvaluateResult,
+    replay_result: &EvaluateResult,
+    test_name: &str,
+    expect_error: bool,
+) {
+    if expect_error {
+        assert!(
+            !play_result.errors.is_empty(),
+            "{test_name}: play result should have errors"
+        );
+        assert!(
+            !replay_result.errors.is_empty(),
+            "{test_name}: replay result should have errors"
+        );
+    } else {
+        assert!(
+            play_result.errors.is_empty(),
+            "{test_name}: play result should not have errors: {:?}",
+            play_result.errors
+        );
+        assert!(
+            replay_result.errors.is_empty(),
+            "{test_name}: replay result should not have errors: {:?}",
+            replay_result.errors
+        );
+    }
+
+    assert_eq!(
+        play_result.cost.value, replay_result.cost.value,
+        "{test_name}: replay cost ({}) should match play cost ({})",
+        replay_result.cost.value, play_result.cost.value
+    );
 }
 
 // =====================================================
@@ -243,4 +335,151 @@ async fn test_grpc_tell_mock_error_returns_error() {
 
     // Verify the mock was called
     assert!(grpc_mock.was_called(), "gRPC mock should have been called");
+}
+
+// =====================================================
+// Replay Consistency Tests
+// These verify play and replay produce identical costs
+// (NonDeterministicProcessesSpec)
+// =====================================================
+
+#[tokio::test]
+async fn replay_gpt4_produces_consistent_costs() {
+    let external_services =
+        create_test_external_services(OpenAIMockConfig::single_completion("gpt4 completion"), None);
+
+    let (play, replay) = evaluate_and_replay(
+        r#"new output, gpt4(`rho:ai:gpt4`) in { gpt4!("abc", *output) }"#,
+        Cost::create(i64::MAX, "test".to_string()),
+        external_services,
+    )
+    .await;
+
+    assert_replay_consistency(&play, &replay, "GPT4 replay", false);
+}
+
+#[tokio::test]
+async fn replay_gpt4_out_of_phlogistons_consistent_cost() {
+    let external_services = create_test_external_services(
+        OpenAIMockConfig::single_completion(&"a".repeat(1_000_000)),
+        None,
+    );
+
+    let (play, replay) = evaluate_and_replay(
+        r#"new output, gpt4(`rho:ai:gpt4`) in { gpt4!("abc", *output) }"#,
+        Cost::create(1000, "test".to_string()),
+        external_services,
+    )
+    .await;
+
+    assert_replay_consistency(&play, &replay, "GPT4 OutOfPhlogistons replay", true);
+}
+
+#[tokio::test]
+async fn replay_gpt4_service_error_consistent() {
+    let external_services =
+        create_test_external_services(OpenAIMockConfig::error_on_first_call(), None);
+
+    let (play, replay) = evaluate_and_replay(
+        r#"new output, gpt4(`rho:ai:gpt4`) in { gpt4!("abc", *output) }"#,
+        Cost::create(i64::MAX, "test".to_string()),
+        external_services,
+    )
+    .await;
+
+    assert_replay_consistency(&play, &replay, "GPT4 service error replay", true);
+}
+
+#[tokio::test]
+async fn replay_dalle3_produces_consistent_costs() {
+    let external_services = create_test_external_services(
+        OpenAIMockConfig::single_dalle3("https://example.com/generated-image.png"),
+        None,
+    );
+
+    let (play, replay) = evaluate_and_replay(
+        r#"new output, dalle3(`rho:ai:dalle3`) in { dalle3!("a cat painting", *output) }"#,
+        Cost::create(i64::MAX, "test".to_string()),
+        external_services,
+    )
+    .await;
+
+    assert_replay_consistency(&play, &replay, "DALL-E 3 replay", false);
+}
+
+#[tokio::test]
+async fn replay_dalle3_service_error_consistent() {
+    let external_services =
+        create_test_external_services(OpenAIMockConfig::error_on_first_call(), None);
+
+    let (play, replay) = evaluate_and_replay(
+        r#"new output, dalle3(`rho:ai:dalle3`) in { dalle3!("a cat painting", *output) }"#,
+        Cost::create(i64::MAX, "test".to_string()),
+        external_services,
+    )
+    .await;
+
+    assert_replay_consistency(&play, &replay, "DALL-E 3 service error replay", true);
+}
+
+#[tokio::test]
+async fn replay_tts_produces_consistent_costs() {
+    let external_services = create_test_external_services(
+        OpenAIMockConfig::single_tts_audio(b"fake audio bytes".to_vec()),
+        None,
+    );
+
+    let (play, replay) = evaluate_and_replay(
+        r#"new output, tts(`rho:ai:textToAudio`) in { tts!("Hello world", *output) }"#,
+        Cost::create(i64::MAX, "test".to_string()),
+        external_services,
+    )
+    .await;
+
+    assert_replay_consistency(&play, &replay, "Text-to-audio replay", false);
+}
+
+#[tokio::test]
+async fn replay_tts_service_error_consistent() {
+    let external_services =
+        create_test_external_services(OpenAIMockConfig::error_on_first_call(), None);
+
+    let (play, replay) = evaluate_and_replay(
+        r#"new output, tts(`rho:ai:textToAudio`) in { tts!("Hello world", *output) }"#,
+        Cost::create(i64::MAX, "test".to_string()),
+        external_services,
+    )
+    .await;
+
+    assert_replay_consistency(&play, &replay, "Text-to-audio service error replay", true);
+}
+
+#[tokio::test]
+async fn replay_grpc_tell_produces_consistent_costs() {
+    let grpc_mock = GrpcClientMockConfig::create("localhost", 8080);
+    let external_services = create_test_external_services_grpc(grpc_mock);
+
+    let (play, replay) = evaluate_and_replay(
+        r#"new grpcTell(`rho:io:grpcTell`) in { grpcTell!("localhost", 8080, "payload") }"#,
+        Cost::create(i64::MAX, "test".to_string()),
+        external_services,
+    )
+    .await;
+
+    assert_replay_consistency(&play, &replay, "gRPC tell replay", false);
+}
+
+#[tokio::test]
+async fn replay_grpc_tell_error_consistent() {
+    let grpc_mock = GrpcClientMockConfig::create("different_host", 9999);
+    let external_services = create_test_external_services_grpc(grpc_mock);
+
+    let (play, replay) = evaluate_and_replay(
+        r#"new grpcTell(`rho:io:grpcTell`) in { grpcTell!("localhost", 8080, "payload") }"#,
+        Cost::create(i64::MAX, "test".to_string()),
+        external_services,
+    )
+    .await;
+
+    assert_replay_consistency(&play, &replay, "gRPC tell error replay", true);
 }

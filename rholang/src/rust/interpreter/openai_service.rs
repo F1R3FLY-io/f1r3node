@@ -326,11 +326,12 @@ impl OpenAIService {
     }
 
     /// Create audio speech from text (text-to-speech)
+    /// Returns the raw audio bytes for use as non-deterministic produce output
     pub async fn create_audio_speech(
         &self,
         input: &str,
         output_path: &str,
-    ) -> Result<(), InterpreterError> {
+    ) -> Result<Vec<u8>, InterpreterError> {
         match self {
             Self::Real(client) => {
                 let request = AudioSpeechRequest::new(
@@ -348,18 +349,25 @@ impl OpenAIService {
                         response.headers
                     )));
                 }
-                Ok(())
+                let bytes = tokio::fs::read(&output_path).await.map_err(|e| {
+                    InterpreterError::OpenAIError(format!(
+                        "Failed to read audio file {}: {}",
+                        output_path, e
+                    ))
+                })?;
+                let _ = tokio::fs::remove_file(&output_path).await;
+                Ok(bytes)
             }
             Self::NoOp => {
                 tracing::debug!(
                     "OpenAI service is disabled - ttsCreateAudioSpeech request ignored"
                 );
-                Ok(())
+                Ok(vec![])
             }
             Self::Mock(config) => match &config.tts_response {
-                Some(Ok(_)) => Ok(()),
+                Some(Ok(bytes)) => Ok(bytes.clone()),
                 Some(Err(e)) => Err(InterpreterError::OpenAIError(e.clone())),
-                None => Ok(()),
+                None => Ok(vec![]),
             },
         }
     }

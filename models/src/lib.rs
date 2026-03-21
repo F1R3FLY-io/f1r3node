@@ -404,6 +404,10 @@ impl PartialEq for expr::ExprInstance {
             (ExprInstance::EPlusPlusBody(a), ExprInstance::EPlusPlusBody(b)) => a == b,
             (ExprInstance::EMinusMinusBody(a), ExprInstance::EMinusMinusBody(b)) => a == b,
             (ExprInstance::EModBody(a), ExprInstance::EModBody(b)) => a == b,
+            (ExprInstance::GDouble(a), ExprInstance::GDouble(b)) => a == b,
+            (ExprInstance::GBigInt(a), ExprInstance::GBigInt(b)) => a == b,
+            (ExprInstance::GBigRat(a), ExprInstance::GBigRat(b)) => a == b,
+            (ExprInstance::GFixedPoint(a), ExprInstance::GFixedPoint(b)) => a == b,
             _ => false,
         }
     }
@@ -444,7 +448,40 @@ impl Hash for expr::ExprInstance {
             ExprInstance::EPlusPlusBody(a) => a.hash(state),
             ExprInstance::EMinusMinusBody(a) => a.hash(state),
             ExprInstance::EModBody(a) => a.hash(state),
+            ExprInstance::GDouble(a) => a.hash(state),
+            ExprInstance::GBigInt(a) => a.hash(state),
+            ExprInstance::GBigRat(a) => a.hash(state),
+            ExprInstance::GFixedPoint(a) => a.hash(state),
         }
+    }
+}
+
+// Relies on numerator/denominator always being in lowest terms (GCD-normalized).
+// Both repos use num_rational::BigRational which normalizes on every operation,
+// so 2/4 is always stored as 1/2 before serialization to proto bytes.
+impl PartialEq for GBigRational {
+    fn eq(&self, other: &Self) -> bool {
+        self.numerator == other.numerator && self.denominator == other.denominator
+    }
+}
+
+impl Hash for GBigRational {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.numerator.hash(state);
+        self.denominator.hash(state);
+    }
+}
+
+impl PartialEq for GFixedPoint {
+    fn eq(&self, other: &Self) -> bool {
+        self.unscaled == other.unscaled && self.scale == other.scale
+    }
+}
+
+impl Hash for GFixedPoint {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.unscaled.hash(state);
+        self.scale.hash(state);
     }
 }
 

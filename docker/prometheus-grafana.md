@@ -4,18 +4,12 @@
 
 - A running F1r3fly cluster
 
-## Installation (Docker Compose extension for shard)
+## Installation
 
-If you are running the shard with `docker/shard-with-autopropose.yml`, you can bring up Prometheus and Grafana on the same network and have Prometheus scrape all validators automatically.
+Prometheus and Grafana are included in `docker/shard.yml` and start automatically with the shard:
 
-1. Start/ensure your shard is running
 ```bash
-docker compose -f docker/shard-with-autopropose.yml up -d
-```
-
-2. Start monitoring stack (uses the same Docker network as the shard)
-```bash
-docker compose -f docker/shard-monitoring.yml up -d
+docker compose -f docker/shard.yml up -d
 ```
 
 This will:
@@ -128,7 +122,7 @@ Alert thresholds can be configured in Prometheus based on the recording rules.
 
 ## Uninstall
 
-Docker Compose:
+Monitoring is part of the shard compose — stopping the shard stops monitoring:
 ```sh
-docker compose -f docker/shard-monitoring.yml down
+docker compose -f docker/shard.yml down
 ```

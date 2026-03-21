@@ -16,6 +16,7 @@ comm = { path = "../comm" }
 rspace_plus_plus = { path = "../rspace++" }
 graphz = { path = "../graphz" }
 block-storage = { path = "../block-storage" }
+base64 = "0.22"
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 itertools = { workspace = true }
@@ -31,7 +32,7 @@ tonic = { workspace = true }
 prost = { workspace = true }
 tonic-prost = { workspace = true }
 colored = "3.0"
-rholang-parser = { git = "https://github.com/F1R3FLY-io/rholang-rs", branch = "f1r3node_dependecies" }
+rholang-parser = { git = "https://github.com/F1R3FLY-io/rholang-rs", rev = "d25f953a" }
 rustyline = "13.0"
 rpassword = "7.4"
 tracing = { workspace = true }

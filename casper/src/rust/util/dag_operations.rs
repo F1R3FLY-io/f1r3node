@@ -106,99 +106,54 @@ impl DagOperations {
             q.push(OrderedBlockMetadata(block.clone()));
         }
 
-        async fn loop_impl(
-            curr_map: HashMap<BlockMetadata, HashSet<u8>>,
-            enqueued: HashSet<BlockMetadata>,
-            uncommon_enqueued: HashSet<BlockMetadata>,
-            q: &mut BinaryHeap<OrderedBlockMetadata>,
-            dag: &KeyValueDagRepresentation,
-            common_set: &HashSet<u8>,
-        ) -> Result<HashMap<BlockMetadata, HashSet<u8>>, KvStoreError> {
-            if uncommon_enqueued.is_empty() {
-                return Ok(curr_map);
-            }
+        let mut curr_map = init_map;
+        let mut enqueued: HashSet<BlockMetadata> = HashSet::new();
+        let mut uncommon_enqueued: HashSet<BlockMetadata> = blocks.iter().cloned().collect();
 
-            let curr_block = q
-                .pop()
-                .expect("Priority queue should not be empty during traversal")
-                .0;
+        while !uncommon_enqueued.is_empty() {
+            let curr_block = q.pop().ok_or_else(|| {
+                KvStoreError::InvalidArgument(
+                    "Priority queue became empty during uncommon ancestor traversal".to_string(),
+                )
+            })?;
+            let curr_block = curr_block.0;
 
             // Note: Instead of BitSet in Rust and union function from models/util.rs,
             // We have used HashSets<u8> and extend function which provides the correct set semantic that match the original Scala BitSet behavior,
             // while the current BitSet implementation and union functions in the Rust side is designed for different use cases (bitwise operations, not set operations).
             let curr_set = curr_map.get(&curr_block).cloned().unwrap_or_default();
-
             let curr_parents = parents(&curr_block, dag).await?;
 
-            let new_map = curr_map;
-            let mut new_enqueued = enqueued;
-            let mut new_uncommon = uncommon_enqueued;
+            enqueued.remove(&curr_block);
+            uncommon_enqueued.remove(&curr_block);
 
-            new_enqueued.remove(&curr_block);
-            new_uncommon.remove(&curr_block);
+            for p in curr_parents {
+                if !enqueued.contains(&p) {
+                    q.push(OrderedBlockMetadata(p.clone()));
+                }
 
-            let (mut new_map, new_enqueued, new_uncommon) = curr_parents.iter().fold(
-                (new_map, new_enqueued, new_uncommon),
-                |(mut map, mut enq, mut unc), p| {
-                    if !enq.contains(p) {
-                        q.push(OrderedBlockMetadata(p.clone()));
-                    }
+                let mut p_set = curr_map.get(&p).cloned().unwrap_or_default();
+                p_set.extend(curr_set.iter().copied());
 
-                    let mut p_set = map.get(p).cloned().unwrap_or_default();
-                    p_set.extend(&curr_set);
+                if is_common(&p_set, &common_set) {
+                    uncommon_enqueued.remove(&p);
+                } else {
+                    uncommon_enqueued.insert(p.clone());
+                }
 
-                    if is_common(&p_set, &common_set) {
-                        unc.remove(&p);
-                    } else {
-                        unc.insert(p.clone());
-                    }
+                curr_map.insert(p.clone(), p_set);
+                enqueued.insert(p);
+            }
 
-                    map.insert(p.clone(), p_set);
-                    enq.insert(p.clone());
-
-                    (map, enq, unc)
-                },
-            );
-
-            if is_common(&curr_set, common_set) {
-                new_map.remove(&curr_block);
-                Box::pin(loop_impl(
-                    new_map,
-                    new_enqueued,
-                    new_uncommon,
-                    q,
-                    dag,
-                    common_set,
-                ))
-                .await
-            } else {
-                Box::pin(loop_impl(
-                    new_map,
-                    new_enqueued,
-                    new_uncommon,
-                    q,
-                    dag,
-                    common_set,
-                ))
-                .await
+            if is_common(&curr_set, &common_set) {
+                curr_map.remove(&curr_block);
             }
         }
 
-        loop_impl(
-            init_map,
-            HashSet::new(),
-            blocks.iter().cloned().collect::<HashSet<_>>(),
-            &mut q,
-            dag,
-            &common_set,
-        )
-        .await
-        .map(|result| {
-            result
-                .into_iter()
-                .filter(|(_, set)| !is_common(set, &common_set))
-                .collect()
-        })
+        Ok(curr_map
+            .into_iter()
+            .filter(|(_, set)| !is_common(set, &common_set))
+            .collect())
     }
 
     /// Conceptually, the LUCA is the lowest point at which the histories of b1 and b2 diverge.

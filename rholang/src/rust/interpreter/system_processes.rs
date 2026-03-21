@@ -26,6 +26,7 @@ use models::rhoapi::g_unforgeable::UnfInstance::GPrivateBody;
 use models::rhoapi::{Bundle, Expr, GPrivate, GUnforgeable, ListParWithRandom, Par, Var};
 use models::rust::casper::protocol::casper_message;
 use models::rust::casper::protocol::casper_message::BlockMessage;
+use prost::Message;
 use models::rust::rholang::implicits::single_expr;
 use models::rust::utils::{new_gbool_par, new_gbytearray_par, new_gsys_auth_token_par};
 use shared::rust::BitSet;
@@ -868,7 +869,12 @@ impl SystemProcesses {
         };
 
         let output = vec![RhoString::create_par(response)];
-        produce(&output, ack).await?;
+        if let Err(e) = produce(&output, ack).await {
+            return Err(InterpreterError::NonDeterministicProcessFailure {
+                cause: Box::new(e),
+                output_not_produced: output.iter().map(|p| p.encode_to_vec()).collect(),
+            });
+        }
         Ok(output)
     }
 
@@ -910,7 +916,12 @@ impl SystemProcesses {
         };
 
         let output = vec![RhoString::create_par(response)];
-        produce(&output, ack).await?;
+        if let Err(e) = produce(&output, ack).await {
+            return Err(InterpreterError::NonDeterministicProcessFailure {
+                cause: Box::new(e),
+                output_not_produced: output.iter().map(|p| p.encode_to_vec()).collect(),
+            });
+        }
         Ok(output)
     }
 
@@ -941,18 +952,28 @@ impl SystemProcesses {
             let service_guard = self.openai_service.lock().await;
             service_guard.clone()
         };
-        match openai_service
-            .create_audio_speech(&input, "audio.mp3")
+        let audio_path = format!("audio_{}.mp3", uuid::Uuid::new_v4());
+        let audio_bytes = match openai_service
+            .create_audio_speech(&input, &audio_path)
             .await
         {
-            Ok(_) => Ok(vec![]),
+            Ok(bytes) => bytes,
             Err(e) => {
                 return Err(InterpreterError::NonDeterministicProcessFailure {
                     cause: Box::new(e),
                     output_not_produced: vec![],
                 });
             }
+        };
+
+        let output = vec![RhoByteArray::create_par(audio_bytes)];
+        if let Err(e) = produce(&output, ack).await {
+            return Err(InterpreterError::NonDeterministicProcessFailure {
+                cause: Box::new(e),
+                output_not_produced: output.iter().map(|p| p.encode_to_vec()).collect(),
+            });
         }
+        Ok(output)
     }
 
     pub async fn ollama_chat(
@@ -1007,7 +1028,12 @@ impl SystemProcesses {
         };
 
         let output = vec![RhoString::create_par(response)];
-        produce(&output, ack).await?;
+        if let Err(e) = produce(&output, ack).await {
+            return Err(InterpreterError::NonDeterministicProcessFailure {
+                cause: Box::new(e),
+                output_not_produced: output.iter().map(|p| p.encode_to_vec()).collect(),
+            });
+        }
         Ok(output)
     }
 
@@ -1058,7 +1084,12 @@ impl SystemProcesses {
         };
 
         let output = vec![RhoString::create_par(response)];
-        produce(&output, ack).await?;
+        if let Err(e) = produce(&output, ack).await {
+            return Err(InterpreterError::NonDeterministicProcessFailure {
+                cause: Box::new(e),
+                output_not_produced: output.iter().map(|p| p.encode_to_vec()).collect(),
+            });
+        }
         Ok(output)
     }
 
@@ -1107,7 +1138,12 @@ impl SystemProcesses {
         };
         let output = vec![Par::default().with_exprs(vec![list_expr])];
 
-        produce(&output, ack).await?;
+        if let Err(e) = produce(&output, ack).await {
+            return Err(InterpreterError::NonDeterministicProcessFailure {
+                cause: Box::new(e),
+                output_not_produced: output.iter().map(|p| p.encode_to_vec()).collect(),
+            });
+        }
         Ok(output)
     }
 

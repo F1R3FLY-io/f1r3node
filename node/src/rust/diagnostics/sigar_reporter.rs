@@ -67,13 +67,18 @@ mod tests {
         let interval = Duration::from_millis(50);
         start_sigar_reporter(interval);
 
-        tokio::time::sleep(Duration::from_millis(150)).await;
-
-        let scrape = reporter.scrape_data();
-        assert!(
-            scrape.contains("system_memory_usage_percent") || scrape.is_empty(),
-            "If metrics are recorded, scrape should contain system_memory_usage_percent"
-        );
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            let scrape = reporter.scrape_data();
+            if scrape.contains("system_memory_usage_percent") {
+                return;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "Timed out waiting for system_memory_usage_percent in scrape output"
+            );
+        }
     }
 
     #[tokio::test]

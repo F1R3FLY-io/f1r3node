@@ -91,6 +91,10 @@ impl HasLocallyFree<Expr> for SpatialMatcherContext {
         match e.expr_instance {
             Some(GBool(_)) => false,
             Some(GInt(_)) => false,
+            Some(GDouble(_)) => false,
+            Some(GBigInt(_)) => false,
+            Some(GBigRat(_)) => false,
+            Some(GFixedPoint(_)) => false,
             Some(GString(_)) => false,
             Some(GUri(_)) => false,
             Some(GByteArray(_)) => false,
@@ -167,6 +171,10 @@ impl HasLocallyFree<Expr> for SpatialMatcherContext {
         match e.expr_instance {
             Some(GBool(_)) => Default::default(),
             Some(GInt(_)) => Default::default(),
+            Some(GDouble(_)) => Default::default(),
+            Some(GBigInt(_)) => Default::default(),
+            Some(GBigRat(_)) => Default::default(),
+            Some(GFixedPoint(_)) => Default::default(),
             Some(GString(_)) => Default::default(),
             Some(GUri(_)) => Default::default(),
             Some(GByteArray(_)) => Default::default(),
@@ -410,6 +418,10 @@ impl HasLocallyFree<Expr> for Expr {
         match e.expr_instance {
             Some(GBool(_)) => false,
             Some(GInt(_)) => false,
+            Some(GDouble(_)) => false,
+            Some(GBigInt(_)) => false,
+            Some(GBigRat(_)) => false,
+            Some(GFixedPoint(_)) => false,
             Some(GString(_)) => false,
             Some(GUri(_)) => false,
             Some(GByteArray(_)) => false,
@@ -486,6 +498,10 @@ impl HasLocallyFree<Expr> for Expr {
         match e.expr_instance {
             Some(GBool(_)) => Default::default(),
             Some(GInt(_)) => Default::default(),
+            Some(GDouble(_)) => Default::default(),
+            Some(GBigInt(_)) => Default::default(),
+            Some(GBigRat(_)) => Default::default(),
+            Some(GFixedPoint(_)) => Default::default(),
             Some(GString(_)) => Default::default(),
             Some(GUri(_)) => Default::default(),
             Some(GByteArray(_)) => Default::default(),

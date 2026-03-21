@@ -297,7 +297,7 @@ where
         }
     }
 
-    fn is_replay(&self) -> bool { false }
+    fn is_replay(&self) -> bool { true }
 
     fn update_produce(&mut self, produce_ref: Produce) -> () {
         for event in self.event_log.iter_mut() {
