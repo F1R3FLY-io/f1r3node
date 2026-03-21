@@ -88,6 +88,7 @@ object ConfigMapper {
 
       add("casper.genesis-ceremony.required-signatures", run.requiredSignatures)
       add("casper.genesis-ceremony.genesis-validator-mode", run.genesisValidator)
+      add("casper.genesis-ceremony.ceremony-master-mode", run.ceremonyMasterMode)
       add("casper.genesis-ceremony.approve-interval", run.approveInterval)
       add("casper.genesis-ceremony.approve-duration", run.approveDuration) //TODO remove
       add("casper.genesis-ceremony.autogen-shard-size", run.autogenShardSize)
@@ -101,6 +102,11 @@ object ConfigMapper {
       }
       add("casper.heartbeat.check-interval", run.heartbeatCheckInterval)
       add("casper.heartbeat.max-lfb-age", run.heartbeatMaxLfbAge)
+
+      add("casper.enable-mergeable-channel-gc", run.enableMergeableChannelGc)
+      if (run.disableMergeableChannelGc.toOption.contains(true)) {
+        map += "casper.enable-mergeable-channel-gc" -> false
+      }
 
       add("api-server.port-grpc-external", run.apiPortGrpcExternal)
       add("api-server.port-grpc-internal", run.apiPortGrpcInternal)

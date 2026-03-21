@@ -563,6 +563,18 @@ final case class Options(arguments: Seq[String]) extends ScallopConf(arguments) 
       descr = "Enable rpsace++"
     )
 
+    val ceremonyMasterMode = opt[Flag](
+      descr = "Enable ceremony master mode for genesis block coordination"
+    )
+
+    val enableMergeableChannelGc = opt[Flag](
+      descr = "Enable background garbage collection for mergeable channels"
+    )
+
+    val disableMergeableChannelGc = opt[Flag](
+      descr = "Disable background garbage collection for mergeable channels"
+    )
+
   }
   addSubcommand(run)
 
