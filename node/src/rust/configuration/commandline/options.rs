@@ -432,6 +432,19 @@ pub struct RunOptions {
     #[arg(long = "min-phlo-price")]
     pub min_phlo_price: Option<i64>,
 
+    /// Enable ceremony master mode (creates genesis block if none found)
+    #[arg(long = "ceremony-master-mode", action = ArgAction::SetTrue)]
+    pub ceremony_master_mode: bool,
+
+    /// Enable mergeable channel garbage collection
+    #[arg(long = "enable-mergeable-channel-gc", action = ArgAction::SetTrue)]
+    pub enable_mergeable_channel_gc: bool,
+
+    /// Disable mergeable channel garbage collection.
+    /// Takes precedence over --enable-mergeable-channel-gc if both are provided.
+    #[arg(long = "disable-mergeable-channel-gc", action = ArgAction::SetTrue)]
+    pub disable_mergeable_channel_gc: bool,
+
     /// Enable heartbeat block proposing for liveness
     #[arg(long = "heartbeat-enabled", action = ArgAction::SetTrue)]
     pub heartbeat_enabled: bool,
