@@ -109,7 +109,7 @@ Run a complete F1r3fly network with automatic block production:
 
 ```bash
 # Start the shard network (recommended)
-docker compose -f docker/shard-with-autopropose.yml up
+docker compose -f docker/shard.yml up
 ```
 
 #### Port Configuration
@@ -128,9 +128,9 @@ docker compose -f docker/shard-with-autopropose.yml up
 
 **Fresh Start**: Remove data directory to reset to genesis:
 ```bash
-docker compose -f docker/shard-with-autopropose.yml down
+docker compose -f docker/shard.yml down
 rm -rf docker/data/
-docker compose -f docker/shard-with-autopropose.yml up
+docker compose -f docker/shard.yml up
 ```
 
 **Additional Resources**: [Docker Hub Repository](https://hub.docker.com/r/f1r3flyindustries/f1r3fly-scala-node)
@@ -256,24 +256,24 @@ Both create: `f1r3flyindustries/f1r3fly-scala-node:latest`
 
 ```bash
 # Start the shard network (recommended)
-docker compose -f docker/shard-with-autopropose.yml up
+docker compose -f docker/shard.yml up
 
 # Start in background
-docker compose -f docker/shard-with-autopropose.yml up -d
+docker compose -f docker/shard.yml up -d
 
 # View logs
-docker compose -f docker/shard-with-autopropose.yml logs -f
+docker compose -f docker/shard.yml logs -f
 
 # Stop the network
-docker compose -f docker/shard-with-autopropose.yml down
+docker compose -f docker/shard.yml down
 ```
 
 **Fresh Start**: Reset to genesis state:
 ```bash
 # Stop network and remove all blockchain data
-docker compose -f docker/shard-with-autopropose.yml down
+docker compose -f docker/shard.yml down
 rm -rf docker/data/
-docker compose -f docker/shard-with-autopropose.yml up
+docker compose -f docker/shard.yml up
 ```
 
 ### Local Development Node
@@ -472,7 +472,7 @@ Evaluating:
 ### Development Setup
 
 1. **Environment**: Follow [source installation](#source) instructions
-2. **Docker**: Use `docker compose -f docker/shard-with-autopropose.yml up` for testing
+2. **Docker**: Use `docker compose -f docker/shard.yml up` for testing
 3. **Build**: Use SBT for compilation and building
 
 ### Quick Commands

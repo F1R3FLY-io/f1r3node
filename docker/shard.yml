@@ -19,6 +19,9 @@ services:
         "--bootstrap=rnode://$BOOTSTRAP_NODE_ID@$BOOTSTRAP_HOST?protocol=40400&discovery=40404", # node will know it's bootstrap node
         "--allow-private-addresses",
         "--validator-private-key=$BOOTSTRAP_PRIVATE_KEY",
+        "--ceremony-master-mode",
+        "--heartbeat-disabled",
+        "--disable-mergeable-channel-gc",
       ]
     ports:
       - "40400:40400"
@@ -28,8 +31,7 @@ services:
       - "40404:40404"
       - "40405:40405"
     volumes:
-      # Bootstrap-specific configuration (ceremony master)
-      - ./conf/bootstrap-ceremony.conf:/var/lib/rnode/rnode.conf
+      - ./conf/default.conf:/var/lib/rnode/rnode.conf
       - ./genesis/wallets.txt:/var/lib/rnode/genesis/wallets.txt
       - ./genesis/bonds.txt:/var/lib/rnode/genesis/bonds.txt
       - ./conf/logback.xml:/var/lib/rnode/logback.xml
@@ -52,6 +54,7 @@ services:
         "--validator-public-key=$VALIDATOR1_PUBLIC_KEY",
         "--validator-private-key=$VALIDATOR1_PRIVATE_KEY",
         "--genesis-validator",
+        "--disable-mergeable-channel-gc",
       ]
     ports:
       - "40410:40400"
@@ -61,7 +64,7 @@ services:
       - "40414:40404"
       - "40415:40405"
     volumes:
-      - ./conf/shared-rnode.conf:/var/lib/rnode/rnode.conf
+      - ./conf/default.conf:/var/lib/rnode/rnode.conf
       - ./genesis/wallets.txt:/var/lib/rnode/genesis/wallets.txt
       - ./genesis/bonds.txt:/var/lib/rnode/genesis/bonds.txt
       - ./conf/logback.xml:/var/lib/rnode/logback.xml
@@ -83,6 +86,7 @@ services:
         "--validator-public-key=$VALIDATOR2_PUBLIC_KEY",
         "--validator-private-key=$VALIDATOR2_PRIVATE_KEY",
         "--genesis-validator",
+        "--disable-mergeable-channel-gc",
       ]
     ports:
       - "40420:40400"
@@ -92,7 +96,7 @@ services:
       - "40424:40404"
       - "40425:40405"
     volumes:
-      - ./conf/shared-rnode.conf:/var/lib/rnode/rnode.conf
+      - ./conf/default.conf:/var/lib/rnode/rnode.conf
       - ./genesis/wallets.txt:/var/lib/rnode/genesis/wallets.txt
       - ./genesis/bonds.txt:/var/lib/rnode/genesis/bonds.txt
       - ./conf/logback.xml:/var/lib/rnode/logback.xml
@@ -114,6 +118,7 @@ services:
         "--validator-public-key=$VALIDATOR3_PUBLIC_KEY",
         "--validator-private-key=$VALIDATOR3_PRIVATE_KEY",
         "--genesis-validator",
+        "--disable-mergeable-channel-gc",
       ]
     ports:
       - "40430:40400"
@@ -123,7 +128,7 @@ services:
       - "40434:40404"
       - "40435:40405"
     volumes:
-      - ./conf/shared-rnode.conf:/var/lib/rnode/rnode.conf
+      - ./conf/default.conf:/var/lib/rnode/rnode.conf
       - ./genesis/wallets.txt:/var/lib/rnode/genesis/wallets.txt
       - ./genesis/bonds.txt:/var/lib/rnode/genesis/bonds.txt
       - ./conf/logback.xml:/var/lib/rnode/logback.xml
@@ -148,10 +153,12 @@ services:
       - --bootstrap=rnode://1e780e5dfbe0a3d9470a2b414f502d59402e09c2@$BOOTSTRAP_HOST?protocol=40400&discovery=40404
       - --no-upnp
       - --allow-private-addresses
+      - --heartbeat-disabled
+      - --disable-mergeable-channel-gc
       - -Dlogback.configurationFile=/var/lib/rnode/logback.xml
 
     volumes:
-      - ./conf/observer.conf:/var/lib/rnode/rnode.conf
+      - ./conf/default.conf:/var/lib/rnode/rnode.conf
       - ./conf/logback.xml:/var/lib/rnode/logback.xml
       - ./genesis/bonds.txt:/var/lib/rnode/genesis/bonds.txt
       - ./genesis/wallets.txt:/var/lib/rnode/genesis/wallets.txt

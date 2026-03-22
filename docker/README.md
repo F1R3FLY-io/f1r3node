@@ -2,80 +2,90 @@
 
 ## Quick Start
 
-### Standalone Node (Recommended for Development)
-The standalone setup runs a **single-validator node** optimized for fast development with instant finalization. This is the simplest way to get started.
+Pull the latest image and start a multi-validator shard:
 
-**Start standalone node:**
 ```bash
-docker-compose -f standalone.yml up --pull always -d
+docker compose -f shard.yml pull
+docker compose -f shard.yml up -d
 ```
+
+Wait for genesis (~2-3 minutes). All validators must transition to Running state:
+```bash
+docker compose -f shard.yml logs -f | grep "Making a transition to Running state"
+```
+
+Once all validators report Running, press `Ctrl+C`. The network is ready.
 
 **Follow logs:**
 ```bash
-docker-compose -f standalone.yml logs -f
+# All nodes
+docker compose -f shard.yml logs -f
+
+# Specific node
+docker compose -f shard.yml logs -f validator1
+docker compose -f shard.yml logs -f boot
+docker compose -f shard.yml logs -f readonly
 ```
 
-**Stop standalone node:**
+**Stop:**
 ```bash
-docker-compose -f standalone.yml down
+docker compose -f shard.yml down
 ```
 
-### Multi-Validator Network
-For testing multi-node consensus and advanced scenarios, use the full shard network with one bootstrap, 3 validators and observer.
-
-**Start the Network:**
+**Stop and wipe all data (fresh restart):**
 ```bash
-docker-compose -f shard-with-autopropose.yml up --pull always -d
-```
-
-**Wait for Genesis (2-3 minutes):**
-
-All nodes need to complete the genesis ceremony and transition to running state before the network is ready.
-```bash
-# Monitor all nodes until they output 'Making a transition to Running state.'
-docker-compose -f shard-with-autopropose.yml logs -f | grep "Making a transition to Running state"
-```
-
-Once you see this message from all validators, the network is ready. Press `Ctrl+C` to stop watching logs.
-
-**Follow logs for all services in the shard:**
-```bash
-docker-compose -f shard-with-autopropose.yml logs -f
-```
-
-**Follow logs for a specific node:**
-```bash
-# For validator1
-docker-compose -f shard-with-autopropose.yml logs -f validator1
-
-# For validator2
-docker-compose -f shard-with-autopropose.yml logs -f validator2
-
-# For validator3
-docker-compose -f shard-with-autopropose.yml logs -f validator3
-
-# For bootstrap node
-docker-compose -f shard-with-autopropose.yml logs -f bootstrap
-
-# For observer
-docker-compose -f shard-with-autopropose.yml logs -f readonly
-```
-
-**Stop the Network:**
-```bash
-docker-compose -f shard-with-autopropose.yml down
-```
-
-### Fresh Restart
-When the network runs, a `data/` directory is created to store blockchain state and node data. 
-
-**To completely reset the network to genesis state:**
-```bash
-# Remove all blockchain data 
+docker compose -f shard.yml down
 rm -rf data/
 ```
 
-**⚠️ Warning**: Removing the `data/` directory will permanently delete all blockchain history, blocks, and state.
+## Build from Source
+
+Requires Nix or a JDK 17+ environment. Build a local Docker image:
+```bash
+sbt ";compile ;project node ;Docker/publishLocal ;project rchain"
+```
+
+Then start with the local image:
+```bash
+F1R3FLY_SCALA_IMAGE=f1r3flyindustries/f1r3fly-scala-node:latest docker compose -f shard.yml up -d
+```
+
+## Standalone Node (Single Validator)
+
+For local development with instant finalization:
+```bash
+docker compose -f standalone.yml up -d
+docker compose -f standalone.yml logs -f
+docker compose -f standalone.yml down
+```
+
+## Configuration
+
+All compose files use 2 shared config files. Per-role behavior is controlled via CLI flags.
+
+| Config File | Used By | Purpose |
+|-------------|---------|---------|
+| `conf/default.conf` | All shard roles | Shared shard defaults |
+| `conf/standalone-dev.conf` | Standalone | `standalone = true`, instant finalization |
+
+CLI flags used per role:
+
+| Flag | Used by |
+|------|---------|
+| `--ceremony-master-mode` | Bootstrap |
+| `--heartbeat-disabled` | Bootstrap, Observer |
+| `--disable-mergeable-channel-gc` | All Scala services ([f1r3node#441](https://github.com/F1R3FLY-io/f1r3node/issues/441)) |
+| `--genesis-validator` | Validators 1-3 |
+
+## Compose Files
+
+| File | Description |
+|------|-------------|
+| `shard.yml` | Full shard: bootstrap + 3 validators + observer |
+| `standalone.yml` | Single standalone node for development |
+| `validator4.yml` | Additional validator joining existing shard |
+| `observer.yml` | Additional read-only node joining existing shard |
+| `shard-monitoring.yml` | Prometheus + Grafana overlay |
 
 ## Adding Validator
 

@@ -6,11 +6,11 @@
 
 ## Installation (Docker Compose extension for shard)
 
-If you are running the shard with `docker/shard-with-autopropose.yml`, you can bring up Prometheus and Grafana on the same network and have Prometheus scrape all validators automatically.
+If you are running the shard with `docker/shard.yml`, you can bring up Prometheus and Grafana on the same network and have Prometheus scrape all validators automatically.
 
 1. Start/ensure your shard is running
 ```bash
-docker compose -f docker/shard-with-autopropose.yml up -d
+docker compose -f docker/shard.yml up -d
 ```
 
 2. Start monitoring stack (uses the same Docker network as the shard)

@@ -16,6 +16,7 @@ services:
         "--bootstrap=rnode://$BOOTSTRAP_NODE_ID@$BOOTSTRAP_HOST?protocol=40400&discovery=40404",
         "--validator-public-key=$VALIDATOR4_PUBLIC_KEY",
         "--validator-private-key=$VALIDATOR4_PRIVATE_KEY",
+        "--disable-mergeable-channel-gc",
       ]
     ports:
       - "40440:40400"
@@ -25,7 +26,7 @@ services:
       - "40444:40404"
       - "40445:40405"
     volumes:
-      - ./conf/shared-rnode-runtime.conf:/var/lib/rnode/rnode.conf
+      - ./conf/default.conf:/var/lib/rnode/rnode.conf
       - ./genesis/wallets.txt:/var/lib/rnode/genesis/wallets.txt
       - ./genesis/bonds.txt:/var/lib/rnode/genesis/bonds.txt
       - ./conf/logback.xml:/var/lib/rnode/logback.xml

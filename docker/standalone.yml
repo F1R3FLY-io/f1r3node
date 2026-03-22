@@ -13,6 +13,7 @@ services:
         "-s",
         "--host=$STANDALONE_HOST",
         "--validator-private-key=$STANDALONE_PRIVATE_KEY",
+        "--disable-mergeable-channel-gc",
       ]
     ports:
       # Protocol server port
