@@ -16,6 +16,17 @@ docker compose -f shard.yml logs -f --tail=500 | grep "Making a transition to Ru
 
 Once all validators report Running, press `Ctrl+C`. The network is ready.
 
+**Follow logs:**
+```bash
+# All nodes
+docker compose -f shard.yml logs -f
+
+# Specific node
+docker compose -f shard.yml logs -f validator1
+docker compose -f shard.yml logs -f boot
+docker compose -f shard.yml logs -f readonly
+```
+
 **Stop:**
 ```bash
 docker compose -f shard.yml down
@@ -58,19 +69,27 @@ docker compose -f standalone.yml down -v
 
 ## Configuration
 
-All compose files use `conf/default.conf` for validators/observers and `conf/bootstrap.conf` for the bootstrap node. Per-role behavior is controlled via CLI flags in the compose commands.
+All compose files use 2 shared config files. Per-role behavior is controlled via CLI flags in compose commands.
 
-| Config File | Used By | Key Difference |
-|-------------|---------|----------------|
-| `conf/default.conf` | Validators, Observer | `ceremony-master-mode = false` |
-| `conf/bootstrap.conf` | Bootstrap | `ceremony-master-mode = true` (includes default.conf) |
-| `conf/standalone-dev.conf` | Standalone | `standalone = true`, `fault-tolerance-threshold = 0.0` |
+| Config File | Used By | Purpose |
+|-------------|---------|---------|
+| `conf/default.conf` | All shard roles | Shared shard defaults |
+| `conf/standalone-dev.conf` | Standalone | `standalone = true`, instant finalization |
+
+CLI flags used per role:
+
+| Flag | Used by |
+|------|---------|
+| `--ceremony-master-mode` | Bootstrap |
+| `--heartbeat-disabled` | Bootstrap, Observer |
+| `--required-signatures N` | Bootstrap |
+| `--genesis-validator` | Validators 1-3 |
 
 Key settings in `default.conf`:
 - `fault-tolerance-threshold = 0.99` (near-unanimous finalization)
 - `synchrony-constraint-threshold = 0.67` (2/3 BFT requirement)
-- `enable-mergeable-channel-gc = true` (safe for Rust)
-- `heartbeat.enabled = true` (keeps finalization moving)
+- `enable-mergeable-channel-gc = true`
+- `heartbeat.enabled = true` (overridden via `--heartbeat-disabled` for bootstrap/observer)
 
 ## Port Mapping
 

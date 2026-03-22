@@ -79,7 +79,6 @@ services:
   # BOOTSTRAP NODE (Ceremony Master)
   # =================================================================
   # Coordinates genesis ceremony but is NOT a validator (not in bonds.txt).
-  # Uses bootstrap.conf which sets ceremony-master-mode = true.
   boot:
     <<: *default-rnode
     container_name: $BOOTSTRAP_HOST
@@ -91,6 +90,8 @@ services:
       - --validator-private-key=$BOOTSTRAP_PRIVATE_KEY
       - --required-signatures
       - "2"
+      - --ceremony-master-mode
+      - --heartbeat-disabled
     ports:
       - "40400:40400"
       - "40401:40401"
@@ -100,8 +101,7 @@ services:
       - "40405:40405"
     volumes:
       - boot-data:/var/lib/rnode/
-      - ./conf/bootstrap.conf:/var/lib/rnode/rnode.conf
-      - ./conf/default.conf:/var/lib/rnode/default.conf:ro
+      - ./conf/default.conf:/var/lib/rnode/rnode.conf
       - ./genesis/wallets.txt:/var/lib/rnode/genesis/wallets.txt
       - ./genesis/bonds.txt:/var/lib/rnode/genesis/bonds.txt
       - ./certs/bootstrap/node.certificate.pem:/var/lib/rnode/node.certificate.pem:ro
@@ -207,6 +207,7 @@ services:
       - --bootstrap=rnode://$BOOTSTRAP_NODE_ID@$BOOTSTRAP_HOST?protocol=40400&discovery=40404
       - --no-upnp
       - --allow-private-addresses
+      - --heartbeat-disabled
     ports:
       - "40450:40400"
       - "40451:40401"
