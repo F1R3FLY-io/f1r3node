@@ -80,6 +80,8 @@ docker compose -f docker/shard.yml up
 
 Data persists in `docker/data/`. Fresh start: `docker compose -f docker/shard.yml down && rm -rf docker/data/`
 
+Docker Compose loads `docker/.env` automatically — it contains node credentials and optional tuning. See [docker/.env.example](docker/.env.example) for all available variables.
+
 See [docker/README.md](docker/README.md) for shard setup, validator bonding, and network configuration.
 
 ### Source (Development)
@@ -183,6 +185,8 @@ docker compose -f docker/observer.yml up
 
 ### Local Development Node
 
+Local runs do **not** load `docker/.env` — configuration comes from HOCON config at `~/.rnode/rnode.conf`. Environment variables for AI services must be set in your shell.
+
 After [building from source](#building):
 
 ```bash
@@ -195,6 +199,11 @@ java -Djna.library.path=./rust_libraries/release \
 ```
 
 Fresh start: `rm -rf ~/.rnode/`
+
+To enable AI services locally, set env vars before running:
+```bash
+OPENAI_ENABLED=true OPENAI_SCALA_CLIENT_API_KEY=sk-... java -Djna.library.path=...
+```
 
 ## Usage
 
@@ -271,6 +280,27 @@ rnode run -s
 Paths: `/usr/bin/rnode`, `/usr/share/rnode/rnode.jar`
 
 </details>
+
+## Multi-Service Orchestration
+
+For running F1r3fly alongside other ecosystem services (Embers, F1R3Sky, monitoring), see the [system-integration](https://github.com/F1R3FLY-io/system-integration) repository. It provides `shardctl` CLI, shared configs, integration tests, and Docker Compose orchestration.
+
+## AI Services
+
+F1r3fly nodes expose AI capabilities as Rholang system processes. These are available to smart contracts at runtime.
+
+| Rholang Process | Provider | Description |
+|---|---|---|
+| `rho:ai:gpt4` | OpenAI | GPT-4 text completion |
+| `rho:ai:dalle3` | OpenAI | DALL-E 3 image generation |
+| `rho:ai:textToAudio` | OpenAI | Text-to-speech audio |
+| `rho:ai:ollama:chat` | Ollama (local) | Chat completion via local Ollama |
+| `rho:ai:ollama:generate` | Ollama (local) | Text generation via local Ollama |
+| `rho:ai:ollama:models` | Ollama (local) | List available local models |
+
+AI services are disabled by default. Enable via environment variables (Docker) or HOCON config (local). See [docker/.env.example](docker/.env.example) for all available env vars and [defaults.conf](node/src/main/resources/defaults.conf) for HOCON config reference.
+
+When AI is disabled, contracts using `rho:ai:*` processes will fail at deploy time.
 
 ## Configuration File
 
