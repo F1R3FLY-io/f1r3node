@@ -1133,21 +1133,6 @@ impl DebruijnInterpreter {
             .collect::<Result<Vec<_>, InterpreterError>>()?;
         log_op_step("after_substitute_data");
 
-        // Diagnostic: log channel details when it contains an unforgeable (likely deployId)
-        if !unbundled.unforgeables.is_empty() && unbundled.sends.is_empty() && unbundled.receives.is_empty() {
-            let bincode_bytes = bincode::serialize(&unbundled).unwrap_or_default();
-            let hash = rspace_plus_plus::rspace::hashing::stable_hash_provider::hash(&unbundled);
-            tracing::info!(
-                target: "f1r3fly.casper.debug",
-                channel_hash = hex::encode(hash.bytes()),
-                channel_bincode_hex = hex::encode(&bincode_bytes),
-                locally_free = ?unbundled.locally_free,
-                connective_used = unbundled.connective_used,
-                unforgeables_len = unbundled.unforgeables.len(),
-                "eval_send: produce on unforgeable channel"
-            );
-        }
-
         self.produce(
             unbundled,
             ListParWithRandom {
