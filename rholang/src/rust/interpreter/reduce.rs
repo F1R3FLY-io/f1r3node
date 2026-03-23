@@ -1133,11 +1133,20 @@ impl DebruijnInterpreter {
             .collect::<Result<Vec<_>, InterpreterError>>()?;
         log_op_step("after_substitute_data");
 
-        // println!("\ndata in eval_send: {:?}", data);
-        // println!("\nsubst_data in eval_send: {:?}", subst_data);
-
-        // println!("\nrand in eval_send");
-        // rand.debug_str();
+        // Diagnostic: log channel details when it contains an unforgeable (likely deployId)
+        if !unbundled.unforgeables.is_empty() && unbundled.sends.is_empty() && unbundled.receives.is_empty() {
+            let bincode_bytes = bincode::serialize(&unbundled).unwrap_or_default();
+            let hash = rspace_plus_plus::rspace::hashing::stable_hash_provider::hash(&unbundled);
+            tracing::info!(
+                target: "f1r3fly.casper.debug",
+                channel_hash = hex::encode(hash.bytes()),
+                channel_bincode_hex = hex::encode(&bincode_bytes),
+                locally_free = ?unbundled.locally_free,
+                connective_used = unbundled.connective_used,
+                unforgeables_len = unbundled.unforgeables.len(),
+                "eval_send: produce on unforgeable channel"
+            );
+        }
 
         self.produce(
             unbundled,
@@ -7200,12 +7209,16 @@ impl DebruijnInterpreter {
 
         // Note: the locallyFree cache in par could now be invalid, but given
         // that locallyFree is for use in the matcher, and the matcher uses
-        // substitution, it will resolve in that case. AlwaysEqual makes sure
-        // that this isn't an issue in the rest of cases.
+        // substitution, it will resolve in that case. In Scala, AlwaysEqual
+        // ensures locallyFree doesn't participate in equality/hashing. In Rust
+        // we must clear it explicitly so bincode-based channel hashing in
+        // RSpace (StableHashProvider) is not affected by stale bits.
+        let mut base = par.with_exprs(Vec::new());
+        base.locally_free = Vec::new();
+        base.connective_used = false;
         let result = evaled_exprs
             .into_iter()
-            .fold(par.with_exprs(Vec::new()), |acc, expr| {
-                // acc.exprs.iter().chain(expr.exprs.iter()).cloned().collect()
+            .fold(base, |acc, expr| {
                 concatenate_pars(acc, expr)
             });
 

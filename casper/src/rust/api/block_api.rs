@@ -805,6 +805,47 @@ impl BlockAPI {
             .map(|event| event_converter::to_rspace_event(event))
             .collect();
 
+        // Diagnostic: log the query Par and expected hash for debugging
+        if sorted_listening_name.len() == 1 {
+            let expected_hash = stable_hash_provider::hash(&sorted_listening_name[0]);
+            let bincode_bytes = bincode::serialize(&sorted_listening_name[0]).unwrap_or_default();
+            tracing::info!(
+                target: "f1r3fly.casper.debug",
+                num_deploys = block.body.deploys.len(),
+                total_events = log.len(),
+                expected_hash = hex::encode(expected_hash.bytes()),
+                query_par_bincode_hex = hex::encode(&bincode_bytes),
+                query_par_locally_free = ?sorted_listening_name[0].locally_free,
+                query_par_connective_used = sorted_listening_name[0].connective_used,
+                query_par_unforgeables_len = sorted_listening_name[0].unforgeables.len(),
+                "is_listening_name_reduced: query diagnostic"
+            );
+
+            // Collect unique produce channel hashes
+            let mut unique_hashes = std::collections::HashSet::new();
+            for event in &log {
+                match event {
+                    RspaceEvent::IoEvent(IOEvent::Produce(p)) => {
+                        unique_hashes.insert(hex::encode(p.channel_hash.bytes()));
+                    }
+                    RspaceEvent::Comm(comm) => {
+                        for p in &comm.produces {
+                            unique_hashes.insert(hex::encode(p.channel_hash.bytes()));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            let expected_hex = hex::encode(expected_hash.bytes());
+            tracing::info!(
+                target: "f1r3fly.casper.debug",
+                unique_channel_hashes = unique_hashes.len(),
+                has_match = unique_hashes.contains(&expected_hex),
+                sample_hashes = ?unique_hashes.iter().take(5).collect::<Vec<_>>(),
+                "is_listening_name_reduced: event hashes"
+            );
+        }
+
         log.iter().any(|event| match event {
             RspaceEvent::IoEvent(IOEvent::Produce(produce)) => {
                 // Produce can only have one channel, so skip if searching for multiple

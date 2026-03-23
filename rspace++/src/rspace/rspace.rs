@@ -314,7 +314,7 @@ where
         continuation: K,
     ) -> Result<Option<(K, Vec<A>)>, RSpaceError> {
         let start = Instant::now();
-        let result = self.locked_install_internal(channels, patterns, continuation, true);
+        let result = self.locked_install_internal(channels, patterns, continuation, true, false);
         let duration = start.elapsed();
         metrics::histogram!("install_time_seconds", "source" => RSPACE_METRICS_SOURCE)
             .record(duration.as_secs_f64());
@@ -545,7 +545,6 @@ where
         self.log_consume(consume_ref, channels, patterns, continuation, persist, peeks);
 
         let channel_to_indexed_data = self.fetch_channel_to_index_data(channels);
-        // println!("\nchannel_to_indexed_data: {:?}", channel_to_indexed_data);
         let zipped: Vec<(C, P)> = channels
             .iter()
             .cloned()
@@ -555,8 +554,6 @@ where
             .extract_data_candidates(&self.matcher, zipped, channel_to_indexed_data, Vec::new())
             .into_iter()
             .collect();
-
-        // println!("options: {:?}", options);
 
         let wk = WaitingContinuation {
             patterns: patterns.to_vec(),
@@ -628,21 +625,13 @@ where
         let _span = tracing::info_span!(target: "f1r3fly.rspace", LOCKED_PRODUCE_SPAN).entered();
         event!(Level::DEBUG, mark = "started-locked-produce", "locked_produce");
 
-        // println!("\nHit locked_produce");
         let grouped_channels = self.store.get_joins(&channel);
-        // println!("\ngrouped_channels: {:?}", grouped_channels);
-        // println!(
-        //     "produce: searching for matching continuations at <grouped_channels:
-        // {:?}>",     grouped_channels
-        // );
         self.log_produce(produce_ref, &channel, &data, persist);
         let extracted = self.extract_produce_candidate(grouped_channels, channel.clone(), Datum {
             a: data.clone(),
             persist,
             source: produce_ref.clone(),
         });
-
-        // println!("extracted in lockedProduce: {:?}", extracted);
 
         match extracted {
             Some(produce_candidate) => {
@@ -919,7 +908,7 @@ where
         }
 
         for (channels, install) in installs {
-            self.locked_install_internal(channels, install.patterns, install.continuation, true)
+            self.locked_install_internal(channels, install.patterns, install.continuation, true, true)
                 .unwrap();
         }
     }
@@ -930,6 +919,7 @@ where
         patterns: Vec<P>,
         continuation: K,
         record_install: bool,
+        is_restore: bool,
     ) -> Result<Option<(K, Vec<A>)>, RSpaceError> {
         if channels.len() != patterns.len() {
             panic!("RUST ERROR: channels.length must equal patterns.length");
@@ -946,36 +936,37 @@ where
                 .into_iter()
                 .collect();
 
-            match options {
-                None => {
-                    if record_install {
-                        self.installs
-                            .lock()
-                            .unwrap()
-                            .insert(channels.clone(), Install {
-                                patterns: patterns.clone(),
-                                continuation: continuation.clone(),
-                            });
-                    }
+            let has_data = options.is_some();
 
-                    self.store
-                        .install_continuation(&channels, WaitingContinuation {
-                            patterns,
-                            continuation,
-                            persist: true,
-                            peeks: BTreeSet::default(),
-                            source: consume_ref,
-                        });
-
-                    for channel in channels.iter() {
-                        self.store.install_join(channel, &channels);
-                    }
-                    Ok(None)
-                }
-                Some(_) => Err(RSpaceError::BugFoundError(
+            if has_data && !is_restore {
+                return Err(RSpaceError::BugFoundError(
                     "RUST ERROR: Installing can be done only on startup".to_string(),
-                )),
+                ));
             }
+
+            if record_install {
+                self.installs
+                    .lock()
+                    .unwrap()
+                    .insert(channels.clone(), Install {
+                        patterns: patterns.clone(),
+                        continuation: continuation.clone(),
+                    });
+            }
+
+            self.store
+                .install_continuation(&channels, WaitingContinuation {
+                    patterns,
+                    continuation,
+                    persist: true,
+                    peeks: BTreeSet::default(),
+                    source: consume_ref,
+                });
+
+            for channel in channels.iter() {
+                self.store.install_join(channel, &channels);
+            }
+            Ok(None)
         }
     }
 

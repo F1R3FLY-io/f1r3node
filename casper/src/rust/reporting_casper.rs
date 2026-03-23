@@ -169,6 +169,7 @@ impl RhoReporterCasper {
         runtime.set_invalid_blocks(invalid_blocks).await;
 
         let mut deploy_results = Vec::new();
+        let mut had_replay_failure = false;
         for (idx, term) in terms.iter().enumerate() {
             tracing::debug!(
                 target: "f1r3fly.casper.reporting",
@@ -188,6 +189,7 @@ impl RhoReporterCasper {
                         error = %e,
                         "Deploy replay failed, returning empty events"
                     );
+                    had_replay_failure = true;
                     Vec::new()
                 }
             };
@@ -220,6 +222,7 @@ impl RhoReporterCasper {
                         error = %e,
                         "System deploy replay failed, returning empty events"
                     );
+                    had_replay_failure = true;
                     Vec::new()
                 }
             };
@@ -235,8 +238,23 @@ impl RhoReporterCasper {
             });
         }
 
-        let checkpoint = runtime.create_checkpoint();
-        let post_state_hash = ByteString::from(checkpoint.root.to_bytes_prost());
+        let post_state_hash = if had_replay_failure {
+            tracing::warn!(
+                target: "f1r3fly.casper.reporting",
+                "Skipping checkpoint due to replay failure, resetting to start state"
+            );
+            if let Err(e) = runtime.reset(start_hash) {
+                tracing::warn!(
+                    target: "f1r3fly.casper.reporting",
+                    error = %e,
+                    "Failed to reset reporting runtime after replay failure"
+                );
+            }
+            ByteString::from(start_hash.to_bytes_prost())
+        } else {
+            let checkpoint = runtime.create_checkpoint();
+            ByteString::from(checkpoint.root.to_bytes_prost())
+        };
 
         Ok(ReplayResult {
             deploy_report_result: deploy_results,

@@ -228,7 +228,7 @@ where
         patterns: Vec<P>,
         continuation: K,
     ) -> Result<Option<(K, Vec<A>)>, RSpaceError> {
-        self.locked_install_internal(channels, patterns, continuation, true)
+        self.locked_install_internal(channels, patterns, continuation, true, false)
     }
 
     fn rig_and_reset(&mut self, start_root: Blake2b256Hash, log: Log) -> Result<(), RSpaceError> {
@@ -1098,7 +1098,7 @@ where
         }
 
         for (channels, install) in installs {
-            self.locked_install_internal(channels, install.patterns, install.continuation, true)
+            self.locked_install_internal(channels, install.patterns, install.continuation, true, true)
                 .unwrap();
         }
     }
@@ -1109,6 +1109,7 @@ where
         patterns: Vec<P>,
         continuation: K,
         record_install: bool,
+        is_restore: bool,
     ) -> Result<Option<(K, Vec<A>)>, RSpaceError> {
         if channels.len() != patterns.len() {
             Err(RSpaceError::BugFoundError(
@@ -1127,41 +1128,37 @@ where
                 .into_iter()
                 .collect();
 
-            match options {
-                None => {
-                    if record_install {
-                        self.installs
-                            .lock()
-                            .unwrap()
-                            .insert(channels.clone(), Install {
-                                patterns: patterns.clone(),
-                                continuation: continuation.clone(),
-                            });
-                    }
+            let has_data = options.is_some();
 
-                    self.store
-                        .install_continuation(&channels, WaitingContinuation {
-                            patterns,
-                            continuation,
-                            persist: true,
-                            peeks: BTreeSet::default(),
-                            source: consume_ref,
-                        });
-
-                    for channel in channels.iter() {
-                        self.store.install_join(channel, &channels);
-                    }
-                    // println!(
-                    //     "storing <(patterns, continuation): ({:?}, {:?})> at <channels: {:?}>",
-                    //     patterns, continuation, channels
-                    // );
-                    // println!("store length after install: {:?}\n", self.store.to_map().len());
-                    Ok(None)
-                }
-                Some(_) => Err(RSpaceError::BugFoundError(
+            if has_data && !is_restore {
+                return Err(RSpaceError::BugFoundError(
                     "RUST ERROR: Installing can be done only on startup".to_string(),
-                )),
+                ));
             }
+
+            if record_install {
+                self.installs
+                    .lock()
+                    .unwrap()
+                    .insert(channels.clone(), Install {
+                        patterns: patterns.clone(),
+                        continuation: continuation.clone(),
+                    });
+            }
+
+            self.store
+                .install_continuation(&channels, WaitingContinuation {
+                    patterns,
+                    continuation,
+                    persist: true,
+                    peeks: BTreeSet::default(),
+                    source: consume_ref,
+                });
+
+            for channel in channels.iter() {
+                self.store.install_join(channel, &channels);
+            }
+            Ok(None)
         }
     }
 
