@@ -405,8 +405,9 @@ object Setup {
                       )
                 } yield ()
                 gcCycle.handleErrorWith {
-                  case err if err.getMessage != null &&
-                    err.getMessage.contains("DagState does not contain lastFinalizedBlock") =>
+                  case err
+                      if err.getMessage != null &&
+                        err.getMessage.contains("DagState does not contain lastFinalizedBlock") =>
                     Log[F].warn(
                       "Mergeable channels GC: Skipping cycle — no finalized block yet (pre-genesis)"
                     )
