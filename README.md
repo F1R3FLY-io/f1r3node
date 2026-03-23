@@ -82,6 +82,8 @@ docker compose -f docker/shard.yml up
 
 Data persists in named Docker volumes. Fresh start: `docker compose -f docker/standalone.yml down -v`
 
+Docker Compose loads `docker/.env` automatically — it contains node credentials and optional tuning. See [docker/.env.example](docker/.env.example) for all available variables.
+
 See [docker/README.md](docker/README.md) for shard setup, validator bonding, and network configuration.
 
 ### Source (Development)
@@ -199,7 +201,7 @@ F1R3FLY_RUST_IMAGE=f1r3fly-rust-node:local docker compose -f docker/shard.yml up
 
 ### Local Development
 
-Run the Rust node locally without Docker.
+Run the Rust node locally without Docker. Local runs do **not** load `docker/.env` — configuration comes from the HOCON config file (`run-local/conf/standalone.conf`). Environment variables for AI services must be set in your shell.
 
 ```bash
 # Build and run standalone node
@@ -222,6 +224,11 @@ just build
 | `just help` | Show node CLI help |
 
 Configuration: [`run-local/conf/standalone.conf`](run-local/conf/standalone.conf). See [`run-local/README.md`](run-local/README.md) for details.
+
+To enable AI services locally, set env vars before running:
+```bash
+OPENAI_ENABLED=true OPENAI_API_KEY=sk-... just run-standalone
+```
 
 ## Usage
 
@@ -276,6 +283,27 @@ cd rust-client
 ### F1r3flyFS
 
 Distributed file system built on F1r3fly: [F1r3flyFS Repository](https://github.com/F1R3FLY-io/f1r3flyfs#f1r3flyfs)
+
+## Multi-Service Orchestration
+
+For running F1r3fly alongside other ecosystem services (Embers, F1R3Sky, monitoring), see the [system-integration](https://github.com/F1R3FLY-io/system-integration) repository. It provides `shardctl` CLI, shared configs, integration tests, and Docker Compose orchestration.
+
+## AI Services
+
+F1r3fly nodes expose AI capabilities as Rholang system processes. These are available to smart contracts at runtime.
+
+| Rholang Process | Provider | Description |
+|---|---|---|
+| `rho:ai:gpt4` | OpenAI | GPT-4 text completion |
+| `rho:ai:dalle3` | OpenAI | DALL-E 3 image generation |
+| `rho:ai:textToAudio` | OpenAI | Text-to-speech audio |
+| `rho:ai:ollama:chat` | Ollama (local) | Chat completion via local Ollama |
+| `rho:ai:ollama:generate` | Ollama (local) | Text generation via local Ollama |
+| `rho:ai:ollama:models` | Ollama (local) | List available local models |
+
+AI services are disabled by default. Enable via environment variables (Docker) or HOCON config (local). See [docker/.env.example](docker/.env.example) for all available env vars and [defaults.conf](node/src/main/resources/defaults.conf) for HOCON config reference.
+
+When AI is disabled, contracts using `rho:ai:*` processes will fail at deploy time.
 
 ## Configuration File
 
