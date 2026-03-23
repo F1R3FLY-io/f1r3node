@@ -330,7 +330,15 @@ impl ReportingRuntime {
         RhoRuntime::create_checkpoint(&mut self.runtime)
     }
 
-    /// Replay a deploy and collect reporting events
+    /// Replay a deploy and collect reporting events.
+    ///
+    /// Unlike consensus replay, the reporting replay skips the strict cost
+    /// check. The reporting layer exists solely to extract COMM events for
+    /// `getDataAtName` queries — cost validation is the consensus replay's
+    /// responsibility. Small cost divergences (e.g. from `encoded_len`
+    /// differences in `locally_free` metadata) would otherwise cause the
+    /// reporting replay to fail and return empty events, making
+    /// `getDataAtName` return "No data found" even for successful deploys.
     pub async fn replay_deploy_e(
         &mut self,
         with_cost_accounting: bool,
@@ -340,16 +348,36 @@ impl ReportingRuntime {
 
         let mut replay_ops = ReplayRuntimeOps::new_from_runtime(self.runtime.clone());
 
-        replay_ops
+        let result = replay_ops
             .replay_deploy_e(with_cost_accounting, processed_deploy)
-            .await?;
+            .await;
+
+        match result {
+            Ok(_) => {}
+            Err(crate::rust::errors::CasperError::ReplayFailure(
+                crate::rust::util::rholang::replay_failure::ReplayFailure::ReplayCostMismatch {
+                    initial_cost,
+                    replay_cost,
+                },
+            )) => {
+                tracing::warn!(
+                    target: "f1r3fly.casper.reporting",
+                    initial_cost,
+                    replay_cost,
+                    diff = replay_cost as i64 - initial_cost as i64,
+                    "Reporting replay: ignoring cost mismatch (not consensus-critical)"
+                );
+            }
+            Err(e) => return Err(e),
+        }
 
         self.runtime = replay_ops.runtime_ops.runtime;
 
         Ok(())
     }
 
-    /// Replay a system deploy and collect reporting events
+    /// Replay a system deploy and collect reporting events.
+    /// Like `replay_deploy_e`, tolerates cost mismatches in reporting context.
     pub async fn replay_block_system_deploy(
         &mut self,
         block_data: &BlockData,
@@ -357,15 +385,31 @@ impl ReportingRuntime {
     ) -> Result<(), crate::rust::errors::CasperError> {
         use crate::rust::rholang::replay_runtime::ReplayRuntimeOps;
 
-        // Create ReplayRuntimeOps from the runtime
         let mut replay_ops = ReplayRuntimeOps::new_from_runtime(self.runtime.clone());
 
-        // Replay the system deploy
-        replay_ops
+        let result = replay_ops
             .replay_block_system_deploy(block_data, processed_system_deploy)
-            .await?;
+            .await;
 
-        // Update the runtime from replay_ops
+        match result {
+            Ok(_) => {}
+            Err(crate::rust::errors::CasperError::ReplayFailure(
+                crate::rust::util::rholang::replay_failure::ReplayFailure::ReplayCostMismatch {
+                    initial_cost,
+                    replay_cost,
+                },
+            )) => {
+                tracing::warn!(
+                    target: "f1r3fly.casper.reporting",
+                    initial_cost,
+                    replay_cost,
+                    diff = replay_cost as i64 - initial_cost as i64,
+                    "Reporting system deploy replay: ignoring cost mismatch (not consensus-critical)"
+                );
+            }
+            Err(e) => return Err(e),
+        }
+
         self.runtime = replay_ops.runtime_ops.runtime;
 
         Ok(())
