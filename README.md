@@ -9,24 +9,21 @@
 - [Installation](#installation)
   - [Docker (Recommended)](#docker-recommended)
   - [Source (Development)](#source-development)
-  - [macOS](#macos)
-  - [System Packages (Legacy)](#system-packages-legacy---hybrid-node)
 - [Building](#building)
-  - [Building Rust Node Docker Image](#building-rust-node-docker-image-recommended)
+  - [Docker Image](#building-rust-node-docker-image)
+  - [Cargo](#building-from-source)
 - [Running](#running)
   - [Docker Network](#docker-network-recommended)
-  - [Local Development (Pure Rust)](#local-development-pure-rust)
+  - [Local Development](#local-development)
 - [Usage](#usage)
   - [F1r3fly Rust Client](#f1r3fly-rust-client)
   - [Smoke Test](#smoke-test)
-  - [Evaluating Rholang Contracts](#evaluating-rholang-contracts)
   - [F1r3flyFS](#f1r3flyfs)
 - [Configuration](#configuration-file)
 - [Troubleshooting](#troubleshooting)
-- [Development](#development)
 - [Support & Community](#support--community)
 - [Known Issues & Reporting](#caveats-and-filing-issues)
-- [Acknowledgements](#acknowledgements)
+- [Legacy Scala/Hybrid Node](#legacy-scalahybrid-node)
 - [License](#licence-information)
 
 ## What is F1r3fly?
@@ -40,84 +37,86 @@ F1r3fly is an open-source blockchain platform that provides:
 
 ### Getting Started
 
-- **Development**: Install locally using [Nix and direnv](#source) for a complete development environment
-- **Production**: Use [Docker](#docker) or [system packages](#debianubuntu) for running nodes
-- **Community**: Join the [F1r3fly Discord](https://discord.gg/NN59aFdAHM) for tutorials, documentation, and project information
+- **Production/Testing**: Use [Docker](#docker-recommended) to run nodes
+- **Development**: Install build tools [manually](#manual-install) or via [Nix](#nix-alternative)
+- **Community**: Join the [F1r3fly Discord](https://discord.gg/NN59aFdAHM)
 - **Testnet**: Public testnet access coming soon
 
 ### Node Implementations
 
-F1r3fly has two node implementations in this repository on different branches:
+This repository contains two node implementations on different branches:
 
-| Implementation | Branch                                                    | Status                       | Description                                                            |
-| -------------- | --------------------------------------------------------- | ---------------------------- | ---------------------------------------------------------------------- |
-| **Rust Node**  | `rust/dev` (default)                                      | **Production (recommended)** | Pure Rust implementation with better performance and no JVM dependency |
-| Scala Node     | [`main`](https://github.com/F1R3FLY-io/f1r3fly/tree/main) | Stable                       | Original Scala implementation, being phased out in favor of Rust       |
+| Implementation | Branch | Status | Description |
+|---|---|---|---|
+| **Rust Node** | `rust/dev` (default) | **Production (recommended)** | Pure Rust, no JVM dependency |
+| Scala Node | [`main`](https://github.com/F1R3FLY-io/f1r3fly/tree/main) | Maintenance | Original implementation, see [legacy section](#legacy-scalahybrid-node) |
 
-> **Note**: You are on the **`rust/dev` branch** (Rust node). For the Scala implementation, switch to the [`main` branch](https://github.com/F1R3FLY-io/f1r3fly/tree/main).
+> You are on the **`rust/dev` branch** (Rust node).
 
 ## Note on the use of this software
-A security review of this code is underway. If you are looking for production ready deployment of this codebase, please contact F1r3fly at  f1r3fly.ceo \<at\> gmail \<dot\> com. F1r3fly takes no responsibility for material or financial loss under the terms of the Apache 2.0 license.
+A security review of this code is underway. If you are looking for production ready deployment of this codebase, please contact F1r3fly at f1r3fly.ceo \<at\> gmail \<dot\> com. F1r3fly takes no responsibility for material or financial loss under the terms of the Apache 2.0 license.
 
 ## Installation
 
 ### Docker (Recommended)
 
-**Pure Rust node - recommended for production and testing**
-
-#### Quick Start
-
 ```bash
 # Pull the latest image
 docker pull f1r3flyindustries/f1r3fly-rust-node:latest
 
-# Start a standalone node (simplest - for development)
+# Start a standalone node (for development)
 docker compose -f docker/standalone.yml up
 
 # Or start a multi-validator network (for testing consensus)
 docker compose -f docker/shard.yml up
 ```
 
-#### Port Configuration
-
-| Port  | Service         | Description              |
-| ----- | --------------- | ------------------------ |
+| Port | Service | Description |
+|------|---------|-------------|
 | 40400 | Protocol Server | Main blockchain protocol |
-| 40401 | gRPC External   | External gRPC API        |
-| 40402 | gRPC Internal   | Internal gRPC API        |
-| 40403 | HTTP API        | REST/HTTP API endpoints  |
-| 40404 | Peer Discovery  | Node discovery service   |
-| 40405 | Admin           | Admin/metrics endpoint   |
+| 40401 | gRPC External | External gRPC API |
+| 40402 | gRPC Internal | Internal gRPC API |
+| 40403 | HTTP API | REST/HTTP API endpoints |
+| 40404 | Peer Discovery | Node discovery service |
+| 40405 | Admin | Admin/metrics endpoint |
 
-#### Data Persistence
+Data persists in named Docker volumes. Fresh start: `docker compose -f docker/standalone.yml down -v`
 
-The compose files use named Docker volumes for blockchain state. Data persists across restarts.
-
-**Fresh Start** - Reset to genesis:
-```bash
-docker compose -f docker/standalone.yml down -v
-docker compose -f docker/standalone.yml up
-```
-
-#### Resources
-
-- [Docker Hub - f1r3fly-rust-node](https://hub.docker.com/r/f1r3flyindustries/f1r3fly-rust-node)
-- [Docker Setup Guide](docker/README.md) - Complete setup, validator bonding, and network configuration
+See [docker/README.md](docker/README.md) for shard setup, validator bonding, and network configuration.
 
 ### Source (Development)
 
-**For development and contributing to F1r3fly**
+#### Manual Install
 
-#### Prerequisites
+Install the following build dependencies:
 
-1. **Install Nix**: https://nixos.org/download/
-2. **Install direnv**: https://direnv.net/#basic-installation
+**Rust toolchain:**
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+rustup default stable
+```
 
-#### Setup
+**System packages:**
+
+Debian/Ubuntu:
+```bash
+sudo apt install autoconf cmake curl git libtool make protobuf-compiler unzip pkg-config libssl-dev
+```
+
+macOS (Homebrew):
+```bash
+brew install autoconf cmake git libtool make protobuf openssl pkg-config
+```
+
+**Optional tools:**
+- [`just`](https://github.com/casey/just) - Task runner for build commands
+- [`grpcurl`](https://github.com/fullstorydev/grpcurl) - gRPC CLI for testing
+
+#### Nix (Alternative)
+
+Nix provides a reproducible environment with all dependencies pinned. Install [Nix](https://nixos.org/download/) and [direnv](https://direnv.net/#basic-installation), then:
 
 ```bash
-git clone <repository-url>
-cd f1r3fly
 direnv allow
 ```
 
@@ -128,263 +127,89 @@ echo "experimental-features = flakes nix-command" > ~/.config/nix/nix.conf
 direnv allow
 ```
 
-> The initial setup will compile all libraries (takes a few minutes).
-
-### macOS
-
-**Docker is recommended for macOS**
-
-```bash
-# Install Docker Desktop for Mac, then:
-docker compose -f docker/standalone.yml up
-```
-
-Native macOS packages are not currently available.
-
-### System Packages (Legacy - Hybrid Node)
-
-> **Note**: These packages install the legacy hybrid Scala+Rust node which requires Java. For new deployments, use [Docker](#docker-recommended) with the pure Rust node.
-
-<details>
-<summary>Debian/Ubuntu (Legacy)</summary>
-
-**Dependency**: `java17-runtime-headless`
-
-```bash
-# Download from GitHub Releases
-sudo apt update
-sudo apt install ./rnode_X.Y.Z_all.deb
-rnode run -s
-```
-
-**Paths**: `/usr/bin/rnode`, `/usr/share/rnode/rnode.jar`
-
-</details>
-
-<details>
-<summary>RedHat/Fedora (Legacy)</summary>
-
-**Dependency**: `java-17-openjdk`
-
-```bash
-# Download from GitHub Releases
-sudo dnf install ./rnode-X.Y.Z-1.noarch.rpm
-rnode run -s
-```
-
-**Paths**: `/usr/bin/rnode`, `/usr/share/rnode/rnode.jar`
-
-</details>
-
 ## Building
 
-**Prerequisites**: [Development environment setup](#source)
-
-### Quick Commands
+### Building Rust Node Docker Image
 
 ```bash
-# Pure Rust Docker image (recommended)
+# Using helper script (recommended)
 ./node/docker-commands.sh build-local
 
-# Clean build
-sbt "clean"
-
-# Legacy: Fat JAR for local development (hybrid Scala + Rust)
-sbt ";compile ;project node ;assembly ;project rchain"
-
-# Legacy: Hybrid Docker image
-docker context use default && sbt ";compile ;project node ;Docker/publishLocal ;project rchain"
-```
-
-### Building Rust Node Docker Image (Recommended)
-
-**Build the Rust node Docker image directly using Docker (no SBT required)**
-
-The Rust node Docker image is built from a multi-stage Dockerfile located at `node/Dockerfile`. This creates a pure Rust binary image without Java dependencies.
-
-#### Quick Start
-
-**Using helper script** (recommended):
-```bash
-# Source the helper script
-source node/docker-commands.sh
-
-# Build for local use (faster, single architecture)
-docker_build_local
-
-# Build for production (single architecture)
-docker_build
-
-# Build multi-architecture (amd64 + arm64, requires Docker buildx)
-MULTI_ARCH=1 docker_build
-```
-
-**Direct execution**:
-```bash
-# Build locally
-./node/docker-commands.sh build-local
-
-# Build for production
-./node/docker-commands.sh build
-
-# Build multi-architecture
-MULTI_ARCH=1 ./node/docker-commands.sh build
-```
-
-#### Manual Docker Build
-
-**From workspace root**:
-```bash
-# Build for current architecture
+# Direct Docker build
 docker build -f node/Dockerfile -t f1r3flyindustries/f1r3fly-rust-node:latest .
 
-# Build for specific architecture
-docker buildx build --platform linux/amd64 -f node/Dockerfile \
-  -t f1r3flyindustries/f1r3fly-rust-node:amd64 .
-
-# Multi-architecture build (requires buildx)
+# Multi-architecture (amd64 + arm64)
 docker buildx build --platform linux/amd64,linux/arm64 \
-  -f node/Dockerfile \
-  -t f1r3flyindustries/f1r3fly-rust-node:latest \
-  --push .
+  -f node/Dockerfile -t f1r3flyindustries/f1r3fly-rust-node:latest --push .
 ```
 
-#### Image Details
+Image details: `rust:bookworm` builder, `debian:bookworm-slim` runtime, pure Rust binary. Tags: `f1r3fly-rust-node:local` (local build), `f1r3flyindustries/f1r3fly-rust-node:latest` (published).
 
-- **Base images**: `rust:bookworm` (builder), `debian:12-slim` (runtime)
-- **Binary**: Pure Rust `node` binary with all dependencies linked
-- **Ports**: Exposes 40400-40404 (protocol, gRPC external/internal, HTTP API, discovery)
-- **Healthcheck**: Uses `grpcurl` and `curl` with `jq` for service validation
-- **User**: Runs as `daemon` user
-- **Entrypoint**: `/opt/docker/bin/docker-entrypoint.sh` (automatically sets `--profile=docker`)
-
-#### Publishing
+### Building from Source
 
 ```bash
-# Using helper script
-source node/docker-commands.sh
-docker_publish
-DRONE_BUILD_NUMBER=123 docker_publish_drone
+# Release build
+cargo build --release -p node
 
-# Direct execution
-./node/docker-commands.sh publish
-DRONE_BUILD_NUMBER=123 ./node/docker-commands.sh publish-drone
+# Debug build (faster compile)
+cargo build -p node
 ```
 
-🐳 **Docker Setup**: [docker/README.md](docker/README.md)
+Or using `just`:
 
-### SBT Tips
-
-- **Keep SBT running**: Use `sbt` shell for faster subsequent commands
-- **Project-specific builds**: `sbt "project node" compile`
-- **Parallel compilation**: Automatic with modern SBT
-
-### Building Hybrid Docker Image (Legacy)
-
-> **Note**: The hybrid node is deprecated. Use the pure Rust node for production deployments.
-
-After setting up the [development environment](#source), build the hybrid Docker image:
-
-**Native Build**:
 ```bash
-docker context use default && sbt ";compile ;project node ;Docker/publishLocal ;project rchain"
+just build              # Release build
+just build-debug        # Debug build
 ```
-
-**Cross-Platform Build** (AMD64 + ARM64):
-```bash
-docker context use default && MULTI_ARCH=true sbt ";compile ;project node ;Docker/publishLocal ;project rchain"
-```
-
-Both create: `f1r3flyindustries/f1r3fly-hybrid-node:latest`
 
 ## Running
 
 ### Docker Network (Recommended)
 
-**Standalone Node** (simplest - for development):
+**Standalone** (single-validator, for development):
 ```bash
-# Single-validator node with instant finalization
-docker compose -f docker/standalone.yml up
-
-# Start in background
 docker compose -f docker/standalone.yml up -d
-
-# View logs
 docker compose -f docker/standalone.yml logs -f
-
-# Stop the node
 docker compose -f docker/standalone.yml down
 ```
 
-**Multi-Validator Network** (for testing consensus):
+**Shard** (3 validators + bootstrap + observer):
 ```bash
-# Start the shard network (3 validators + bootstrap + observer)
 docker compose -f docker/shard.yml up -d
 
-# Wait for genesis (~2-3 min). All validators must reach Running state:
+# Wait for genesis (~2-3 min)
 docker compose -f docker/shard.yml logs -f --tail=500 | grep "Making a transition to Running state"
-# Press Ctrl+C once all validators report Running. The network is ready.
+# Ctrl+C once all validators report Running
 
-# View logs
-docker compose -f docker/shard.yml logs -f
-
-# Stop the network
-docker compose -f docker/shard.yml down
+docker compose -f docker/shard.yml logs -f         # Follow logs
+docker compose -f docker/shard.yml down             # Stop
+docker compose -f docker/shard.yml down -v          # Stop and wipe data
 ```
 
-**Fresh Start**: Reset to genesis state:
+**Observer** (read-only, requires running shard):
 ```bash
-# Stop network and remove all blockchain data (named volumes)
-docker compose -f docker/standalone.yml down -v
-docker compose -f docker/standalone.yml up
-# Or for shard:
-docker compose -f docker/shard.yml down -v
-docker compose -f docker/shard.yml up
-```
-
-**Observer Node** (optional - read-only access):
-```bash
-# Start observer (requires running shard network)
 docker compose -f docker/observer.yml up
 ```
 
-### Build and Run Rust Node
-
-**Build the Rust node image and run locally**:
-
+**Build and run local image:**
 ```bash
-# Build local image
 ./node/docker-commands.sh build-local
-
-# Start standalone with local image
-F1R3FLY_RUST_IMAGE=f1r3fly-rust-node:local docker compose -f docker/standalone.yml up
-
-# Or start the full shard network
 F1R3FLY_RUST_IMAGE=f1r3fly-rust-node:local docker compose -f docker/shard.yml up
 ```
 
-### Local Development (Pure Rust)
+### Local Development
 
-**Run the Rust node locally without Docker** - ideal for development and debugging.
-
-#### Prerequisites
-
-- [Development environment](#source-development) (Nix + direnv)
-- `just` command runner (included in nix flake)
-
-#### Quick Start
+Run the Rust node locally without Docker.
 
 ```bash
-# Enter the development environment
-direnv allow  # or: nix develop
-
 # Build and run standalone node
 just run-standalone
+
+# Or manually
+just setup-standalone
+just build
+./target/release/node run -s --config-file run-local/conf/standalone.conf
 ```
-
-#### Available Commands
-
-Run `just` to see all available commands:
 
 | Command | Description |
 |---------|-------------|
@@ -395,35 +220,139 @@ Run `just` to see all available commands:
 | `just setup-standalone` | Set up data directory only |
 | `just clean-standalone` | Remove node data (fresh start) |
 | `just help` | Show node CLI help |
-| `just run-help` | Show 'run' subcommand options |
 
-#### Configuration
+Configuration: [`run-local/conf/standalone.conf`](run-local/conf/standalone.conf). See [`run-local/README.md`](run-local/README.md) for details.
 
-Local configuration files are in [`run-local/`](run-local/):
+## Usage
 
-```
-run-local/
-├── conf/standalone.conf     # Node configuration
-├── genesis/standalone/      # Genesis files (bonds, wallets)
-└── data/standalone/         # Node data (gitignored)
-```
+### F1r3fly Rust Client
 
-See [`run-local/README.md`](run-local/README.md) for details.
+CLI for interacting with F1r3fly nodes: deploy, propose, transfer, bond validators, check health.
 
-#### Fresh Start
+Repository: [F1R3FLY-io/rust-client](https://github.com/F1R3FLY-io/rust-client)
 
 ```bash
-just clean-standalone
-just run-standalone
+git clone https://github.com/F1R3FLY-io/rust-client.git
+cd rust-client
+cargo build --release
+
+# Deploy a Rholang contract
+cargo run -- deploy -f ./rho_examples/stdout.rho
+
+# Check network status
+cargo run -- status
 ```
 
----
+### Rholang CLI
 
-### Local Development Node (Legacy - Hybrid)
+Standalone CLI for executing and compiling Rholang programs (no running node required). See [rholang/README.md](rholang/README.md) for full documentation.
 
-> **Note**: This uses the legacy hybrid Scala+Rust node. For production, use the pure Rust Docker image.
+```bash
+# Build
+cargo build --release --bin rholang-cli
 
-After [building from source](#building):
+# Execute a Rholang program
+./target/release/rholang-cli examples/hello.rho
+
+# Compile to AST
+./target/release/rholang-cli --format ast examples/hello.rho
+```
+
+### F1r3drive
+
+FUSE-based file system backed by the F1r3fly blockchain.
+
+Repository: [F1R3FLY-io/f1r3drive](https://github.com/F1R3FLY-io/f1r3drive)
+
+### Smoke Test
+
+Verify the shard end-to-end using the [rust-client](https://github.com/F1R3FLY-io/rust-client) smoke test:
+
+```bash
+cd rust-client
+./scripts/smoke_test.sh localhost 40412 40413 40452
+```
+
+### F1r3flyFS
+
+Distributed file system built on F1r3fly: [F1r3flyFS Repository](https://github.com/F1R3FLY-io/f1r3flyfs#f1r3flyfs)
+
+## Configuration File
+
+- **Default location**: Data directory (`~/.rnode/`)
+- **Custom location**: `--config-file <path>`
+- **Format**: [HOCON](https://github.com/lightbend/config/blob/master/HOCON.md)
+
+Reference configs:
+- [defaults.conf](node/src/main/resources/defaults.conf) - All available options
+- [docker/conf/standalone-dev.conf](docker/conf/standalone-dev.conf) - Standalone development config
+- [docker/conf/default.conf](docker/conf/default.conf) - Shard config
+
+## Troubleshooting
+
+### Rust Build Issues
+
+```bash
+# Update toolchain
+rustup update stable
+
+# Clean and rebuild
+cargo clean
+cargo build --release -p node
+```
+
+### Docker Issues
+
+```bash
+docker context use default
+docker system prune -a
+```
+
+### Port Conflicts
+
+```bash
+lsof -i :40400-40404
+kill -9 <PID>
+```
+
+### Nix Issues
+
+```bash
+nix-garbage-collect
+direnv reload
+```
+
+## Support & Community
+
+- [F1r3fly Discord](https://discord.gg/NN59aFdAHM) - Tutorials, discussions, support
+- [GitHub Issues](https://github.com/F1R3FLY-io/f1r3fly/issues) - Bug reports and feature requests
+
+## Caveats and Filing Issues
+
+This F1r3fly repository is under active development. Report issues at [GitHub Issues](https://github.com/F1R3FLY-io/f1r3fly/issues/new).
+
+Include: F1r3fly version, OS, steps to reproduce, expected vs actual behavior, logs.
+
+## Legacy Scala/Hybrid Node
+
+<details>
+<summary>Scala node and hybrid node documentation (deprecated)</summary>
+
+The Scala node (`main` branch) and hybrid Scala+Rust node are deprecated in favor of the pure Rust node. For new deployments, use the Rust node on `rust/dev`.
+
+### Building Legacy Hybrid Node
+
+Requires [Nix development environment](#nix-alternative):
+
+```bash
+# Build hybrid Docker image
+docker context use default && sbt ";compile ;project node ;Docker/publishLocal ;project rchain"
+
+# Build fat JAR
+sbt ";compile ;project node ;assembly ;project rchain"
+```
+
+### Running Legacy Node
 
 ```bash
 java -Djna.library.path=./rust_libraries/release \
@@ -434,239 +363,53 @@ java -Djna.library.path=./rust_libraries/release \
   run -s --no-upnp --allow-private-addresses --synchrony-constraint-threshold=0.0
 ```
 
-**Fresh Start**: `rm -rf ~/.rnode/`
+### System Packages (Legacy)
 
-## Usage
+<details>
+<summary>Debian/Ubuntu</summary>
 
-### F1r3fly Rust Client
-
-**Modern Rust-based CLI for interacting with F1r3fly nodes**
-
-The F1r3fly Rust Client provides a comprehensive command-line interface for blockchain operations:
-
-| Feature                | Description                                                  |
-| ---------------------- | ------------------------------------------------------------ |
-| **Deploy**             | Upload Rholang code to F1r3fly nodes                         |
-| **Propose**            | Create new blocks containing deployed code                   |
-| **Full Deploy**        | Deploy + propose in a single operation                       |
-| **Deploy & Wait**      | Deploy with automatic finalization checking                  |
-| **Exploratory Deploy** | Execute Rholang without blockchain commitment (read-only)    |
-| **Transfer**           | Send tokens between addresses                                |
-| **Bond Validator**     | Add new validators to the network                            |
-| **Network Health**     | Check validator status and network consensus                 |
-| **Key Management**     | Generate public keys and key pairs for blockchain identities |
-
-🔗 **Repository**: [F1R3FLY-io/rust-client](https://github.com/F1R3FLY-io/rust-client)
-
-**Installation**:
-```bash
-git clone https://github.com/F1R3FLY-io/rust-client.git
-cd rust-client
-cargo build --release
-```
-
-**Quick Example**:
-```bash
-# Deploy a Rholang contract
-cargo run -- deploy -f ./rho_examples/stdout.rho
-
-# Check network status
-cargo run -- status
-```
-
-### Smoke Test
-
-Verify the shard is working end-to-end using the [rust-client](https://github.com/F1R3FLY-io/rust-client) smoke test:
+Requires `java17-runtime-headless`:
 
 ```bash
-cd rust-client
-./scripts/smoke_test.sh localhost 40412 40413 40452
+sudo apt update
+sudo apt install ./rnode_X.Y.Z_all.deb
+rnode run -s
 ```
 
-The smoke test covers deploy/propose/finalize, token transfers, node status, PoS queries, block streaming, and load testing. See [docker/README.md](docker/README.md#smoke-test) for details.
+</details>
 
-### Evaluating Rholang Contracts
+<details>
+<summary>RedHat/Fedora</summary>
 
-**Prerequisites**: [Running node](#running)
+Requires `java-17-openjdk`:
 
-#### Quick Evaluation
-
-1. **Build the evaluator**:
-   ```bash
-   sbt ";compile ;stage"
-   ```
-
-2. **Evaluate a contract**:
-   ```bash
-   ./node/target/universal/stage/bin/rnode \
-     -Djna.library.path=./rust_libraries/release \
-     eval ./rholang/examples/tut-ai.rho
-   ```
-
-#### Example Contracts
-
-Explore the `rholang/examples/` directory for sample contracts and tutorials.
-
-### F1r3flyFS
-
-**Distributed file system built on F1r3fly**
-
-F1r3flyFS provides a simple, fast file system interface on top of the F1r3fly blockchain.
-
-🔗 **Project**: [F1r3flyFS Repository](https://github.com/F1R3FLY-io/f1r3flyfs#f1r3flyfs)
-
-## Troubleshooting
-
-### Common Issues and Solutions
-
-#### Nix Issues
-
-**Problem**: Unable to load `flake.nix` or general Nix problems
 ```bash
-nix-garbage-collect
+sudo dnf install ./rnode-X.Y.Z-1.noarch.rpm
+rnode run -s
 ```
 
-#### SBT Build Issues
+</details>
 
-**Problem**: Build failures or dependency issues
+### SBT Tips
+
+- Keep SBT running: use `sbt` shell for faster subsequent commands
+- Project-specific builds: `sbt "project node" compile`
+- Clean build: `sbt clean` then `rm -rf ~/.cache/coursier/`
+
+### Evaluating Rholang Contracts (Legacy)
+
 ```bash
-# Clear coursier cache
-rm -rf ~/.cache/coursier/
-
-# Clean SBT
-sbt clean
+sbt ";compile ;stage"
+./node/target/universal/stage/bin/rnode \
+  -Djna.library.path=./rust_libraries/release \
+  eval ./rholang/examples/tut-ai.rho
 ```
 
-#### Node Compilation Issues
-
-**Problem**: StackOverflow error during compilation
-```bash
-# Option 1: Direct compile
-sbt "node/compile"
-
-# Option 2: Use SBT shell (recommended)
-sbt
-sbt:rchain> project node
-sbt:node> compile
-```
-
-#### Rust Library Issues
-
-**Problem**: Rust compilation or library loading errors
-```bash
-# Clean Rust libraries
-./scripts/clean_rust_libraries.sh
-
-# Reset Rust toolchain
-rustup default stable
-```
-
-#### Docker Issues
-
-**Problem**: Docker build failures
-```bash
-# Reset Docker context
-docker context use default
-
-# Clean Docker system
-docker system prune -a
-```
-
-#### Port Conflicts
-
-**Problem**: "Port already in use" errors
-```bash
-# Find processes using F1r3fly ports
-lsof -i :40400-40404
-
-# Kill specific process
-kill -9 <PID>
-```
-
-## Configuration File
-
-**Customize RNode behavior with HOCON configuration**
-
-### Configuration Options
-
-- **Default location**: Data directory (usually `~/.rnode/`)
-- **Custom location**: Use `--config-file <path>` command line option
-- **Format**: [HOCON](https://github.com/lightbend/config/blob/master/HOCON.md) (Human-Optimized Config Object Notation)
-
-### Reference Configuration
-
-- **All available options**: [defaults.conf](node/src/main/resources/defaults.conf)
-- **Standalone example**: [docker/conf/standalone-dev.conf](docker/conf/standalone-dev.conf) - Ready-to-use development configuration
-
-## Development
-
-**Contributing to F1r3fly? Start here!**
-
-### Development Setup
-
-1. **Environment**: Follow [source installation](#source) instructions
-2. **Docker**: Use `docker/shard.yml` for testing
-3. **Client**: Use [F1r3fly Rust Client](https://github.com/F1R3FLY-io/rust-client) for interaction
-
-### Contribution Workflow
-
-1. Fork the repository
-2. Create feature branch: `git checkout -b feature/amazing-feature`
-3. Make changes and test locally
-4. Submit pull request
-
-🐳 **Docker Guide**: [docker/README.md](docker/README.md) - Complete Docker setup, validator bonding, and network configuration
-
-## Support & Community
-
-### Discord Community
-
-Join the F1r3fly community for real-time support, tutorials, and project updates:
-
-🌐 **[F1r3fly Discord](https://discord.gg/NN59aFdAHM)**
-
-**Available Resources**:
-- Project tutorials and documentation
-- Development planning and discussions
-- Events calendar and announcements
-- Community support and Q&A
-
-### Getting Help
-
-1. **Documentation**: Start with this README
-2. **Troubleshooting**: Check the [troubleshooting section](#troubleshooting)
-3. **Community**: Ask questions in Discord
-4. **Issues**: Report bugs in GitHub Issues
-
-## Caveats and Filing Issues
-
-### Known Issues
-
-⚠️ **[Beta-release Software**: This F1r3fly repository is under active development](#note-on-the-use-of-this-software)
-
-**Current Issue Trackers**:
-- **F1r3fly Issues**: [GitHub Issues](https://github.com/F1R3FLY-io/f1r3fly/issues)
-- **RChain Legacy Issues**: [Legacy Bug Reports](https://github.com/rchain/rchain/issues?q=is%3Aopen+is%3Aissue+label%3Abug)
-
-### Filing Bug Reports
-
-**Report Issues**: [Create New Issue](https://github.com/F1R3FLY-io/f1r3fly/issues/new)
-
-**Include in your report**:
-- F1r3fly version
-- Operating system and version
-- Steps to reproduce
-- Expected vs actual behavior
-- Relevant logs or error messages
+</details>
 
 ## Acknowledgements
 
-**Performance Profiling**: 
-We use [YourKit](https://www.yourkit.com/) to profile F1r3fly performance. YourKit supports open source projects with their full-featured Java and .NET profilers.
-
-**Tools**:
-- [YourKit Java Profiler](https://www.yourkit.com/java/profiler/)
-- [YourKit .NET Profiler](https://www.yourkit.com/.net/profiler/)
+We use [YourKit](https://www.yourkit.com/) to profile F1r3fly performance.
 
 ## License Information
 
