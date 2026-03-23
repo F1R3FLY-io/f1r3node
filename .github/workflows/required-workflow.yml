@@ -451,7 +451,8 @@ jobs:
         uses: actions/checkout@v5
         with:
           repository: F1R3FLY-io/system-integration
-          ref: main
+          # TODO: Revert to ref: main after system-integration PR #35 merges
+          ref: chore/docker-config-consolidation
           path: system-integration
 
       - uses: actions/setup-java@v5
