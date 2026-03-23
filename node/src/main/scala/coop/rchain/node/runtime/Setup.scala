@@ -396,7 +396,7 @@ object Setup {
         )
         for {
           _ <- if (conf.casper.enableMergeableChannelGC) {
-                for {
+                val gcCycle = for {
                   dag <- BlockDagStorage[F].getRepresentation
                   _ <- coop.rchain.casper.util.MergeableChannelsGC.collectGarbage(
                         dag,
@@ -404,6 +404,11 @@ object Setup {
                         casperShardConf
                       )
                 } yield ()
+                gcCycle.handleErrorWith { err =>
+                  Log[F].debug(
+                    s"Mergeable channels GC: Skipping cycle — DAG not ready (${err.getMessage})"
+                  )
+                }
               } else {
                 Sync[F].unit
               }
