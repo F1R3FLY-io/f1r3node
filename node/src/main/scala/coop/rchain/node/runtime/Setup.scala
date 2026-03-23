@@ -404,10 +404,17 @@ object Setup {
                         casperShardConf
                       )
                 } yield ()
-                gcCycle.handleErrorWith { err =>
-                  Log[F].debug(
-                    s"Mergeable channels GC: Skipping cycle — DAG not ready (${err.getMessage})"
-                  )
+                gcCycle.handleErrorWith {
+                  case err if err.getMessage != null &&
+                    err.getMessage.contains("DagState does not contain lastFinalizedBlock") =>
+                    Log[F].warn(
+                      "Mergeable channels GC: Skipping cycle — no finalized block yet (pre-genesis)"
+                    )
+                  case err =>
+                    Log[F].error(
+                      s"Mergeable channels GC: Unexpected error — ${err.getMessage}",
+                      err
+                    )
                 }
               } else {
                 Sync[F].unit
