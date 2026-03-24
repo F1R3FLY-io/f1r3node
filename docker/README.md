@@ -87,7 +87,7 @@ CLI flags used per role:
 
 Key settings in `default.conf`:
 - `fault-tolerance-threshold = 0.99` (near-unanimous finalization)
-- `synchrony-constraint-threshold = 0.67` (2/3 BFT requirement)
+- `synchrony-constraint-threshold = 0` (no synchrony gate on proposals)
 - `enable-mergeable-channel-gc = true`
 - `heartbeat.enabled = true` (overridden via `--heartbeat-disabled` for bootstrap/observer)
 

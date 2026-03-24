@@ -154,7 +154,7 @@ If the validator's last block was the genesis block (block number 0), they are a
 
 ```hocon
 casper {
-  synchrony-constraint-threshold = 0.67
+  synchrony-constraint-threshold = 0
 }
 ```
 
@@ -162,7 +162,7 @@ casper {
 
 **Type**: `Double` (0.0 to 1.0)
 
-**Default Value**: 0.67 (67%)
+**Default Value**: 0 (no synchrony gate)
 
 ### What Different Values Mean
 
@@ -391,7 +391,7 @@ Balances liveness with safety:
 
 ### Large Networks (10+ Validators)
 
-**Recommended**: `synchrony-constraint-threshold = 0.67` (default)
+**Recommended**: `synchrony-constraint-threshold = 0` (default)
 
 The default Byzantine fault tolerance threshold:
 - Assumes up to 1/3 of validators can be faulty/offline
@@ -401,7 +401,7 @@ The default Byzantine fault tolerance threshold:
 
 ### Production Networks
 
-**Recommended**: `synchrony-constraint-threshold = 0.67`
+**Recommended**: `synchrony-constraint-threshold = 0`
 
 **Considerations**:
 - Monitor validator participation rates

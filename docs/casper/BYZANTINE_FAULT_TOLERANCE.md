@@ -88,7 +88,7 @@ synchronyConstraintValue = 0 / 200 = 0.0
 
 ```hocon
 casper {
-  synchrony-constraint-threshold = 0.67  // 2/3 majority (BFT threshold)
+  synchrony-constraint-threshold = 0  // no synchrony gate on proposals
 }
 ```
 
@@ -766,11 +766,11 @@ Higher values require stronger consensus before declaring finality.
 
 ```hocon
 casper {
-  synchrony-constraint-threshold = 0.67
+  synchrony-constraint-threshold = 0
 }
 ```
 
-**Default:** 0.67 (2/3 majority)
+**Default:** 0 (no synchrony gate)
 
 **Network Size Recommendations:**
 - **Large (10+ validators):** 0.67 (optimal BFT)
