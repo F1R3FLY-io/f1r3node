@@ -69,6 +69,8 @@ jobs:
 
           # Version from Git repository (tag-commit)
           VERSION="$(git describe --tags --always)"
+          # Strip implementation prefix for Docker-friendly version tags
+          VERSION="${VERSION#rust-}"
           echo "VERSION=$VERSION" >> $GITHUB_ENV
 
           # Find latest tag on rust/dev branch, with fallback
@@ -469,7 +471,7 @@ jobs:
   # GitHub (create) release and packages
   release_packages:
     name: Release Packages
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/rust-v')
     permissions:
       contents: write # Required for creating/updating releases
     needs:
@@ -478,11 +480,18 @@ jobs:
       - build_rust_docker_image
     runs-on: ubuntu-latest
     steps:
-      - name: Load Packages
+      - name: Load Docker artifact (amd64)
         uses: actions/download-artifact@v4
         with:
           name: artifacts-docker-amd64
           path: /tmp/artifacts
+
+      - name: Extract node binary from Docker image
+        run: |
+          zcat /tmp/artifacts/rust-node-docker.tar.gz | docker image load
+          CONTAINER_ID=$(docker create f1r3flyindustries/f1r3fly-rust-node:amd64)
+          docker cp "$CONTAINER_ID:/opt/docker/bin/node" /tmp/artifacts/f1r3node-linux-amd64
+          docker rm "$CONTAINER_ID"
 
       - name: Update release and release artifacts
         uses: ncipollo/release-action@v1

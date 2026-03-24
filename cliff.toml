@@ -1,0 +1,46 @@
+# git-cliff configuration for f1r3node (Rust)
+# https://git-cliff.org/docs/configuration
+
+[changelog]
+header = """# Changelog
+
+All notable changes to the Rust implementation of F1r3node will be documented in this file.
+This changelog is automatically generated from conventional commits.\n
+"""
+body = """
+{%- if version %}
+## [{{ version | trim_start_matches(pat="rust-") }}] - {{ timestamp | date(format="%Y-%m-%d") }}
+{%- else %}
+## [unreleased]
+{%- endif %}
+{% for group, commits in commits | group_by(attribute="group") %}
+### {{ group | striptags | trim | upper_first }}
+{% for commit in commits %}
+- {{ commit.message | split(pat="\n") | first | trim }}\
+  {% if commit.breaking %} [**breaking**]{% endif %}\
+{% endfor %}
+{% endfor %}\n
+"""
+trim = true
+footer = ""
+
+[git]
+conventional_commits = true
+filter_unconventional = true
+split_commits = false
+commit_parsers = [
+    { message = "^feat", group = "Features" },
+    { message = "^fix", group = "Bug Fixes" },
+    { message = "^docs", group = "Documentation" },
+    { message = "^perf", group = "Performance" },
+    { message = "^refactor", group = "Refactoring" },
+    { message = "^ci", group = "CI" },
+    { message = "^test", group = "Testing" },
+    { message = "^chore\\(release\\)", skip = true },
+    { message = "^chore", group = "Miscellaneous" },
+    { message = "^Merge", skip = true },
+]
+protect_breaking_commits = false
+filter_commits = false
+tag_pattern = "rust-v[0-9].*"
+sort_commits = "newest"

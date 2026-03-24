@@ -1,0 +1,94 @@
+# Rust release — auto-bumps minor version on merge to rust/main
+#
+# Triggers on every push to rust/main. Determines the next minor version
+# from the latest rust-v* tag, bumps node/Cargo.toml and node/Dockerfile,
+# generates CHANGELOG.md via git-cliff, commits, tags, and pushes. The tag
+# push triggers the existing build-test-and-deploy.yml which handles Docker
+# release and package publishing.
+#
+# Requires repository secret: RELEASE_PAT (a PAT with contents:write so
+# the tag push triggers downstream workflows).
+
+name: Release (Rust)
+
+on:
+  push:
+    branches:
+      - rust/main
+  workflow_dispatch:
+
+jobs:
+  release:
+    name: Bump Version & Tag
+    runs-on: ubuntu-latest
+    if: "!startsWith(github.event.head_commit.message, 'chore(release)')"
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_PAT }}
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Install git-cliff
+        uses: orhun/git-cliff-action@v4
+        with:
+          args: --version
+
+      - name: Determine next version
+        id: version
+        run: |
+          LATEST_TAG=$(git tag -l 'rust-v*' --sort=-v:refname | head -1)
+          if [ -z "$LATEST_TAG" ]; then
+            echo "No existing rust-v* tag found, starting at 0.2.0"
+            NEXT_VERSION="0.2.0"
+          else
+            # Extract version numbers from tag like rust-v0.2.0
+            CURRENT="${LATEST_TAG#rust-v}"
+            MAJOR=$(echo "$CURRENT" | cut -d. -f1)
+            MINOR=$(echo "$CURRENT" | cut -d. -f2)
+            NEXT_MINOR=$((MINOR + 1))
+            NEXT_VERSION="${MAJOR}.${NEXT_MINOR}.0"
+          fi
+          echo "NEXT_VERSION=$NEXT_VERSION" >> "$GITHUB_OUTPUT"
+          echo "TAG_NAME=rust-v${NEXT_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Next version: $NEXT_VERSION (tag: rust-v${NEXT_VERSION})"
+
+      - name: Update node/Cargo.toml version
+        run: |
+          sed -i '0,/^version = ".*"/s//version = "${{ steps.version.outputs.NEXT_VERSION }}"/' node/Cargo.toml
+
+      - name: Update Dockerfile LABEL
+        run: |
+          sed -i 's/^LABEL version=".*"/LABEL version="${{ steps.version.outputs.NEXT_VERSION }}"/' node/Dockerfile
+
+      - name: Update Cargo.lock
+        run: |
+          # Only update the lock file, no compilation needed
+          cargo update -p node --precise ${{ steps.version.outputs.NEXT_VERSION }} 2>/dev/null || cargo generate-lockfile
+
+      - name: Generate CHANGELOG
+        uses: orhun/git-cliff-action@v4
+        with:
+          config: cliff.toml
+          args: --tag ${{ steps.version.outputs.TAG_NAME }} -o CHANGELOG.md
+
+      - name: Commit release
+        run: |
+          git add node/Cargo.toml node/Dockerfile Cargo.lock CHANGELOG.md
+          git commit -m "chore(release): rust v${{ steps.version.outputs.NEXT_VERSION }}"
+
+      - name: Create tag
+        run: |
+          git tag -a "${{ steps.version.outputs.TAG_NAME }}" \
+            -m "Release rust v${{ steps.version.outputs.NEXT_VERSION }}"
+
+      - name: Push
+        run: |
+          git push origin rust/main --follow-tags
