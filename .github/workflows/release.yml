@@ -1,0 +1,95 @@
+# Scala release — auto-bumps minor version on merge to main
+#
+# Triggers on every push to main. Determines the next minor version from
+# the latest scala-v* tag, bumps version.sbt, generates CHANGELOG.md via
+# git-cliff, commits, tags, and pushes. The tag push triggers the existing
+# required-workflow.yml which handles Docker release and package publishing.
+#
+# Requires repository secret: RELEASE_PAT (a PAT with contents:write so
+# the tag push triggers downstream workflows).
+
+name: Release (Scala)
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  release:
+    name: Bump Version & Tag
+    runs-on: ubuntu-22.04
+    if: "!startsWith(github.event.head_commit.message, 'chore(release)')"
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_PAT }}
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Install git-cliff
+        uses: orhun/git-cliff-action@v4
+        with:
+          args: --version
+
+      - name: Determine next version
+        id: version
+        run: |
+          LATEST_TAG=$(git tag -l 'scala-v*' --sort=-v:refname | head -1)
+          if [ -z "$LATEST_TAG" ]; then
+            echo "No existing scala-v* tag found, starting at 0.2.0"
+            NEXT_VERSION="0.2.0"
+          else
+            # Extract version numbers from tag like scala-v0.2.0
+            CURRENT="${LATEST_TAG#scala-v}"
+            MAJOR=$(echo "$CURRENT" | cut -d. -f1)
+            MINOR=$(echo "$CURRENT" | cut -d. -f2)
+            NEXT_MINOR=$((MINOR + 1))
+            NEXT_VERSION="${MAJOR}.${NEXT_MINOR}.0"
+          fi
+          echo "NEXT_VERSION=$NEXT_VERSION" >> "$GITHUB_OUTPUT"
+          echo "TAG_NAME=scala-v${NEXT_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Next version: $NEXT_VERSION (tag: scala-v${NEXT_VERSION})"
+
+      - name: Update version.sbt
+        run: |
+          echo "ThisBuild / version := \"${{ steps.version.outputs.NEXT_VERSION }}\"" > version.sbt
+
+      - name: Generate CHANGELOG
+        uses: orhun/git-cliff-action@v4
+        with:
+          config: cliff.toml
+          args: --tag ${{ steps.version.outputs.TAG_NAME }} -o CHANGELOG.md
+
+      - name: Commit release
+        run: |
+          git add version.sbt CHANGELOG.md
+          git commit -m "chore(release): scala v${{ steps.version.outputs.NEXT_VERSION }}"
+
+      - name: Create tag
+        run: |
+          git tag -a "${{ steps.version.outputs.TAG_NAME }}" \
+            -m "Release scala v${{ steps.version.outputs.NEXT_VERSION }}"
+
+      - name: Prepare next development cycle
+        run: |
+          NEXT="${{ steps.version.outputs.NEXT_VERSION }}"
+          MAJOR=$(echo "$NEXT" | cut -d. -f1)
+          MINOR=$(echo "$NEXT" | cut -d. -f2)
+          DEV_MINOR=$((MINOR + 1))
+          DEV_VERSION="${MAJOR}.${DEV_MINOR}.0-SNAPSHOT"
+          echo "ThisBuild / version := \"${DEV_VERSION}\"" > version.sbt
+          git add version.sbt
+          git commit -m "chore: prepare next development cycle (${DEV_VERSION})"
+
+      - name: Push
+        run: |
+          git push origin main --follow-tags

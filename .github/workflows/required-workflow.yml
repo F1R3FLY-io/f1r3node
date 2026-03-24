@@ -114,6 +114,8 @@ jobs:
 
           # Version from Git repository (tag-commit)
           VERSION="$(git describe --tags --always)"
+          # Strip implementation prefix for Docker-friendly version tags
+          VERSION="${VERSION#scala-}"
           echo "VERSION=$VERSION" >> $GITHUB_ENV
 
           # Find latest tag on dev branch, with fallback
@@ -679,7 +681,7 @@ jobs:
       - required_scala_unit_tests
       - required_integration_tests
       - build_packages
-    if: "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')"
+    if: "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/scala-v')"
     runs-on: ubuntu-22.04
     steps:
       - name: Load Packages
