@@ -24,7 +24,6 @@ final case class NodeConf(
     ollama: Option[OllamaConf],
     devMode: Boolean,
     dev: DevConf,
-    rspacePlusPlus: Boolean,
     // This field is dynamic and computed according to profile and is not used directly in client code.
     // But it is required in the model because of how Pureconfig works and how config file is structured (there are
     // references to this key in `defaults.conf`).

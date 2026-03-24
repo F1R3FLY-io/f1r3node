@@ -136,8 +136,6 @@ object ConfigMapper {
       add("dev-mode", run.devMode)
       add("dev.deployer-private-key", run.deployerPrivateKey)
 
-      add("rspace-plus-plus", run.rspacePlusPlus)
-
       //TODO remove
       //add(keys.KnownValidatorsFile, run.knownValidators
     }
