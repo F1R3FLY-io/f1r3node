@@ -13,7 +13,6 @@ services:
         "-s",
         "--host=${STANDALONE_HOST:-rnode.standalone}",
         "--validator-private-key=${STANDALONE_PRIVATE_KEY:-5f668a7ee96d944a4494cc947e4005e172d7ab3461ee5538f1f2a45a835e9657}",
-        "--disable-mergeable-channel-gc",
       ]
     ports:
       # Protocol server port

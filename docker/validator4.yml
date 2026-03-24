@@ -16,7 +16,6 @@ services:
         "--bootstrap=rnode://${BOOTSTRAP_NODE_ID:-1e780e5dfbe0a3d9470a2b414f502d59402e09c2}@${BOOTSTRAP_HOST:-rnode.bootstrap}?protocol=40400&discovery=40404",
         "--validator-public-key=${VALIDATOR4_PUBLIC_KEY:-04d26c6103d7269773b943d7a9c456f9eb227e0d8b1fe30bccee4fca963f4446e3385d99f6386317f2c1ad36b9e6b0d5f97bb0a0041f05781c60a5ebca124a251d}",
         "--validator-private-key=${VALIDATOR4_PRIVATE_KEY:-5ff3514bf79a7d18e8dd974c699678ba63b7762ce8d78c532346e52f0ad219cd}",
-        "--disable-mergeable-channel-gc",
       ]
     ports:
       - "40440:40400"

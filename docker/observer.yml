@@ -16,7 +16,6 @@ services:
     - --no-upnp
     - --allow-private-addresses
     - --heartbeat-disabled
-    - --disable-mergeable-channel-gc
     - -Dlogback.configurationFile=/var/lib/rnode/logback.xml
 
     volumes:

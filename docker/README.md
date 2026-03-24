@@ -74,7 +74,6 @@ CLI flags used per role:
 |------|---------|
 | `--ceremony-master-mode` | Bootstrap |
 | `--heartbeat-disabled` | Bootstrap, Observer |
-| `--disable-mergeable-channel-gc` | All Scala services ([f1r3node#441](https://github.com/F1R3FLY-io/f1r3node/issues/441)) |
 | `--genesis-validator` | Validators 1-3 |
 
 ## Compose Files
