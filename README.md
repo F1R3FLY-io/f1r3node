@@ -193,6 +193,19 @@ docker compose -f docker/shard.yml down -v          # Stop and wipe data
 docker compose -f docker/observer.yml up
 ```
 
+**Monitoring** (Prometheus + Grafana + cAdvisor, requires running shard or standalone):
+```bash
+docker compose -f docker/shard-monitoring.yml up -d
+```
+
+| Component | URL | Description |
+|---|---|---|
+| Prometheus | http://localhost:9090 | Metrics, targets, recording rules |
+| Grafana | http://localhost:3000 | Dashboards (admin/admin) |
+| cAdvisor | http://localhost:8080 | Container CPU/memory/IO metrics |
+
+See [docker/README.md](docker/README.md) for details.
+
 **Build and run local image:**
 ```bash
 ./node/docker-commands.sh build-local

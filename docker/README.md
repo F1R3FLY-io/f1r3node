@@ -62,10 +62,11 @@ docker compose -f standalone.yml down -v
 
 | File | Description |
 |------|-------------|
-| `shard.yml` | Full shard: bootstrap + 3 validators + observer + Prometheus + Grafana |
+| `shard.yml` | Full shard: bootstrap + 3 validators + observer |
 | `standalone.yml` | Single standalone node for development |
 | `validator4.yml` | Additional validator joining existing shard |
 | `observer.yml` | Additional read-only node joining existing shard |
+| `shard-monitoring.yml` | Prometheus + Grafana + cAdvisor overlay |
 
 ## Configuration
 
@@ -102,6 +103,22 @@ Key settings in `default.conf`:
 | Validator4 | 40440 | 40441 | 40442 | 40443 | 40444 | 40445 |
 | Observer | 40450 | 40451 | 40452 | 40453 | 40454 | 40455 |
 
+## Monitoring
+
+Start the monitoring stack after the shard is running:
+
+```bash
+docker compose -f shard-monitoring.yml up -d
+```
+
+| Component | URL | Description |
+|---|---|---|
+| Prometheus | http://localhost:9090 | Metrics, targets, recording rules |
+| Grafana | http://localhost:3000 | Dashboards (admin/admin) |
+| cAdvisor | http://localhost:8080 | Container CPU/memory/IO metrics |
+
+Prometheus uses DNS-based service discovery — only running nodes get scraped (no false DOWN targets for standalone or partial shard).
+
 ## CI/Smoke Testing
 
 Automated startup SLA check:
@@ -136,13 +153,6 @@ The smoke test builds the rust-client binary and runs 30+ commands covering:
 - Load testing with concurrent transfers
 
 Results are logged to `logs/smoke_test_*.log` with pass/fail counters.
-
-## Monitoring
-
-Prometheus and Grafana are included in `shard.yml` and start automatically with the shard.
-
-- Prometheus: http://localhost:9090
-- Grafana: http://localhost:3000 (admin/admin)
 
 ## Genesis Configuration
 

@@ -1630,7 +1630,7 @@
   },
   "timepicker": {},
   "timezone": "browser",
-  "title": "Block Transfer Performance (WIP - Rust metrics pending)",
+  "title": "Block Transfer Performance",
   "uid": "block-transfer",
   "version": 0
 }
