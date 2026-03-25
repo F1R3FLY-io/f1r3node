@@ -113,6 +113,21 @@ class DebruijnInterpreter[M[_]: Sync: Parallel: _cost](
                       e.raiseError[M, DispatchType]
                   }
                 })
+            case e: ProduceFailureWithOutput =>
+              val produce1 = produceEvent
+                .markAsNonDeterministic(e.outputNotProduced)
+                .withError()
+
+              space
+                .updateProduce(produce1) // TODO: avoid mutating the produce event
+                .flatMap(_ => {
+                  e.cause match {
+                    case oop @ OutOfPhlogistonsError => // special case
+                      oop.raiseError[M, DispatchType]
+                    case _ => // any other error
+                      e.raiseError[M, DispatchType]
+                  }
+                })
           }
       case other =>
         continue(

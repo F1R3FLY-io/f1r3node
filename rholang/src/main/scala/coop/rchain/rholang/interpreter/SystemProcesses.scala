@@ -22,7 +22,11 @@ import coop.rchain.rholang.externalservices.ExternalServices
 import coop.rchain.rholang.interpreter.RhoRuntime.RhoTuplespace
 import coop.rchain.rholang.interpreter.registry.Registry
 import coop.rchain.rholang.interpreter.RholangAndScalaDispatcher.RhoDispatch
-import coop.rchain.rholang.interpreter.errors.{NonDeterministicProcessFailure, ReduceError}
+import coop.rchain.rholang.interpreter.errors.{
+  NonDeterministicProcessFailure,
+  ProduceFailureWithOutput,
+  ReduceError
+}
 import coop.rchain.rholang.interpreter.util.VaultAddress
 import coop.rchain.rspace.{ContResult, Result}
 import coop.rchain.shared.{Base16, Log}
@@ -486,7 +490,14 @@ object SystemProcesses {
 
           def mapOutput(response: String): Seq[Par] = Seq(RhoType.String(response))
 
-          callApi.map(mapOutput).flatMap(output => produce(output, ack).map(_ => output))
+          callApi.map(mapOutput).flatMap { output =>
+            produce(output, ack)
+              .map(_ => output)
+              .recoverWith {
+                case e =>
+                  ProduceFailureWithOutput(output.map(_.toByteArray), e).raiseError
+              }
+          }
         }
       }
 
@@ -506,7 +517,14 @@ object SystemProcesses {
 
           def mapOutput(response: String): Seq[Par] = Seq(RhoType.String(response))
 
-          callApi.map(mapOutput).flatMap(output => produce(output, ack).map(_ => output))
+          callApi.map(mapOutput).flatMap { output =>
+            produce(output, ack)
+              .map(_ => output)
+              .recoverWith {
+                case e =>
+                  ProduceFailureWithOutput(output.map(_.toByteArray), e).raiseError
+              }
+          }
         }
       }
 
@@ -526,7 +544,14 @@ object SystemProcesses {
 
           def mapOutput(bytes: Array[Byte]): Seq[Par] = Seq(RhoType.ByteArray(bytes))
 
-          callApi.map(mapOutput).flatMap(output => produce(output, ack).map(_ => output))
+          callApi.map(mapOutput).flatMap { output =>
+            produce(output, ack)
+              .map(_ => output)
+              .recoverWith {
+                case e =>
+                  ProduceFailureWithOutput(output.map(_.toByteArray), e).raiseError
+              }
+          }
         }
       }
 
@@ -555,7 +580,10 @@ object SystemProcesses {
                              ).raiseError
                          }
             output = Seq(RhoType.String(response))
-            _      <- produce(output, ack)
+            _ <- produce(output, ack).recoverWith {
+                  case e =>
+                    ProduceFailureWithOutput(output.map(_.toByteArray), e).raiseError
+                }
           } yield output
         }
       }
@@ -581,7 +609,10 @@ object SystemProcesses {
                              ).raiseError
                          }
             output = Seq(RhoType.String(response))
-            _      <- produce(output, ack)
+            _ <- produce(output, ack).recoverWith {
+                  case e =>
+                    ProduceFailureWithOutput(output.map(_.toByteArray), e).raiseError
+                }
           } yield output
         }
       }
@@ -600,7 +631,10 @@ object SystemProcesses {
                        }
             modelPars = models.map(model => Par(exprs = Seq(Expr(GString(model)))))
             output    = Seq(Par(exprs = Seq(EList(modelPars))))
-            _         <- produce(output, ack)
+            _ <- produce(output, ack).recoverWith {
+                  case e =>
+                    ProduceFailureWithOutput(output.map(_.toByteArray), e).raiseError
+                }
           } yield output
         }
       }
