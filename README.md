@@ -184,9 +184,10 @@ docker compose -f docker/shard.yml up -d
 docker compose -f docker/shard.yml logs 2>&1 | grep "Making a transition to Running state"
 # Ctrl+C once all validators report Running
 
-docker compose -f docker/shard.yml logs -f         # Follow logs
-docker compose -f docker/shard.yml down             # Stop
-docker compose -f docker/shard.yml down -v          # Stop and wipe data
+docker compose -f docker/shard.yml logs -f                  # Follow logs
+docker compose -f docker/shard-monitoring.yml down          # Stop monitoring (if running)
+docker compose -f docker/shard.yml down                     # Stop shard
+docker compose -f docker/shard.yml down -v                  # Stop and wipe data
 ```
 
 **Observer** (read-only, requires running shard):
