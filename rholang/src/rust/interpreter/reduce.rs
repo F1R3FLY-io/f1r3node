@@ -350,6 +350,86 @@ mod step_helpers_tests {
             PostMatchControlState::RestorePeeks
         ));
     }
+
+    #[tokio::test]
+    async fn reduce_step_completes_reconsume_follow_up_path() {
+        let (_, reducer) =
+            create_test_space::<RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>()
+                .await;
+
+        let state = PostMatchExecState {
+            dispatch: DispatchExecState {
+                continuation: TaggedContinuation::default(),
+                data_list: Vec::new(),
+                is_replay: false,
+                previous_output: Vec::new(),
+                _remaining_phlo: reducer.cost.get().value,
+            },
+            control: PostMatchControlState::Reconsume(ReceiveRegistrationState {
+                binds: vec![(
+                    BindPattern {
+                        patterns: vec![Par::default()],
+                        remainder: None,
+                        free_count: 0,
+                    },
+                    Par::default(),
+                )],
+                body: ParWithRandom::default(),
+                persistent: true,
+                peek: false,
+            }),
+        };
+
+        let step_result = reducer.reduce_step(state, i64::MAX).await.unwrap();
+        assert!(matches!(step_result.terminal_status, StepTerminalStatus::Completed));
+        assert!(step_result.next_state.is_none());
+    }
+
+    #[tokio::test]
+    async fn reduce_step_completes_restore_peeks_follow_up_path() {
+        let (_, reducer) =
+            create_test_space::<RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>()
+                .await;
+
+        let state = PostMatchExecState {
+            dispatch: DispatchExecState {
+                continuation: TaggedContinuation::default(),
+                data_list: Vec::new(),
+                is_replay: false,
+                previous_output: Vec::new(),
+                _remaining_phlo: reducer.cost.get().value,
+            },
+            control: PostMatchControlState::RestorePeeks,
+        };
+
+        let step_result = reducer.reduce_step(state, i64::MAX).await.unwrap();
+        assert!(matches!(step_result.terminal_status, StepTerminalStatus::Completed));
+        assert!(step_result.next_state.is_none());
+    }
+
+    #[tokio::test]
+    async fn execute_post_match_to_completion_advances_suspended_state() {
+        let (_, reducer) =
+            create_test_space::<RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>()
+                .await;
+
+        let state = PostMatchExecState {
+            dispatch: DispatchExecState {
+                continuation: TaggedContinuation::default(),
+                data_list: Vec::new(),
+                is_replay: false,
+                previous_output: Vec::new(),
+                _remaining_phlo: reducer.cost.get().value,
+            },
+            control: PostMatchControlState::DispatchAndRestorePeeks,
+        };
+
+        let result = reducer
+            .execute_post_match_to_completion(state, i64::MAX)
+            .await
+            .unwrap();
+        assert!(matches!(result, DispatchType::Skip));
+    }
 }
 
 trait Method {
