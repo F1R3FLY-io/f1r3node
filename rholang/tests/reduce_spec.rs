@@ -44,7 +44,10 @@ use rholang::rust::interpreter::{
     matcher::r#match::Matcher,
     reduce::{ContinuationExecutionStatus, DebruijnInterpreter, SplitPostMatchConfig},
     rho_runtime::RhoISpace,
-    storage::continuation_store::{ContinuationHandle, ContinuationVisibility, FundingPolicy},
+    storage::continuation_store::{
+        BridgeContinuationMetadata, BridgeFinalityPhase, BridgeRewardPolicy, ContinuationHandle,
+        ContinuationSubtype, ContinuationVisibility, FundingPolicy,
+    },
     test_utils::persistent_store_tester::create_test_space,
 };
 use rspace_plus_plus::rspace::{
@@ -127,6 +130,56 @@ fn check_continuation(
     }
 
     true
+}
+
+async fn create_split_continuation_with_persistent_send(
+    reducer: &Arc<DebruijnInterpreter>,
+    channel_name: &str,
+    result_channel_name: &str,
+    payload: i64,
+    seed: i8,
+) {
+    let channel = new_gstring_par(channel_name.to_string(), Vec::new(), false);
+    let result_channel = new_gstring_par(result_channel_name.to_string(), Vec::new(), false);
+
+    let receive = Par::default().with_receives(vec![Receive {
+        binds: vec![ReceiveBind {
+            patterns: vec![new_freevar_par(0, Vec::new())],
+            source: Some(channel.clone()),
+            remainder: None,
+            free_count: 1,
+        }],
+        body: Some(Par::default().with_sends(vec![Send {
+            chan: Some(result_channel),
+            data: vec![new_gstring_par("Success".to_string(), Vec::new(), false)],
+            persistent: false,
+            locally_free: Vec::new(),
+            connective_used: false,
+        }])),
+        persistent: false,
+        peek: false,
+        bind_count: 1,
+        locally_free: Vec::new(),
+        connective_used: false,
+    }]);
+
+    let send = Par::default().with_sends(vec![Send {
+        chan: Some(channel),
+        data: vec![new_gint_par(payload, Vec::new(), false)],
+        persistent: true,
+        locally_free: Vec::new(),
+        connective_used: false,
+    }]);
+
+    let env: Env<Par> = Env::new();
+    assert!(reducer
+        .eval(receive, &env, rand().split_byte(seed))
+        .await
+        .is_ok());
+    assert!(reducer
+        .eval(send, &env, rand().split_byte(seed.wrapping_add(1)))
+        .await
+        .is_ok());
 }
 
 #[tokio::test]
@@ -1275,6 +1328,7 @@ async fn public_executor_should_advance_executor_funded_public_continuations() {
         continuation_visibility: ContinuationVisibility::Public,
         continuation_bounty: Some(42),
         continuation_ttl_epochs: Some(10),
+        continuation_subtype: ContinuationSubtype::Standard,
     });
 
     let channel = new_gstring_par("public-channel".to_string(), Vec::new(), false);
@@ -1338,6 +1392,7 @@ async fn phase6_private_producer_continuations_should_stay_private_or_expire() {
         continuation_visibility: ContinuationVisibility::Private,
         continuation_bounty: None,
         continuation_ttl_epochs: Some(1),
+        continuation_subtype: ContinuationSubtype::Standard,
     });
 
     let channel = new_gstring_par("private-channel".to_string(), Vec::new(), false);
@@ -1412,6 +1467,147 @@ async fn phase6_private_producer_continuations_should_stay_private_or_expire() {
         resume_after_expiry,
         Err(InterpreterError::IllegalArgumentError(msg)) if msg.contains("not active")
     ));
+}
+
+#[tokio::test]
+async fn bridge_subtype_metadata_should_be_available_to_scheduler_and_rescue_hooks() {
+    let (_, reducer) =
+        create_test_space::<RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>()
+            .await;
+    reducer.set_split_post_match_config(SplitPostMatchConfig {
+        enabled: true,
+        initial_step_gas_limit: i64::MAX,
+        continuation_funding_policy: FundingPolicy::ExecutorPays,
+        continuation_visibility: ContinuationVisibility::Public,
+        continuation_bounty: Some(11),
+        continuation_ttl_epochs: Some(20),
+        continuation_subtype: ContinuationSubtype::Bridge(BridgeContinuationMetadata {
+            lane_id: "lane-42".to_string(),
+            source_domain: "eth-mainnet".to_string(),
+            target_domain: "f1r3node".to_string(),
+            message_nonce: 42,
+            finality_phase: BridgeFinalityPhase::Pending,
+            deadline_epoch: Some(9),
+            reward_policy: BridgeRewardPolicy::Fixed(77),
+            rescue_epoch: Some(12),
+        }),
+    });
+
+    create_split_continuation_with_persistent_send(
+        &reducer,
+        "bridge-meta-channel",
+        "bridge-meta-result",
+        7,
+        10,
+    )
+    .await;
+
+    let by_deadline = reducer
+        .list_bridge_continuation_queue_by_deadline(0)
+        .expect("bridge deadline queue should be available");
+    assert_eq!(by_deadline.len(), 1);
+    assert_eq!(by_deadline[0].bridge_metadata.lane_id, "lane-42");
+    assert_eq!(by_deadline[0].bridge_metadata.message_nonce, 42);
+    assert_eq!(by_deadline[0].bridge_metadata.reward_policy, BridgeRewardPolicy::Fixed(77));
+
+    let by_reward = reducer
+        .list_bridge_continuation_queue_by_reward(0)
+        .expect("bridge reward queue should be available");
+    assert_eq!(by_reward.len(), 1);
+    assert_eq!(by_reward[0].handle, by_deadline[0].handle);
+
+    let rescue_before = reducer
+        .list_bridge_rescue_candidates(11)
+        .expect("bridge rescue candidates should be queryable");
+    assert!(rescue_before.is_empty());
+    let rescue_due = reducer
+        .list_bridge_rescue_candidates(12)
+        .expect("bridge rescue candidates should be queryable");
+    assert_eq!(rescue_due.len(), 1);
+    assert_eq!(rescue_due[0].handle, by_deadline[0].handle);
+}
+
+#[tokio::test]
+async fn bridge_queue_should_support_deadline_and_reward_priority_and_shared_execution_path() {
+    let (_, reducer) =
+        create_test_space::<RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>()
+            .await;
+
+    let mk_bridge_config = |message_nonce: u64, deadline_epoch: u64, reward: u64| SplitPostMatchConfig {
+        enabled: true,
+        initial_step_gas_limit: i64::MAX,
+        continuation_funding_policy: FundingPolicy::ExecutorPays,
+        continuation_visibility: ContinuationVisibility::Public,
+        continuation_bounty: Some(reward),
+        continuation_ttl_epochs: Some(50),
+        continuation_subtype: ContinuationSubtype::Bridge(BridgeContinuationMetadata {
+            lane_id: "lane-priority".to_string(),
+            source_domain: "eth-mainnet".to_string(),
+            target_domain: "f1r3node".to_string(),
+            message_nonce,
+            finality_phase: BridgeFinalityPhase::Pending,
+            deadline_epoch: Some(deadline_epoch),
+            reward_policy: BridgeRewardPolicy::Fixed(reward),
+            rescue_epoch: Some(40),
+        }),
+    };
+
+    reducer.set_split_post_match_config(mk_bridge_config(1, 20, 3));
+    create_split_continuation_with_persistent_send(
+        &reducer,
+        "bridge-priority-channel-a",
+        "bridge-priority-result-a",
+        1,
+        20,
+    )
+    .await;
+
+    reducer.set_split_post_match_config(mk_bridge_config(2, 10, 1));
+    create_split_continuation_with_persistent_send(
+        &reducer,
+        "bridge-priority-channel-b",
+        "bridge-priority-result-b",
+        2,
+        30,
+    )
+    .await;
+
+    reducer.set_split_post_match_config(mk_bridge_config(3, 15, 9));
+    create_split_continuation_with_persistent_send(
+        &reducer,
+        "bridge-priority-channel-c",
+        "bridge-priority-result-c",
+        3,
+        40,
+    )
+    .await;
+
+    let by_deadline = reducer
+        .list_bridge_continuation_queue_by_deadline(0)
+        .expect("bridge deadline queue should be available");
+    assert_eq!(by_deadline.len(), 3);
+    assert_eq!(by_deadline[0].bridge_metadata.message_nonce, 2);
+    assert_eq!(by_deadline[1].bridge_metadata.message_nonce, 3);
+    assert_eq!(by_deadline[2].bridge_metadata.message_nonce, 1);
+
+    let by_reward = reducer
+        .list_bridge_continuation_queue_by_reward(0)
+        .expect("bridge reward queue should be available");
+    assert_eq!(by_reward.len(), 3);
+    assert_eq!(by_reward[0].bridge_metadata.message_nonce, 3);
+    assert_eq!(by_reward[1].bridge_metadata.message_nonce, 1);
+    assert_eq!(by_reward[2].bridge_metadata.message_nonce, 2);
+
+    let exec = reducer
+        .execute_bridge_continuation(
+            &by_deadline[0].handle,
+            by_deadline[0].version,
+            i64::MAX,
+            0,
+        )
+        .await
+        .expect("bridge continuation should execute through shared runtime");
+    assert_eq!(exec.status, ContinuationExecutionStatus::Completed);
 }
 
 #[tokio::test]

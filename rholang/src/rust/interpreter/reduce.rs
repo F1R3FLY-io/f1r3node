@@ -65,8 +65,9 @@ use super::substitute::Substitute;
 use super::unwrap_option_safe;
 use super::util::GeneratedMessage;
 use super::storage::continuation_store::{
-    ContinuationHandle, ContinuationStatus, ContinuationStoreError, ContinuationVisibility,
-    CreateContinuation, FundingPolicy, InMemoryContinuationStore, PersistedContinuation,
+    BridgeContinuationMetadata, ContinuationHandle, ContinuationStatus,
+    ContinuationStoreError, ContinuationSubtype, ContinuationVisibility, CreateContinuation,
+    FundingPolicy, InMemoryContinuationStore, PersistedContinuation,
 };
 use models::rust::pathmap_crate_type_mapper::PathMapCrateTypeMapper;
 
@@ -152,7 +153,7 @@ pub struct DebruijnInterpreter {
     pub(crate) continuation_nonce: Arc<AtomicU64>,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SplitPostMatchConfig {
     pub enabled: bool,
     pub initial_step_gas_limit: i64,
@@ -160,6 +161,7 @@ pub struct SplitPostMatchConfig {
     pub continuation_visibility: ContinuationVisibility,
     pub continuation_bounty: Option<u64>,
     pub continuation_ttl_epochs: Option<u64>,
+    pub continuation_subtype: ContinuationSubtype,
 }
 
 impl Default for SplitPostMatchConfig {
@@ -171,6 +173,7 @@ impl Default for SplitPostMatchConfig {
             continuation_visibility: ContinuationVisibility::Private,
             continuation_bounty: None,
             continuation_ttl_epochs: None,
+            continuation_subtype: ContinuationSubtype::Standard,
         }
     }
 }
@@ -198,6 +201,15 @@ pub struct PublicContinuationInfo {
     pub gas_limit_per_step: i64,
     pub bounty: Option<u64>,
     pub expires_at_epoch: Option<u64>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BridgeContinuationInfo {
+    pub handle: ContinuationHandle,
+    pub version: u64,
+    pub gas_limit_per_step: i64,
+    pub bounty: Option<u64>,
+    pub bridge_metadata: BridgeContinuationMetadata,
 }
 
 type MatchedData = (Par, ListParWithRandom, ListParWithRandom, bool);
@@ -1386,7 +1398,7 @@ impl DebruijnInterpreter {
         &self,
         state: PostMatchExecState,
     ) -> Result<DispatchType, InterpreterError> {
-        let split_config = *self.split_post_match_config.read().unwrap();
+        let split_config = self.split_post_match_config.read().unwrap().clone();
         if !split_config.enabled {
             return self.execute_post_match_to_completion(state, i64::MAX).await;
         }
@@ -1461,6 +1473,7 @@ impl DebruijnInterpreter {
             visibility: split_config.continuation_visibility,
             bounty: split_config.continuation_bounty,
             ttl_epochs: split_config.continuation_ttl_epochs,
+            subtype: split_config.continuation_subtype,
         };
 
         let mut store = self.continuation_store.write().unwrap();
@@ -8090,6 +8103,63 @@ impl DebruijnInterpreter {
         Ok(queue)
     }
 
+    pub fn list_bridge_continuation_queue_by_deadline(
+        &self,
+        epoch: u64,
+    ) -> Result<Vec<BridgeContinuationInfo>, InterpreterError> {
+        let mut store = self.continuation_store.write().unwrap();
+        store.set_epoch(epoch).map_err(map_continuation_store_error)?;
+        let expired = store.expire_due().map_err(map_continuation_store_error)?;
+        if !expired.is_empty() {
+            metrics::counter!("rholang.continuation.expired").increment(expired.len() as u64);
+        }
+
+        metrics::counter!("rholang.bridge.queue.deadline_requests").increment(1);
+        Ok(store
+            .bridge_active_continuations_sorted_by_deadline()
+            .into_iter()
+            .filter_map(persisted_to_bridge_info)
+            .collect())
+    }
+
+    pub fn list_bridge_continuation_queue_by_reward(
+        &self,
+        epoch: u64,
+    ) -> Result<Vec<BridgeContinuationInfo>, InterpreterError> {
+        let mut store = self.continuation_store.write().unwrap();
+        store.set_epoch(epoch).map_err(map_continuation_store_error)?;
+        let expired = store.expire_due().map_err(map_continuation_store_error)?;
+        if !expired.is_empty() {
+            metrics::counter!("rholang.continuation.expired").increment(expired.len() as u64);
+        }
+
+        metrics::counter!("rholang.bridge.queue.reward_requests").increment(1);
+        Ok(store
+            .bridge_active_continuations_sorted_by_reward()
+            .into_iter()
+            .filter_map(persisted_to_bridge_info)
+            .collect())
+    }
+
+    pub fn list_bridge_rescue_candidates(
+        &self,
+        epoch: u64,
+    ) -> Result<Vec<BridgeContinuationInfo>, InterpreterError> {
+        let mut store = self.continuation_store.write().unwrap();
+        store.set_epoch(epoch).map_err(map_continuation_store_error)?;
+        let expired = store.expire_due().map_err(map_continuation_store_error)?;
+        if !expired.is_empty() {
+            metrics::counter!("rholang.continuation.expired").increment(expired.len() as u64);
+        }
+
+        metrics::counter!("rholang.bridge.queue.rescue_requests").increment(1);
+        Ok(store
+            .bridge_rescue_candidates(epoch)
+            .into_iter()
+            .filter_map(persisted_to_bridge_info)
+            .collect())
+    }
+
     pub fn load_continuation(
         &self,
         handle: &ContinuationHandle,
@@ -8133,6 +8203,34 @@ impl DebruijnInterpreter {
             }
         }
 
+        self.execute_continuation(handle, expected_version, gas_limit)
+            .await
+    }
+
+    pub async fn execute_bridge_continuation(
+        &self,
+        handle: &ContinuationHandle,
+        expected_version: u64,
+        gas_limit: i64,
+        epoch: u64,
+    ) -> Result<ContinuationExecutionResult, InterpreterError> {
+        {
+            let mut store = self.continuation_store.write().unwrap();
+            store.set_epoch(epoch).map_err(map_continuation_store_error)?;
+            let expired = store.expire_due().map_err(map_continuation_store_error)?;
+            if !expired.is_empty() {
+                metrics::counter!("rholang.continuation.expired").increment(expired.len() as u64);
+            }
+            let persisted = store.load(handle).map_err(map_continuation_store_error)?;
+            if persisted.subtype.as_bridge().is_none() {
+                return Err(InterpreterError::IllegalArgumentError(format!(
+                    "continuation {}:{} is not a bridge continuation",
+                    hex::encode(&persisted.handle.origin),
+                    persisted.handle.nonce
+                )));
+            }
+        }
+        metrics::counter!("rholang.bridge.execute.requests").increment(1);
         self.execute_continuation(handle, expected_version, gas_limit)
             .await
     }
@@ -8247,6 +8345,21 @@ impl DebruijnInterpreter {
                 })
             }
         }
+    }
+}
+
+fn persisted_to_bridge_info(
+    continuation: PersistedContinuation,
+) -> Option<BridgeContinuationInfo> {
+    match continuation.subtype {
+        ContinuationSubtype::Standard => None,
+        ContinuationSubtype::Bridge(bridge_metadata) => Some(BridgeContinuationInfo {
+            handle: continuation.handle,
+            version: continuation.version,
+            gas_limit_per_step: continuation.gas_limit_per_step,
+            bounty: continuation.bounty,
+            bridge_metadata,
+        }),
     }
 }
 

@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use crypto::rust::hash::blake2b256::Blake2b256;
 
-const CONTINUATION_ENCODING_VERSION: u8 = 2;
+const CONTINUATION_ENCODING_VERSION: u8 = 3;
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct ContinuationHandle {
@@ -67,6 +67,79 @@ impl ContinuationVisibility {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BridgeFinalityPhase {
+    Pending,
+    Finalized,
+    Retrying,
+    RescueQueued,
+}
+
+impl BridgeFinalityPhase {
+    fn to_u8(self) -> u8 {
+        match self {
+            BridgeFinalityPhase::Pending => 0,
+            BridgeFinalityPhase::Finalized => 1,
+            BridgeFinalityPhase::Retrying => 2,
+            BridgeFinalityPhase::RescueQueued => 3,
+        }
+    }
+
+    fn from_u8(value: u8) -> Result<Self, ContinuationStoreError> {
+        match value {
+            0 => Ok(BridgeFinalityPhase::Pending),
+            1 => Ok(BridgeFinalityPhase::Finalized),
+            2 => Ok(BridgeFinalityPhase::Retrying),
+            3 => Ok(BridgeFinalityPhase::RescueQueued),
+            _ => Err(ContinuationStoreError::InvalidFormat(format!(
+                "unknown bridge finality phase: {value}"
+            ))),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum BridgeRewardPolicy {
+    None,
+    Fixed(u64),
+}
+
+impl BridgeRewardPolicy {
+    fn reward_amount(&self) -> u64 {
+        match self {
+            BridgeRewardPolicy::None => 0,
+            BridgeRewardPolicy::Fixed(amount) => *amount,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BridgeContinuationMetadata {
+    pub lane_id: String,
+    pub source_domain: String,
+    pub target_domain: String,
+    pub message_nonce: u64,
+    pub finality_phase: BridgeFinalityPhase,
+    pub deadline_epoch: Option<u64>,
+    pub reward_policy: BridgeRewardPolicy,
+    pub rescue_epoch: Option<u64>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ContinuationSubtype {
+    Standard,
+    Bridge(BridgeContinuationMetadata),
+}
+
+impl ContinuationSubtype {
+    pub fn as_bridge(&self) -> Option<&BridgeContinuationMetadata> {
+        match self {
+            ContinuationSubtype::Standard => None,
+            ContinuationSubtype::Bridge(metadata) => Some(metadata),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ContinuationStatus {
     Active,
     Completed,
@@ -107,6 +180,7 @@ pub struct PersistedContinuation {
     pub visibility: ContinuationVisibility,
     pub bounty: Option<u64>,
     pub expires_at_epoch: Option<u64>,
+    pub subtype: ContinuationSubtype,
     pub status: ContinuationStatus,
     pub version: u64,
     pub state_root: Vec<u8>,
@@ -126,6 +200,7 @@ impl PersistedContinuation {
         put_u8(&mut out, self.visibility.to_u8());
         put_opt_u64(&mut out, self.bounty);
         put_opt_u64(&mut out, self.expires_at_epoch);
+        serialize_continuation_subtype(&self.subtype, &mut out);
         put_u8(&mut out, self.status.to_u8());
         put_u64(&mut out, self.version);
         put_bytes(&mut out, &self.state_root);
@@ -151,6 +226,7 @@ impl PersistedContinuation {
         let visibility = ContinuationVisibility::from_u8(read_u8(bytes, &mut idx)?)?;
         let bounty = read_opt_u64(bytes, &mut idx)?;
         let expires_at_epoch = read_opt_u64(bytes, &mut idx)?;
+        let subtype = deserialize_continuation_subtype(bytes, &mut idx)?;
         let status = ContinuationStatus::from_u8(read_u8(bytes, &mut idx)?)?;
         let version = read_u64(bytes, &mut idx)?;
         let state_root = read_vec(bytes, &mut idx)?;
@@ -171,6 +247,7 @@ impl PersistedContinuation {
             visibility,
             bounty,
             expires_at_epoch,
+            subtype,
             status,
             version,
             state_root,
@@ -207,6 +284,7 @@ impl PersistedContinuation {
         put_u8(&mut root_payload, self.visibility.to_u8());
         put_opt_u64(&mut root_payload, self.bounty);
         put_opt_u64(&mut root_payload, self.expires_at_epoch);
+        serialize_continuation_subtype(&self.subtype, &mut root_payload);
         put_u8(&mut root_payload, self.status.to_u8());
         put_u64(&mut root_payload, self.version);
         Blake2b256::hash(root_payload).to_vec()
@@ -228,6 +306,7 @@ pub struct CreateContinuation {
     pub visibility: ContinuationVisibility,
     pub bounty: Option<u64>,
     pub ttl_epochs: Option<u64>,
+    pub subtype: ContinuationSubtype,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -277,6 +356,7 @@ impl InMemoryContinuationStore {
             visibility: create.visibility,
             bounty: create.bounty,
             expires_at_epoch: create.ttl_epochs.map(|ttl| self.epoch.saturating_add(ttl)),
+            subtype: create.subtype,
             status: ContinuationStatus::Active,
             version: 1,
             state_root: Vec::new(),
@@ -352,6 +432,84 @@ impl InMemoryContinuationStore {
                     && continuation.visibility == ContinuationVisibility::Public
             })
             .cloned()
+            .collect()
+    }
+
+    pub fn bridge_active_continuations_sorted_by_deadline(&self) -> Vec<PersistedContinuation> {
+        let mut items: Vec<_> = self
+            .entries
+            .values()
+            .filter_map(|continuation| {
+                if continuation.status != ContinuationStatus::Active {
+                    return None;
+                }
+                continuation
+                    .subtype
+                    .as_bridge()
+                    .map(|_| continuation.clone())
+            })
+            .collect();
+
+        items.sort_by(|a, b| {
+            let a_bridge = a.subtype.as_bridge().expect("bridge subtype must exist");
+            let b_bridge = b.subtype.as_bridge().expect("bridge subtype must exist");
+            a_bridge
+                .deadline_epoch
+                .unwrap_or(u64::MAX)
+                .cmp(&b_bridge.deadline_epoch.unwrap_or(u64::MAX))
+                .then(a_bridge.message_nonce.cmp(&b_bridge.message_nonce))
+                .then(a.handle.cmp(&b.handle))
+        });
+        items
+    }
+
+    pub fn bridge_active_continuations_sorted_by_reward(&self) -> Vec<PersistedContinuation> {
+        let mut items: Vec<_> = self
+            .entries
+            .values()
+            .filter_map(|continuation| {
+                if continuation.status != ContinuationStatus::Active {
+                    return None;
+                }
+                continuation
+                    .subtype
+                    .as_bridge()
+                    .map(|_| continuation.clone())
+            })
+            .collect();
+
+        items.sort_by(|a, b| {
+            let a_bridge = a.subtype.as_bridge().expect("bridge subtype must exist");
+            let b_bridge = b.subtype.as_bridge().expect("bridge subtype must exist");
+            b_bridge
+                .reward_policy
+                .reward_amount()
+                .cmp(&a_bridge.reward_policy.reward_amount())
+                .then(
+                    a_bridge
+                        .deadline_epoch
+                        .unwrap_or(u64::MAX)
+                        .cmp(&b_bridge.deadline_epoch.unwrap_or(u64::MAX)),
+                )
+                .then(a.handle.cmp(&b.handle))
+        });
+        items
+    }
+
+    pub fn bridge_rescue_candidates(&self, epoch: u64) -> Vec<PersistedContinuation> {
+        self.entries
+            .values()
+            .filter_map(|continuation| {
+                if continuation.status != ContinuationStatus::Active {
+                    return None;
+                }
+                let bridge = continuation.subtype.as_bridge()?;
+                if bridge.rescue_epoch.is_some_and(|rescue_epoch| rescue_epoch <= epoch) {
+                    Some(continuation.clone())
+                } else {
+                    None
+                }
+            })
             .collect()
     }
 
@@ -497,6 +655,91 @@ impl InMemoryContinuationStore {
     }
 }
 
+fn serialize_continuation_subtype(subtype: &ContinuationSubtype, out: &mut Vec<u8>) {
+    match subtype {
+        ContinuationSubtype::Standard => {
+            put_u8(out, 0);
+        }
+        ContinuationSubtype::Bridge(metadata) => {
+            put_u8(out, 1);
+            put_bytes(out, metadata.lane_id.as_bytes());
+            put_bytes(out, metadata.source_domain.as_bytes());
+            put_bytes(out, metadata.target_domain.as_bytes());
+            put_u64(out, metadata.message_nonce);
+            put_u8(out, metadata.finality_phase.to_u8());
+            put_opt_u64(out, metadata.deadline_epoch);
+            match metadata.reward_policy {
+                BridgeRewardPolicy::None => {
+                    put_u8(out, 0);
+                }
+                BridgeRewardPolicy::Fixed(amount) => {
+                    put_u8(out, 1);
+                    put_u64(out, amount);
+                }
+            }
+            put_opt_u64(out, metadata.rescue_epoch);
+        }
+    }
+}
+
+fn deserialize_continuation_subtype(
+    input: &[u8],
+    idx: &mut usize,
+) -> Result<ContinuationSubtype, ContinuationStoreError> {
+    let subtype_tag = read_u8(input, idx)?;
+    match subtype_tag {
+        0 => Ok(ContinuationSubtype::Standard),
+        1 => {
+            let lane_id = String::from_utf8(read_vec(input, idx)?).map_err(|e| {
+                ContinuationStoreError::InvalidFormat(format!(
+                    "invalid UTF-8 in bridge lane_id: {}",
+                    e
+                ))
+            })?;
+            let source_domain = String::from_utf8(read_vec(input, idx)?).map_err(|e| {
+                ContinuationStoreError::InvalidFormat(format!(
+                    "invalid UTF-8 in bridge source_domain: {}",
+                    e
+                ))
+            })?;
+            let target_domain = String::from_utf8(read_vec(input, idx)?).map_err(|e| {
+                ContinuationStoreError::InvalidFormat(format!(
+                    "invalid UTF-8 in bridge target_domain: {}",
+                    e
+                ))
+            })?;
+            let message_nonce = read_u64(input, idx)?;
+            let finality_phase = BridgeFinalityPhase::from_u8(read_u8(input, idx)?)?;
+            let deadline_epoch = read_opt_u64(input, idx)?;
+            let reward_policy = match read_u8(input, idx)? {
+                0 => BridgeRewardPolicy::None,
+                1 => BridgeRewardPolicy::Fixed(read_u64(input, idx)?),
+                marker => {
+                    return Err(ContinuationStoreError::InvalidFormat(format!(
+                        "unknown bridge reward policy marker: {}",
+                        marker
+                    )))
+                }
+            };
+            let rescue_epoch = read_opt_u64(input, idx)?;
+            Ok(ContinuationSubtype::Bridge(BridgeContinuationMetadata {
+                lane_id,
+                source_domain,
+                target_domain,
+                message_nonce,
+                finality_phase,
+                deadline_epoch,
+                reward_policy,
+                rescue_epoch,
+            }))
+        }
+        _ => Err(ContinuationStoreError::InvalidFormat(format!(
+            "unknown continuation subtype tag: {}",
+            subtype_tag
+        ))),
+    }
+}
+
 fn put_u8(out: &mut Vec<u8>, value: u8) {
     out.push(value);
 }
@@ -612,6 +855,7 @@ mod tests {
             visibility: ContinuationVisibility::Private,
             bounty: None,
             ttl_epochs: None,
+            subtype: ContinuationSubtype::Standard,
         }
     }
 
@@ -751,6 +995,7 @@ mod tests {
                 visibility: ContinuationVisibility::Public,
                 bounty: Some(10),
                 ttl_epochs: None,
+                subtype: ContinuationSubtype::Standard,
             })
             .expect("public continuation should be created");
         store
@@ -777,6 +1022,7 @@ mod tests {
                 visibility: ContinuationVisibility::Private,
                 bounty: None,
                 ttl_epochs: Some(5),
+                subtype: ContinuationSubtype::Standard,
             })
             .expect("continuation creation should succeed");
         assert_eq!(created.expires_at_epoch, Some(15));
@@ -803,5 +1049,82 @@ mod tests {
                 attempted: 6
             })
         ));
+    }
+
+    #[test]
+    fn bridge_scheduler_ordering_should_support_deadline_and_reward_priorities() {
+        let mut store = InMemoryContinuationStore::default();
+        let make_bridge = |nonce: u64, deadline_epoch: Option<u64>, reward: u64| CreateContinuation {
+            handle: ContinuationHandle::new(b"bridge-origin".to_vec(), nonce),
+            origin_reference: b"origin-ref".to_vec(),
+            serialized_state: vec![nonce as u8],
+            gas_limit_per_step: 100,
+            funding_policy: FundingPolicy::ExecutorPays,
+            visibility: ContinuationVisibility::Public,
+            bounty: Some(reward),
+            ttl_epochs: None,
+            subtype: ContinuationSubtype::Bridge(BridgeContinuationMetadata {
+                lane_id: "lane-a".to_string(),
+                source_domain: "eth".to_string(),
+                target_domain: "f1r3".to_string(),
+                message_nonce: nonce,
+                finality_phase: BridgeFinalityPhase::Pending,
+                deadline_epoch,
+                reward_policy: BridgeRewardPolicy::Fixed(reward),
+                rescue_epoch: None,
+            }),
+        };
+
+        let c1 = store
+            .create(make_bridge(1, Some(10), 5))
+            .expect("bridge continuation should be created");
+        let c2 = store
+            .create(make_bridge(2, Some(5), 1))
+            .expect("bridge continuation should be created");
+        let c3 = store
+            .create(make_bridge(3, Some(8), 20))
+            .expect("bridge continuation should be created");
+
+        let by_deadline = store.bridge_active_continuations_sorted_by_deadline();
+        assert_eq!(by_deadline[0].handle, c2.handle);
+        assert_eq!(by_deadline[1].handle, c3.handle);
+        assert_eq!(by_deadline[2].handle, c1.handle);
+
+        let by_reward = store.bridge_active_continuations_sorted_by_reward();
+        assert_eq!(by_reward[0].handle, c3.handle);
+        assert_eq!(by_reward[1].handle, c1.handle);
+        assert_eq!(by_reward[2].handle, c2.handle);
+    }
+
+    #[test]
+    fn bridge_rescue_candidates_should_return_due_entries() {
+        let mut store = InMemoryContinuationStore::default();
+        store
+            .create(CreateContinuation {
+                handle: ContinuationHandle::new(b"bridge-origin".to_vec(), 11),
+                origin_reference: b"origin-ref".to_vec(),
+                serialized_state: vec![1],
+                gas_limit_per_step: 100,
+                funding_policy: FundingPolicy::ExecutorPays,
+                visibility: ContinuationVisibility::Public,
+                bounty: Some(3),
+                ttl_epochs: None,
+                subtype: ContinuationSubtype::Bridge(BridgeContinuationMetadata {
+                    lane_id: "lane-b".to_string(),
+                    source_domain: "eth".to_string(),
+                    target_domain: "f1r3".to_string(),
+                    message_nonce: 11,
+                    finality_phase: BridgeFinalityPhase::Retrying,
+                    deadline_epoch: Some(20),
+                    reward_policy: BridgeRewardPolicy::Fixed(3),
+                    rescue_epoch: Some(7),
+                }),
+            })
+            .expect("bridge continuation should be created");
+
+        assert!(store.bridge_rescue_candidates(6).is_empty());
+        let due = store.bridge_rescue_candidates(7);
+        assert_eq!(due.len(), 1);
+        assert_eq!(due[0].handle.nonce, 11);
     }
 }
