@@ -655,6 +655,7 @@ fn to_signed_deploy(request: &DeployRequest) -> Result<Signed<DeployData>> {
     // Look up signature algorithm by name
     let sig_alg: Box<dyn SignaturesAlg> = match request.sig_algorithm.as_str() {
         "secp256k1" => Box::new(crypto::rust::signatures::secp256k1::Secp256k1),
+        "secp256k1-eth" => Box::new(crypto::rust::signatures::secp256k1_eth::Secp256k1Eth),
         "ed25519" => Box::new(crypto::rust::signatures::ed25519::Ed25519),
         #[cfg(feature = "schnorr_secp256k1_experimental")]
         "schnorr-secp256k1" => Box::new(SchnorrSecp256k1),
