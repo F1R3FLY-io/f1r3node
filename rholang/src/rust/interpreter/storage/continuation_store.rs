@@ -46,6 +46,7 @@ pub enum ContinuationStatus {
     Active,
     Completed,
     Expired,
+    Failed,
 }
 
 impl ContinuationStatus {
@@ -54,6 +55,7 @@ impl ContinuationStatus {
             ContinuationStatus::Active => 0,
             ContinuationStatus::Completed => 1,
             ContinuationStatus::Expired => 2,
+            ContinuationStatus::Failed => 3,
         }
     }
 
@@ -62,6 +64,7 @@ impl ContinuationStatus {
             0 => Ok(ContinuationStatus::Active),
             1 => Ok(ContinuationStatus::Completed),
             2 => Ok(ContinuationStatus::Expired),
+            3 => Ok(ContinuationStatus::Failed),
             _ => Err(ContinuationStoreError::InvalidFormat(format!(
                 "unknown continuation status: {value}"
             ))),
@@ -188,6 +191,11 @@ pub struct CreateContinuation {
 pub enum ContinuationStoreError {
     AlreadyExists(ContinuationHandle),
     NotFound(ContinuationHandle),
+    VersionMismatch {
+        handle: ContinuationHandle,
+        expected: u64,
+        actual: u64,
+    },
     InvalidTransition {
         handle: ContinuationHandle,
         from: ContinuationStatus,
@@ -250,7 +258,21 @@ impl InMemoryContinuationStore {
         serialized_state: Vec<u8>,
         gas_limit_per_step: i64,
     ) -> Result<PersistedContinuation, ContinuationStoreError> {
-        self.update(handle, ContinuationStatus::Active, |c| {
+        let expected_version = self.current_version(handle)?;
+        self.update_with_version(handle, expected_version, ContinuationStatus::Active, |c| {
+            c.serialized_state = serialized_state.clone();
+            c.gas_limit_per_step = gas_limit_per_step;
+        })
+    }
+
+    pub fn update_state_with_version(
+        &mut self,
+        handle: &ContinuationHandle,
+        expected_version: u64,
+        serialized_state: Vec<u8>,
+        gas_limit_per_step: i64,
+    ) -> Result<PersistedContinuation, ContinuationStoreError> {
+        self.update_with_version(handle, expected_version, ContinuationStatus::Active, |c| {
             c.serialized_state = serialized_state.clone();
             c.gas_limit_per_step = gas_limit_per_step;
         })
@@ -260,14 +282,40 @@ impl InMemoryContinuationStore {
         &mut self,
         handle: &ContinuationHandle,
     ) -> Result<PersistedContinuation, ContinuationStoreError> {
-        self.update(handle, ContinuationStatus::Completed, |_| {})
+        let expected_version = self.current_version(handle)?;
+        self.update_with_version(handle, expected_version, ContinuationStatus::Completed, |_| {})
+    }
+
+    pub fn complete_with_version(
+        &mut self,
+        handle: &ContinuationHandle,
+        expected_version: u64,
+    ) -> Result<PersistedContinuation, ContinuationStoreError> {
+        self.update_with_version(handle, expected_version, ContinuationStatus::Completed, |_| {})
     }
 
     pub fn expire(
         &mut self,
         handle: &ContinuationHandle,
     ) -> Result<PersistedContinuation, ContinuationStoreError> {
-        self.update(handle, ContinuationStatus::Expired, |_| {})
+        let expected_version = self.current_version(handle)?;
+        self.update_with_version(handle, expected_version, ContinuationStatus::Expired, |_| {})
+    }
+
+    pub fn expire_with_version(
+        &mut self,
+        handle: &ContinuationHandle,
+        expected_version: u64,
+    ) -> Result<PersistedContinuation, ContinuationStoreError> {
+        self.update_with_version(handle, expected_version, ContinuationStatus::Expired, |_| {})
+    }
+
+    pub fn fail_with_version(
+        &mut self,
+        handle: &ContinuationHandle,
+        expected_version: u64,
+    ) -> Result<PersistedContinuation, ContinuationStoreError> {
+        self.update_with_version(handle, expected_version, ContinuationStatus::Failed, |_| {})
     }
 
     pub fn total_storage_bytes(&self) -> u64 {
@@ -278,9 +326,21 @@ impl InMemoryContinuationStore {
         self.entries.len()
     }
 
-    fn update<F>(
+    pub fn handles(&self) -> Vec<ContinuationHandle> {
+        self.entries.keys().cloned().collect()
+    }
+
+    fn current_version(&self, handle: &ContinuationHandle) -> Result<u64, ContinuationStoreError> {
+        self.entries
+            .get(handle)
+            .map(|continuation| continuation.version)
+            .ok_or_else(|| ContinuationStoreError::NotFound(handle.clone()))
+    }
+
+    fn update_with_version<F>(
         &mut self,
         handle: &ContinuationHandle,
+        expected_version: u64,
         next_status: ContinuationStatus,
         mut update_fn: F,
     ) -> Result<PersistedContinuation, ContinuationStoreError>
@@ -293,11 +353,20 @@ impl InMemoryContinuationStore {
             .cloned()
             .ok_or_else(|| ContinuationStoreError::NotFound(handle.clone()))?;
 
+        if existing.version != expected_version {
+            return Err(ContinuationStoreError::VersionMismatch {
+                handle: handle.clone(),
+                expected: expected_version,
+                actual: existing.version,
+            });
+        }
+
         let from_status = existing.status;
         let valid_transition = match (from_status, next_status) {
             (ContinuationStatus::Active, ContinuationStatus::Active)
             | (ContinuationStatus::Active, ContinuationStatus::Completed)
-            | (ContinuationStatus::Active, ContinuationStatus::Expired) => true,
+            | (ContinuationStatus::Active, ContinuationStatus::Expired)
+            | (ContinuationStatus::Active, ContinuationStatus::Failed) => true,
             _ => false,
         };
         if !valid_transition {
@@ -496,5 +565,46 @@ mod tests {
         *tampered.last_mut().expect("encoded bytes should not be empty") ^= 0x01;
         let decode_result = PersistedContinuation::from_bytes(&tampered);
         assert!(decode_result.is_err());
+    }
+
+    #[test]
+    fn update_with_version_should_reject_stale_version() {
+        let mut store = InMemoryContinuationStore::default();
+        let created = store
+            .create(sample_create(6, vec![1, 2, 3]))
+            .expect("create should succeed");
+
+        let stale_update =
+            store.update_state_with_version(&created.handle, 0, vec![7, 8, 9], 100);
+        assert!(matches!(
+            stale_update,
+            Err(ContinuationStoreError::VersionMismatch {
+                expected: 0,
+                actual: 1,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn failed_status_should_be_terminal() {
+        let mut store = InMemoryContinuationStore::default();
+        let created = store
+            .create(sample_create(7, vec![1]))
+            .expect("create should succeed");
+        let failed = store
+            .fail_with_version(&created.handle, created.version)
+            .expect("fail transition should succeed");
+        assert_eq!(failed.status, ContinuationStatus::Failed);
+
+        let retry = store.update_state(&created.handle, vec![2], 100);
+        assert!(matches!(
+            retry,
+            Err(ContinuationStoreError::InvalidTransition {
+                from: ContinuationStatus::Failed,
+                to: ContinuationStatus::Active,
+                ..
+            })
+        ));
     }
 }

@@ -65,7 +65,8 @@ use super::substitute::Substitute;
 use super::unwrap_option_safe;
 use super::util::GeneratedMessage;
 use super::storage::continuation_store::{
-    ContinuationHandle, CreateContinuation, FundingPolicy, InMemoryContinuationStore,
+    ContinuationHandle, ContinuationStatus, ContinuationStoreError, CreateContinuation,
+    FundingPolicy, InMemoryContinuationStore, PersistedContinuation,
 };
 use models::rust::pathmap_crate_type_mapper::PathMapCrateTypeMapper;
 
@@ -164,6 +165,22 @@ impl Default for SplitPostMatchConfig {
             initial_step_gas_limit: i64::MAX,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ContinuationExecutionStatus {
+    Suspended,
+    Completed,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContinuationExecutionResult {
+    pub handle: ContinuationHandle,
+    pub status: ContinuationExecutionStatus,
+    pub version: u64,
+    pub state_root: Vec<u8>,
+    pub consumed_gas: i64,
+    pub emitted_effects: bool,
 }
 
 type MatchedData = (Par, ListParWithRandom, ListParWithRandom, bool);
@@ -596,6 +613,9 @@ mod step_helpers_tests {
         for state in states.iter() {
             let encoded = serialize_post_match_state(state).unwrap();
             assert!(!encoded.is_empty());
+            let decoded = deserialize_post_match_state(&encoded).unwrap();
+            let reencoded = serialize_post_match_state(&decoded).unwrap();
+            assert_eq!(encoded, reencoded);
         }
     }
 }
@@ -8004,6 +8024,171 @@ impl DebruijnInterpreter {
     pub fn continuation_store_len(&self) -> usize {
         self.continuation_store.read().unwrap().len()
     }
+
+    pub fn list_continuation_handles(&self) -> Vec<ContinuationHandle> {
+        self.continuation_store.read().unwrap().handles()
+    }
+
+    pub fn load_continuation(
+        &self,
+        handle: &ContinuationHandle,
+    ) -> Result<PersistedContinuation, InterpreterError> {
+        self.continuation_store
+            .read()
+            .unwrap()
+            .load(handle)
+            .map_err(map_continuation_store_error)
+    }
+
+    pub async fn execute_continuation(
+        &self,
+        handle: &ContinuationHandle,
+        expected_version: u64,
+        gas_limit: i64,
+    ) -> Result<ContinuationExecutionResult, InterpreterError> {
+        let persisted = self.load_continuation(handle)?;
+        if persisted.status != ContinuationStatus::Active {
+            return Err(InterpreterError::IllegalArgumentError(format!(
+                "continuation {}:{} is not active (status {:?})",
+                hex::encode(&persisted.handle.origin),
+                persisted.handle.nonce,
+                persisted.status
+            )));
+        }
+        if persisted.version != expected_version {
+            return Err(map_continuation_store_error(
+                ContinuationStoreError::VersionMismatch {
+                    handle: persisted.handle.clone(),
+                    expected: expected_version,
+                    actual: persisted.version,
+                },
+            ));
+        }
+
+        let effective_gas_limit = gas_limit.min(persisted.gas_limit_per_step);
+        let state = deserialize_post_match_state(&persisted.serialized_state)?;
+        let step_result = match self.reduce_step(state, effective_gas_limit).await {
+            Ok(step_result) => step_result,
+            Err(error) => {
+                if let Err(mark_error) = self
+                    .continuation_store
+                    .write()
+                    .unwrap()
+                    .fail_with_version(handle, expected_version)
+                    .map_err(map_continuation_store_error)
+                {
+                    return Err(InterpreterError::BugFoundError(format!(
+                        "continuation step failed and could not mark continuation as failed: {mark_error}"
+                    )));
+                }
+
+                metrics::counter!("rholang.continuation.resume.failed").increment(1);
+                return Err(error);
+            }
+        };
+
+        let StepResult {
+            dispatch_result: _dispatch_result,
+            emitted_effects,
+            next_state,
+            consumed_gas,
+            terminal_status,
+        } = step_result;
+
+        match terminal_status {
+            StepTerminalStatus::Completed => {
+                let updated = self
+                    .continuation_store
+                    .write()
+                    .unwrap()
+                    .complete_with_version(handle, expected_version)
+                    .map_err(map_continuation_store_error)?;
+                metrics::counter!("rholang.continuation.resume.completed").increment(1);
+                Ok(ContinuationExecutionResult {
+                    handle: updated.handle,
+                    status: ContinuationExecutionStatus::Completed,
+                    version: updated.version,
+                    state_root: updated.state_root,
+                    consumed_gas,
+                    emitted_effects,
+                })
+            }
+            StepTerminalStatus::Suspended => {
+                let suspended_state = next_state.ok_or_else(|| {
+                    InterpreterError::BugFoundError(
+                        "continuation step suspended without next state".to_string(),
+                    )
+                })?;
+                let serialized_state = serialize_post_match_state(&suspended_state)?;
+                let updated = self
+                    .continuation_store
+                    .write()
+                    .unwrap()
+                    .update_state_with_version(
+                        handle,
+                        expected_version,
+                        serialized_state,
+                        persisted.gas_limit_per_step,
+                    )
+                    .map_err(map_continuation_store_error)?;
+                metrics::counter!("rholang.continuation.resume.suspended").increment(1);
+                Ok(ContinuationExecutionResult {
+                    handle: updated.handle,
+                    status: ContinuationExecutionStatus::Suspended,
+                    version: updated.version,
+                    state_root: updated.state_root,
+                    consumed_gas,
+                    emitted_effects,
+                })
+            }
+        }
+    }
+}
+
+fn map_continuation_store_error(error: ContinuationStoreError) -> InterpreterError {
+    match error {
+        ContinuationStoreError::AlreadyExists(handle) => InterpreterError::BugFoundError(format!(
+            "continuation already exists: {}:{}",
+            hex::encode(&handle.origin),
+            handle.nonce
+        )),
+        ContinuationStoreError::NotFound(handle) => InterpreterError::IllegalArgumentError(
+            format!(
+                "continuation not found: {}:{}",
+                hex::encode(&handle.origin),
+                handle.nonce
+            ),
+        ),
+        ContinuationStoreError::VersionMismatch {
+            handle,
+            expected,
+            actual,
+        } => InterpreterError::IllegalArgumentError(format!(
+            "stale continuation version for {}:{} (expected {}, actual {})",
+            hex::encode(&handle.origin),
+            handle.nonce,
+            expected,
+            actual
+        )),
+        ContinuationStoreError::InvalidTransition { handle, from, to } => {
+            InterpreterError::IllegalArgumentError(format!(
+                "invalid continuation transition for {}:{} from {:?} to {:?}",
+                hex::encode(&handle.origin),
+                handle.nonce,
+                from,
+                to
+            ))
+        }
+        ContinuationStoreError::UnsupportedEncodingVersion(version) => {
+            InterpreterError::DecodeError(format!(
+                "unsupported continuation encoding version: {}",
+                version
+            ))
+        }
+        ContinuationStoreError::InvalidFormat(message) => {
+            InterpreterError::DecodeError(format!("invalid continuation encoding: {}", message))
+        }
+    }
 }
 
 const POST_MATCH_STATE_ENCODING_VERSION: u8 = 1;
@@ -8091,6 +8276,200 @@ fn put_i64(out: &mut Vec<u8>, value: i64) {
 fn put_bytes(out: &mut Vec<u8>, bytes: &[u8]) {
     put_u32(out, bytes.len() as u32);
     out.extend_from_slice(bytes);
+}
+
+fn deserialize_post_match_state(input: &[u8]) -> Result<PostMatchExecState, InterpreterError> {
+    let mut idx = 0usize;
+    let encoding_version = read_u8(input, &mut idx)?;
+    if encoding_version != POST_MATCH_STATE_ENCODING_VERSION {
+        return Err(InterpreterError::DecodeError(format!(
+            "unsupported post-match state encoding version: {}",
+            encoding_version
+        )));
+    }
+
+    let control_tag = read_u8(input, &mut idx)?;
+    let dispatch = deserialize_dispatch_exec_state(input, &mut idx)?;
+    let control = match control_tag {
+        0 => PostMatchControlState::DispatchOnly,
+        1 => PostMatchControlState::DispatchAndReconsume(deserialize_receive_registration_state(
+            input, &mut idx,
+        )?),
+        2 => PostMatchControlState::DispatchAndReproduce(deserialize_produce_registration_state(
+            input, &mut idx,
+        )?),
+        3 => PostMatchControlState::DispatchAndRestorePeeks,
+        4 => PostMatchControlState::Reconsume(deserialize_receive_registration_state(
+            input, &mut idx,
+        )?),
+        5 => PostMatchControlState::Reproduce(deserialize_produce_registration_state(
+            input, &mut idx,
+        )?),
+        6 => PostMatchControlState::RestorePeeks,
+        _ => {
+            return Err(InterpreterError::DecodeError(format!(
+                "unknown post-match control tag: {}",
+                control_tag
+            )))
+        }
+    };
+
+    if idx != input.len() {
+        return Err(InterpreterError::DecodeError(
+            "trailing bytes in post-match state encoding".to_string(),
+        ));
+    }
+
+    Ok(PostMatchExecState { dispatch, control })
+}
+
+fn deserialize_receive_registration_state(
+    input: &[u8],
+    idx: &mut usize,
+) -> Result<ReceiveRegistrationState, InterpreterError> {
+    let bind_count = read_u32(input, idx)? as usize;
+    let mut binds = Vec::with_capacity(bind_count);
+    for _ in 0..bind_count {
+        let bind_pattern = decode_message::<BindPattern>(&read_bytes(input, idx)?, "BindPattern")?;
+        let source = decode_message::<Par>(&read_bytes(input, idx)?, "Par")?;
+        binds.push((bind_pattern, source));
+    }
+
+    let body = decode_message::<ParWithRandom>(&read_bytes(input, idx)?, "ParWithRandom")?;
+    let persistent = read_bool(input, idx)?;
+    let peek = read_bool(input, idx)?;
+
+    Ok(ReceiveRegistrationState {
+        binds,
+        body,
+        persistent,
+        peek,
+    })
+}
+
+fn deserialize_produce_registration_state(
+    input: &[u8],
+    idx: &mut usize,
+) -> Result<ProduceRegistrationState, InterpreterError> {
+    let chan = decode_message::<Par>(&read_bytes(input, idx)?, "Par")?;
+    let data = decode_message::<ListParWithRandom>(&read_bytes(input, idx)?, "ListParWithRandom")?;
+    let persistent = read_bool(input, idx)?;
+    Ok(ProduceRegistrationState {
+        chan,
+        data,
+        persistent,
+    })
+}
+
+fn deserialize_dispatch_exec_state(
+    input: &[u8],
+    idx: &mut usize,
+) -> Result<DispatchExecState, InterpreterError> {
+    let continuation = decode_message::<TaggedContinuation>(
+        &read_bytes(input, idx)?,
+        "TaggedContinuation",
+    )?;
+
+    let data_list_count = read_u32(input, idx)? as usize;
+    let mut data_list = Vec::with_capacity(data_list_count);
+    for _ in 0..data_list_count {
+        let chan = decode_message::<Par>(&read_bytes(input, idx)?, "Par")?;
+        let matched_data =
+            decode_message::<ListParWithRandom>(&read_bytes(input, idx)?, "ListParWithRandom")?;
+        let removed_data =
+            decode_message::<ListParWithRandom>(&read_bytes(input, idx)?, "ListParWithRandom")?;
+        let persistent = read_bool(input, idx)?;
+        data_list.push((chan, matched_data, removed_data, persistent));
+    }
+
+    let is_replay = read_bool(input, idx)?;
+    let previous_output_count = read_u32(input, idx)? as usize;
+    let mut previous_output = Vec::with_capacity(previous_output_count);
+    for _ in 0..previous_output_count {
+        previous_output.push(decode_message::<Par>(&read_bytes(input, idx)?, "Par")?);
+    }
+    let remaining_phlo = read_i64(input, idx)?;
+
+    Ok(DispatchExecState {
+        continuation,
+        data_list,
+        is_replay,
+        previous_output,
+        _remaining_phlo: remaining_phlo,
+    })
+}
+
+fn decode_message<T>(bytes: &[u8], type_name: &str) -> Result<T, InterpreterError>
+where
+    T: Message + Default,
+{
+    T::decode(bytes).map_err(|e| {
+        InterpreterError::DecodeError(format!("failed to decode {} from continuation state: {}", type_name, e))
+    })
+}
+
+fn read_bool(input: &[u8], idx: &mut usize) -> Result<bool, InterpreterError> {
+    match read_u8(input, idx)? {
+        0 => Ok(false),
+        1 => Ok(true),
+        value => Err(InterpreterError::DecodeError(format!(
+            "invalid bool encoding: {}",
+            value
+        ))),
+    }
+}
+
+fn read_u8(input: &[u8], idx: &mut usize) -> Result<u8, InterpreterError> {
+    if *idx + 1 > input.len() {
+        return Err(InterpreterError::DecodeError(
+            "unexpected end of bytes while decoding u8".to_string(),
+        ));
+    }
+    let value = input[*idx];
+    *idx += 1;
+    Ok(value)
+}
+
+fn read_u32(input: &[u8], idx: &mut usize) -> Result<u32, InterpreterError> {
+    if *idx + 4 > input.len() {
+        return Err(InterpreterError::DecodeError(
+            "unexpected end of bytes while decoding u32".to_string(),
+        ));
+    }
+    let mut bytes = [0u8; 4];
+    bytes.copy_from_slice(&input[*idx..*idx + 4]);
+    *idx += 4;
+    Ok(u32::from_le_bytes(bytes))
+}
+
+fn read_i64(input: &[u8], idx: &mut usize) -> Result<i64, InterpreterError> {
+    if *idx + 8 > input.len() {
+        return Err(InterpreterError::DecodeError(
+            "unexpected end of bytes while decoding i64".to_string(),
+        ));
+    }
+    let mut bytes = [0u8; 8];
+    bytes.copy_from_slice(&input[*idx..*idx + 8]);
+    *idx += 8;
+    Ok(i64::from_le_bytes(bytes))
+}
+
+fn read_bytes(input: &[u8], idx: &mut usize) -> Result<Vec<u8>, InterpreterError> {
+    let len = read_u32(input, idx)? as usize;
+    let end = idx.checked_add(len).ok_or_else(|| {
+        InterpreterError::DecodeError(
+            "byte length overflow while decoding continuation state".to_string(),
+        )
+    })?;
+    if end > input.len() {
+        return Err(InterpreterError::DecodeError(
+            "unexpected end of bytes while decoding length-delimited bytes".to_string(),
+        ));
+    }
+
+    let bytes = input[*idx..end].to_vec();
+    *idx = end;
+    Ok(bytes)
 }
 
 fn get_type(expr_instance: ExprInstance) -> String {
