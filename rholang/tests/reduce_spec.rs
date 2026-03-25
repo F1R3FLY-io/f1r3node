@@ -962,6 +962,80 @@ async fn eval_of_persistent_receive_should_remain_registered_after_each_match() 
 }
 
 #[tokio::test]
+async fn eval_of_persistent_receive_pipe_send_should_produce_same_state_in_any_order() {
+    let (space_a, reducer_a) =
+        create_test_space::<RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>()
+            .await;
+    let (space_b, reducer_b) =
+        create_test_space::<RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>()
+            .await;
+
+    let channel = new_gstring_par("channel".to_string(), Vec::new(), false);
+    let result_channel = new_gstring_par("result".to_string(), Vec::new(), false);
+
+    let receive = Par::default().with_receives(vec![Receive {
+        binds: vec![ReceiveBind {
+            patterns: vec![new_freevar_par(0, Vec::new())],
+            source: Some(channel.clone()),
+            remainder: None,
+            free_count: 1,
+        }],
+        body: Some(Par::default().with_sends(vec![Send {
+            chan: Some(result_channel.clone()),
+            data: vec![new_gstring_par("Success".to_string(), Vec::new(), false)],
+            persistent: false,
+            locally_free: Vec::new(),
+            connective_used: false,
+        }])),
+        persistent: true,
+        peek: false,
+        bind_count: 1,
+        locally_free: Vec::new(),
+        connective_used: false,
+    }]);
+
+    let send = Par::default().with_sends(vec![Send {
+        chan: Some(channel.clone()),
+        data: vec![new_gint_par(7, Vec::new(), false)],
+        persistent: false,
+        locally_free: Vec::new(),
+        connective_used: false,
+    }]);
+
+    let env: Env<Par> = Env::new();
+    let receive_rand = rand().split_byte(0);
+    let send_rand = rand().split_byte(1);
+
+    // Order A: receive then send.
+    assert!(
+        reducer_a
+            .eval(receive.clone(), &env, receive_rand.clone())
+            .await
+            .is_ok()
+    );
+    assert!(reducer_a.eval(send.clone(), &env, send_rand.clone()).await.is_ok());
+    let state_a = space_a.to_map();
+
+    // Order B: send then receive.
+    assert!(reducer_b.eval(send, &env, send_rand).await.is_ok());
+    assert!(reducer_b.eval(receive, &env, receive_rand).await.is_ok());
+    let state_b = space_b.to_map();
+
+    assert_eq!(state_a, state_b);
+
+    let channel_row = state_a
+        .get(&vec![channel.clone()])
+        .expect("persistent receive should stay in tuplespace");
+    let result_row = state_a
+        .get(&vec![result_channel.clone()])
+        .expect("match should emit result");
+
+    assert_eq!(channel_row.wks.len(), 1);
+    assert_eq!(channel_row.data.len(), 0);
+    assert_eq!(result_row.data.len(), 1);
+}
+
+#[tokio::test]
 async fn eval_of_persistent_send_should_remain_registered_after_each_match() {
     let (space, reducer) =
         create_test_space::<RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>()
