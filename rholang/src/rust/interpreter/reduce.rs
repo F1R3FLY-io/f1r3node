@@ -144,11 +144,6 @@ pub struct DebruijnInterpreter {
 
 type MatchedData = (Par, ListParWithRandom, ListParWithRandom, bool);
 type Application = Option<(TaggedContinuation, Vec<MatchedData>, bool)>;
-type DispatchResultFuture<'a> = Pin<
-    Box<
-        dyn futures::Future<Output = Result<DispatchType, InterpreterError>> + std::marker::Send + 'a,
-    >,
->;
 
 #[derive(Clone)]
 struct DispatchExecState {
@@ -181,6 +176,9 @@ enum PostMatchControlState {
     DispatchAndReconsume(ReceiveRegistrationState),
     DispatchAndReproduce(ProduceRegistrationState),
     DispatchAndRestorePeeks,
+    Reconsume(ReceiveRegistrationState),
+    Reproduce(ProduceRegistrationState),
+    RestorePeeks,
 }
 
 #[derive(Clone)]
@@ -219,18 +217,20 @@ fn dispatch_emits_effects(dispatch_result: &DispatchType) -> bool {
     !matches!(dispatch_result, DispatchType::Skip)
 }
 
-fn dispatch_from_step_result(step_result: StepResult) -> DispatchType {
-    let StepResult {
-        dispatch_result,
-        emitted_effects: _emitted_effects,
-        next_state: _next_state,
-        consumed_gas: _consumed_gas,
-        terminal_status,
-    } = step_result;
-
-    match terminal_status {
-        StepTerminalStatus::Completed => dispatch_result,
-        StepTerminalStatus::Suspended => DispatchType::Skip,
+#[cfg(test)]
+fn next_control_after_dispatch(control: PostMatchControlState) -> Option<PostMatchControlState> {
+    match control {
+        PostMatchControlState::DispatchOnly => None,
+        PostMatchControlState::DispatchAndReconsume(state) => {
+            Some(PostMatchControlState::Reconsume(state))
+        }
+        PostMatchControlState::DispatchAndReproduce(state) => {
+            Some(PostMatchControlState::Reproduce(state))
+        }
+        PostMatchControlState::DispatchAndRestorePeeks => Some(PostMatchControlState::RestorePeeks),
+        PostMatchControlState::Reconsume(_)
+        | PostMatchControlState::Reproduce(_)
+        | PostMatchControlState::RestorePeeks => None,
     }
 }
 
@@ -257,6 +257,41 @@ mod step_helpers_tests {
         assert!(!dispatch_emits_effects(&DispatchType::Skip));
         assert!(dispatch_emits_effects(&DispatchType::DeterministicCall));
         assert!(dispatch_emits_effects(&DispatchType::NonDeterministicCall(vec![])));
+    }
+
+    #[test]
+    fn next_control_after_dispatch_maps_expected_variants() {
+        assert!(next_control_after_dispatch(PostMatchControlState::DispatchOnly).is_none());
+
+        let receive_state = ReceiveRegistrationState {
+            binds: Vec::new(),
+            body: ParWithRandom::default(),
+            persistent: true,
+            peek: false,
+        };
+        assert!(matches!(
+            next_control_after_dispatch(PostMatchControlState::DispatchAndReconsume(
+                receive_state
+            )),
+            Some(PostMatchControlState::Reconsume(_))
+        ));
+
+        let produce_state = ProduceRegistrationState {
+            chan: Par::default(),
+            data: ListParWithRandom::default(),
+            persistent: true,
+        };
+        assert!(matches!(
+            next_control_after_dispatch(PostMatchControlState::DispatchAndReproduce(
+                produce_state
+            )),
+            Some(PostMatchControlState::Reproduce(_))
+        ));
+
+        assert!(matches!(
+            next_control_after_dispatch(PostMatchControlState::DispatchAndRestorePeeks),
+            Some(PostMatchControlState::RestorePeeks)
+        ));
     }
 }
 
@@ -747,8 +782,7 @@ impl DebruijnInterpreter {
             return Ok(DispatchType::Skip);
         };
 
-        let step_result = self.reduce_step(state, i64::MAX).await?;
-        Ok(dispatch_from_step_result(step_result))
+        self.execute_post_match_to_completion(state, i64::MAX).await
     }
 
     fn decode_previous_output(
@@ -850,119 +884,171 @@ impl DebruijnInterpreter {
             });
         }
 
-        let remaining_before = exec_state.dispatch._remaining_phlo;
-        let dispatch_result = self.execute_post_match_exec_state(exec_state).await?;
-        let consumed_gas = compute_consumed_gas(remaining_before, self.cost.get().value);
-
-        Ok(StepResult {
-            emitted_effects: dispatch_emits_effects(&dispatch_result),
-            dispatch_result,
-            next_state: None,
-            consumed_gas,
-            terminal_status: StepTerminalStatus::Completed,
-        })
-    }
-
-    async fn execute_post_match_exec_state(
-        &self,
-        state: PostMatchExecState,
-    ) -> Result<DispatchType, InterpreterError> {
-        let PostMatchExecState { dispatch, control } = state;
+        let PostMatchExecState { dispatch, control } = exec_state;
+        let remaining_before = dispatch._remaining_phlo;
 
         match control {
             PostMatchControlState::DispatchOnly => {
-                self.dispatch(
-                    dispatch.continuation,
-                    dispatch.data_list,
-                    dispatch.is_replay,
-                    dispatch.previous_output,
-                )
-                .await
+                let dispatch_result = self
+                    .dispatch(
+                        dispatch.continuation,
+                        dispatch.data_list,
+                        dispatch.is_replay,
+                        dispatch.previous_output,
+                    )
+                    .await?;
+                Ok(self.completed_step_result(dispatch_result, remaining_before))
             }
             PostMatchControlState::DispatchAndReconsume(receive_state) => {
-                let self_clone1 = self.clone();
-                let self_clone2 = self.clone();
-
-                let dispatch_fut = self_clone1.dispatch(
-                    dispatch.continuation,
-                    dispatch.data_list,
-                    dispatch.is_replay,
-                    dispatch.previous_output,
-                );
-                let consume_fut = self_clone2.consume(
-                    receive_state.binds,
-                    receive_state.body,
-                    receive_state.persistent,
-                    receive_state.peek,
-                );
-
-                let futures: Vec<DispatchResultFuture<'_>> = vec![
-                    Box::pin(dispatch_fut) as DispatchResultFuture<'_>,
-                    Box::pin(consume_fut) as DispatchResultFuture<'_>,
-                ];
-
-                let results: Vec<Result<DispatchType, InterpreterError>> =
-                    futures::future::join_all(futures).await;
-                let flattened_results: Vec<InterpreterError> = results
-                    .into_iter()
-                    .filter_map(|result| result.err())
-                    .collect();
-
-                self.aggregate_evaluator_errors(flattened_results)
+                let dispatch_state = dispatch.clone();
+                let dispatch_result = self
+                    .dispatch(
+                        dispatch.continuation,
+                        dispatch.data_list,
+                        dispatch.is_replay,
+                        dispatch.previous_output,
+                    )
+                    .await?;
+                Ok(self.suspended_step_result(
+                    dispatch_state,
+                    dispatch_result,
+                    PostMatchControlState::Reconsume(receive_state),
+                    remaining_before,
+                ))
             }
             PostMatchControlState::DispatchAndReproduce(produce_state) => {
-                let self_clone1 = self.clone();
-                let self_clone2 = self.clone();
-
-                let dispatch_fut = self_clone1.dispatch(
-                    dispatch.continuation,
-                    dispatch.data_list,
-                    dispatch.is_replay,
-                    dispatch.previous_output,
-                );
-                let produce_fut =
-                    self_clone2.produce(produce_state.chan, produce_state.data, produce_state.persistent);
-
-                let futures: Vec<DispatchResultFuture<'_>> = vec![
-                    Box::pin(dispatch_fut) as DispatchResultFuture<'_>,
-                    Box::pin(produce_fut) as DispatchResultFuture<'_>,
-                ];
-
-                let results: Vec<Result<DispatchType, InterpreterError>> =
-                    futures::future::join_all(futures).await;
-                let flattened_results: Vec<InterpreterError> = results
-                    .into_iter()
-                    .filter_map(|result| result.err())
-                    .collect();
-
-                self.aggregate_evaluator_errors(flattened_results)
+                let dispatch_state = dispatch.clone();
+                let dispatch_result = self
+                    .dispatch(
+                        dispatch.continuation,
+                        dispatch.data_list,
+                        dispatch.is_replay,
+                        dispatch.previous_output,
+                    )
+                    .await?;
+                Ok(self.suspended_step_result(
+                    dispatch_state,
+                    dispatch_result,
+                    PostMatchControlState::Reproduce(produce_state),
+                    remaining_before,
+                ))
             }
             PostMatchControlState::DispatchAndRestorePeeks => {
-                let self_clone = self.clone();
                 let dispatch_state = dispatch.clone();
-
-                let mut futures: Vec<DispatchResultFuture<'_>> = vec![Box::pin(async move {
-                    self_clone
-                        .dispatch(
-                            dispatch_state.continuation,
-                            dispatch_state.data_list,
-                            dispatch_state.is_replay,
-                            dispatch_state.previous_output,
-                        )
-                        .await
-                }) as DispatchResultFuture<'_>];
-                futures.extend(self.produce_peeks(dispatch.data_list).await);
-
-                let results: Vec<Result<DispatchType, InterpreterError>> =
-                    futures::future::join_all(futures).await;
-                let flattened_results: Vec<InterpreterError> = results
-                    .into_iter()
-                    .filter_map(|result| result.err())
-                    .collect();
-
-                self.aggregate_evaluator_errors(flattened_results)
+                let dispatch_result = self
+                    .dispatch(
+                        dispatch.continuation,
+                        dispatch.data_list,
+                        dispatch.is_replay,
+                        dispatch.previous_output,
+                    )
+                    .await?;
+                Ok(self.suspended_step_result(
+                    dispatch_state,
+                    dispatch_result,
+                    PostMatchControlState::RestorePeeks,
+                    remaining_before,
+                ))
+            }
+            PostMatchControlState::Reconsume(receive_state) => {
+                let reduce_result = self
+                    .consume(
+                        receive_state.binds,
+                        receive_state.body,
+                        receive_state.persistent,
+                        receive_state.peek,
+                    )
+                    .await?;
+                Ok(self.completed_step_result(reduce_result, remaining_before))
+            }
+            PostMatchControlState::Reproduce(produce_state) => {
+                let reduce_result = self
+                    .produce(
+                        produce_state.chan,
+                        produce_state.data,
+                        produce_state.persistent,
+                    )
+                    .await?;
+                Ok(self.completed_step_result(reduce_result, remaining_before))
+            }
+            PostMatchControlState::RestorePeeks => {
+                let restore_result = self.restore_peeks(dispatch.data_list).await?;
+                Ok(self.completed_step_result(restore_result, remaining_before))
             }
         }
+    }
+
+    fn completed_step_result(&self, dispatch_result: DispatchType, remaining_before: i64) -> StepResult {
+        StepResult {
+            emitted_effects: dispatch_emits_effects(&dispatch_result),
+            dispatch_result,
+            next_state: None,
+            consumed_gas: compute_consumed_gas(remaining_before, self.cost.get().value),
+            terminal_status: StepTerminalStatus::Completed,
+        }
+    }
+
+    fn suspended_step_result(
+        &self,
+        dispatch_state: DispatchExecState,
+        dispatch_result: DispatchType,
+        next_control: PostMatchControlState,
+        remaining_before: i64,
+    ) -> StepResult {
+        let next_state = PostMatchExecState {
+            dispatch: DispatchExecState {
+                _remaining_phlo: self.cost.get().value,
+                ..dispatch_state
+            },
+            control: next_control,
+        };
+
+        StepResult {
+            emitted_effects: dispatch_emits_effects(&dispatch_result),
+            dispatch_result,
+            next_state: Some(next_state),
+            consumed_gas: compute_consumed_gas(remaining_before, self.cost.get().value),
+            terminal_status: StepTerminalStatus::Suspended,
+        }
+    }
+
+    async fn execute_post_match_to_completion(
+        &self,
+        mut state: PostMatchExecState,
+        gas_limit_per_step: i64,
+    ) -> Result<DispatchType, InterpreterError> {
+        loop {
+            let step_result = self.reduce_step(state, gas_limit_per_step).await?;
+            let StepResult {
+                dispatch_result,
+                emitted_effects: _emitted_effects,
+                next_state,
+                consumed_gas: _consumed_gas,
+                terminal_status,
+            } = step_result;
+
+            match terminal_status {
+                StepTerminalStatus::Completed => return Ok(dispatch_result),
+                StepTerminalStatus::Suspended => {
+                    state = next_state.ok_or_else(|| {
+                        InterpreterError::BugFoundError(
+                            "reduce_step suspended without next state".to_string(),
+                        )
+                    })?;
+                }
+            }
+        }
+    }
+
+    async fn restore_peeks(&self, data_list: Vec<MatchedData>) -> Result<DispatchType, InterpreterError> {
+        let futures = self.produce_peeks(data_list).await;
+        let results: Vec<Result<DispatchType, InterpreterError>> = futures::future::join_all(futures).await;
+        let flattened_results: Vec<InterpreterError> = results
+            .into_iter()
+            .filter_map(|result| result.err())
+            .collect();
+
+        self.aggregate_evaluator_errors(flattened_results)
     }
 
     async fn continue_consume_process(
@@ -990,8 +1076,7 @@ impl DebruijnInterpreter {
             return Ok(DispatchType::Skip);
         };
 
-        let step_result = self.reduce_step(state, i64::MAX).await?;
-        Ok(dispatch_from_step_result(step_result))
+        self.execute_post_match_to_completion(state, i64::MAX).await
     }
 
     fn dispatch<'a>(
