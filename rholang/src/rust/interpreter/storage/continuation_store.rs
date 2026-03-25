@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use crypto::rust::hash::blake2b256::Blake2b256;
 
-const CONTINUATION_ENCODING_VERSION: u8 = 1;
+const CONTINUATION_ENCODING_VERSION: u8 = 2;
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct ContinuationHandle {
@@ -36,6 +36,31 @@ impl FundingPolicy {
             1 => Ok(FundingPolicy::ExecutorPays),
             _ => Err(ContinuationStoreError::InvalidFormat(format!(
                 "unknown funding policy: {value}"
+            ))),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ContinuationVisibility {
+    Private,
+    Public,
+}
+
+impl ContinuationVisibility {
+    fn to_u8(self) -> u8 {
+        match self {
+            ContinuationVisibility::Private => 0,
+            ContinuationVisibility::Public => 1,
+        }
+    }
+
+    fn from_u8(value: u8) -> Result<Self, ContinuationStoreError> {
+        match value {
+            0 => Ok(ContinuationVisibility::Private),
+            1 => Ok(ContinuationVisibility::Public),
+            _ => Err(ContinuationStoreError::InvalidFormat(format!(
+                "unknown continuation visibility: {value}"
             ))),
         }
     }
@@ -79,6 +104,9 @@ pub struct PersistedContinuation {
     pub serialized_state: Vec<u8>,
     pub gas_limit_per_step: i64,
     pub funding_policy: FundingPolicy,
+    pub visibility: ContinuationVisibility,
+    pub bounty: Option<u64>,
+    pub expires_at_epoch: Option<u64>,
     pub status: ContinuationStatus,
     pub version: u64,
     pub state_root: Vec<u8>,
@@ -95,6 +123,9 @@ impl PersistedContinuation {
         put_bytes(&mut out, &self.serialized_state);
         put_i64(&mut out, self.gas_limit_per_step);
         put_u8(&mut out, self.funding_policy.to_u8());
+        put_u8(&mut out, self.visibility.to_u8());
+        put_opt_u64(&mut out, self.bounty);
+        put_opt_u64(&mut out, self.expires_at_epoch);
         put_u8(&mut out, self.status.to_u8());
         put_u64(&mut out, self.version);
         put_bytes(&mut out, &self.state_root);
@@ -117,6 +148,9 @@ impl PersistedContinuation {
         let serialized_state = read_vec(bytes, &mut idx)?;
         let gas_limit_per_step = read_i64(bytes, &mut idx)?;
         let funding_policy = FundingPolicy::from_u8(read_u8(bytes, &mut idx)?)?;
+        let visibility = ContinuationVisibility::from_u8(read_u8(bytes, &mut idx)?)?;
+        let bounty = read_opt_u64(bytes, &mut idx)?;
+        let expires_at_epoch = read_opt_u64(bytes, &mut idx)?;
         let status = ContinuationStatus::from_u8(read_u8(bytes, &mut idx)?)?;
         let version = read_u64(bytes, &mut idx)?;
         let state_root = read_vec(bytes, &mut idx)?;
@@ -134,6 +168,9 @@ impl PersistedContinuation {
             serialized_state,
             gas_limit_per_step,
             funding_policy,
+            visibility,
+            bounty,
+            expires_at_epoch,
             status,
             version,
             state_root,
@@ -167,6 +204,9 @@ impl PersistedContinuation {
         put_bytes(&mut root_payload, &self.serialized_state);
         put_i64(&mut root_payload, self.gas_limit_per_step);
         put_u8(&mut root_payload, self.funding_policy.to_u8());
+        put_u8(&mut root_payload, self.visibility.to_u8());
+        put_opt_u64(&mut root_payload, self.bounty);
+        put_opt_u64(&mut root_payload, self.expires_at_epoch);
         put_u8(&mut root_payload, self.status.to_u8());
         put_u64(&mut root_payload, self.version);
         Blake2b256::hash(root_payload).to_vec()
@@ -185,6 +225,9 @@ pub struct CreateContinuation {
     pub serialized_state: Vec<u8>,
     pub gas_limit_per_step: i64,
     pub funding_policy: FundingPolicy,
+    pub visibility: ContinuationVisibility,
+    pub bounty: Option<u64>,
+    pub ttl_epochs: Option<u64>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -195,6 +238,10 @@ pub enum ContinuationStoreError {
         handle: ContinuationHandle,
         expected: u64,
         actual: u64,
+    },
+    EpochRegression {
+        current: u64,
+        attempted: u64,
     },
     InvalidTransition {
         handle: ContinuationHandle,
@@ -209,6 +256,7 @@ pub enum ContinuationStoreError {
 pub struct InMemoryContinuationStore {
     entries: BTreeMap<ContinuationHandle, PersistedContinuation>,
     total_storage_bytes: u64,
+    epoch: u64,
 }
 
 impl InMemoryContinuationStore {
@@ -226,6 +274,9 @@ impl InMemoryContinuationStore {
             serialized_state: create.serialized_state,
             gas_limit_per_step: create.gas_limit_per_step,
             funding_policy: create.funding_policy,
+            visibility: create.visibility,
+            bounty: create.bounty,
+            expires_at_epoch: create.ttl_epochs.map(|ttl| self.epoch.saturating_add(ttl)),
             status: ContinuationStatus::Active,
             version: 1,
             state_root: Vec::new(),
@@ -250,6 +301,58 @@ impl InMemoryContinuationStore {
             .get(handle)
             .cloned()
             .ok_or_else(|| ContinuationStoreError::NotFound(handle.clone()))
+    }
+
+    pub fn set_epoch(&mut self, epoch: u64) -> Result<(), ContinuationStoreError> {
+        if epoch < self.epoch {
+            return Err(ContinuationStoreError::EpochRegression {
+                current: self.epoch,
+                attempted: epoch,
+            });
+        }
+        self.epoch = epoch;
+        Ok(())
+    }
+
+    pub fn current_epoch(&self) -> u64 {
+        self.epoch
+    }
+
+    pub fn expire_due(&mut self) -> Result<Vec<PersistedContinuation>, ContinuationStoreError> {
+        let handles_to_expire: Vec<_> = self
+            .entries
+            .iter()
+            .filter_map(|(handle, continuation)| {
+                if continuation.status == ContinuationStatus::Active
+                    && continuation
+                        .expires_at_epoch
+                        .is_some_and(|epoch| epoch <= self.epoch)
+                {
+                    Some(handle.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let mut expired = Vec::with_capacity(handles_to_expire.len());
+        for handle in handles_to_expire.into_iter() {
+            let version = self.current_version(&handle)?;
+            expired.push(self.expire_with_version(&handle, version)?);
+        }
+
+        Ok(expired)
+    }
+
+    pub fn public_active_continuations(&self) -> Vec<PersistedContinuation> {
+        self.entries
+            .values()
+            .filter(|continuation| {
+                continuation.status == ContinuationStatus::Active
+                    && continuation.visibility == ContinuationVisibility::Public
+            })
+            .cloned()
+            .collect()
     }
 
     pub fn update_state(
@@ -406,6 +509,16 @@ fn put_u64(out: &mut Vec<u8>, value: u64) {
     out.extend_from_slice(&value.to_le_bytes());
 }
 
+fn put_opt_u64(out: &mut Vec<u8>, value: Option<u64>) {
+    match value {
+        Some(v) => {
+            put_u8(out, 1);
+            put_u64(out, v);
+        }
+        None => put_u8(out, 0),
+    }
+}
+
 fn put_i64(out: &mut Vec<u8>, value: i64) {
     out.extend_from_slice(&value.to_le_bytes());
 }
@@ -450,6 +563,17 @@ fn read_u64(input: &[u8], idx: &mut usize) -> Result<u64, ContinuationStoreError
     Ok(u64::from_le_bytes(bytes))
 }
 
+fn read_opt_u64(input: &[u8], idx: &mut usize) -> Result<Option<u64>, ContinuationStoreError> {
+    match read_u8(input, idx)? {
+        0 => Ok(None),
+        1 => Ok(Some(read_u64(input, idx)?)),
+        marker => Err(ContinuationStoreError::InvalidFormat(format!(
+            "invalid optional u64 marker: {}",
+            marker
+        ))),
+    }
+}
+
 fn read_i64(input: &[u8], idx: &mut usize) -> Result<i64, ContinuationStoreError> {
     if *idx + 8 > input.len() {
         return Err(ContinuationStoreError::InvalidFormat(
@@ -485,6 +609,9 @@ mod tests {
             serialized_state: state,
             gas_limit_per_step: 100,
             funding_policy: FundingPolicy::ProducerOnly,
+            visibility: ContinuationVisibility::Private,
+            bounty: None,
+            ttl_epochs: None,
         }
     }
 
@@ -604,6 +731,76 @@ mod tests {
                 from: ContinuationStatus::Failed,
                 to: ContinuationStatus::Active,
                 ..
+            })
+        ));
+    }
+
+    #[test]
+    fn public_active_continuations_should_filter_by_visibility_and_status() {
+        let mut store = InMemoryContinuationStore::default();
+        let private = store
+            .create(sample_create(8, vec![1]))
+            .expect("private continuation should be created");
+        let public = store
+            .create(CreateContinuation {
+                handle: ContinuationHandle::new(b"deploy-origin".to_vec(), 9),
+                origin_reference: b"origin-ref".to_vec(),
+                serialized_state: vec![2],
+                gas_limit_per_step: 100,
+                funding_policy: FundingPolicy::ExecutorPays,
+                visibility: ContinuationVisibility::Public,
+                bounty: Some(10),
+                ttl_epochs: None,
+            })
+            .expect("public continuation should be created");
+        store
+            .complete_with_version(&private.handle, private.version)
+            .expect("completing private continuation should succeed");
+
+        let public_queue = store.public_active_continuations();
+        assert_eq!(public_queue.len(), 1);
+        assert_eq!(public_queue[0].handle, public.handle);
+        assert_eq!(public_queue[0].bounty, Some(10));
+    }
+
+    #[test]
+    fn ttl_expiration_should_mark_due_continuations_expired() {
+        let mut store = InMemoryContinuationStore::default();
+        store.set_epoch(10).expect("epoch set should succeed");
+        let created = store
+            .create(CreateContinuation {
+                handle: ContinuationHandle::new(b"deploy-origin".to_vec(), 10),
+                origin_reference: b"origin-ref".to_vec(),
+                serialized_state: vec![1, 2, 3],
+                gas_limit_per_step: 100,
+                funding_policy: FundingPolicy::ProducerOnly,
+                visibility: ContinuationVisibility::Private,
+                bounty: None,
+                ttl_epochs: Some(5),
+            })
+            .expect("continuation creation should succeed");
+        assert_eq!(created.expires_at_epoch, Some(15));
+
+        store.set_epoch(14).expect("epoch set should succeed");
+        let still_active = store.expire_due().expect("expiry sweep should succeed");
+        assert!(still_active.is_empty());
+
+        store.set_epoch(15).expect("epoch set should succeed");
+        let expired = store.expire_due().expect("expiry sweep should succeed");
+        assert_eq!(expired.len(), 1);
+        assert_eq!(expired[0].status, ContinuationStatus::Expired);
+    }
+
+    #[test]
+    fn set_epoch_should_reject_regression() {
+        let mut store = InMemoryContinuationStore::default();
+        store.set_epoch(7).expect("epoch set should succeed");
+        let regression = store.set_epoch(6);
+        assert!(matches!(
+            regression,
+            Err(ContinuationStoreError::EpochRegression {
+                current: 7,
+                attempted: 6
             })
         ));
     }

@@ -65,8 +65,8 @@ use super::substitute::Substitute;
 use super::unwrap_option_safe;
 use super::util::GeneratedMessage;
 use super::storage::continuation_store::{
-    ContinuationHandle, ContinuationStatus, ContinuationStoreError, CreateContinuation,
-    FundingPolicy, InMemoryContinuationStore, PersistedContinuation,
+    ContinuationHandle, ContinuationStatus, ContinuationStoreError, ContinuationVisibility,
+    CreateContinuation, FundingPolicy, InMemoryContinuationStore, PersistedContinuation,
 };
 use models::rust::pathmap_crate_type_mapper::PathMapCrateTypeMapper;
 
@@ -156,6 +156,10 @@ pub struct DebruijnInterpreter {
 pub struct SplitPostMatchConfig {
     pub enabled: bool,
     pub initial_step_gas_limit: i64,
+    pub continuation_funding_policy: FundingPolicy,
+    pub continuation_visibility: ContinuationVisibility,
+    pub continuation_bounty: Option<u64>,
+    pub continuation_ttl_epochs: Option<u64>,
 }
 
 impl Default for SplitPostMatchConfig {
@@ -163,6 +167,10 @@ impl Default for SplitPostMatchConfig {
         Self {
             enabled: false,
             initial_step_gas_limit: i64::MAX,
+            continuation_funding_policy: FundingPolicy::ProducerOnly,
+            continuation_visibility: ContinuationVisibility::Private,
+            continuation_bounty: None,
+            continuation_ttl_epochs: None,
         }
     }
 }
@@ -181,6 +189,15 @@ pub struct ContinuationExecutionResult {
     pub state_root: Vec<u8>,
     pub consumed_gas: i64,
     pub emitted_effects: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PublicContinuationInfo {
+    pub handle: ContinuationHandle,
+    pub version: u64,
+    pub gas_limit_per_step: i64,
+    pub bounty: Option<u64>,
+    pub expires_at_epoch: Option<u64>,
 }
 
 type MatchedData = (Par, ListParWithRandom, ListParWithRandom, bool);
@@ -1377,13 +1394,13 @@ impl DebruijnInterpreter {
         let step_result = self
             .reduce_step(state, split_config.initial_step_gas_limit)
             .await?;
-        self.handle_split_step_result(step_result, split_config.initial_step_gas_limit)
+        self.handle_split_step_result(step_result, split_config)
     }
 
     fn handle_split_step_result(
         &self,
         step_result: StepResult,
-        gas_limit_per_step: i64,
+        split_config: SplitPostMatchConfig,
     ) -> Result<DispatchType, InterpreterError> {
         let StepResult {
             dispatch_result,
@@ -1398,7 +1415,7 @@ impl DebruijnInterpreter {
             split_post_match_enabled = true,
             emitted_effects,
             consumed_gas,
-            gas_limit_per_step,
+            gas_limit_per_step = split_config.initial_step_gas_limit,
             terminal_status = match terminal_status {
                 StepTerminalStatus::Completed => "completed",
                 StepTerminalStatus::Suspended => "suspended",
@@ -1418,10 +1435,7 @@ impl DebruijnInterpreter {
                         "split step suspended without next state".to_string(),
                     )
                 })?;
-                let _ = self.persist_suspended_post_match_state(
-                    suspended_state,
-                    gas_limit_per_step,
-                )?;
+                let _ = self.persist_suspended_post_match_state(suspended_state, split_config)?;
                 Ok(dispatch_result)
             }
         }
@@ -1430,7 +1444,7 @@ impl DebruijnInterpreter {
     fn persist_suspended_post_match_state(
         &self,
         state: PostMatchExecState,
-        gas_limit_per_step: i64,
+        split_config: SplitPostMatchConfig,
     ) -> Result<ContinuationHandle, InterpreterError> {
         let serialized_state = serialize_post_match_state(&state)?;
         let origin_reference = state.dispatch.continuation.encode_to_vec();
@@ -1442,8 +1456,11 @@ impl DebruijnInterpreter {
             handle: handle.clone(),
             origin_reference,
             serialized_state,
-            gas_limit_per_step,
-            funding_policy: FundingPolicy::ProducerOnly,
+            gas_limit_per_step: split_config.initial_step_gas_limit,
+            funding_policy: split_config.continuation_funding_policy,
+            visibility: split_config.continuation_visibility,
+            bounty: split_config.continuation_bounty,
+            ttl_epochs: split_config.continuation_ttl_epochs,
         };
 
         let mut store = self.continuation_store.write().unwrap();
@@ -8029,6 +8046,50 @@ impl DebruijnInterpreter {
         self.continuation_store.read().unwrap().handles()
     }
 
+    pub fn set_continuation_epoch(
+        &self,
+        epoch: u64,
+    ) -> Result<Vec<ContinuationHandle>, InterpreterError> {
+        let mut store = self.continuation_store.write().unwrap();
+        store.set_epoch(epoch).map_err(map_continuation_store_error)?;
+        let expired = store.expire_due().map_err(map_continuation_store_error)?;
+        let expired_handles = expired
+            .iter()
+            .map(|continuation| continuation.handle.clone())
+            .collect::<Vec<_>>();
+        if !expired_handles.is_empty() {
+            metrics::counter!("rholang.continuation.expired")
+                .increment(expired_handles.len() as u64);
+        }
+        Ok(expired_handles)
+    }
+
+    pub fn list_public_continuation_queue(
+        &self,
+        epoch: u64,
+    ) -> Result<Vec<PublicContinuationInfo>, InterpreterError> {
+        let mut store = self.continuation_store.write().unwrap();
+        store.set_epoch(epoch).map_err(map_continuation_store_error)?;
+        let expired = store.expire_due().map_err(map_continuation_store_error)?;
+        if !expired.is_empty() {
+            metrics::counter!("rholang.continuation.expired").increment(expired.len() as u64);
+        }
+
+        let queue = store
+            .public_active_continuations()
+            .into_iter()
+            .filter(|continuation| continuation.funding_policy == FundingPolicy::ExecutorPays)
+            .map(|continuation| PublicContinuationInfo {
+                handle: continuation.handle,
+                version: continuation.version,
+                gas_limit_per_step: continuation.gas_limit_per_step,
+                bounty: continuation.bounty,
+                expires_at_epoch: continuation.expires_at_epoch,
+            })
+            .collect();
+        Ok(queue)
+    }
+
     pub fn load_continuation(
         &self,
         handle: &ContinuationHandle,
@@ -8040,12 +8101,56 @@ impl DebruijnInterpreter {
             .map_err(map_continuation_store_error)
     }
 
+    pub async fn execute_public_continuation(
+        &self,
+        handle: &ContinuationHandle,
+        expected_version: u64,
+        gas_limit: i64,
+        epoch: u64,
+    ) -> Result<ContinuationExecutionResult, InterpreterError> {
+        {
+            let mut store = self.continuation_store.write().unwrap();
+            store.set_epoch(epoch).map_err(map_continuation_store_error)?;
+            let expired = store.expire_due().map_err(map_continuation_store_error)?;
+            if !expired.is_empty() {
+                metrics::counter!("rholang.continuation.expired").increment(expired.len() as u64);
+            }
+
+            let persisted = store.load(handle).map_err(map_continuation_store_error)?;
+            if persisted.visibility != ContinuationVisibility::Public {
+                return Err(InterpreterError::IllegalArgumentError(format!(
+                    "continuation {}:{} is not publicly visible",
+                    hex::encode(&persisted.handle.origin),
+                    persisted.handle.nonce
+                )));
+            }
+            if persisted.funding_policy != FundingPolicy::ExecutorPays {
+                return Err(InterpreterError::IllegalArgumentError(format!(
+                    "continuation {}:{} is not executor-funded",
+                    hex::encode(&persisted.handle.origin),
+                    persisted.handle.nonce
+                )));
+            }
+        }
+
+        self.execute_continuation(handle, expected_version, gas_limit)
+            .await
+    }
+
     pub async fn execute_continuation(
         &self,
         handle: &ContinuationHandle,
         expected_version: u64,
         gas_limit: i64,
     ) -> Result<ContinuationExecutionResult, InterpreterError> {
+        {
+            let mut store = self.continuation_store.write().unwrap();
+            let expired = store.expire_due().map_err(map_continuation_store_error)?;
+            if !expired.is_empty() {
+                metrics::counter!("rholang.continuation.expired").increment(expired.len() as u64);
+            }
+        }
+
         let persisted = self.load_continuation(handle)?;
         if persisted.status != ContinuationStatus::Active {
             return Err(InterpreterError::IllegalArgumentError(format!(
@@ -8170,6 +8275,12 @@ fn map_continuation_store_error(error: ContinuationStoreError) -> InterpreterErr
             expected,
             actual
         )),
+        ContinuationStoreError::EpochRegression { current, attempted } => {
+            InterpreterError::IllegalArgumentError(format!(
+                "continuation epoch regression is not allowed (current {}, attempted {})",
+                current, attempted
+            ))
+        }
         ContinuationStoreError::InvalidTransition { handle, from, to } => {
             InterpreterError::IllegalArgumentError(format!(
                 "invalid continuation transition for {}:{} from {:?} to {:?}",

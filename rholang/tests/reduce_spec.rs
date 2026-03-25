@@ -44,7 +44,7 @@ use rholang::rust::interpreter::{
     matcher::r#match::Matcher,
     reduce::{ContinuationExecutionStatus, DebruijnInterpreter, SplitPostMatchConfig},
     rho_runtime::RhoISpace,
-    storage::continuation_store::ContinuationHandle,
+    storage::continuation_store::{ContinuationHandle, ContinuationVisibility, FundingPolicy},
     test_utils::persistent_store_tester::create_test_space,
 };
 use rspace_plus_plus::rspace::{
@@ -972,6 +972,7 @@ async fn split_post_match_enabled_should_commit_dispatch_effects_and_persist_rem
     reducer.set_split_post_match_config(SplitPostMatchConfig {
         enabled: true,
         initial_step_gas_limit: i64::MAX,
+        ..SplitPostMatchConfig::default()
     });
 
     let channel = new_gstring_par("split-channel".to_string(), Vec::new(), false);
@@ -1036,6 +1037,7 @@ async fn split_post_match_disabled_should_execute_full_post_match_path() {
     reducer.set_split_post_match_config(SplitPostMatchConfig {
         enabled: false,
         initial_step_gas_limit: 1,
+        ..SplitPostMatchConfig::default()
     });
 
     let channel = new_gstring_par("full-channel".to_string(), Vec::new(), false);
@@ -1095,6 +1097,7 @@ async fn execute_continuation_should_resume_to_completion_and_reject_terminal_re
     reducer.set_split_post_match_config(SplitPostMatchConfig {
         enabled: true,
         initial_step_gas_limit: i64::MAX,
+        ..SplitPostMatchConfig::default()
     });
 
     let channel = new_gstring_par("resume-channel".to_string(), Vec::new(), false);
@@ -1177,6 +1180,7 @@ async fn execute_continuation_should_handle_partial_progress_and_reject_stale_or
     reducer.set_split_post_match_config(SplitPostMatchConfig {
         enabled: true,
         initial_step_gas_limit: i64::MAX,
+        ..SplitPostMatchConfig::default()
     });
 
     let channel = new_gstring_par("partial-channel".to_string(), Vec::new(), false);
@@ -1256,6 +1260,157 @@ async fn execute_continuation_should_handle_partial_progress_and_reject_stale_or
     assert!(matches!(
         unknown_result,
         Err(InterpreterError::IllegalArgumentError(msg)) if msg.contains("not found")
+    ));
+}
+
+#[tokio::test]
+async fn public_executor_should_advance_executor_funded_public_continuations() {
+    let (_, reducer) =
+        create_test_space::<RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>()
+            .await;
+    reducer.set_split_post_match_config(SplitPostMatchConfig {
+        enabled: true,
+        initial_step_gas_limit: i64::MAX,
+        continuation_funding_policy: FundingPolicy::ExecutorPays,
+        continuation_visibility: ContinuationVisibility::Public,
+        continuation_bounty: Some(42),
+        continuation_ttl_epochs: Some(10),
+    });
+
+    let channel = new_gstring_par("public-channel".to_string(), Vec::new(), false);
+    let result_channel = new_gstring_par("public-result".to_string(), Vec::new(), false);
+
+    let receive = Par::default().with_receives(vec![Receive {
+        binds: vec![ReceiveBind {
+            patterns: vec![new_freevar_par(0, Vec::new())],
+            source: Some(channel.clone()),
+            remainder: None,
+            free_count: 1,
+        }],
+        body: Some(Par::default().with_sends(vec![Send {
+            chan: Some(result_channel.clone()),
+            data: vec![new_gstring_par("Success".to_string(), Vec::new(), false)],
+            persistent: false,
+            locally_free: Vec::new(),
+            connective_used: false,
+        }])),
+        persistent: false,
+        peek: false,
+        bind_count: 1,
+        locally_free: Vec::new(),
+        connective_used: false,
+    }]);
+
+    let send = Par::default().with_sends(vec![Send {
+        chan: Some(channel.clone()),
+        data: vec![new_gint_par(1, Vec::new(), false)],
+        persistent: true,
+        locally_free: Vec::new(),
+        connective_used: false,
+    }]);
+
+    let env: Env<Par> = Env::new();
+    assert!(reducer.eval(receive, &env, rand().split_byte(0)).await.is_ok());
+    assert!(reducer.eval(send, &env, rand().split_byte(1)).await.is_ok());
+
+    let queue = reducer
+        .list_public_continuation_queue(0)
+        .expect("public queue listing should succeed");
+    assert_eq!(queue.len(), 1);
+    assert_eq!(queue[0].bounty, Some(42));
+
+    let result = reducer
+        .execute_public_continuation(&queue[0].handle, queue[0].version, i64::MAX, 0)
+        .await
+        .expect("public executor should advance eligible continuation");
+    assert_eq!(result.status, ContinuationExecutionStatus::Completed);
+}
+
+#[tokio::test]
+async fn phase6_private_producer_continuations_should_stay_private_or_expire() {
+    let (_, reducer) =
+        create_test_space::<RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>()
+            .await;
+    reducer.set_split_post_match_config(SplitPostMatchConfig {
+        enabled: true,
+        initial_step_gas_limit: i64::MAX,
+        continuation_funding_policy: FundingPolicy::ProducerOnly,
+        continuation_visibility: ContinuationVisibility::Private,
+        continuation_bounty: None,
+        continuation_ttl_epochs: Some(1),
+    });
+
+    let channel = new_gstring_par("private-channel".to_string(), Vec::new(), false);
+    let result_channel = new_gstring_par("private-result".to_string(), Vec::new(), false);
+
+    let receive = Par::default().with_receives(vec![Receive {
+        binds: vec![ReceiveBind {
+            patterns: vec![new_freevar_par(0, Vec::new())],
+            source: Some(channel.clone()),
+            remainder: None,
+            free_count: 1,
+        }],
+        body: Some(Par::default().with_sends(vec![Send {
+            chan: Some(result_channel.clone()),
+            data: vec![new_gstring_par("Success".to_string(), Vec::new(), false)],
+            persistent: false,
+            locally_free: Vec::new(),
+            connective_used: false,
+        }])),
+        persistent: false,
+        peek: false,
+        bind_count: 1,
+        locally_free: Vec::new(),
+        connective_used: false,
+    }]);
+
+    let send = Par::default().with_sends(vec![Send {
+        chan: Some(channel.clone()),
+        data: vec![new_gint_par(1, Vec::new(), false)],
+        persistent: true,
+        locally_free: Vec::new(),
+        connective_used: false,
+    }]);
+
+    let env: Env<Par> = Env::new();
+    assert!(reducer.eval(receive, &env, rand().split_byte(0)).await.is_ok());
+    assert!(reducer.eval(send, &env, rand().split_byte(1)).await.is_ok());
+
+    let handle = reducer
+        .list_continuation_handles()
+        .into_iter()
+        .next()
+        .expect("one continuation should be persisted");
+    let persisted = reducer
+        .load_continuation(&handle)
+        .expect("persisted continuation should load");
+
+    let public_queue = reducer
+        .list_public_continuation_queue(0)
+        .expect("public queue listing should succeed");
+    assert!(public_queue.is_empty(), "private continuation must not be listed");
+
+    let public_attempt = reducer
+        .execute_public_continuation(&handle, persisted.version, i64::MAX, 0)
+        .await;
+    assert!(matches!(
+        public_attempt,
+        Err(InterpreterError::IllegalArgumentError(msg))
+            if msg.contains("not publicly visible") || msg.contains("not executor-funded")
+    ));
+
+    let expired = reducer
+        .set_continuation_epoch(1)
+        .expect("advancing epoch should succeed");
+    assert_eq!(expired.len(), 1);
+    assert_eq!(expired[0], handle);
+
+    let resume_after_expiry = reducer
+        .execute_continuation(&handle, persisted.version, i64::MAX)
+        .await;
+    assert!(matches!(
+        resume_after_expiry,
+        Err(InterpreterError::IllegalArgumentError(msg)) if msg.contains("not active")
     ));
 }
 
