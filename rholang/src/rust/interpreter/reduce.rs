@@ -142,11 +142,50 @@ pub struct DebruijnInterpreter {
     pub substitute: Substitute,
 }
 
-type Application = Option<(
-    TaggedContinuation,
-    Vec<(Par, ListParWithRandom, ListParWithRandom, bool)>,
-    bool,
-)>;
+type MatchedData = (Par, ListParWithRandom, ListParWithRandom, bool);
+type Application = Option<(TaggedContinuation, Vec<MatchedData>, bool)>;
+type DispatchResultFuture<'a> = Pin<
+    Box<
+        dyn futures::Future<Output = Result<DispatchType, InterpreterError>> + std::marker::Send + 'a,
+    >,
+>;
+
+#[derive(Clone)]
+struct DispatchExecState {
+    continuation: TaggedContinuation,
+    data_list: Vec<MatchedData>,
+    is_replay: bool,
+    previous_output: Vec<Par>,
+}
+
+#[derive(Clone)]
+struct ReceiveRegistrationState {
+    binds: Vec<(BindPattern, Par)>,
+    body: ParWithRandom,
+    persistent: bool,
+    peek: bool,
+}
+
+#[derive(Clone)]
+struct ProduceRegistrationState {
+    chan: Par,
+    data: ListParWithRandom,
+    persistent: bool,
+}
+
+#[derive(Clone)]
+enum PostMatchControlState {
+    DispatchOnly,
+    DispatchAndReconsume(ReceiveRegistrationState),
+    DispatchAndReproduce(ProduceRegistrationState),
+    DispatchAndRestorePeeks,
+}
+
+#[derive(Clone)]
+struct PostMatchExecState {
+    dispatch: DispatchExecState,
+    control: PostMatchControlState,
+}
 
 trait Method {
     fn apply(&self, p: Par, args: Vec<Par>, env: &Env<Par>) -> Result<Par, InterpreterError>;
@@ -623,109 +662,202 @@ impl DebruijnInterpreter {
             return Err(InterpreterError::CanNotReplayFailedNonDeterministicProcess);
         }
 
-        let previous_output_as_par = previous_output
+        let previous_output_as_par = self.decode_previous_output(previous_output)?;
+        let Some(state) = self.build_post_match_produce_exec_state(
+            res,
+            chan,
+            data,
+            persistent,
+            is_replay,
+            previous_output_as_par,
+        ) else {
+            return Ok(DispatchType::Skip);
+        };
+
+        self.execute_post_match_exec_state(state).await
+    }
+
+    fn decode_previous_output(
+        &self,
+        previous_output: Vec<Vec<u8>>,
+    ) -> Result<Vec<Par>, InterpreterError> {
+        previous_output
             .into_iter()
             .map(|bytes| {
                 Par::decode(&bytes[..]).map_err(|e| InterpreterError::DecodeError(e.to_string()))
             })
-            .collect::<Result<Vec<_>, _>>()?;
+            .collect::<Result<Vec<_>, _>>()
+    }
 
-        match res {
-            Some((continuation, data_list, peek)) => {
-                if persistent {
-                    // dispatchAndRun
-                    let self_clone1 = self.clone();
-                    let self_clone2 = self.clone();
-                    let continuation_clone = continuation.clone();
-                    let data_list_clone = data_list.clone();
-                    let previous_output_clone = previous_output_as_par.clone();
-                    let chan_clone = chan.clone();
-                    let data_clone = data.clone();
-                    let persistent_flag = persistent;
-                    let is_replay_flag = is_replay;
+    fn build_post_match_exec_state(
+        &self,
+        res: Application,
+        binds: Vec<(BindPattern, Par)>,
+        body: ParWithRandom,
+        persistent: bool,
+        peek: bool,
+        is_replay: bool,
+        previous_output: Vec<Par>,
+    ) -> Option<PostMatchExecState> {
+        res.map(|(continuation, data_list, matched_peek)| {
+            let control = if persistent {
+                PostMatchControlState::DispatchAndReconsume(ReceiveRegistrationState {
+                    binds,
+                    body,
+                    persistent,
+                    peek,
+                })
+            } else if matched_peek {
+                PostMatchControlState::DispatchAndRestorePeeks
+            } else {
+                PostMatchControlState::DispatchOnly
+            };
 
-                    let mut futures: Vec<
-                        Pin<
-                            Box<
-                                dyn futures::Future<Output = Result<DispatchType, InterpreterError>>
-                                    + std::marker::Send,
-                            >,
-                        >,
-                    > = vec![];
-
-                    let dispatch_fut = self_clone1.dispatch(
-                        continuation_clone,
-                        data_list_clone,
-                        is_replay_flag,
-                        previous_output_clone,
-                    );
-                    futures.push(Box::pin(dispatch_fut)
-                        as Pin<
-                            Box<
-                                dyn futures::Future<Output = Result<DispatchType, InterpreterError>>
-                                    + std::marker::Send,
-                            >,
-                        >);
-
-                    let produce_fut = self_clone2.produce(chan_clone, data_clone, persistent_flag);
-                    futures.push(Box::pin(produce_fut)
-                        as Pin<
-                            Box<
-                                dyn futures::Future<Output = Result<DispatchType, InterpreterError>>
-                                    + std::marker::Send,
-                            >,
-                        >);
-
-                    // parTraverseSafe
-                    let results: Vec<Result<DispatchType, InterpreterError>> =
-                        futures::future::join_all(futures).await;
-                    let flattened_results: Vec<InterpreterError> = results
-                        .into_iter()
-                        .filter_map(|result| result.err())
-                        .collect();
-
-                    self.aggregate_evaluator_errors(flattened_results)
-                } else if peek {
-                    // dispatchAndRun
-                    let self_clone = self.clone();
-                    let continuation_clone = continuation.clone();
-                    let data_list_clone = data_list.clone();
-                    let previous_output_clone = previous_output_as_par.clone();
-
-                    let mut futures: Vec<
-                        Pin<
-                            Box<
-                                dyn futures::Future<Output = Result<DispatchType, InterpreterError>>
-                                    + std::marker::Send,
-                            >,
-                        >,
-                    > = vec![Box::pin(async move {
-                        self_clone
-                            .dispatch(
-                                continuation_clone,
-                                data_list_clone,
-                                is_replay,
-                                previous_output_clone,
-                            )
-                            .await
-                    })];
-                    futures.extend(self.produce_peeks(data_list).await);
-
-                    // parTraverseSafe
-                    let results: Vec<Result<DispatchType, InterpreterError>> =
-                        futures::future::join_all(futures).await;
-                    let flattened_results: Vec<InterpreterError> = results
-                        .into_iter()
-                        .filter_map(|result| result.err())
-                        .collect();
-
-                    self.aggregate_evaluator_errors(flattened_results)
-                } else {
-                    self.dispatch(continuation, data_list, is_replay, previous_output_as_par)
-                        .await
-                }
+            PostMatchExecState {
+                dispatch: DispatchExecState {
+                    continuation,
+                    data_list,
+                    is_replay,
+                    previous_output,
+                },
+                control,
             }
-            None => Ok(DispatchType::Skip),
+        })
+    }
+
+    fn build_post_match_produce_exec_state(
+        &self,
+        res: Application,
+        chan: Par,
+        data: ListParWithRandom,
+        persistent: bool,
+        is_replay: bool,
+        previous_output: Vec<Par>,
+    ) -> Option<PostMatchExecState> {
+        res.map(|(continuation, data_list, matched_peek)| {
+            let control = if persistent {
+                PostMatchControlState::DispatchAndReproduce(ProduceRegistrationState {
+                    chan,
+                    data,
+                    persistent,
+                })
+            } else if matched_peek {
+                PostMatchControlState::DispatchAndRestorePeeks
+            } else {
+                PostMatchControlState::DispatchOnly
+            };
+
+            PostMatchExecState {
+                dispatch: DispatchExecState {
+                    continuation,
+                    data_list,
+                    is_replay,
+                    previous_output,
+                },
+                control,
+            }
+        })
+    }
+
+    async fn execute_post_match_exec_state(
+        &self,
+        state: PostMatchExecState,
+    ) -> Result<DispatchType, InterpreterError> {
+        let PostMatchExecState { dispatch, control } = state;
+
+        match control {
+            PostMatchControlState::DispatchOnly => {
+                self.dispatch(
+                    dispatch.continuation,
+                    dispatch.data_list,
+                    dispatch.is_replay,
+                    dispatch.previous_output,
+                )
+                .await
+            }
+            PostMatchControlState::DispatchAndReconsume(receive_state) => {
+                let self_clone1 = self.clone();
+                let self_clone2 = self.clone();
+
+                let dispatch_fut = self_clone1.dispatch(
+                    dispatch.continuation,
+                    dispatch.data_list,
+                    dispatch.is_replay,
+                    dispatch.previous_output,
+                );
+                let consume_fut = self_clone2.consume(
+                    receive_state.binds,
+                    receive_state.body,
+                    receive_state.persistent,
+                    receive_state.peek,
+                );
+
+                let futures: Vec<DispatchResultFuture<'_>> = vec![
+                    Box::pin(dispatch_fut) as DispatchResultFuture<'_>,
+                    Box::pin(consume_fut) as DispatchResultFuture<'_>,
+                ];
+
+                let results: Vec<Result<DispatchType, InterpreterError>> =
+                    futures::future::join_all(futures).await;
+                let flattened_results: Vec<InterpreterError> = results
+                    .into_iter()
+                    .filter_map(|result| result.err())
+                    .collect();
+
+                self.aggregate_evaluator_errors(flattened_results)
+            }
+            PostMatchControlState::DispatchAndReproduce(produce_state) => {
+                let self_clone1 = self.clone();
+                let self_clone2 = self.clone();
+
+                let dispatch_fut = self_clone1.dispatch(
+                    dispatch.continuation,
+                    dispatch.data_list,
+                    dispatch.is_replay,
+                    dispatch.previous_output,
+                );
+                let produce_fut =
+                    self_clone2.produce(produce_state.chan, produce_state.data, produce_state.persistent);
+
+                let futures: Vec<DispatchResultFuture<'_>> = vec![
+                    Box::pin(dispatch_fut) as DispatchResultFuture<'_>,
+                    Box::pin(produce_fut) as DispatchResultFuture<'_>,
+                ];
+
+                let results: Vec<Result<DispatchType, InterpreterError>> =
+                    futures::future::join_all(futures).await;
+                let flattened_results: Vec<InterpreterError> = results
+                    .into_iter()
+                    .filter_map(|result| result.err())
+                    .collect();
+
+                self.aggregate_evaluator_errors(flattened_results)
+            }
+            PostMatchControlState::DispatchAndRestorePeeks => {
+                let self_clone = self.clone();
+                let dispatch_state = dispatch.clone();
+
+                let mut futures: Vec<DispatchResultFuture<'_>> = vec![Box::pin(async move {
+                    self_clone
+                        .dispatch(
+                            dispatch_state.continuation,
+                            dispatch_state.data_list,
+                            dispatch_state.is_replay,
+                            dispatch_state.previous_output,
+                        )
+                        .await
+                }) as DispatchResultFuture<'_>];
+                futures.extend(self.produce_peeks(dispatch.data_list).await);
+
+                let results: Vec<Result<DispatchType, InterpreterError>> =
+                    futures::future::join_all(futures).await;
+                let flattened_results: Vec<InterpreterError> = results
+                    .into_iter()
+                    .filter_map(|result| result.err())
+                    .collect();
+
+                self.aggregate_evaluator_errors(flattened_results)
+            }
         }
     }
 
@@ -741,118 +873,26 @@ impl DebruijnInterpreter {
     ) -> Result<DispatchType, InterpreterError> {
         // println!("\ncontinue_consume_process");
         // println!("\napplication in continue_consume_process: {:?}", res);
-        let previous_output_as_par = previous_output
-            .into_iter()
-            .map(|bytes| {
-                Par::decode(&bytes[..]).map_err(|e| InterpreterError::DecodeError(e.to_string()))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+        let previous_output_as_par = self.decode_previous_output(previous_output)?;
+        let Some(state) = self.build_post_match_exec_state(
+            res,
+            binds,
+            body,
+            persistent,
+            peek,
+            is_replay,
+            previous_output_as_par,
+        ) else {
+            return Ok(DispatchType::Skip);
+        };
 
-        match res {
-            Some((continuation, data_list, _peek)) => {
-                if persistent {
-                    // dispatchAndRun
-                    let self_clone1 = self.clone();
-                    let self_clone2 = self.clone();
-                    let continuation_clone = continuation.clone();
-                    let data_list_clone = data_list.clone();
-                    let previous_output_clone = previous_output_as_par.clone();
-                    let binds_clone = binds.clone();
-                    let body_clone = body.clone();
-                    let persistent_flag = persistent;
-                    let peek_flag = peek;
-                    let is_replay_flag = is_replay;
-
-                    let mut futures: Vec<
-                        Pin<
-                            Box<
-                                dyn futures::Future<Output = Result<DispatchType, InterpreterError>>
-                                    + std::marker::Send,
-                            >,
-                        >,
-                    > = vec![];
-
-                    let dispatch_fut = self_clone1.dispatch(
-                        continuation_clone,
-                        data_list_clone,
-                        is_replay_flag,
-                        previous_output_clone,
-                    );
-                    futures.push(Box::pin(dispatch_fut)
-                        as Pin<
-                            Box<
-                                dyn futures::Future<Output = Result<DispatchType, InterpreterError>>
-                                    + std::marker::Send,
-                            >,
-                        >);
-
-                    let consume_fut =
-                        self_clone2.consume(binds_clone, body_clone, persistent_flag, peek_flag);
-                    futures.push(Box::pin(consume_fut)
-                        as Pin<
-                            Box<
-                                dyn futures::Future<Output = Result<DispatchType, InterpreterError>>
-                                    + std::marker::Send,
-                            >,
-                        >);
-
-                    // parTraverseSafe
-                    let results: Vec<Result<DispatchType, InterpreterError>> =
-                        futures::future::join_all(futures).await;
-                    let flattened_results: Vec<InterpreterError> = results
-                        .into_iter()
-                        .filter_map(|result| result.err())
-                        .collect();
-
-                    self.aggregate_evaluator_errors(flattened_results)
-                } else if _peek {
-                    // dispatchAndRun
-                    let self_clone = self.clone();
-                    let continuation_clone = continuation.clone();
-                    let data_list_clone = data_list.clone();
-                    let previous_output_clone = previous_output_as_par.clone();
-
-                    let mut futures: Vec<
-                        Pin<
-                            Box<
-                                dyn futures::Future<Output = Result<DispatchType, InterpreterError>>
-                                    + std::marker::Send,
-                            >,
-                        >,
-                    > = vec![Box::pin(async move {
-                        self_clone
-                            .dispatch(
-                                continuation_clone,
-                                data_list_clone,
-                                is_replay,
-                                previous_output_clone,
-                            )
-                            .await
-                    })];
-                    futures.extend(self.produce_peeks(data_list).await);
-
-                    // parTraverseSafe
-                    let results: Vec<Result<DispatchType, InterpreterError>> =
-                        futures::future::join_all(futures).await;
-                    let flattened_results: Vec<InterpreterError> = results
-                        .into_iter()
-                        .filter_map(|result| result.err())
-                        .collect();
-
-                    self.aggregate_evaluator_errors(flattened_results)
-                } else {
-                    self.dispatch(continuation, data_list, is_replay, previous_output_as_par)
-                        .await
-                }
-            }
-            None => Ok(DispatchType::Skip),
-        }
+        self.execute_post_match_exec_state(state).await
     }
 
     fn dispatch<'a>(
         &'a self,
         continuation: TaggedContinuation,
-        data_list: Vec<(Par, ListParWithRandom, ListParWithRandom, bool)>,
+        data_list: Vec<MatchedData>,
         is_replay: bool,
         previous_output: Vec<Par>,
     ) -> Pin<
@@ -870,7 +910,7 @@ impl DebruijnInterpreter {
     async fn dispatch_inner(
         &self,
         continuation: TaggedContinuation,
-        data_list: Vec<(Par, ListParWithRandom, ListParWithRandom, bool)>,
+        data_list: Vec<MatchedData>,
         is_replay: bool,
         previous_output: Vec<Par>,
     ) -> Result<DispatchType, InterpreterError> {
@@ -920,7 +960,7 @@ impl DebruijnInterpreter {
 
     async fn produce_peeks(
         &self,
-        data_list: Vec<(Par, ListParWithRandom, ListParWithRandom, bool)>,
+        data_list: Vec<MatchedData>,
     ) -> Vec<
         Pin<
             Box<
