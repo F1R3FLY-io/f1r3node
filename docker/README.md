@@ -11,7 +11,7 @@ docker compose -f shard.yml up -d
 
 Wait for genesis (~2-3 minutes). All validators must transition to Running state:
 ```bash
-docker compose -f shard.yml logs -f --tail=500 | grep "Making a transition to Running state"
+docker compose -f shard.yml logs 2>&1 | grep "Making a transition to Running state"
 ```
 
 Once all validators report Running, press `Ctrl+C`. The network is ready.
