@@ -180,7 +180,7 @@ docker compose -f docker/standalone.yml down
 docker compose -f docker/shard.yml up -d
 
 # Wait for genesis (~2-3 min)
-docker compose -f docker/shard.yml logs -f --tail=500 | grep "Making a transition to Running state"
+docker compose -f docker/shard.yml logs 2>&1 | grep "Making a transition to Running state"
 # Ctrl+C once all validators report Running
 
 docker compose -f docker/shard.yml logs -f         # Follow logs
