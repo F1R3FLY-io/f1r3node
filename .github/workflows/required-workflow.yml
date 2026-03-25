@@ -694,7 +694,7 @@ jobs:
         with:
           artifacts: /tmp/artifacts/*
           prerelease: true
-          draft: true
+          draft: false
           allowUpdates: true
           omitBodyDuringUpdate: true
           token: ${{ secrets.GITHUB_TOKEN }}
