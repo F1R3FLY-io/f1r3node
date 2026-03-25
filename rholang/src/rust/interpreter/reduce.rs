@@ -189,6 +189,77 @@ struct PostMatchExecState {
     control: PostMatchControlState,
 }
 
+#[derive(Clone, Copy)]
+enum StepTerminalStatus {
+    Completed,
+    Suspended,
+}
+
+struct StepResult {
+    dispatch_result: DispatchType,
+    emitted_effects: bool,
+    next_state: Option<PostMatchExecState>,
+    consumed_gas: i64,
+    terminal_status: StepTerminalStatus,
+}
+
+fn should_suspend_for_step(gas_limit: i64) -> bool {
+    gas_limit <= 0
+}
+
+fn compute_consumed_gas(starting_phlo: i64, remaining_phlo: i64) -> i64 {
+    if remaining_phlo >= starting_phlo {
+        0
+    } else {
+        starting_phlo - remaining_phlo
+    }
+}
+
+fn dispatch_emits_effects(dispatch_result: &DispatchType) -> bool {
+    !matches!(dispatch_result, DispatchType::Skip)
+}
+
+fn dispatch_from_step_result(step_result: StepResult) -> DispatchType {
+    let StepResult {
+        dispatch_result,
+        emitted_effects: _emitted_effects,
+        next_state: _next_state,
+        consumed_gas: _consumed_gas,
+        terminal_status,
+    } = step_result;
+
+    match terminal_status {
+        StepTerminalStatus::Completed => dispatch_result,
+        StepTerminalStatus::Suspended => DispatchType::Skip,
+    }
+}
+
+#[cfg(test)]
+mod step_helpers_tests {
+    use super::*;
+
+    #[test]
+    fn step_should_suspend_when_gas_limit_is_non_positive() {
+        assert!(should_suspend_for_step(0));
+        assert!(should_suspend_for_step(-1));
+        assert!(!should_suspend_for_step(1));
+    }
+
+    #[test]
+    fn step_consumed_gas_is_monotonic_and_clamped() {
+        assert_eq!(compute_consumed_gas(100, 70), 30);
+        assert_eq!(compute_consumed_gas(100, 100), 0);
+        assert_eq!(compute_consumed_gas(70, 100), 0);
+    }
+
+    #[test]
+    fn step_effect_marker_matches_dispatch_type() {
+        assert!(!dispatch_emits_effects(&DispatchType::Skip));
+        assert!(dispatch_emits_effects(&DispatchType::DeterministicCall));
+        assert!(dispatch_emits_effects(&DispatchType::NonDeterministicCall(vec![])));
+    }
+}
+
 trait Method {
     fn apply(&self, p: Par, args: Vec<Par>, env: &Env<Par>) -> Result<Par, InterpreterError>;
 }
@@ -676,7 +747,8 @@ impl DebruijnInterpreter {
             return Ok(DispatchType::Skip);
         };
 
-        self.execute_post_match_exec_state(state).await
+        let step_result = self.reduce_step(state, i64::MAX).await?;
+        Ok(dispatch_from_step_result(step_result))
     }
 
     fn decode_previous_output(
@@ -760,6 +832,34 @@ impl DebruijnInterpreter {
                 },
                 control,
             }
+        })
+    }
+
+    async fn reduce_step(
+        &self,
+        exec_state: PostMatchExecState,
+        gas_limit: i64,
+    ) -> Result<StepResult, InterpreterError> {
+        if should_suspend_for_step(gas_limit) {
+            return Ok(StepResult {
+                dispatch_result: DispatchType::Skip,
+                emitted_effects: false,
+                next_state: Some(exec_state),
+                consumed_gas: 0,
+                terminal_status: StepTerminalStatus::Suspended,
+            });
+        }
+
+        let remaining_before = exec_state.dispatch._remaining_phlo;
+        let dispatch_result = self.execute_post_match_exec_state(exec_state).await?;
+        let consumed_gas = compute_consumed_gas(remaining_before, self.cost.get().value);
+
+        Ok(StepResult {
+            emitted_effects: dispatch_emits_effects(&dispatch_result),
+            dispatch_result,
+            next_state: None,
+            consumed_gas,
+            terminal_status: StepTerminalStatus::Completed,
         })
     }
 
@@ -890,7 +990,8 @@ impl DebruijnInterpreter {
             return Ok(DispatchType::Skip);
         };
 
-        self.execute_post_match_exec_state(state).await
+        let step_result = self.reduce_step(state, i64::MAX).await?;
+        Ok(dispatch_from_step_result(step_result))
     }
 
     fn dispatch<'a>(
