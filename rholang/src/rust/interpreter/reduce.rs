@@ -156,6 +156,8 @@ struct DispatchExecState {
     data_list: Vec<MatchedData>,
     is_replay: bool,
     previous_output: Vec<Par>,
+    // Phase 1 metadata capture for later step-based gas accounting.
+    _remaining_phlo: i64,
 }
 
 #[derive(Clone)]
@@ -719,6 +721,7 @@ impl DebruijnInterpreter {
                     data_list,
                     is_replay,
                     previous_output,
+                    _remaining_phlo: self.cost.get().value,
                 },
                 control,
             }
@@ -753,6 +756,7 @@ impl DebruijnInterpreter {
                     data_list,
                     is_replay,
                     previous_output,
+                    _remaining_phlo: self.cost.get().value,
                 },
                 control,
             }
