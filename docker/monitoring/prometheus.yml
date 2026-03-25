@@ -2,15 +2,32 @@ global:
   scrape_interval: 15s
   evaluation_interval: 15s
 
+rule_files:
+  - /etc/prometheus/rules/prometheus-rules.yml
+
 scrape_configs:
+  # Dynamic node discovery via Docker DNS.
+  # Only nodes that exist on the network are scraped — no spurious
+  # DOWN targets when running light shard or standalone mode.
   - job_name: 'f1r3node'
-    static_configs:
-      - targets:
-          - 'rnode.bootstrap:40403'
-          - 'rnode.validator1:40403'
-          - 'rnode.validator2:40403'
-          - 'rnode.validator3:40403'
-          - 'rnode.readonly:40403'
-        labels:
-          shard: 'default'
+    dns_sd_configs:
+      - names:
+          - 'rnode.bootstrap'
+          - 'rnode.validator1'
+          - 'rnode.validator2'
+          - 'rnode.validator3'
+          - 'rnode.readonly'
+          - 'rnode.standalone'
+        type: A
+        port: 40403
+        refresh_interval: 15s
     metrics_path: /metrics
+    relabel_configs:
+      - source_labels: [__meta_dns_name]
+        target_label: instance
+      - target_label: shard
+        replacement: 'default'
+
+  - job_name: 'cadvisor'
+    static_configs:
+      - targets: ['cadvisor:8080']

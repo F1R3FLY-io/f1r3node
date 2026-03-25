@@ -11,7 +11,7 @@ docker compose -f shard.yml up -d
 
 Wait for genesis (~2-3 minutes). All validators must transition to Running state:
 ```bash
-docker compose -f shard.yml logs -f | grep "Making a transition to Running state"
+docker compose -f shard.yml logs -f --tail=500 | grep "Making a transition to Running state"
 ```
 
 Once all validators report Running, press `Ctrl+C`. The network is ready.
@@ -34,9 +34,22 @@ docker compose -f shard.yml down
 
 **Stop and wipe all data (fresh restart):**
 ```bash
-docker compose -f shard.yml down
-rm -rf data/
+docker compose -f shard.yml down -v
 ```
+
+Start the monitoring stack after the shard is running:
+
+```bash
+docker compose -f shard-monitoring.yml up -d
+```
+
+| Component | URL | Description |
+|---|---|---|
+| Prometheus | http://localhost:9090 | Metrics, targets, recording rules |
+| Grafana | http://localhost:3000 | Dashboards (admin/admin) |
+| cAdvisor | http://localhost:8080 | Container CPU/memory/IO metrics |
+
+Prometheus uses DNS-based service discovery — only running nodes get scraped (no false DOWN targets for standalone or partial shard).
 
 ## Build from Source
 
@@ -59,6 +72,16 @@ docker compose -f standalone.yml logs -f
 docker compose -f standalone.yml down
 ```
 
+## Compose Files
+
+| File | Description |
+|------|-------------|
+| `shard.yml` | Full shard: bootstrap + 3 validators + observer |
+| `standalone.yml` | Single standalone node for development |
+| `validator4.yml` | Additional validator joining existing shard |
+| `observer.yml` | Additional read-only node joining existing shard |
+| `shard-monitoring.yml` | Prometheus + Grafana + cAdvisor overlay |
+
 ## Configuration
 
 All compose files use 2 shared config files. Per-role behavior is controlled via CLI flags.
@@ -76,15 +99,38 @@ CLI flags used per role:
 | `--heartbeat-disabled` | Bootstrap, Observer |
 | `--genesis-validator` | Validators 1-3 |
 
-## Compose Files
+Key settings in `default.conf`:
+- `fault-tolerance-threshold = 0.99` (near-unanimous finalization)
+- `synchrony-constraint-threshold = 0` (no synchrony gate on proposals)
+- `enable-mergeable-channel-gc = true`
+- `heartbeat.enabled = true` (overridden via `--heartbeat-disabled` for bootstrap/observer)
 
-| File | Description |
-|------|-------------|
-| `shard.yml` | Full shard: bootstrap + 3 validators + observer |
-| `standalone.yml` | Single standalone node for development |
-| `validator4.yml` | Additional validator joining existing shard |
-| `observer.yml` | Additional read-only node joining existing shard |
-| `shard-monitoring.yml` | Prometheus + Grafana overlay |
+## Port Mapping
+
+| Node | Protocol | gRPC Ext | gRPC Int | HTTP | Discovery | Admin |
+|------|----------|----------|----------|------|-----------|-------|
+| Bootstrap | 40400 | 40401 | 40402 | 40403 | 40404 | 40405 |
+| Validator1 | 40410 | 40411 | 40412 | 40413 | 40414 | 40415 |
+| Validator2 | 40420 | 40421 | 40422 | 40423 | 40424 | 40425 |
+| Validator3 | 40430 | 40431 | 40432 | 40433 | 40434 | 40435 |
+| Validator4 | 40440 | 40441 | 40442 | 40443 | 40444 | 40445 |
+| Observer | 40450 | 40451 | 40452 | 40453 | 40454 | 40455 |
+
+## Monitoring
+
+Start the monitoring stack after the shard is running:
+
+```bash
+docker compose -f shard-monitoring.yml up -d
+```
+
+| Component | URL | Description |
+|---|---|---|
+| Prometheus | http://localhost:9090 | Metrics, targets, recording rules |
+| Grafana | http://localhost:3000 | Dashboards (admin/admin) |
+| cAdvisor | http://localhost:8080 | Container CPU/memory/IO metrics |
+
+Prometheus uses DNS-based service discovery — only running nodes get scraped (no false DOWN targets for standalone or partial shard).
 
 ## Adding Validator
 

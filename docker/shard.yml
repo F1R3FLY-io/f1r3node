@@ -160,4 +160,5 @@ services:
 
 networks:
   f1r3fly:
+    name: f1r3fly
     driver: bridge

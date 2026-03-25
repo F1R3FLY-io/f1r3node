@@ -27,4 +27,4 @@ services:
 networks:
   f1r3fly:
     external: true
-    name: docker_f1r3fly
+    name: f1r3fly
