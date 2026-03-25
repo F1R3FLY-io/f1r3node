@@ -45,5 +45,6 @@ Initial milestone focuses on deterministic extraction of explicit execution stat
 
 - Plan: `IMPLEMENTATION_PLAN.md`
 - Detailed project plan source: `logicT_execution_runtime-IMPLEMENTATION_PLAN.md`
+- Experimental branch functionality/usage guide: `docs/runtime/logicT-execution-runtime-usage.md`
 - Verification entrypoint: `scripts/verify-runtime.sh`
 - Agent constraints: `AGENTS.md`
