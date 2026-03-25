@@ -20,6 +20,7 @@
   - [Smoke Test](#smoke-test)
   - [F1r3flyFS](#f1r3flyfs)
 - [Configuration](#configuration-file)
+- [Rust Codebase Documentation](#rust-codebase-documentation)
 - [Troubleshooting](#troubleshooting)
 - [Support & Community](#support--community)
 - [Known Issues & Reporting](#caveats-and-filing-issues)
@@ -328,6 +329,25 @@ Reference configs:
 - [defaults.conf](node/src/main/resources/defaults.conf) - All available options
 - [docker/conf/standalone-dev.conf](docker/conf/standalone-dev.conf) - Standalone development config
 - [docker/conf/default.conf](docker/conf/default.conf) - Shard config
+
+## Rust Codebase Documentation
+
+Detailed architecture and API documentation for each Rust crate is available in [docs/rust/](docs/rust/README.md):
+
+| Module | Description |
+|--------|-------------|
+| [shared](docs/rust/shared.md) | Foundation types, KV store abstraction, LMDB bindings |
+| [crypto](docs/rust/crypto.md) | Hashing, signing, certificates |
+| [models](docs/rust/models.md) | Protobuf types, Rholang AST, sorted collections |
+| [rspace](docs/rust/rspace.md) | Tuple space engine, produce/consume matching, trie history |
+| [rholang](docs/rust/rholang.md) | Interpreter, reducer, cost accounting, system processes |
+| [casper](docs/rust/casper.md) | CBC Casper consensus, block creation/validation, finalization |
+| [block-storage](docs/rust/block-storage.md) | Block persistence, DAG storage, deploy index |
+| [comm](docs/rust/comm.md) | P2P networking, Kademlia DHT, TLS transport |
+| [node](docs/rust/node.md) | Binary entry point, gRPC/HTTP servers, CLI, diagnostics |
+| [graphz](docs/rust/graphz.md) | Graphviz DOT generation |
+
+See also: [Data Flows](docs/rust/data-flows.md) | [Patterns & Conventions](docs/rust/patterns.md)
 
 ## Troubleshooting
 
