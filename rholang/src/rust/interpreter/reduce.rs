@@ -1,6 +1,7 @@
 // See See rholang/src/main/scala/coop/rchain/rholang/interpreter/Reduce.scala
 
 use crypto::rust::hash::blake2b512_random::Blake2b512Random;
+use crypto::rust::hash::blake2b256::Blake2b256;
 use models::rhoapi::expr::ExprInstance;
 use models::rhoapi::g_unforgeable::UnfInstance;
 use models::rhoapi::tagged_continuation::TaggedCont;
@@ -30,8 +31,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, RwLock};
 use std::task::{Context, Poll};
+use tracing::debug;
 
 use crate::rust::interpreter::accounting::costs::{
     add_cost, bytes_to_hex_cost, diff_cost, hex_to_bytes_cost, interpolate_cost, keys_method_cost,
@@ -61,6 +64,9 @@ use super::rho_type::{RhoExpression, RhoUnforgeable};
 use super::substitute::Substitute;
 use super::unwrap_option_safe;
 use super::util::GeneratedMessage;
+use super::storage::continuation_store::{
+    ContinuationHandle, CreateContinuation, FundingPolicy, InMemoryContinuationStore,
+};
 use models::rust::pathmap_crate_type_mapper::PathMapCrateTypeMapper;
 
 /// Minimum remaining stack space (in bytes) before growing.
@@ -140,6 +146,24 @@ pub struct DebruijnInterpreter {
     pub mergeable_tag_name: Par,
     pub cost: _cost,
     pub substitute: Substitute,
+    pub(crate) split_post_match_config: Arc<RwLock<SplitPostMatchConfig>>,
+    pub(crate) continuation_store: Arc<RwLock<InMemoryContinuationStore>>,
+    pub(crate) continuation_nonce: Arc<AtomicU64>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SplitPostMatchConfig {
+    pub enabled: bool,
+    pub initial_step_gas_limit: i64,
+}
+
+impl Default for SplitPostMatchConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            initial_step_gas_limit: i64::MAX,
+        }
+    }
 }
 
 type MatchedData = (Par, ListParWithRandom, ListParWithRandom, bool);
@@ -507,6 +531,72 @@ mod step_helpers_tests {
         let step_map = step_space.to_map();
 
         assert_eq!(full_map, step_map);
+    }
+
+    #[test]
+    fn serialize_post_match_state_supports_dispatch_and_follow_up_controls() {
+        let dispatch = DispatchExecState {
+            continuation: TaggedContinuation::default(),
+            data_list: Vec::new(),
+            is_replay: false,
+            previous_output: Vec::new(),
+            _remaining_phlo: 42,
+        };
+
+        let receive_state = ReceiveRegistrationState {
+            binds: vec![(
+                BindPattern::default(),
+                new_gstring_par("channel".to_string(), Vec::new(), false),
+            )],
+            body: ParWithRandom::default(),
+            persistent: true,
+            peek: false,
+        };
+
+        let produce_state = ProduceRegistrationState {
+            chan: new_gstring_par("channel".to_string(), Vec::new(), false),
+            data: ListParWithRandom {
+                pars: vec![new_gint_par(7, Vec::new(), false)],
+                random_state: Vec::new(),
+            },
+            persistent: true,
+        };
+
+        let states = vec![
+            PostMatchExecState {
+                dispatch: dispatch.clone(),
+                control: PostMatchControlState::DispatchOnly,
+            },
+            PostMatchExecState {
+                dispatch: dispatch.clone(),
+                control: PostMatchControlState::DispatchAndReconsume(receive_state.clone()),
+            },
+            PostMatchExecState {
+                dispatch: dispatch.clone(),
+                control: PostMatchControlState::DispatchAndReproduce(produce_state.clone()),
+            },
+            PostMatchExecState {
+                dispatch: dispatch.clone(),
+                control: PostMatchControlState::DispatchAndRestorePeeks,
+            },
+            PostMatchExecState {
+                dispatch: dispatch.clone(),
+                control: PostMatchControlState::Reconsume(receive_state),
+            },
+            PostMatchExecState {
+                dispatch: dispatch.clone(),
+                control: PostMatchControlState::Reproduce(produce_state),
+            },
+            PostMatchExecState {
+                dispatch,
+                control: PostMatchControlState::RestorePeeks,
+            },
+        ];
+
+        for state in states.iter() {
+            let encoded = serialize_post_match_state(state).unwrap();
+            assert!(!encoded.is_empty());
+        }
     }
 }
 
@@ -997,7 +1087,7 @@ impl DebruijnInterpreter {
             return Ok(DispatchType::Skip);
         };
 
-        self.execute_post_match_to_completion(state, i64::MAX).await
+        self.execute_post_match_with_runtime_policy(state).await
     }
 
     fn decode_previous_output(
@@ -1255,6 +1345,106 @@ impl DebruijnInterpreter {
         }
     }
 
+    async fn execute_post_match_with_runtime_policy(
+        &self,
+        state: PostMatchExecState,
+    ) -> Result<DispatchType, InterpreterError> {
+        let split_config = *self.split_post_match_config.read().unwrap();
+        if !split_config.enabled {
+            return self.execute_post_match_to_completion(state, i64::MAX).await;
+        }
+
+        let step_result = self
+            .reduce_step(state, split_config.initial_step_gas_limit)
+            .await?;
+        self.handle_split_step_result(step_result, split_config.initial_step_gas_limit)
+    }
+
+    fn handle_split_step_result(
+        &self,
+        step_result: StepResult,
+        gas_limit_per_step: i64,
+    ) -> Result<DispatchType, InterpreterError> {
+        let StepResult {
+            dispatch_result,
+            emitted_effects,
+            next_state,
+            consumed_gas,
+            terminal_status,
+        } = step_result;
+
+        debug!(
+            target: "f1r3fly.rholang",
+            split_post_match_enabled = true,
+            emitted_effects,
+            consumed_gas,
+            gas_limit_per_step,
+            terminal_status = match terminal_status {
+                StepTerminalStatus::Completed => "completed",
+                StepTerminalStatus::Suspended => "suspended",
+            },
+            "post-match split step completed",
+        );
+
+        match terminal_status {
+            StepTerminalStatus::Completed => {
+                metrics::counter!("rholang.split_post_match.completed").increment(1);
+                Ok(dispatch_result)
+            }
+            StepTerminalStatus::Suspended => {
+                metrics::counter!("rholang.split_post_match.suspended").increment(1);
+                let suspended_state = next_state.ok_or_else(|| {
+                    InterpreterError::BugFoundError(
+                        "split step suspended without next state".to_string(),
+                    )
+                })?;
+                let _ = self.persist_suspended_post_match_state(
+                    suspended_state,
+                    gas_limit_per_step,
+                )?;
+                Ok(dispatch_result)
+            }
+        }
+    }
+
+    fn persist_suspended_post_match_state(
+        &self,
+        state: PostMatchExecState,
+        gas_limit_per_step: i64,
+    ) -> Result<ContinuationHandle, InterpreterError> {
+        let serialized_state = serialize_post_match_state(&state)?;
+        let origin_reference = state.dispatch.continuation.encode_to_vec();
+        let origin = Blake2b256::hash(origin_reference.clone()).to_vec();
+        let nonce = self.continuation_nonce.fetch_add(1, Ordering::SeqCst);
+        let handle = ContinuationHandle::new(origin, nonce);
+
+        let create = CreateContinuation {
+            handle: handle.clone(),
+            origin_reference,
+            serialized_state,
+            gas_limit_per_step,
+            funding_policy: FundingPolicy::ProducerOnly,
+        };
+
+        let mut store = self.continuation_store.write().unwrap();
+        store
+            .create(create)
+            .map_err(|e| {
+                InterpreterError::BugFoundError(format!(
+                    "failed to persist suspended continuation: {e:?}"
+                ))
+            })?;
+
+        metrics::counter!("rholang.split_post_match.continuation_persisted").increment(1);
+        debug!(
+            target: "f1r3fly.rholang",
+            continuation_nonce = nonce,
+            "persisted suspended post-match continuation",
+        );
+
+        Ok(handle)
+    }
+
     /// Compatibility path: run the post-match machine in a single full call.
     /// Kept for equivalence testing against `reduce_step` progression.
     #[cfg(test)]
@@ -1410,7 +1600,7 @@ impl DebruijnInterpreter {
             return Ok(DispatchType::Skip);
         };
 
-        self.execute_post_match_to_completion(state, i64::MAX).await
+        self.execute_post_match_with_runtime_policy(state).await
     }
 
     fn dispatch<'a>(
@@ -7797,11 +7987,110 @@ impl DebruijnInterpreter {
             mergeable_tag_name,
             cost: cost.clone(),
             substitute: Substitute { cost: cost.clone() },
+            split_post_match_config: Arc::new(RwLock::new(SplitPostMatchConfig::default())),
+            continuation_store: Arc::new(RwLock::new(InMemoryContinuationStore::default())),
+            continuation_nonce: Arc::new(AtomicU64::new(0)),
         });
 
         reducer_cell.set(Arc::downgrade(&reducer)).ok().unwrap();
         reducer
     }
+
+    pub fn set_split_post_match_config(&self, config: SplitPostMatchConfig) {
+        let mut config_guard = self.split_post_match_config.write().unwrap();
+        *config_guard = config;
+    }
+
+    pub fn continuation_store_len(&self) -> usize {
+        self.continuation_store.read().unwrap().len()
+    }
+}
+
+const POST_MATCH_STATE_ENCODING_VERSION: u8 = 1;
+
+fn serialize_post_match_state(state: &PostMatchExecState) -> Result<Vec<u8>, InterpreterError> {
+    let mut out = Vec::new();
+    out.push(POST_MATCH_STATE_ENCODING_VERSION);
+
+    let control_tag = match &state.control {
+        PostMatchControlState::DispatchOnly => 0u8,
+        PostMatchControlState::DispatchAndReconsume(_) => 1u8,
+        PostMatchControlState::DispatchAndReproduce(_) => 2u8,
+        PostMatchControlState::DispatchAndRestorePeeks => 3u8,
+        PostMatchControlState::Reconsume(_) => 4u8,
+        PostMatchControlState::Reproduce(_) => 5u8,
+        PostMatchControlState::RestorePeeks => 6u8,
+    };
+    out.push(control_tag);
+
+    serialize_dispatch_exec_state(&state.dispatch, &mut out);
+
+    match &state.control {
+        PostMatchControlState::DispatchAndReconsume(receive_state)
+        | PostMatchControlState::Reconsume(receive_state) => {
+            serialize_receive_registration_state(receive_state, &mut out);
+        }
+        PostMatchControlState::DispatchAndReproduce(produce_state)
+        | PostMatchControlState::Reproduce(produce_state) => {
+            serialize_produce_registration_state(produce_state, &mut out);
+        }
+        PostMatchControlState::DispatchOnly
+        | PostMatchControlState::DispatchAndRestorePeeks
+        | PostMatchControlState::RestorePeeks => {}
+    }
+
+    Ok(out)
+}
+
+fn serialize_receive_registration_state(receive_state: &ReceiveRegistrationState, out: &mut Vec<u8>) {
+    put_u32(out, receive_state.binds.len() as u32);
+    for (bind_pattern, source) in receive_state.binds.iter() {
+        put_bytes(out, &bind_pattern.encode_to_vec());
+        put_bytes(out, &source.encode_to_vec());
+    }
+    put_bytes(out, &receive_state.body.encode_to_vec());
+    put_bool(out, receive_state.persistent);
+    put_bool(out, receive_state.peek);
+}
+
+fn serialize_produce_registration_state(produce_state: &ProduceRegistrationState, out: &mut Vec<u8>) {
+    put_bytes(out, &produce_state.chan.encode_to_vec());
+    put_bytes(out, &produce_state.data.encode_to_vec());
+    put_bool(out, produce_state.persistent);
+}
+
+fn serialize_dispatch_exec_state(dispatch: &DispatchExecState, out: &mut Vec<u8>) {
+    put_bytes(out, &dispatch.continuation.encode_to_vec());
+    put_u32(out, dispatch.data_list.len() as u32);
+    for (chan, matched_data, removed_data, persistent) in dispatch.data_list.iter() {
+        put_bytes(out, &chan.encode_to_vec());
+        put_bytes(out, &matched_data.encode_to_vec());
+        put_bytes(out, &removed_data.encode_to_vec());
+        put_bool(out, *persistent);
+    }
+    put_bool(out, dispatch.is_replay);
+    put_u32(out, dispatch.previous_output.len() as u32);
+    for par in dispatch.previous_output.iter() {
+        put_bytes(out, &par.encode_to_vec());
+    }
+    put_i64(out, dispatch._remaining_phlo);
+}
+
+fn put_bool(out: &mut Vec<u8>, value: bool) {
+    out.push(if value { 1 } else { 0 });
+}
+
+fn put_u32(out: &mut Vec<u8>, value: u32) {
+    out.extend_from_slice(&value.to_le_bytes());
+}
+
+fn put_i64(out: &mut Vec<u8>, value: i64) {
+    out.extend_from_slice(&value.to_le_bytes());
+}
+
+fn put_bytes(out: &mut Vec<u8>, bytes: &[u8]) {
+    put_u32(out, bytes.len() as u32);
+    out.extend_from_slice(bytes);
 }
 
 fn get_type(expr_instance: ExprInstance) -> String {

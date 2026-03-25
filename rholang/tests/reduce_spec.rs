@@ -42,7 +42,7 @@ use rholang::rust::interpreter::{
     env::Env,
     errors::InterpreterError,
     matcher::r#match::Matcher,
-    reduce::DebruijnInterpreter,
+    reduce::{DebruijnInterpreter, SplitPostMatchConfig},
     rho_runtime::RhoISpace,
     test_utils::persistent_store_tester::create_test_space,
 };
@@ -960,6 +960,130 @@ async fn eval_of_persistent_receive_should_remain_registered_after_each_match() 
 
     assert_eq!(second_receive_row.wks.len(), 1);
     assert_eq!(second_result_row.data.len(), 2);
+}
+
+#[tokio::test]
+async fn split_post_match_enabled_should_commit_dispatch_effects_and_persist_remainder() {
+    let (space, reducer) =
+        create_test_space::<RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>()
+            .await;
+
+    reducer.set_split_post_match_config(SplitPostMatchConfig {
+        enabled: true,
+        initial_step_gas_limit: i64::MAX,
+    });
+
+    let channel = new_gstring_par("split-channel".to_string(), Vec::new(), false);
+    let result_channel = new_gstring_par("split-result".to_string(), Vec::new(), false);
+
+    let receive = Par::default().with_receives(vec![Receive {
+        binds: vec![ReceiveBind {
+            patterns: vec![new_freevar_par(0, Vec::new())],
+            source: Some(channel.clone()),
+            remainder: None,
+            free_count: 1,
+        }],
+        body: Some(Par::default().with_sends(vec![Send {
+            chan: Some(result_channel.clone()),
+            data: vec![new_gstring_par("Success".to_string(), Vec::new(), false)],
+            persistent: false,
+            locally_free: Vec::new(),
+            connective_used: false,
+        }])),
+        persistent: false,
+        peek: false,
+        bind_count: 1,
+        locally_free: Vec::new(),
+        connective_used: false,
+    }]);
+
+    let send = Par::default().with_sends(vec![Send {
+        chan: Some(channel.clone()),
+        data: vec![new_gint_par(1, Vec::new(), false)],
+        persistent: true,
+        locally_free: Vec::new(),
+        connective_used: false,
+    }]);
+
+    let env: Env<Par> = Env::new();
+    assert!(reducer.eval(receive, &env, rand().split_byte(0)).await.is_ok());
+    assert_eq!(reducer.continuation_store_len(), 0);
+    assert!(reducer.eval(send, &env, rand().split_byte(1)).await.is_ok());
+
+    let state = space.to_map();
+    let result_row = state
+        .get(&vec![result_channel.clone()])
+        .expect("dispatch effects should be committed immediately");
+    assert_eq!(result_row.data.len(), 1);
+
+    assert_eq!(reducer.continuation_store_len(), 1);
+    if let Some(channel_row) = state.get(&vec![channel.clone()]) {
+        assert_eq!(
+            channel_row.data.len(),
+            0,
+            "persistent send re-registration should be deferred to continuation resume"
+        );
+    }
+}
+
+#[tokio::test]
+async fn split_post_match_disabled_should_execute_full_post_match_path() {
+    let (space, reducer) =
+        create_test_space::<RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>()
+            .await;
+
+    reducer.set_split_post_match_config(SplitPostMatchConfig {
+        enabled: false,
+        initial_step_gas_limit: 1,
+    });
+
+    let channel = new_gstring_par("full-channel".to_string(), Vec::new(), false);
+    let result_channel = new_gstring_par("full-result".to_string(), Vec::new(), false);
+
+    let receive = Par::default().with_receives(vec![Receive {
+        binds: vec![ReceiveBind {
+            patterns: vec![new_freevar_par(0, Vec::new())],
+            source: Some(channel.clone()),
+            remainder: None,
+            free_count: 1,
+        }],
+        body: Some(Par::default().with_sends(vec![Send {
+            chan: Some(result_channel.clone()),
+            data: vec![new_gstring_par("Success".to_string(), Vec::new(), false)],
+            persistent: false,
+            locally_free: Vec::new(),
+            connective_used: false,
+        }])),
+        persistent: true,
+        peek: false,
+        bind_count: 1,
+        locally_free: Vec::new(),
+        connective_used: false,
+    }]);
+
+    let send = Par::default().with_sends(vec![Send {
+        chan: Some(channel.clone()),
+        data: vec![new_gint_par(1, Vec::new(), false)],
+        persistent: false,
+        locally_free: Vec::new(),
+        connective_used: false,
+    }]);
+
+    let env: Env<Par> = Env::new();
+    assert!(reducer.eval(receive, &env, rand().split_byte(0)).await.is_ok());
+    assert!(reducer.eval(send, &env, rand().split_byte(1)).await.is_ok());
+
+    let state = space.to_map();
+    let channel_row = state
+        .get(&vec![channel.clone()])
+        .expect("persistent receive should be restored in full execution mode");
+    let result_row = state
+        .get(&vec![result_channel.clone()])
+        .expect("dispatch effects should be committed");
+
+    assert_eq!(channel_row.wks.len(), 1);
+    assert_eq!(result_row.data.len(), 1);
+    assert_eq!(reducer.continuation_store_len(), 0);
 }
 
 #[tokio::test]
