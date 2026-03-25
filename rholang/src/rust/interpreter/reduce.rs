@@ -1,7 +1,7 @@
 // See See rholang/src/main/scala/coop/rchain/rholang/interpreter/Reduce.scala
 
-use crypto::rust::hash::blake2b512_random::Blake2b512Random;
 use crypto::rust::hash::blake2b256::Blake2b256;
+use crypto::rust::hash::blake2b512_random::Blake2b512Random;
 use models::rhoapi::expr::ExprInstance;
 use models::rhoapi::g_unforgeable::UnfInstance;
 use models::rhoapi::tagged_continuation::TaggedCont;
@@ -46,9 +46,9 @@ use crate::rust::interpreter::rho_type::RhoTuple2;
 
 use super::accounting::_cost;
 use super::accounting::costs::{
-    bigint_comparison_cost, bigint_division_cost, bigint_modulo_cost,
-    bigint_multiplication_cost, bigint_negation_cost, bigint_subtraction_cost, bigint_sum_cost,
-    bigrat_comparison_cost, bigrat_division_cost, bigrat_multiplication_cost, bigrat_negation_cost,
+    bigint_comparison_cost, bigint_division_cost, bigint_modulo_cost, bigint_multiplication_cost,
+    bigint_negation_cost, bigint_subtraction_cost, bigint_sum_cost, bigrat_comparison_cost,
+    bigrat_division_cost, bigrat_multiplication_cost, bigrat_negation_cost,
     bigrat_subtraction_cost, bigrat_sum_cost, boolean_and_cost, boolean_or_cost,
     byte_array_append_cost, comparison_cost, division_cost, equality_check_cost, list_append_cost,
     method_call_cost, modulo_cost, multiplication_cost, new_bindings_cost, op_call_cost,
@@ -61,14 +61,14 @@ use super::errors::InterpreterError;
 use super::matcher::has_locally_free::HasLocallyFree;
 use super::rho_runtime::RhoISpace;
 use super::rho_type::{RhoExpression, RhoUnforgeable};
-use super::substitute::Substitute;
-use super::unwrap_option_safe;
-use super::util::GeneratedMessage;
 use super::storage::continuation_store::{
-    BridgeContinuationMetadata, ContinuationHandle, ContinuationStatus,
+    BridgeContinuationMetadata, BridgeFinalityPhase, ContinuationHandle, ContinuationStatus,
     ContinuationStoreError, ContinuationSubtype, ContinuationVisibility, CreateContinuation,
     FundingPolicy, InMemoryContinuationStore, PersistedContinuation,
 };
+use super::substitute::Substitute;
+use super::unwrap_option_safe;
+use super::util::GeneratedMessage;
 use models::rust::pathmap_crate_type_mapper::PathMapCrateTypeMapper;
 
 /// Minimum remaining stack space (in bytes) before growing.
@@ -217,7 +217,9 @@ type Application = Option<(TaggedContinuation, Vec<MatchedData>, bool)>;
 #[cfg(test)]
 type DispatchResultFuture<'a> = Pin<
     Box<
-        dyn futures::Future<Output = Result<DispatchType, InterpreterError>> + std::marker::Send + 'a,
+        dyn futures::Future<Output = Result<DispatchType, InterpreterError>>
+            + std::marker::Send
+            + 'a,
     >,
 >;
 
@@ -335,7 +337,9 @@ mod step_helpers_tests {
     fn step_effect_marker_matches_dispatch_type() {
         assert!(!dispatch_emits_effects(&DispatchType::Skip));
         assert!(dispatch_emits_effects(&DispatchType::DeterministicCall));
-        assert!(dispatch_emits_effects(&DispatchType::NonDeterministicCall(vec![])));
+        assert!(dispatch_emits_effects(&DispatchType::NonDeterministicCall(
+            vec![]
+        )));
     }
 
     #[test]
@@ -349,9 +353,7 @@ mod step_helpers_tests {
             peek: false,
         };
         assert!(matches!(
-            next_control_after_dispatch(PostMatchControlState::DispatchAndReconsume(
-                receive_state
-            )),
+            next_control_after_dispatch(PostMatchControlState::DispatchAndReconsume(receive_state)),
             Some(PostMatchControlState::Reconsume(_))
         ));
 
@@ -361,9 +363,7 @@ mod step_helpers_tests {
             persistent: true,
         };
         assert!(matches!(
-            next_control_after_dispatch(PostMatchControlState::DispatchAndReproduce(
-                produce_state
-            )),
+            next_control_after_dispatch(PostMatchControlState::DispatchAndReproduce(produce_state)),
             Some(PostMatchControlState::Reproduce(_))
         ));
 
@@ -396,7 +396,10 @@ mod step_helpers_tests {
         };
 
         let step_result = reducer.reduce_step(state, i64::MAX).await.unwrap();
-        assert!(matches!(step_result.terminal_status, StepTerminalStatus::Suspended));
+        assert!(matches!(
+            step_result.terminal_status,
+            StepTerminalStatus::Suspended
+        ));
         assert!(matches!(
             step_result.next_state.unwrap().control,
             PostMatchControlState::Reconsume(_)
@@ -421,7 +424,10 @@ mod step_helpers_tests {
         };
 
         let step_result = reducer.reduce_step(state, i64::MAX).await.unwrap();
-        assert!(matches!(step_result.terminal_status, StepTerminalStatus::Suspended));
+        assert!(matches!(
+            step_result.terminal_status,
+            StepTerminalStatus::Suspended
+        ));
         assert!(matches!(
             step_result.next_state.unwrap().control,
             PostMatchControlState::RestorePeeks
@@ -458,7 +464,10 @@ mod step_helpers_tests {
         };
 
         let step_result = reducer.reduce_step(state, i64::MAX).await.unwrap();
-        assert!(matches!(step_result.terminal_status, StepTerminalStatus::Completed));
+        assert!(matches!(
+            step_result.terminal_status,
+            StepTerminalStatus::Completed
+        ));
         assert!(step_result.next_state.is_none());
     }
 
@@ -480,7 +489,10 @@ mod step_helpers_tests {
         };
 
         let step_result = reducer.reduce_step(state, i64::MAX).await.unwrap();
-        assert!(matches!(step_result.terminal_status, StepTerminalStatus::Completed));
+        assert!(matches!(
+            step_result.terminal_status,
+            StepTerminalStatus::Completed
+        ));
         assert!(step_result.next_state.is_none());
     }
 
@@ -561,7 +573,10 @@ mod step_helpers_tests {
             create_test_space::<RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>()
                 .await;
         let step_state = sample_dispatch_and_restore_state(step_reducer.cost.get().value);
-        let step_result_1 = step_reducer.reduce_step(step_state, i64::MAX).await.unwrap();
+        let step_result_1 = step_reducer
+            .reduce_step(step_state, i64::MAX)
+            .await
+            .unwrap();
         assert!(matches!(
             step_result_1.terminal_status,
             StepTerminalStatus::Suspended
@@ -646,6 +661,121 @@ mod step_helpers_tests {
             let reencoded = serialize_post_match_state(&decoded).unwrap();
             assert_eq!(encoded, reencoded);
         }
+    }
+
+    #[tokio::test]
+    async fn persist_suspended_state_should_reject_fanout_above_cap() {
+        let (_, reducer) =
+            create_test_space::<RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>()
+                .await;
+
+        let state = PostMatchExecState {
+            dispatch: DispatchExecState {
+                continuation: TaggedContinuation::default(),
+                data_list: vec![
+                    (
+                        Par::default(),
+                        ListParWithRandom::default(),
+                        ListParWithRandom::default(),
+                        false
+                    );
+                    MAX_CONTINUATION_BRANCH_FANOUT + 1
+                ],
+                is_replay: false,
+                previous_output: Vec::new(),
+                _remaining_phlo: reducer.cost.get().value,
+            },
+            control: PostMatchControlState::RestorePeeks,
+        };
+
+        let result =
+            reducer.persist_suspended_post_match_state(state, SplitPostMatchConfig::default());
+        assert!(matches!(
+            result,
+            Err(InterpreterError::IllegalArgumentError(msg)) if msg.contains("fan-out")
+        ));
+    }
+
+    #[tokio::test]
+    async fn persist_suspended_state_should_reject_state_size_above_cap() {
+        let (_, reducer) =
+            create_test_space::<RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>()
+                .await;
+
+        let oversized_output = new_gstring_par(
+            "x".repeat(MAX_CONTINUATION_STATE_BYTES + 1024),
+            Vec::new(),
+            false,
+        );
+        let state = PostMatchExecState {
+            dispatch: DispatchExecState {
+                continuation: TaggedContinuation::default(),
+                data_list: Vec::new(),
+                is_replay: false,
+                previous_output: vec![oversized_output],
+                _remaining_phlo: reducer.cost.get().value,
+            },
+            control: PostMatchControlState::RestorePeeks,
+        };
+
+        let result =
+            reducer.persist_suspended_post_match_state(state, SplitPostMatchConfig::default());
+        assert!(matches!(
+            result,
+            Err(InterpreterError::IllegalArgumentError(msg)) if msg.contains("state size")
+        ));
+    }
+
+    #[test]
+    fn post_match_state_round_trip_should_be_stable_across_multiple_cycles() {
+        let mut encoded =
+            serialize_post_match_state(&sample_dispatch_and_restore_state(123)).unwrap();
+
+        for _ in 0..8 {
+            let decoded = deserialize_post_match_state(&encoded).unwrap();
+            let reencoded = serialize_post_match_state(&decoded).unwrap();
+            assert_eq!(encoded, reencoded);
+            encoded = reencoded;
+        }
+    }
+
+    #[tokio::test]
+    async fn continuation_store_restore_should_preserve_nonce_progress_for_same_origin() {
+        let (_, reducer) =
+            create_test_space::<RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>()
+                .await;
+        let split_config = SplitPostMatchConfig::default();
+        let first_state = sample_dispatch_and_restore_state(reducer.cost.get().value);
+
+        let first_handle = reducer
+            .persist_suspended_post_match_state(first_state.clone(), split_config.clone())
+            .expect("first continuation persistence should succeed");
+
+        let snapshot = reducer.continuation_store.read().unwrap().snapshot();
+        let restored = InMemoryContinuationStore::restore(snapshot)
+            .expect("continuation store restore should succeed");
+        let next_nonce = restored
+            .handles()
+            .into_iter()
+            .map(|handle| handle.nonce)
+            .max()
+            .map(|nonce| nonce.saturating_add(1))
+            .unwrap_or(0);
+
+        {
+            let mut store = reducer.continuation_store.write().unwrap();
+            *store = restored;
+        }
+        reducer
+            .continuation_nonce
+            .store(next_nonce, Ordering::SeqCst);
+
+        let second_handle = reducer
+            .persist_suspended_post_match_state(first_state, split_config)
+            .expect("second continuation persistence should succeed");
+
+        assert_eq!(first_handle.origin, second_handle.origin);
+        assert_eq!(second_handle.nonce, first_handle.nonce + 1);
     }
 }
 
@@ -1332,7 +1462,11 @@ impl DebruijnInterpreter {
         }
     }
 
-    fn completed_step_result(&self, dispatch_result: DispatchType, remaining_before: i64) -> StepResult {
+    fn completed_step_result(
+        &self,
+        dispatch_result: DispatchType,
+        remaining_before: i64,
+    ) -> StepResult {
         StepResult {
             emitted_effects: dispatch_emits_effects(&dispatch_result),
             dispatch_result,
@@ -1458,12 +1592,27 @@ impl DebruijnInterpreter {
         state: PostMatchExecState,
         split_config: SplitPostMatchConfig,
     ) -> Result<ContinuationHandle, InterpreterError> {
+        if state.dispatch.data_list.len() > MAX_CONTINUATION_BRANCH_FANOUT {
+            return Err(InterpreterError::IllegalArgumentError(format!(
+                "continuation fan-out {} exceeds maximum {}",
+                state.dispatch.data_list.len(),
+                MAX_CONTINUATION_BRANCH_FANOUT
+            )));
+        }
         let serialized_state = serialize_post_match_state(&state)?;
+        if serialized_state.len() > MAX_CONTINUATION_STATE_BYTES {
+            return Err(InterpreterError::IllegalArgumentError(format!(
+                "continuation state size {} exceeds maximum {} bytes",
+                serialized_state.len(),
+                MAX_CONTINUATION_STATE_BYTES
+            )));
+        }
         let origin_reference = state.dispatch.continuation.encode_to_vec();
         let origin = Blake2b256::hash(origin_reference.clone()).to_vec();
         let nonce = self.continuation_nonce.fetch_add(1, Ordering::SeqCst);
         let handle = ContinuationHandle::new(origin, nonce);
 
+        let state_size_bytes = serialized_state.len() as f64;
         let create = CreateContinuation {
             handle: handle.clone(),
             origin_reference,
@@ -1477,15 +1626,15 @@ impl DebruijnInterpreter {
         };
 
         let mut store = self.continuation_store.write().unwrap();
-        store
-            .create(create)
-            .map_err(|e| {
-                InterpreterError::BugFoundError(format!(
-                    "failed to persist suspended continuation: {e:?}"
-                ))
-            })?;
+        store.create(create).map_err(|e| {
+            InterpreterError::BugFoundError(format!(
+                "failed to persist suspended continuation: {e:?}"
+            ))
+        })?;
 
         metrics::counter!("rholang.split_post_match.continuation_persisted").increment(1);
+        metrics::counter!("rholang.continuation.created").increment(1);
+        metrics::histogram!("rholang.continuation.state_bytes").record(state_size_bytes);
         debug!(
             target: "f1r3fly.rholang",
             continuation_nonce = nonce,
@@ -1555,8 +1704,11 @@ impl DebruijnInterpreter {
                     dispatch.is_replay,
                     dispatch.previous_output,
                 );
-                let produce_fut =
-                    self_clone2.produce(produce_state.chan, produce_state.data, produce_state.persistent);
+                let produce_fut = self_clone2.produce(
+                    produce_state.chan,
+                    produce_state.data,
+                    produce_state.persistent,
+                );
 
                 let futures: Vec<DispatchResultFuture<'_>> = vec![
                     Box::pin(dispatch_fut) as DispatchResultFuture<'_>,
@@ -1585,7 +1737,8 @@ impl DebruijnInterpreter {
                             dispatch_state.previous_output,
                         )
                         .await
-                }) as DispatchResultFuture<'_>];
+                })
+                    as DispatchResultFuture<'_>];
                 futures.extend(self.produce_peeks(dispatch.data_list).await);
 
                 let results: Vec<Result<DispatchType, InterpreterError>> =
@@ -1607,16 +1760,24 @@ impl DebruijnInterpreter {
                 .await
             }
             PostMatchControlState::Reproduce(produce_state) => {
-                self.produce(produce_state.chan, produce_state.data, produce_state.persistent)
-                    .await
+                self.produce(
+                    produce_state.chan,
+                    produce_state.data,
+                    produce_state.persistent,
+                )
+                .await
             }
             PostMatchControlState::RestorePeeks => self.restore_peeks(dispatch.data_list).await,
         }
     }
 
-    async fn restore_peeks(&self, data_list: Vec<MatchedData>) -> Result<DispatchType, InterpreterError> {
+    async fn restore_peeks(
+        &self,
+        data_list: Vec<MatchedData>,
+    ) -> Result<DispatchType, InterpreterError> {
         let futures = self.produce_peeks(data_list).await;
-        let results: Vec<Result<DispatchType, InterpreterError>> = futures::future::join_all(futures).await;
+        let results: Vec<Result<DispatchType, InterpreterError>> =
+            futures::future::join_all(futures).await;
         let flattened_results: Vec<InterpreterError> = results
             .into_iter()
             .filter_map(|result| result.err())
@@ -2438,7 +2599,8 @@ impl DebruijnInterpreter {
                 }
 
                 (ExprInstance::GBigInt(b1), ExprInstance::GBigInt(b2)) => {
-                    self.cost.charge(bigint_comparison_cost(b1.len(), b2.len()))?;
+                    self.cost
+                        .charge(bigint_comparison_cost(b1.len(), b2.len()))?;
                     let cmp = compare_twos_complement_bytes(&b1, &b2);
                     Ok(Expr {
                         expr_instance: Some(ExprInstance::GBool(relopi(cmp as i64, 0))),
@@ -2447,8 +2609,10 @@ impl DebruijnInterpreter {
 
                 (ExprInstance::GBigRat(r1), ExprInstance::GBigRat(r2)) => {
                     self.cost.charge(bigrat_comparison_cost(
-                        r1.numerator.len(), r1.denominator.len(),
-                        r2.numerator.len(), r2.denominator.len(),
+                        r1.numerator.len(),
+                        r1.denominator.len(),
+                        r2.numerator.len(),
+                        r2.denominator.len(),
                     ))?;
                     let cmp = compare_big_rationals(&r1, &r2);
                     Ok(Expr {
@@ -2457,7 +2621,10 @@ impl DebruijnInterpreter {
                 }
 
                 (ExprInstance::GFixedPoint(fp1), ExprInstance::GFixedPoint(fp2)) => {
-                    self.cost.charge(bigint_comparison_cost(fp1.unscaled.len(), fp2.unscaled.len()))?;
+                    self.cost.charge(bigint_comparison_cost(
+                        fp1.unscaled.len(),
+                        fp2.unscaled.len(),
+                    ))?;
                     let cmp = compare_fixed_points(&fp1, &fp2)?;
                     Ok(Expr {
                         expr_instance: Some(ExprInstance::GBool(relopi(cmp as i64, 0))),
@@ -2540,7 +2707,8 @@ impl DebruijnInterpreter {
                             make_bigint_expr(negate_twos_complement(&bytes), "negation")
                         }
                         ExprInstance::GBigRat(rat) => {
-                            self.cost.charge(bigrat_negation_cost(rat.numerator.len()))?;
+                            self.cost
+                                .charge(bigrat_negation_cost(rat.numerator.len()))?;
                             make_bigrat_expr(
                                 models::rhoapi::GBigRational {
                                     numerator: negate_twos_complement(&rat.numerator),
@@ -2590,13 +2758,16 @@ impl DebruijnInterpreter {
                             })
                         }
                         (ExprInstance::GBigInt(b1), ExprInstance::GBigInt(b2)) => {
-                            self.cost.charge(bigint_multiplication_cost(b1.len(), b2.len()))?;
+                            self.cost
+                                .charge(bigint_multiplication_cost(b1.len(), b2.len()))?;
                             make_bigint_expr(multiply_twos_complement(&b1, &b2), "multiplication")
                         }
                         (ExprInstance::GBigRat(r1), ExprInstance::GBigRat(r2)) => {
                             self.cost.charge(bigrat_multiplication_cost(
-                                r1.numerator.len(), r1.denominator.len(),
-                                r2.numerator.len(), r2.denominator.len(),
+                                r1.numerator.len(),
+                                r1.denominator.len(),
+                                r2.numerator.len(),
+                                r2.denominator.len(),
                             ))?;
                             make_bigrat_expr(multiply_big_rationals(&r1, &r2), "multiplication")
                         }
@@ -2608,8 +2779,14 @@ impl DebruijnInterpreter {
                                     other_type: format!("FixedPoint(p{})", fp2.scale),
                                 });
                             }
-                            self.cost.charge(bigint_multiplication_cost(fp1.unscaled.len(), fp2.unscaled.len()))?;
-                            make_fixedpoint_expr(multiply_fixed_points(&fp1, &fp2), "multiplication")
+                            self.cost.charge(bigint_multiplication_cost(
+                                fp1.unscaled.len(),
+                                fp2.unscaled.len(),
+                            ))?;
+                            make_fixedpoint_expr(
+                                multiply_fixed_points(&fp1, &fp2),
+                                "multiplication",
+                            )
                         }
                         (lhs, rhs) => {
                             let lhs_type = get_type(lhs);
@@ -2669,8 +2846,10 @@ impl DebruijnInterpreter {
                         }
                         (ExprInstance::GBigRat(r1), ExprInstance::GBigRat(r2)) => {
                             self.cost.charge(bigrat_division_cost(
-                                r1.numerator.len(), r1.denominator.len(),
-                                r2.numerator.len(), r2.denominator.len(),
+                                r1.numerator.len(),
+                                r1.denominator.len(),
+                                r2.numerator.len(),
+                                r2.denominator.len(),
                             ))?;
                             if is_zero_twos_complement(&r2.numerator) {
                                 return Err(InterpreterError::ReduceError(
@@ -2687,7 +2866,10 @@ impl DebruijnInterpreter {
                                     other_type: format!("FixedPoint(p{})", fp2.scale),
                                 });
                             }
-                            self.cost.charge(bigint_division_cost(fp1.unscaled.len(), fp2.unscaled.len()))?;
+                            self.cost.charge(bigint_division_cost(
+                                fp1.unscaled.len(),
+                                fp2.unscaled.len(),
+                            ))?;
                             if is_zero_twos_complement(&fp2.unscaled) {
                                 return Err(InterpreterError::ReduceError(
                                     "Division by zero".to_string(),
@@ -2838,8 +3020,10 @@ impl DebruijnInterpreter {
 
                         (ExprInstance::GBigRat(r1), ExprInstance::GBigRat(r2)) => {
                             self.cost.charge(bigrat_sum_cost(
-                                r1.numerator.len(), r1.denominator.len(),
-                                r2.numerator.len(), r2.denominator.len(),
+                                r1.numerator.len(),
+                                r1.denominator.len(),
+                                r2.numerator.len(),
+                                r2.denominator.len(),
                             ))?;
                             make_bigrat_expr(add_big_rationals(&r1, &r2), "+")
                         }
@@ -2852,7 +3036,8 @@ impl DebruijnInterpreter {
                                     other_type: format!("FixedPoint(p{})", fp2.scale),
                                 });
                             }
-                            self.cost.charge(bigint_sum_cost(fp1.unscaled.len(), fp2.unscaled.len()))?;
+                            self.cost
+                                .charge(bigint_sum_cost(fp1.unscaled.len(), fp2.unscaled.len()))?;
                             make_fixedpoint_expr(
                                 models::rhoapi::GFixedPoint {
                                     unscaled: add_twos_complement(&fp1.unscaled, &fp2.unscaled),
@@ -2918,14 +3103,17 @@ impl DebruijnInterpreter {
                         }
 
                         (ExprInstance::GBigInt(b1), ExprInstance::GBigInt(b2)) => {
-                            self.cost.charge(bigint_subtraction_cost(b1.len(), b2.len()))?;
+                            self.cost
+                                .charge(bigint_subtraction_cost(b1.len(), b2.len()))?;
                             make_bigint_expr(subtract_twos_complement(&b1, &b2), "-")
                         }
 
                         (ExprInstance::GBigRat(r1), ExprInstance::GBigRat(r2)) => {
                             self.cost.charge(bigrat_subtraction_cost(
-                                r1.numerator.len(), r1.denominator.len(),
-                                r2.numerator.len(), r2.denominator.len(),
+                                r1.numerator.len(),
+                                r1.denominator.len(),
+                                r2.numerator.len(),
+                                r2.denominator.len(),
                             ))?;
                             make_bigrat_expr(subtract_big_rationals(&r1, &r2), "-")
                         }
@@ -2938,7 +3126,10 @@ impl DebruijnInterpreter {
                                     other_type: format!("FixedPoint(p{})", fp2.scale),
                                 });
                             }
-                            self.cost.charge(bigint_subtraction_cost(fp1.unscaled.len(), fp2.unscaled.len()))?;
+                            self.cost.charge(bigint_subtraction_cost(
+                                fp1.unscaled.len(),
+                                fp2.unscaled.len(),
+                            ))?;
                             make_fixedpoint_expr(
                                 models::rhoapi::GFixedPoint {
                                     unscaled: subtract_twos_complement(
@@ -3002,45 +3193,37 @@ impl DebruijnInterpreter {
                     }
                 }
 
-                ExprInstance::ELtBody(ELt { p1, p2 }) => {
-                    relop(
-                        &p1.clone().unwrap(),
-                        &p2.clone().unwrap(),
-                        |b1: bool, b2: bool| b1 < b2,
-                        |i1: i64, i2: i64| i1 < i2,
-                        |s1: String, s2: String| s1 < s2,
-                    )
-                }
+                ExprInstance::ELtBody(ELt { p1, p2 }) => relop(
+                    &p1.clone().unwrap(),
+                    &p2.clone().unwrap(),
+                    |b1: bool, b2: bool| b1 < b2,
+                    |i1: i64, i2: i64| i1 < i2,
+                    |s1: String, s2: String| s1 < s2,
+                ),
 
-                ExprInstance::ELteBody(ELte { p1, p2 }) => {
-                    relop(
-                        &p1.clone().unwrap(),
-                        &p2.clone().unwrap(),
-                        |b1: bool, b2: bool| b1 <= b2,
-                        |i1: i64, i2: i64| i1 <= i2,
-                        |s1: String, s2: String| s1 <= s2,
-                    )
-                }
+                ExprInstance::ELteBody(ELte { p1, p2 }) => relop(
+                    &p1.clone().unwrap(),
+                    &p2.clone().unwrap(),
+                    |b1: bool, b2: bool| b1 <= b2,
+                    |i1: i64, i2: i64| i1 <= i2,
+                    |s1: String, s2: String| s1 <= s2,
+                ),
 
-                ExprInstance::EGtBody(EGt { p1, p2 }) => {
-                    relop(
-                        &p1.clone().unwrap(),
-                        &p2.clone().unwrap(),
-                        |b1: bool, b2: bool| b1 > b2,
-                        |i1: i64, i2: i64| i1 > i2,
-                        |s1: String, s2: String| s1 > s2,
-                    )
-                }
+                ExprInstance::EGtBody(EGt { p1, p2 }) => relop(
+                    &p1.clone().unwrap(),
+                    &p2.clone().unwrap(),
+                    |b1: bool, b2: bool| b1 > b2,
+                    |i1: i64, i2: i64| i1 > i2,
+                    |s1: String, s2: String| s1 > s2,
+                ),
 
-                ExprInstance::EGteBody(EGte { p1, p2 }) => {
-                    relop(
-                        &p1.clone().unwrap(),
-                        &p2.clone().unwrap(),
-                        |b1: bool, b2: bool| b1 >= b2,
-                        |i1: i64, i2: i64| i1 >= i2,
-                        |s1: String, s2: String| s1 >= s2,
-                    )
-                }
+                ExprInstance::EGteBody(EGte { p1, p2 }) => relop(
+                    &p1.clone().unwrap(),
+                    &p2.clone().unwrap(),
+                    |b1: bool, b2: bool| b1 >= b2,
+                    |i1: i64, i2: i64| i1 >= i2,
+                    |s1: String, s2: String| s1 >= s2,
+                ),
 
                 ExprInstance::EEqBody(EEq { p1, p2 }) => {
                     let v1 = self.eval_expr(&p1.clone().unwrap(), env)?;
@@ -3050,9 +3233,7 @@ impl DebruijnInterpreter {
                     let sv2 = self.substitute.substitute_and_charge(&v2, 0, env)?;
                     self.cost.charge(equality_check_cost(&sv1, &sv2))?;
 
-                    let result = if par_contains_nan_double(&sv1)
-                        || par_contains_nan_double(&sv2)
-                    {
+                    let result = if par_contains_nan_double(&sv1) || par_contains_nan_double(&sv2) {
                         false
                     } else {
                         sv1 == sv2
@@ -3069,9 +3250,7 @@ impl DebruijnInterpreter {
                     let sv2 = self.substitute.substitute_and_charge(&v2, 0, env)?;
                     self.cost.charge(equality_check_cost(&sv1, &sv2))?;
 
-                    let result = if par_contains_nan_double(&sv1)
-                        || par_contains_nan_double(&sv2)
-                    {
+                    let result = if par_contains_nan_double(&sv1) || par_contains_nan_double(&sv2) {
                         true
                     } else {
                         sv1 != sv2
@@ -8064,7 +8243,9 @@ impl DebruijnInterpreter {
         epoch: u64,
     ) -> Result<Vec<ContinuationHandle>, InterpreterError> {
         let mut store = self.continuation_store.write().unwrap();
-        store.set_epoch(epoch).map_err(map_continuation_store_error)?;
+        store
+            .set_epoch(epoch)
+            .map_err(map_continuation_store_error)?;
         let expired = store.expire_due().map_err(map_continuation_store_error)?;
         let expired_handles = expired
             .iter()
@@ -8082,7 +8263,9 @@ impl DebruijnInterpreter {
         epoch: u64,
     ) -> Result<Vec<PublicContinuationInfo>, InterpreterError> {
         let mut store = self.continuation_store.write().unwrap();
-        store.set_epoch(epoch).map_err(map_continuation_store_error)?;
+        store
+            .set_epoch(epoch)
+            .map_err(map_continuation_store_error)?;
         let expired = store.expire_due().map_err(map_continuation_store_error)?;
         if !expired.is_empty() {
             metrics::counter!("rholang.continuation.expired").increment(expired.len() as u64);
@@ -8108,7 +8291,9 @@ impl DebruijnInterpreter {
         epoch: u64,
     ) -> Result<Vec<BridgeContinuationInfo>, InterpreterError> {
         let mut store = self.continuation_store.write().unwrap();
-        store.set_epoch(epoch).map_err(map_continuation_store_error)?;
+        store
+            .set_epoch(epoch)
+            .map_err(map_continuation_store_error)?;
         let expired = store.expire_due().map_err(map_continuation_store_error)?;
         if !expired.is_empty() {
             metrics::counter!("rholang.continuation.expired").increment(expired.len() as u64);
@@ -8127,7 +8312,9 @@ impl DebruijnInterpreter {
         epoch: u64,
     ) -> Result<Vec<BridgeContinuationInfo>, InterpreterError> {
         let mut store = self.continuation_store.write().unwrap();
-        store.set_epoch(epoch).map_err(map_continuation_store_error)?;
+        store
+            .set_epoch(epoch)
+            .map_err(map_continuation_store_error)?;
         let expired = store.expire_due().map_err(map_continuation_store_error)?;
         if !expired.is_empty() {
             metrics::counter!("rholang.continuation.expired").increment(expired.len() as u64);
@@ -8146,7 +8333,9 @@ impl DebruijnInterpreter {
         epoch: u64,
     ) -> Result<Vec<BridgeContinuationInfo>, InterpreterError> {
         let mut store = self.continuation_store.write().unwrap();
-        store.set_epoch(epoch).map_err(map_continuation_store_error)?;
+        store
+            .set_epoch(epoch)
+            .map_err(map_continuation_store_error)?;
         let expired = store.expire_due().map_err(map_continuation_store_error)?;
         if !expired.is_empty() {
             metrics::counter!("rholang.continuation.expired").increment(expired.len() as u64);
@@ -8158,6 +8347,19 @@ impl DebruijnInterpreter {
             .into_iter()
             .filter_map(persisted_to_bridge_info)
             .collect())
+    }
+
+    pub fn update_bridge_finality_phase(
+        &self,
+        handle: &ContinuationHandle,
+        expected_version: u64,
+        finality_phase: BridgeFinalityPhase,
+    ) -> Result<PersistedContinuation, InterpreterError> {
+        self.continuation_store
+            .write()
+            .unwrap()
+            .update_bridge_finality_phase_with_version(handle, expected_version, finality_phase)
+            .map_err(map_continuation_store_error)
     }
 
     pub fn load_continuation(
@@ -8180,7 +8382,9 @@ impl DebruijnInterpreter {
     ) -> Result<ContinuationExecutionResult, InterpreterError> {
         {
             let mut store = self.continuation_store.write().unwrap();
-            store.set_epoch(epoch).map_err(map_continuation_store_error)?;
+            store
+                .set_epoch(epoch)
+                .map_err(map_continuation_store_error)?;
             let expired = store.expire_due().map_err(map_continuation_store_error)?;
             if !expired.is_empty() {
                 metrics::counter!("rholang.continuation.expired").increment(expired.len() as u64);
@@ -8216,7 +8420,9 @@ impl DebruijnInterpreter {
     ) -> Result<ContinuationExecutionResult, InterpreterError> {
         {
             let mut store = self.continuation_store.write().unwrap();
-            store.set_epoch(epoch).map_err(map_continuation_store_error)?;
+            store
+                .set_epoch(epoch)
+                .map_err(map_continuation_store_error)?;
             let expired = store.expire_due().map_err(map_continuation_store_error)?;
             if !expired.is_empty() {
                 metrics::counter!("rholang.continuation.expired").increment(expired.len() as u64);
@@ -8233,6 +8439,38 @@ impl DebruijnInterpreter {
         metrics::counter!("rholang.bridge.execute.requests").increment(1);
         self.execute_continuation(handle, expected_version, gas_limit)
             .await
+    }
+
+    pub async fn execute_next_bridge_by_deadline(
+        &self,
+        epoch: u64,
+        gas_limit: i64,
+    ) -> Result<Option<ContinuationExecutionResult>, InterpreterError> {
+        let queue = self.list_bridge_continuation_queue_by_deadline(epoch)?;
+        let Some(next) = queue.first() else {
+            return Ok(None);
+        };
+
+        let result = self
+            .execute_bridge_continuation(&next.handle, next.version, gas_limit, epoch)
+            .await?;
+        Ok(Some(result))
+    }
+
+    pub async fn execute_next_bridge_by_reward(
+        &self,
+        epoch: u64,
+        gas_limit: i64,
+    ) -> Result<Option<ContinuationExecutionResult>, InterpreterError> {
+        let queue = self.list_bridge_continuation_queue_by_reward(epoch)?;
+        let Some(next) = queue.first() else {
+            return Ok(None);
+        };
+
+        let result = self
+            .execute_bridge_continuation(&next.handle, next.version, gas_limit, epoch)
+            .await?;
+        Ok(Some(result))
     }
 
     pub async fn execute_continuation(
@@ -8297,6 +8535,8 @@ impl DebruijnInterpreter {
             consumed_gas,
             terminal_status,
         } = step_result;
+        metrics::histogram!("rholang.continuation.gas_per_step").record(consumed_gas as f64);
+        metrics::counter!("rholang.continuation.resumed").increment(1);
 
         match terminal_status {
             StepTerminalStatus::Completed => {
@@ -8307,6 +8547,8 @@ impl DebruijnInterpreter {
                     .complete_with_version(handle, expected_version)
                     .map_err(map_continuation_store_error)?;
                 metrics::counter!("rholang.continuation.resume.completed").increment(1);
+                metrics::histogram!("rholang.continuation.steps_to_completion")
+                    .record(updated.version.saturating_sub(1) as f64);
                 Ok(ContinuationExecutionResult {
                     handle: updated.handle,
                     status: ContinuationExecutionStatus::Completed,
@@ -8348,9 +8590,7 @@ impl DebruijnInterpreter {
     }
 }
 
-fn persisted_to_bridge_info(
-    continuation: PersistedContinuation,
-) -> Option<BridgeContinuationInfo> {
+fn persisted_to_bridge_info(continuation: PersistedContinuation) -> Option<BridgeContinuationInfo> {
     match continuation.subtype {
         ContinuationSubtype::Standard => None,
         ContinuationSubtype::Bridge(bridge_metadata) => Some(BridgeContinuationInfo {
@@ -8370,13 +8610,20 @@ fn map_continuation_store_error(error: ContinuationStoreError) -> InterpreterErr
             hex::encode(&handle.origin),
             handle.nonce
         )),
-        ContinuationStoreError::NotFound(handle) => InterpreterError::IllegalArgumentError(
-            format!(
+        ContinuationStoreError::NotFound(handle) => {
+            InterpreterError::IllegalArgumentError(format!(
                 "continuation not found: {}:{}",
                 hex::encode(&handle.origin),
                 handle.nonce
-            ),
-        ),
+            ))
+        }
+        ContinuationStoreError::NotBridgeContinuation(handle) => {
+            InterpreterError::IllegalArgumentError(format!(
+                "continuation {}:{} is not a bridge continuation",
+                hex::encode(&handle.origin),
+                handle.nonce
+            ))
+        }
         ContinuationStoreError::VersionMismatch {
             handle,
             expected,
@@ -8415,6 +8662,8 @@ fn map_continuation_store_error(error: ContinuationStoreError) -> InterpreterErr
     }
 }
 
+const MAX_CONTINUATION_STATE_BYTES: usize = 128 * 1024;
+const MAX_CONTINUATION_BRANCH_FANOUT: usize = 128;
 const POST_MATCH_STATE_ENCODING_VERSION: u8 = 1;
 
 fn serialize_post_match_state(state: &PostMatchExecState) -> Result<Vec<u8>, InterpreterError> {
@@ -8451,7 +8700,10 @@ fn serialize_post_match_state(state: &PostMatchExecState) -> Result<Vec<u8>, Int
     Ok(out)
 }
 
-fn serialize_receive_registration_state(receive_state: &ReceiveRegistrationState, out: &mut Vec<u8>) {
+fn serialize_receive_registration_state(
+    receive_state: &ReceiveRegistrationState,
+    out: &mut Vec<u8>,
+) {
     put_u32(out, receive_state.binds.len() as u32);
     for (bind_pattern, source) in receive_state.binds.iter() {
         put_bytes(out, &bind_pattern.encode_to_vec());
@@ -8462,7 +8714,10 @@ fn serialize_receive_registration_state(receive_state: &ReceiveRegistrationState
     put_bool(out, receive_state.peek);
 }
 
-fn serialize_produce_registration_state(produce_state: &ProduceRegistrationState, out: &mut Vec<u8>) {
+fn serialize_produce_registration_state(
+    produce_state: &ProduceRegistrationState,
+    out: &mut Vec<u8>,
+) {
     put_bytes(out, &produce_state.chan.encode_to_vec());
     put_bytes(out, &produce_state.data.encode_to_vec());
     put_bool(out, produce_state.persistent);
@@ -8589,10 +8844,8 @@ fn deserialize_dispatch_exec_state(
     input: &[u8],
     idx: &mut usize,
 ) -> Result<DispatchExecState, InterpreterError> {
-    let continuation = decode_message::<TaggedContinuation>(
-        &read_bytes(input, idx)?,
-        "TaggedContinuation",
-    )?;
+    let continuation =
+        decode_message::<TaggedContinuation>(&read_bytes(input, idx)?, "TaggedContinuation")?;
 
     let data_list_count = read_u32(input, idx)? as usize;
     let mut data_list = Vec::with_capacity(data_list_count);
@@ -8628,7 +8881,10 @@ where
     T: Message + Default,
 {
     T::decode(bytes).map_err(|e| {
-        InterpreterError::DecodeError(format!("failed to decode {} from continuation state: {}", type_name, e))
+        InterpreterError::DecodeError(format!(
+            "failed to decode {} from continuation state: {}",
+            type_name, e
+        ))
     })
 }
 
@@ -8843,9 +9099,7 @@ fn compare_twos_complement_bytes(a: &[u8], b: &[u8]) -> i32 {
     }
 }
 
-fn bytes_to_bigrat(
-    rat: &models::rhoapi::GBigRational,
-) -> num_rational::BigRational {
+fn bytes_to_bigrat(rat: &models::rhoapi::GBigRational) -> num_rational::BigRational {
     num_rational::BigRational::new(
         bytes_to_bigint(&rat.numerator),
         bytes_to_bigint(&rat.denominator),
@@ -8916,7 +9170,10 @@ fn multiply_fixed_points(
     a: &models::rhoapi::GFixedPoint,
     b: &models::rhoapi::GFixedPoint,
 ) -> models::rhoapi::GFixedPoint {
-    debug_assert_eq!(a.scale, b.scale, "multiply_fixed_points called with mismatched scales");
+    debug_assert_eq!(
+        a.scale, b.scale,
+        "multiply_fixed_points called with mismatched scales"
+    );
     // Scale-preserving: (ua * ub) / 10^scale, using floor division
     let ua = bytes_to_bigint(&a.unscaled);
     let ub = bytes_to_bigint(&b.unscaled);
@@ -8941,7 +9198,10 @@ fn divide_fixed_points(
     a: &models::rhoapi::GFixedPoint,
     b: &models::rhoapi::GFixedPoint,
 ) -> models::rhoapi::GFixedPoint {
-    debug_assert_eq!(a.scale, b.scale, "divide_fixed_points called with mismatched scales");
+    debug_assert_eq!(
+        a.scale, b.scale,
+        "divide_fixed_points called with mismatched scales"
+    );
     let ten = num_bigint::BigInt::from(10);
     let factor = num_traits::pow::pow(ten, b.scale as usize);
     let scaled = bytes_to_bigint(&a.unscaled) * factor;

@@ -310,9 +310,16 @@ pub struct CreateContinuation {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContinuationStoreSnapshot {
+    pub epoch: u64,
+    pub entries: Vec<Vec<u8>>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ContinuationStoreError {
     AlreadyExists(ContinuationHandle),
     NotFound(ContinuationHandle),
+    NotBridgeContinuation(ContinuationHandle),
     VersionMismatch {
         handle: ContinuationHandle,
         expected: u64,
@@ -367,8 +374,7 @@ impl InMemoryContinuationStore {
         self.total_storage_bytes = self
             .total_storage_bytes
             .saturating_add(continuation.storage_bytes);
-        self.entries
-            .insert(create.handle, continuation.clone());
+        self.entries.insert(create.handle, continuation.clone());
 
         Ok(continuation)
     }
@@ -504,13 +510,70 @@ impl InMemoryContinuationStore {
                     return None;
                 }
                 let bridge = continuation.subtype.as_bridge()?;
-                if bridge.rescue_epoch.is_some_and(|rescue_epoch| rescue_epoch <= epoch) {
+                if bridge
+                    .rescue_epoch
+                    .is_some_and(|rescue_epoch| rescue_epoch <= epoch)
+                {
                     Some(continuation.clone())
                 } else {
                     None
                 }
             })
             .collect()
+    }
+
+    pub fn update_bridge_finality_phase_with_version(
+        &mut self,
+        handle: &ContinuationHandle,
+        expected_version: u64,
+        finality_phase: BridgeFinalityPhase,
+    ) -> Result<PersistedContinuation, ContinuationStoreError> {
+        let existing = self.load(handle)?;
+        if existing.subtype.as_bridge().is_none() {
+            return Err(ContinuationStoreError::NotBridgeContinuation(
+                handle.clone(),
+            ));
+        }
+
+        self.update_with_version(handle, expected_version, ContinuationStatus::Active, |c| {
+            if let ContinuationSubtype::Bridge(bridge) = &mut c.subtype {
+                bridge.finality_phase = finality_phase;
+            }
+        })
+    }
+
+    pub fn snapshot(&self) -> ContinuationStoreSnapshot {
+        ContinuationStoreSnapshot {
+            epoch: self.epoch,
+            entries: self
+                .entries
+                .values()
+                .map(|entry| entry.to_bytes())
+                .collect(),
+        }
+    }
+
+    pub fn restore(snapshot: ContinuationStoreSnapshot) -> Result<Self, ContinuationStoreError> {
+        let mut entries = BTreeMap::new();
+        let mut total_storage_bytes = 0u64;
+        for encoded in snapshot.entries.into_iter() {
+            let continuation = PersistedContinuation::from_bytes(&encoded)?;
+            total_storage_bytes = total_storage_bytes.saturating_add(continuation.storage_bytes);
+            if entries
+                .insert(continuation.handle.clone(), continuation)
+                .is_some()
+            {
+                return Err(ContinuationStoreError::InvalidFormat(
+                    "duplicate continuation handle in snapshot".to_string(),
+                ));
+            }
+        }
+
+        Ok(Self {
+            entries,
+            total_storage_bytes,
+            epoch: snapshot.epoch,
+        })
     }
 
     pub fn update_state(
@@ -544,7 +607,12 @@ impl InMemoryContinuationStore {
         handle: &ContinuationHandle,
     ) -> Result<PersistedContinuation, ContinuationStoreError> {
         let expected_version = self.current_version(handle)?;
-        self.update_with_version(handle, expected_version, ContinuationStatus::Completed, |_| {})
+        self.update_with_version(
+            handle,
+            expected_version,
+            ContinuationStatus::Completed,
+            |_| {},
+        )
     }
 
     pub fn complete_with_version(
@@ -552,7 +620,12 @@ impl InMemoryContinuationStore {
         handle: &ContinuationHandle,
         expected_version: u64,
     ) -> Result<PersistedContinuation, ContinuationStoreError> {
-        self.update_with_version(handle, expected_version, ContinuationStatus::Completed, |_| {})
+        self.update_with_version(
+            handle,
+            expected_version,
+            ContinuationStatus::Completed,
+            |_| {},
+        )
     }
 
     pub fn expire(
@@ -560,7 +633,12 @@ impl InMemoryContinuationStore {
         handle: &ContinuationHandle,
     ) -> Result<PersistedContinuation, ContinuationStoreError> {
         let expected_version = self.current_version(handle)?;
-        self.update_with_version(handle, expected_version, ContinuationStatus::Expired, |_| {})
+        self.update_with_version(
+            handle,
+            expected_version,
+            ContinuationStatus::Expired,
+            |_| {},
+        )
     }
 
     pub fn expire_with_version(
@@ -568,7 +646,12 @@ impl InMemoryContinuationStore {
         handle: &ContinuationHandle,
         expected_version: u64,
     ) -> Result<PersistedContinuation, ContinuationStoreError> {
-        self.update_with_version(handle, expected_version, ContinuationStatus::Expired, |_| {})
+        self.update_with_version(
+            handle,
+            expected_version,
+            ContinuationStatus::Expired,
+            |_| {},
+        )
     }
 
     pub fn fail_with_version(
@@ -933,7 +1016,9 @@ mod tests {
         assert_eq!(bytes1, bytes2);
 
         let mut tampered = bytes1;
-        *tampered.last_mut().expect("encoded bytes should not be empty") ^= 0x01;
+        *tampered
+            .last_mut()
+            .expect("encoded bytes should not be empty") ^= 0x01;
         let decode_result = PersistedContinuation::from_bytes(&tampered);
         assert!(decode_result.is_err());
     }
@@ -945,8 +1030,7 @@ mod tests {
             .create(sample_create(6, vec![1, 2, 3]))
             .expect("create should succeed");
 
-        let stale_update =
-            store.update_state_with_version(&created.handle, 0, vec![7, 8, 9], 100);
+        let stale_update = store.update_state_with_version(&created.handle, 0, vec![7, 8, 9], 100);
         assert!(matches!(
             stale_update,
             Err(ContinuationStoreError::VersionMismatch {
@@ -1054,26 +1138,27 @@ mod tests {
     #[test]
     fn bridge_scheduler_ordering_should_support_deadline_and_reward_priorities() {
         let mut store = InMemoryContinuationStore::default();
-        let make_bridge = |nonce: u64, deadline_epoch: Option<u64>, reward: u64| CreateContinuation {
-            handle: ContinuationHandle::new(b"bridge-origin".to_vec(), nonce),
-            origin_reference: b"origin-ref".to_vec(),
-            serialized_state: vec![nonce as u8],
-            gas_limit_per_step: 100,
-            funding_policy: FundingPolicy::ExecutorPays,
-            visibility: ContinuationVisibility::Public,
-            bounty: Some(reward),
-            ttl_epochs: None,
-            subtype: ContinuationSubtype::Bridge(BridgeContinuationMetadata {
-                lane_id: "lane-a".to_string(),
-                source_domain: "eth".to_string(),
-                target_domain: "f1r3".to_string(),
-                message_nonce: nonce,
-                finality_phase: BridgeFinalityPhase::Pending,
-                deadline_epoch,
-                reward_policy: BridgeRewardPolicy::Fixed(reward),
-                rescue_epoch: None,
-            }),
-        };
+        let make_bridge =
+            |nonce: u64, deadline_epoch: Option<u64>, reward: u64| CreateContinuation {
+                handle: ContinuationHandle::new(b"bridge-origin".to_vec(), nonce),
+                origin_reference: b"origin-ref".to_vec(),
+                serialized_state: vec![nonce as u8],
+                gas_limit_per_step: 100,
+                funding_policy: FundingPolicy::ExecutorPays,
+                visibility: ContinuationVisibility::Public,
+                bounty: Some(reward),
+                ttl_epochs: None,
+                subtype: ContinuationSubtype::Bridge(BridgeContinuationMetadata {
+                    lane_id: "lane-a".to_string(),
+                    source_domain: "eth".to_string(),
+                    target_domain: "f1r3".to_string(),
+                    message_nonce: nonce,
+                    finality_phase: BridgeFinalityPhase::Pending,
+                    deadline_epoch,
+                    reward_policy: BridgeRewardPolicy::Fixed(reward),
+                    rescue_epoch: None,
+                }),
+            };
 
         let c1 = store
             .create(make_bridge(1, Some(10), 5))
@@ -1126,5 +1211,76 @@ mod tests {
         let due = store.bridge_rescue_candidates(7);
         assert_eq!(due.len(), 1);
         assert_eq!(due[0].handle.nonce, 11);
+    }
+
+    #[test]
+    fn snapshot_restore_should_preserve_runtime_state() {
+        let mut store = InMemoryContinuationStore::default();
+        store.set_epoch(5).expect("epoch set should succeed");
+
+        let standard = store
+            .create(CreateContinuation {
+                handle: ContinuationHandle::new(b"restore-origin".to_vec(), 21),
+                origin_reference: b"origin-ref".to_vec(),
+                serialized_state: vec![1, 2, 3],
+                gas_limit_per_step: 80,
+                funding_policy: FundingPolicy::ProducerOnly,
+                visibility: ContinuationVisibility::Private,
+                bounty: None,
+                ttl_epochs: Some(10),
+                subtype: ContinuationSubtype::Standard,
+            })
+            .expect("standard continuation creation should succeed");
+
+        let bridge = store
+            .create(CreateContinuation {
+                handle: ContinuationHandle::new(b"restore-origin".to_vec(), 22),
+                origin_reference: b"origin-ref".to_vec(),
+                serialized_state: vec![4, 5, 6],
+                gas_limit_per_step: 90,
+                funding_policy: FundingPolicy::ExecutorPays,
+                visibility: ContinuationVisibility::Public,
+                bounty: Some(7),
+                ttl_epochs: Some(10),
+                subtype: ContinuationSubtype::Bridge(BridgeContinuationMetadata {
+                    lane_id: "lane-restore".to_string(),
+                    source_domain: "eth".to_string(),
+                    target_domain: "f1r3".to_string(),
+                    message_nonce: 22,
+                    finality_phase: BridgeFinalityPhase::Pending,
+                    deadline_epoch: Some(8),
+                    reward_policy: BridgeRewardPolicy::Fixed(7),
+                    rescue_epoch: Some(9),
+                }),
+            })
+            .expect("bridge continuation creation should succeed");
+
+        store
+            .update_state_with_version(&standard.handle, standard.version, vec![9, 9, 9], 81)
+            .expect("state update should succeed");
+        store
+            .update_bridge_finality_phase_with_version(
+                &bridge.handle,
+                bridge.version,
+                BridgeFinalityPhase::Retrying,
+            )
+            .expect("bridge phase update should succeed");
+
+        let snapshot = store.snapshot();
+        let restored =
+            InMemoryContinuationStore::restore(snapshot).expect("restore should succeed");
+
+        assert_eq!(restored.current_epoch(), 5);
+        assert_eq!(store.total_storage_bytes(), restored.total_storage_bytes());
+        assert_eq!(store.handles(), restored.handles());
+        assert_eq!(
+            store.bridge_active_continuations_sorted_by_deadline(),
+            restored.bridge_active_continuations_sorted_by_deadline()
+        );
+        assert_eq!(
+            store.load(&standard.handle),
+            restored.load(&standard.handle)
+        );
+        assert_eq!(store.load(&bridge.handle), restored.load(&bridge.handle));
     }
 }
