@@ -7,7 +7,7 @@ import org.http4s.HttpRoutes
 
 object VersionInfo {
   val get: String =
-    s"F1r3node ${BuildInfo.version} (${BuildInfo.gitHeadCommit})"
+    s"F1r3node Scala ${BuildInfo.version} (${BuildInfo.gitHeadCommit})"
 
   def service[F[_]: Sync]: HttpRoutes[F] = {
     val dsl = org.http4s.dsl.Http4sDsl[F]

@@ -33,9 +33,13 @@ env:
 
 jobs:
   # Build and save artifacts for next jobs.
+  # Skip release commits on branch pushes — the tag push handles the release build.
   build_base:
     name: Build Base
     runs-on: ubuntu-22.04
+    if: >-
+      !startsWith(github.event.head_commit.message, 'chore(release)')
+      || startsWith(github.ref, 'refs/tags/')
     outputs:
       VERSION: ${{ env.VERSION }}
       BRANCH: ${{ env.BRANCH }}

@@ -10,48 +10,22 @@
 
 set -euo pipefail
 
-BUMP_TYPE="${1:-minor}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 cd "$REPO_DIR"
 
-# Find the latest scala-v* tag
-LATEST_TAG=$(git tag -l 'scala-v*' --sort=-v:refname | head -1)
-if [ -z "$LATEST_TAG" ]; then
-    echo "No existing scala-v* tag found, starting at 0.2.0"
-    CURRENT="0.1.0"
-else
-    CURRENT="${LATEST_TAG#scala-v}"
-fi
+# Ensure working tree is clean
+git diff --quiet && git diff --cached --quiet || {
+    echo "ERROR: working tree is dirty — commit or stash changes first"
+    exit 1
+}
 
-MAJOR=$(echo "$CURRENT" | cut -d. -f1)
-MINOR=$(echo "$CURRENT" | cut -d. -f2)
-PATCH=$(echo "$CURRENT" | cut -d. -f3)
+# Source shared version logic
+source "$SCRIPT_DIR/version.sh"
+bump_version "${1:-minor}"
 
-case "$BUMP_TYPE" in
-    major)
-        MAJOR=$((MAJOR + 1))
-        MINOR=0
-        PATCH=0
-        ;;
-    minor)
-        MINOR=$((MINOR + 1))
-        PATCH=0
-        ;;
-    patch)
-        PATCH=$((PATCH + 1))
-        ;;
-    *)
-        echo "Usage: $0 [major|minor|patch]"
-        exit 1
-        ;;
-esac
-
-NEXT_VERSION="${MAJOR}.${MINOR}.${PATCH}"
-TAG_NAME="scala-v${NEXT_VERSION}"
-
-echo "Current: ${CURRENT} -> Next: ${NEXT_VERSION} (${TAG_NAME})"
+echo "Current: ${CURRENT_VERSION} -> Next: ${NEXT_VERSION} (${TAG_NAME})"
 echo ""
 
 # Update version.sbt
@@ -73,6 +47,8 @@ git commit -m "chore(release): scala v${NEXT_VERSION}"
 git tag -a "$TAG_NAME" -m "Release scala v${NEXT_VERSION}"
 
 # Prepare next SNAPSHOT
+MAJOR=$(echo "$NEXT_VERSION" | cut -d. -f1)
+MINOR=$(echo "$NEXT_VERSION" | cut -d. -f2)
 DEV_MINOR=$((MINOR + 1))
 DEV_VERSION="${MAJOR}.${DEV_MINOR}.0-SNAPSHOT"
 echo "ThisBuild / version := \"${DEV_VERSION}\"" > version.sbt
