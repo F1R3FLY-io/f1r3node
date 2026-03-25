@@ -6,8 +6,8 @@
 # push triggers the existing build-test-and-deploy.yml which handles Docker
 # release and package publishing.
 #
-# Requires repository secret: RELEASE_PAT (a PAT with contents:write so
-# the tag push triggers downstream workflows).
+# Requires repository secret: RELEASE_PAT (a PAT with contents:write and
+# branch protection bypass so the tag push triggers downstream workflows).
 
 name: Release (Rust)
 
@@ -21,7 +21,9 @@ jobs:
   release:
     name: Bump Version & Tag
     runs-on: ubuntu-latest
-    if: "!startsWith(github.event.head_commit.message, 'chore(release)')"
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      !startsWith(github.event.head_commit.message, 'chore(release)')
     permissions:
       contents: write
     steps:
@@ -30,6 +32,9 @@ jobs:
         with:
           fetch-depth: 0
           token: ${{ secrets.RELEASE_PAT }}
+
+      - name: Force-refresh tags
+        run: git fetch origin --tags --force
 
       - name: Configure Git
         run: |
@@ -44,34 +49,22 @@ jobs:
       - name: Determine next version
         id: version
         run: |
-          LATEST_TAG=$(git tag -l 'rust-v*' --sort=-v:refname | head -1)
-          if [ -z "$LATEST_TAG" ]; then
-            echo "No existing rust-v* tag found, starting at 0.2.0"
-            NEXT_VERSION="0.2.0"
-          else
-            # Extract version numbers from tag like rust-v0.2.0
-            CURRENT="${LATEST_TAG#rust-v}"
-            MAJOR=$(echo "$CURRENT" | cut -d. -f1)
-            MINOR=$(echo "$CURRENT" | cut -d. -f2)
-            NEXT_MINOR=$((MINOR + 1))
-            NEXT_VERSION="${MAJOR}.${NEXT_MINOR}.0"
-          fi
+          source scripts/version.sh
+          bump_version minor
           echo "NEXT_VERSION=$NEXT_VERSION" >> "$GITHUB_OUTPUT"
-          echo "TAG_NAME=rust-v${NEXT_VERSION}" >> "$GITHUB_OUTPUT"
-          echo "Next version: $NEXT_VERSION (tag: rust-v${NEXT_VERSION})"
+          echo "TAG_NAME=$TAG_NAME" >> "$GITHUB_OUTPUT"
+          echo "Next version: $NEXT_VERSION (tag: $TAG_NAME)"
 
       - name: Update node/Cargo.toml version
         run: |
-          sed -i '0,/^version = ".*"/s//version = "${{ steps.version.outputs.NEXT_VERSION }}"/' node/Cargo.toml
+          sed -i "0,/^version = \".*\"/s//version = \"${{ steps.version.outputs.NEXT_VERSION }}\"/" node/Cargo.toml
 
       - name: Update Dockerfile LABEL
         run: |
           sed -i 's/^LABEL version=".*"/LABEL version="${{ steps.version.outputs.NEXT_VERSION }}"/' node/Dockerfile
 
       - name: Update Cargo.lock
-        run: |
-          # Only update the lock file, no compilation needed
-          cargo update -p node --precise ${{ steps.version.outputs.NEXT_VERSION }} 2>/dev/null || cargo generate-lockfile
+        run: cargo generate-lockfile
 
       - name: Generate CHANGELOG
         uses: orhun/git-cliff-action@v4

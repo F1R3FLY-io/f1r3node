@@ -10,56 +10,30 @@
 
 set -euo pipefail
 
-BUMP_TYPE="${1:-minor}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 cd "$REPO_DIR"
 
-# Find the latest rust-v* tag
-LATEST_TAG=$(git tag -l 'rust-v*' --sort=-v:refname | head -1)
-if [ -z "$LATEST_TAG" ]; then
-    echo "No existing rust-v* tag found, starting at 0.2.0"
-    CURRENT="0.1.0"
-else
-    CURRENT="${LATEST_TAG#rust-v}"
-fi
+# Ensure working tree is clean
+git diff --quiet && git diff --cached --quiet || {
+    echo "ERROR: working tree is dirty — commit or stash changes first"
+    exit 1
+}
 
-MAJOR=$(echo "$CURRENT" | cut -d. -f1)
-MINOR=$(echo "$CURRENT" | cut -d. -f2)
-PATCH=$(echo "$CURRENT" | cut -d. -f3)
+# Source shared version logic
+source "$SCRIPT_DIR/version.sh"
+bump_version "${1:-minor}"
 
-case "$BUMP_TYPE" in
-    major)
-        MAJOR=$((MAJOR + 1))
-        MINOR=0
-        PATCH=0
-        ;;
-    minor)
-        MINOR=$((MINOR + 1))
-        PATCH=0
-        ;;
-    patch)
-        PATCH=$((PATCH + 1))
-        ;;
-    *)
-        echo "Usage: $0 [major|minor|patch]"
-        exit 1
-        ;;
-esac
-
-NEXT_VERSION="${MAJOR}.${MINOR}.${PATCH}"
-TAG_NAME="rust-v${NEXT_VERSION}"
-
-echo "Current: ${CURRENT} -> Next: ${NEXT_VERSION} (${TAG_NAME})"
+echo "Current: ${CURRENT_VERSION} -> Next: ${NEXT_VERSION} (${TAG_NAME})"
 echo ""
 
-# Update node/Cargo.toml version
-sed -i "0,/^version = \".*\"/s//version = \"${NEXT_VERSION}\"/" node/Cargo.toml
+# Update node/Cargo.toml version (portable sed for GNU + BSD/macOS)
+sed -i'' -e "0,/^version = \".*\"/s//version = \"${NEXT_VERSION}\"/" node/Cargo.toml
 echo "Updated node/Cargo.toml to ${NEXT_VERSION}"
 
-# Update Dockerfile LABEL
-sed -i "s/^LABEL version=\".*\"/LABEL version=\"${NEXT_VERSION}\"/" node/Dockerfile
+# Update Dockerfile LABEL (portable sed)
+sed -i'' -e "s/^LABEL version=\".*\"/LABEL version=\"${NEXT_VERSION}\"/" node/Dockerfile
 echo "Updated node/Dockerfile LABEL to ${NEXT_VERSION}"
 
 # Update Cargo.lock
