@@ -4,6 +4,7 @@ use std::{
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     i64,
     sync::Arc,
+    time::Duration,
 };
 
 use crypto::rust::hash::blake2b512_random::Blake2b512Random;
@@ -1173,6 +1174,49 @@ async fn eval_of_persistent_send_pipe_receive_should_produce_same_state_in_any_o
 
     assert_eq!(channel_row.data.len(), 1);
     assert_eq!(result_row.data.len(), 1);
+}
+
+#[tokio::test]
+#[ignore = "Known issue: persistent + peek receive can recurse indefinitely"]
+async fn eval_of_persistent_peek_receive_should_complete_without_non_termination() {
+    let (_, reducer) =
+        create_test_space::<RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>()
+            .await;
+
+    let channel = new_gstring_par("channel".to_string(), Vec::new(), false);
+    let receive = Par::default().with_receives(vec![Receive {
+        binds: vec![ReceiveBind {
+            patterns: vec![new_freevar_par(0, Vec::new())],
+            source: Some(channel.clone()),
+            remainder: None,
+            free_count: 1,
+        }],
+        body: Some(Par::default()),
+        persistent: true,
+        peek: true,
+        bind_count: 1,
+        locally_free: Vec::new(),
+        connective_used: false,
+    }]);
+
+    let send = Par::default().with_sends(vec![Send {
+        chan: Some(channel),
+        data: vec![new_gint_par(7, Vec::new(), false)],
+        persistent: false,
+        locally_free: Vec::new(),
+        connective_used: false,
+    }]);
+
+    let env: Env<Par> = Env::new();
+    assert!(reducer.eval(receive, &env, rand().split_byte(0)).await.is_ok());
+
+    let completion =
+        tokio::time::timeout(Duration::from_secs(1), reducer.eval(send, &env, rand().split_byte(1)))
+            .await;
+    assert!(
+        completion.is_ok(),
+        "persistent+peek send/receive should complete within timeout"
+    );
 }
 
 #[tokio::test]
