@@ -237,6 +237,8 @@ fn next_control_after_dispatch(control: PostMatchControlState) -> Option<PostMat
 #[cfg(test)]
 mod step_helpers_tests {
     use super::*;
+    use crate::rust::interpreter::test_utils::persistent_store_tester::create_test_space;
+    use rspace_plus_plus::rspace::rspace::RSpace;
 
     #[test]
     fn step_should_suspend_when_gas_limit_is_non_positive() {
@@ -291,6 +293,61 @@ mod step_helpers_tests {
         assert!(matches!(
             next_control_after_dispatch(PostMatchControlState::DispatchAndRestorePeeks),
             Some(PostMatchControlState::RestorePeeks)
+        ));
+    }
+
+    #[tokio::test]
+    async fn reduce_step_suspends_after_dispatch_for_reconsume_path() {
+        let (_, reducer) =
+            create_test_space::<RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>()
+                .await;
+
+        let state = PostMatchExecState {
+            dispatch: DispatchExecState {
+                continuation: TaggedContinuation::default(),
+                data_list: Vec::new(),
+                is_replay: false,
+                previous_output: Vec::new(),
+                _remaining_phlo: reducer.cost.get().value,
+            },
+            control: PostMatchControlState::DispatchAndReconsume(ReceiveRegistrationState {
+                binds: Vec::new(),
+                body: ParWithRandom::default(),
+                persistent: true,
+                peek: false,
+            }),
+        };
+
+        let step_result = reducer.reduce_step(state, i64::MAX).await.unwrap();
+        assert!(matches!(step_result.terminal_status, StepTerminalStatus::Suspended));
+        assert!(matches!(
+            step_result.next_state.unwrap().control,
+            PostMatchControlState::Reconsume(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn reduce_step_suspends_after_dispatch_for_restore_peeks_path() {
+        let (_, reducer) =
+            create_test_space::<RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>()
+                .await;
+
+        let state = PostMatchExecState {
+            dispatch: DispatchExecState {
+                continuation: TaggedContinuation::default(),
+                data_list: Vec::new(),
+                is_replay: false,
+                previous_output: Vec::new(),
+                _remaining_phlo: reducer.cost.get().value,
+            },
+            control: PostMatchControlState::DispatchAndRestorePeeks,
+        };
+
+        let step_result = reducer.reduce_step(state, i64::MAX).await.unwrap();
+        assert!(matches!(step_result.terminal_status, StepTerminalStatus::Suspended));
+        assert!(matches!(
+            step_result.next_state.unwrap().control,
+            PostMatchControlState::RestorePeeks
         ));
     }
 }
