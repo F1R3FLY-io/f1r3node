@@ -29,11 +29,13 @@ docker compose -f shard.yml logs -f readonly
 
 **Stop:**
 ```bash
+docker compose -f shard-monitoring.yml down   # stop monitoring first (if running)
 docker compose -f shard.yml down
 ```
 
 **Stop and wipe all data (fresh restart):**
 ```bash
+docker compose -f shard-monitoring.yml down   # stop monitoring first (if running)
 docker compose -f shard.yml down -v
 ```
 
