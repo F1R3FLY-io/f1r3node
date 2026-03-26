@@ -33,9 +33,13 @@ env:
 
 jobs:
   # Build and save artifacts for next jobs.
+  # Skip release commits on branch pushes — the tag push handles the release build.
   build_base:
     name: Build Base
     runs-on: ubuntu-22.04
+    if: >-
+      !startsWith(github.event.head_commit.message, 'chore(release)')
+      || startsWith(github.ref, 'refs/tags/')
     outputs:
       VERSION: ${{ env.VERSION }}
       BRANCH: ${{ env.BRANCH }}
@@ -110,10 +114,12 @@ jobs:
         shell: bash -exu -o pipefail {0}
         run: |
           git fetch origin
-          git fetch origin --tags
+          git fetch origin --tags --force
 
           # Version from Git repository (tag-commit)
           VERSION="$(git describe --tags --always)"
+          # Strip implementation prefix for Docker-friendly version tags
+          VERSION="${VERSION#scala-}"
           echo "VERSION=$VERSION" >> $GITHUB_ENV
 
           # Find latest tag on dev branch, with fallback
@@ -679,7 +685,7 @@ jobs:
       - required_scala_unit_tests
       - required_integration_tests
       - build_packages
-    if: "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')"
+    if: "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/scala-v')"
     runs-on: ubuntu-22.04
     steps:
       - name: Load Packages
@@ -692,7 +698,7 @@ jobs:
         with:
           artifacts: /tmp/artifacts/*
           prerelease: true
-          draft: true
+          draft: false
           allowUpdates: true
           omitBodyDuringUpdate: true
           token: ${{ secrets.GITHUB_TOKEN }}

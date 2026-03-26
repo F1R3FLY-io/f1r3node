@@ -7,25 +7,22 @@
 - [What is F1r3fly?](#what-is-f1r3fly)
 - [Security Notice](#note-on-the-use-of-this-software)
 - [Installation](#installation)
-  - [Source (Development)](#source)
-  - [Docker](#docker)
-  - [Debian/Ubuntu](#debianubuntu)
-  - [RedHat/Fedora](#redhatfedora)
-  - [macOS](#macos)
+  - [Docker (Recommended)](#docker-recommended)
+  - [Source (Development)](#source-development)
 - [Building](#building)
 - [Running](#running)
+  - [Docker Network](#docker-network-recommended)
+  - [Local Development](#local-development-node)
 - [Usage](#usage)
   - [F1r3fly Rust Client](#f1r3fly-rust-client)
-  - [Node CLI](#node-cli)
+  - [F1r3drive](#f1r3drive)
+  - [Smoke Test](#smoke-test)
   - [Evaluating Rholang Contracts](#evaluating-rholang-contracts)
 - [Configuration](#configuration-file)
-- [Development](#development)
 - [Troubleshooting](#troubleshooting)
 - [Support & Community](#support--community)
 - [Known Issues & Reporting](#caveats-and-filing-issues)
-- [Acknowledgements](#acknowledgements)
 - [License](#licence-information)
-
 
 ## What is F1r3fly?
 
@@ -38,176 +35,103 @@ F1r3fly is an open-source blockchain platform that provides:
 
 ### Getting Started
 
-- **Development**: Install locally using [Nix and direnv](#source) for a complete development environment
-- **Production**: Use [Docker](#docker) or [system packages](#debianubuntu) for running nodes
-- **Community**: Join the [F1r3fly Discord](https://discord.gg/NN59aFdAHM) for tutorials, documentation, and project information
+- **Production/Testing**: Use [Docker](#docker-recommended) to run nodes
+- **Development**: Install via [Nix](#nix-recommended) or [manually](#manual-install)
+- **Community**: Join the [F1r3fly Discord](https://discord.gg/NN59aFdAHM)
 - **Testnet**: Public testnet access coming soon
 
 ### Node Implementations
 
-F1r3fly has two node implementations in this repository on different branches:
+This repository contains two node implementations on different branches:
 
-| Implementation | Branch                                                            | Status                       | Description                                                            |
-| -------------- | ----------------------------------------------------------------- | ---------------------------- | ---------------------------------------------------------------------- |
-| **Rust Node**  | [`rust/dev`](https://github.com/F1R3FLY-io/f1r3fly/tree/rust/dev) | **Production (recommended)** | Pure Rust implementation with better performance and no JVM dependency |
-| Scala Node     | `main` (this branch)                                              | Development                  | Original Scala implementation                                          |
+| Implementation | Branch | Status | Description |
+|---|---|---|---|
+| **Rust Node** | [`rust/dev`](https://github.com/F1R3FLY-io/f1r3fly/tree/rust/dev) | **Production (recommended)** | Pure Rust, no JVM dependency |
+| Scala Node | `main` (this branch) | Maintenance | Original Scala implementation |
 
-> **Note**: You are on the **`main` branch** (Scala node). For new deployments, we recommend switching to the [`rust/dev` branch](https://github.com/F1R3FLY-io/f1r3fly/tree/rust/dev) which offers better performance and is under active development.
+> You are on the **`main` branch** (Scala node). For new deployments, the [`rust/dev` branch](https://github.com/F1R3FLY-io/f1r3fly/tree/rust/dev) is recommended.
 
 ## Note on the use of this software
 This code has not yet completed a security review. We strongly recommend that you do not use it in production or to transfer items of material value. We take no responsibility for any loss you may incur through the use of this code.
 
 ## Installation
 
-### Source
-
-**Recommended for development and contributing to F1r3fly**
-
-#### Prerequisites
-
-1. **Install Nix**: https://nixos.org/download/
-   - Learn more: [How Nix Works](https://nixos.org/guides/how-nix-works/)
-
-2. **Install direnv**: https://direnv.net/#basic-installation
-   - Learn more: [direnv documentation](https://direnv.net/)
-
-#### Setup Steps
-
-3. **Clone and setup the repository**:
-   ```bash
-   git clone <repository-url>
-   cd f1r3fly-clone
-   direnv allow
-   ```
-
-   **Troubleshooting**: If you encounter the error:
-   ```
-   error: experimental Nix feature 'nix-command' is disabled
-   ```
-
-   **Solution**:
-   ```bash
-   # Create Nix config directory
-   mkdir -p ~/.config/nix
-   
-   # Add experimental features
-   echo "experimental-features = flakes nix-command" > ~/.config/nix/nix.conf
-   
-   # Try again
-   direnv allow
-   ```
-
-   > 📝 **Note**: The initial setup will compile all libraries (takes a few minutes). Your development environment will be ready after completion.
-
-### Docker
-
-**Recommended for production deployments and testing**
-
-#### Quick Start
-
-Run a complete F1r3fly network with automatic block production:
+### Docker (Recommended)
 
 ```bash
-# Start the shard network (recommended)
-docker compose -f docker/shard-with-autopropose.yml up
+# Pull the latest image
+docker pull f1r3flyindustries/f1r3fly-scala-node:latest
+
+# Start a standalone node (for development)
+docker compose -f docker/standalone.yml up
+
+# Or start a multi-validator network (for testing consensus)
+docker compose -f docker/shard.yml up
 ```
 
-#### Port Configuration
-
-| Port  | Service         | Description              |
-| ----- | --------------- | ------------------------ |
+| Port | Service | Description |
+|------|---------|-------------|
 | 40400 | Protocol Server | Main blockchain protocol |
-| 40401 | gRPC External   | External gRPC API        |
-| 40402 | gRPC Internal   | Internal gRPC API        |
-| 40403 | HTTP API        | REST/HTTP API endpoints  |
-| 40404 | Peer Discovery  | Node discovery service   |
+| 40401 | gRPC External | External gRPC API |
+| 40402 | gRPC Internal | Internal gRPC API |
+| 40403 | HTTP API | REST/HTTP API endpoints |
+| 40404 | Peer Discovery | Node discovery service |
+| 40405 | Admin | Admin/metrics endpoint |
 
-#### Advanced Options
+Data persists in `docker/data/`. Fresh start: `docker compose -f docker/shard.yml down && rm -rf docker/data/`
 
-**Data Persistence**: The shard network automatically creates a `docker/data/` directory for blockchain state.
+Docker Compose loads `docker/.env` automatically — it contains node credentials and optional tuning. See [docker/.env.example](docker/.env.example) for all available variables.
 
-**Fresh Start**: Remove data directory to reset to genesis:
+See [docker/README.md](docker/README.md) for shard setup, validator bonding, and network configuration.
+
+### Source (Development)
+
+#### Nix (Recommended)
+
+Nix provides a reproducible environment with all dependencies pinned (JDK 17, SBT, Rust, BNFC, JFlex, protobuf).
+
+1. Install [Nix](https://nixos.org/download/) and [direnv](https://direnv.net/#basic-installation)
+2. Clone and enter the environment:
+
 ```bash
-docker compose -f docker/shard-with-autopropose.yml down
-rm -rf docker/data/
-docker compose -f docker/shard-with-autopropose.yml up
+git clone <repository-url>
+cd f1r3fly
+direnv allow
 ```
 
-**Additional Resources**: [Docker Hub Repository](https://hub.docker.com/r/f1r3flyindustries/f1r3fly-scala-node)
+If you encounter `error: experimental Nix feature 'nix-command' is disabled`:
+```bash
+mkdir -p ~/.config/nix
+echo "experimental-features = flakes nix-command" > ~/.config/nix/nix.conf
+direnv allow
+```
 
-#### Pull Latest Image
+#### Manual Install
 
-`$ docker pull f1r3flyindustries/f1r3fly-scala-node:latest`
+Install the following:
 
-### Debian/Ubuntu
+- **Java 17** (OpenJDK/Temurin)
+- **SBT** (Scala Build Tool)
+- **Rust** (stable toolchain): `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`
+- **System packages:**
 
-**Pre-built packages for Debian-based systems**
+Debian/Ubuntu:
+```bash
+sudo apt install autoconf cmake curl git jflex libtool make protobuf-compiler sbt unzip
+```
 
-F1r3fly provides Debian packages with RNode binary. **Dependency**: `java17-runtime-headless`
+macOS (Homebrew):
+```bash
+brew install autoconf cmake git libtool make protobuf sbt
+```
 
-#### Installation Steps
-
-1. **Download**: Visit [GitHub Releases](https://github.com/F1R3FLY-io/f1r3fly/releases) and download `rnode-X.Y.Z-1.noarch.rpm`
-
-2. **Install**:
-   ```bash
-   sudo apt update
-   sudo apt install ./rnode_X.Y.Z_all.deb
-   ```
-   > Replace `X.Y.Z` with the actual version number
-
-3. **Run**:
-   ```bash
-   rnode run -s
-   ```
-
-**Installation Paths**:
-- Binary: `/usr/bin/rnode`
-- JAR: `/usr/share/rnode/rnode.jar`
-
-### RedHat/Fedora
-
-**Pre-built packages for RPM-based systems**
-
-F1r3fly provides RPM packages with RNode binary. **Dependency**: `java-17-openjdk`
-
-#### Installation Steps
-
-1. **Download**: Visit [GitHub Releases](https://github.com/F1R3FLY-io/f1r3fly/releases) and download `rnode-X.Y.Z-1.noarch.rpm`
-
-2. **Install**:
-   ```bash
-   # For Fedora/newer systems
-   sudo dnf install ./rnode-X.Y.Z-1.noarch.rpm
-   
-   # For CentOS/older systems
-   sudo yum install ./rnode-X.Y.Z-1.noarch.rpm
-   ```
-   > Replace `X.Y.Z` with the actual version number
-
-3. **Run**:
-   ```bash
-   rnode run -s
-   ```
-
-**Installation Paths**:
-- Binary: `/usr/bin/rnode`
-- JAR: `/usr/share/rnode/rnode.jar`
-
-### macOS
-
-**Docker or manual installation recommended**
-
-macOS native packages are not yet available. Choose one of these options:
-
-#### Option 1: Docker (Recommended)
-Use the [Docker installation method](#docker) for the best macOS experience.
-
-> 🔮 **Future**: Native macOS packages may be added in upcoming releases.
+**BNFC** (parser generator, from Haskell):
+```bash
+# Via cabal
+cabal install alex happy BNFC
+```
 
 ## Building
-
-**Prerequisites**: [Development environment setup](#source)
 
 ### Quick Commands
 
@@ -215,10 +139,10 @@ Use the [Docker installation method](#docker) for the best macOS experience.
 # Fat JAR for local development
 sbt ";compile ;project node ;assembly ;project rchain"
 
-# Docker image (native - faster for development)
-sbt ";compile ;project node ;Docker/publishLocal ;project rchain"
+# Docker image
+docker context use default && sbt ";compile ;project node ;Docker/publishLocal ;project rchain"
 
-# Docker image (multiplatform - linux/amd64,linux/arm64)
+# Docker image (multiplatform: amd64 + arm64)
 docker context use default && MULTI_ARCH=true sbt ";compile ;project node ;Docker/publishLocal ;project rchain"
 
 # Clean build
@@ -227,56 +151,55 @@ sbt "clean"
 
 ### SBT Tips
 
-- **Keep SBT running**: Use `sbt` shell for faster subsequent commands
-- **Project-specific builds**: `sbt "project node" compile`
-- **Parallel compilation**: Automatic with modern SBT
-
-#### Building Docker Images Locally
-
-After setting up the [development environment](#source), build Docker images:
-
-**Native Build** (Recommended - 3-5x faster):
-```bash
-docker context use default && sbt ";compile ;project node ;Docker/publishLocal ;project rchain"
-```
-
-**Multiplatform Build** (for linux/amd64,linux/arm64):
-```bash
-# Enable multiplatform build with MULTI_ARCH environment variable
-docker context use default && MULTI_ARCH=true sbt ";compile ;project node ;Docker/publishLocal ;project rchain"
-```
-
-Both create: `f1r3flyindustries/f1r3fly-scala-node:latest`
+- Keep SBT running: use `sbt` shell for faster subsequent commands
+- Project-specific builds: `sbt "project node" compile`
 
 ## Running
 
 ### Docker Network (Recommended)
 
-**F1r3fly Network with Auto-propose** - Complete blockchain network with automatic block production:
-
+**Standalone** (single-validator, for development):
 ```bash
-# Start the shard network (recommended)
-docker compose -f docker/shard-with-autopropose.yml up
-
-# Start in background
-docker compose -f docker/shard-with-autopropose.yml up -d
-
-# View logs
-docker compose -f docker/shard-with-autopropose.yml logs -f
-
-# Stop the network
-docker compose -f docker/shard-with-autopropose.yml down
+docker compose -f docker/standalone.yml up -d
+docker compose -f docker/standalone.yml logs -f
+docker compose -f docker/standalone.yml down
 ```
 
-**Fresh Start**: Reset to genesis state:
+**Shard** (3 validators + bootstrap + observer):
 ```bash
-# Stop network and remove all blockchain data
-docker compose -f docker/shard-with-autopropose.yml down
-rm -rf docker/data/
-docker compose -f docker/shard-with-autopropose.yml up
+docker compose -f docker/shard.yml up -d
+
+# Wait for genesis (~2-3 min)
+docker compose -f docker/shard.yml logs 2>&1 | grep "Making a transition to Running state"
+# Ctrl+C once all validators report Running
+
+docker compose -f docker/shard.yml logs -f         # Follow logs
+docker compose -f docker/shard.yml down             # Stop
+docker compose -f docker/shard.yml down -v          # Stop and wipe data
 ```
+
+**Observer** (read-only, requires running shard):
+```bash
+docker compose -f docker/observer.yml up
+```
+
+**Monitoring** (Prometheus + Grafana + cAdvisor, requires running shard):
+```bash
+docker compose -f docker/shard-monitoring.yml up -d    # Start
+docker compose -f docker/shard-monitoring.yml down      # Stop
+```
+
+| Component | URL | Description |
+|---|---|---|
+| Prometheus | http://localhost:9090 | Metrics, targets, recording rules |
+| Grafana | http://localhost:3000 | Dashboards (admin/admin) |
+| cAdvisor | http://localhost:8080 | Container CPU/memory/IO metrics |
+
+See [docker/README.md](docker/README.md) for details.
 
 ### Local Development Node
+
+Local runs do **not** load `docker/.env` — configuration comes from HOCON config at `~/.rnode/rnode.conf`. Environment variables for AI services must be set in your shell.
 
 After [building from source](#building):
 
@@ -289,111 +212,26 @@ java -Djna.library.path=./rust_libraries/release \
   run -s --no-upnp --allow-private-addresses --synchrony-constraint-threshold=0.0
 ```
 
-**Fresh Start**: `rm -rf ~/.rnode/`
+Fresh start: `rm -rf ~/.rnode/`
 
-### Single Node (Development)
-
-To fetch the latest version of RNode from the remote Docker hub and run it (exit with `C-c`):
-
-```sh
-$ docker run -it -p 40400:40400 f1r3flyindustries/f1r3fly-scala-node:latest
-
-# With binding of RNode data directory to the host directory $HOME/rnode 
-$ docker run -v $HOME/rnode:/var/lib/rnode -it -p 40400:40400 f1r3flyindustries/f1r3fly-scala-node:latest
-```
-
-In order to use both the peer-to-peer network and REPL capabilities of the
-node, you need to run more than one Docker RNode on the same host, the
-containers need to be connected to one user-defined network bridge:
-
+To enable AI services locally, set env vars before running:
 ```bash
-$ docker network create rnode-net
-
-$ docker run -dit --name rnode0 --network rnode-net f1r3flyindustries/f1r3fly-scala-node:latest run -s
-
-$ docker ps
-CONTAINER ID   IMAGE                                          COMMAND                  CREATED          STATUS          PORTS     NAMES
-ef770b4d4139   f1r3flyindustries/f1r3fly-scala-node:latest   "bin/rnode --profile…"   23 seconds ago   Up 22 seconds             rnode0
-```
-
-To attach terminal to RNode logstream execute
-
-```bash
-$ docker logs -f rnode0
-[...]
-08:38:11.460 [main] INFO  logger - Listening for traffic on rnode://137200d47b8bb0fff54a753aabddf9ee2bfea089@172.18.0.2?protocol=40400&discovery=40404
-[...]
-```
-
-A repl instance can be invoked in a separate terminal using the following command:
-
-```bash
-$ docker run -it --rm --name rnode-repl --network rnode-net f1r3flyindustries/f1r3fly-scala-node:latest --grpc-host rnode0 --grpc-port 40402 repl
-
-  ╦═╗┌─┐┬ ┬┌─┐┬┌┐┌  ╔╗╔┌─┐┌┬┐┌─┐  ╦═╗╔═╗╔═╗╦  
-  ╠╦╝│  ├─┤├─┤││││  ║║║│ │ ││├┤   ╠╦╝║╣ ╠═╝║  
-  ╩╚═└─┘┴ ┴┴ ┴┴┘└┘  ╝╚╝└─┘─┴┘└─┘  ╩╚═╚═╝╩  ╩═╝
-    
-rholang $
-```
-
-Type `@42!("Hello!")` in REPL console. This command should result in (`rnode0` output):
-```bash
-Evaluating:
-@{42}!("Hello!")
-```
-
-A peer node can be started with the following command (note that `--bootstrap` takes the listening address of `rnode0`):
-
-```bash
-$ docker run -it --rm --name rnode1 --network rnode-net f1r3flyindustries/f1r3fly-scala-node:latest run --bootstrap 'rnode://8c775b2143b731a225f039838998ef0fac34ba25@rnode0?protocol=40400&discovery=40404' --allow-private-addresses --host rnode1
-[...]
-15:41:41.818 [INFO ] [node-runner-39      ] [coop.rchain.node.NodeRuntime ] - Starting node that will bootstrap from rnode://8c775b2143b731a225f039838998ef0fac34ba25@rnode0?protocol=40400&discovery=40404
-15:57:37.021 [INFO ] [node-runner-32      ] [coop.rchain.comm.rp.Connect$ ] - Peers: 1
-15:57:46.495 [INFO ] [node-runner-32      ] [c.r.c.util.comm.CommUtil$    ] - Successfully sent ApprovedBlockRequest to rnode://8c775b2143b731a225f039838998ef0fac34ba25@rnode0?protocol=40400&discovery=40404
-15:57:50.463 [INFO ] [node-runner-40      ] [c.r.c.engine.Initializing    ] - Rholang state received and saved to store.
-15:57:50.482 [INFO ] [node-runner-34      ] [c.r.casper.engine.Engine$    ] - Making a transition to Running state.
-```
-
-The above command should result in (`rnode0` output):
-```bash
-15:57:37.021 [INFO ] [node-runner-42      ] [c.r.comm.rp.HandleMessages$  ] - Responded to protocol handshake request from rnode://e80faf589973c2c1b9b8441790d34a9a0ffdd3ce@rnode1?protocol=40400&discovery=40404
-15:57:37.023 [INFO ] [node-runner-42      ] [coop.rchain.comm.rp.Connect$ ] - Peers: 1
-15:57:46.530 [INFO ] [node-runner-43      ] [c.r.casper.engine.Running$   ] - ApprovedBlock sent to rnode://e80faf589973c2c1b9b8441790d34a9a0ffdd3ce@rnode1?protocol=40400&discovery=40404
-15:57:48.283 [INFO ] [node-runner-43      ] [c.r.casper.engine.Running$   ] - Store items sent to rnode://e80faf589973c2c1b9b8441790d34a9a0ffdd3ce@rnode1?protocol=40400&discovery=40404
+OPENAI_ENABLED=true OPENAI_SCALA_CLIENT_API_KEY=sk-... java -Djna.library.path=...
 ```
 
 ## Usage
 
 ### F1r3fly Rust Client
 
-**Modern Rust-based CLI for interacting with F1r3fly nodes**
+CLI for interacting with F1r3fly nodes: deploy, propose, transfer, bond validators, check health.
 
-The F1r3fly Rust Client provides a comprehensive command-line interface for blockchain operations:
+Repository: [F1R3FLY-io/rust-client](https://github.com/F1R3FLY-io/rust-client)
 
-| Feature                | Description                                                  |
-| ---------------------- | ------------------------------------------------------------ |
-| **Deploy**             | Upload Rholang code to F1r3fly nodes                         |
-| **Propose**            | Create new blocks containing deployed code                   |
-| **Full Deploy**        | Deploy + propose in a single operation                       |
-| **Deploy & Wait**      | Deploy with automatic finalization checking                  |
-| **Exploratory Deploy** | Execute Rholang without blockchain commitment (read-only)    |
-| **Transfer**           | Send REV tokens between addresses                            |
-| **Bond Validator**     | Add new validators to the network                            |
-| **Network Health**     | Check validator status and network consensus                 |
-| **Key Management**     | Generate public keys and key pairs for blockchain identities |
-
-🔗 **Repository**: [F1R3FLY-io/rust-client](https://github.com/F1R3FLY-io/rust-client)
-
-**Installation**:
 ```bash
 git clone https://github.com/F1R3FLY-io/rust-client.git
 cd rust-client
 cargo build --release
-```
 
-**Quick Example**:
-```bash
 # Deploy a Rholang contract
 cargo run -- deploy -f ./rho_examples/stdout.rho
 
@@ -401,210 +239,140 @@ cargo run -- deploy -f ./rho_examples/stdout.rho
 cargo run -- status
 ```
 
-### Node CLI
+### F1r3drive
 
-To get a full list of options rnode accepts, use the `--help` option:
+FUSE-based file system backed by the F1r3fly blockchain.
 
-```sh
-$ docker run -it --rm f1r3flyindustries/f1r3fly-scala-node:latest --help
+Repository: [F1R3FLY-io/f1r3drive](https://github.com/F1R3FLY-io/f1r3drive)
+
+### Smoke Test
+
+Verify the shard end-to-end using the [rust-client](https://github.com/F1R3FLY-io/rust-client) smoke test:
+
+```bash
+cd rust-client
+./scripts/smoke_test.sh localhost 40412 40413 40452
 ```
 
 ### Evaluating Rholang Contracts
 
-**Prerequisites**: [Running node](#running)
-
-#### Quick Evaluation
-
-1. **Build the evaluator**:
-   ```bash
-   sbt ";compile ;stage"
-   ```
-
-2. **Evaluate a contract**:
-   ```bash
-   ./node/target/universal/stage/bin/rnode \
-     eval ./rholang/examples/tut-ai.rho
-   ```
-
-#### Example Contracts
-
-Explore the `rholang/examples/` directory for sample contracts and tutorials.
-
-#### Using the REPL
-
-A repl instance can be invoked in a separate terminal using the following command:
-
 ```bash
-$ docker run -it --rm --name rnode-repl --network rnode-net f1r3flyindustries/f1r3fly-scala-node:latest --grpc-host rnode0 --grpc-port 40402 repl
-
-  ╦═╗┌─┐┬ ┬┌─┐┬┌┐┌  ╔╗╔┌─┐┌┬┐┌─┐  ╦═╗╔═╗╔═╗╦  
-  ╠╦╝│  ├─┤├─┤││││  ║║║│ │ ││├┤   ╠╦╝║╣ ╠═╝║  
-  ╩╚═└─┘┴ ┴┴ ┴┴┘└┘  ╝╚╝└─┘─┴┘└─┘  ╩╚═╚═╝╩  ╩═╝
-    
-rholang $
+sbt ";compile ;stage"
+./node/target/universal/stage/bin/rnode \
+  eval ./rholang/examples/tut-ai.rho
 ```
 
-Type `@42!("Hello!")` in REPL console. This command should result in (`rnode0` output):
+Explore `rholang/examples/` for sample contracts.
+
+### System Packages
+
+<details>
+<summary>Debian/Ubuntu</summary>
+
+Requires `java17-runtime-headless`:
+
 ```bash
-Evaluating:
-@{42}!("Hello!")
+sudo apt update
+sudo apt install ./rnode_X.Y.Z_all.deb
+rnode run -s
 ```
+
+Paths: `/usr/bin/rnode`, `/usr/share/rnode/rnode.jar`
+
+</details>
+
+<details>
+<summary>RedHat/Fedora</summary>
+
+Requires `java-17-openjdk`:
+
+```bash
+sudo dnf install ./rnode-X.Y.Z-1.noarch.rpm
+rnode run -s
+```
+
+Paths: `/usr/bin/rnode`, `/usr/share/rnode/rnode.jar`
+
+</details>
+
+## Multi-Service Orchestration
+
+For running F1r3fly alongside other ecosystem services (Embers, F1R3Sky, monitoring), see the [system-integration](https://github.com/F1R3FLY-io/system-integration) repository. It provides `shardctl` CLI, shared configs, integration tests, and Docker Compose orchestration.
+
+## AI Services
+
+F1r3fly nodes expose AI capabilities as Rholang system processes. These are available to smart contracts at runtime.
+
+| Rholang Process | Provider | Description |
+|---|---|---|
+| `rho:ai:gpt4` | OpenAI | GPT-4 text completion |
+| `rho:ai:dalle3` | OpenAI | DALL-E 3 image generation |
+| `rho:ai:textToAudio` | OpenAI | Text-to-speech audio |
+| `rho:ai:ollama:chat` | Ollama (local) | Chat completion via local Ollama |
+| `rho:ai:ollama:generate` | Ollama (local) | Text generation via local Ollama |
+| `rho:ai:ollama:models` | Ollama (local) | List available local models |
+
+AI services are disabled by default. Enable via environment variables (Docker) or HOCON config (local). See [docker/.env.example](docker/.env.example) for all available env vars and [defaults.conf](node/src/main/resources/defaults.conf) for HOCON config reference.
+
+When AI is disabled, contracts using `rho:ai:*` processes will fail at deploy time.
 
 ## Configuration File
 
-**Customize RNode behavior with HOCON configuration**
+- **Default location**: Data directory (`~/.rnode/`)
+- **Custom location**: `--config-file <path>`
+- **Format**: [HOCON](https://github.com/lightbend/config/blob/master/HOCON.md)
 
-### Configuration Options
-
-- **Default location**: Data directory (usually `~/.rnode/`)
-- **Custom location**: Use `--config-file <path>` command line option
-- **Format**: [HOCON](https://github.com/lightbend/config/blob/master/HOCON.md) (Human-Optimized Config Object Notation)
-
-### Reference Configuration
-
-- **All available options**: [defaults.conf](node/src/main/resources/defaults.conf)
-- **Standalone example**: [docker/conf/standalone-dev.conf](docker/conf/standalone-dev.conf) - Ready-to-use development configuration
-
-## Development
-
-**Contributing to F1r3fly? Start here!**
-
-### Development Setup
-
-1. **Environment**: Follow [source installation](#source) instructions
-2. **Docker**: Use `docker compose -f docker/shard-with-autopropose.yml up` for testing
-3. **Build**: Use SBT for compilation and building
-
-### Quick Commands
-
-```bash
-# Clean and compile
-sbt clean compile
-
-# Build executable and Docker image
-sbt clean compile stage docker:publishLocal
-
-# Run the resulting binary
-./node/target/universal/stage/bin/rnode
-```
-
-### Contribution Workflow
-
-1. Fork the repository
-2. Create feature branch: `git checkout -b feature/amazing-feature`
-3. Make changes and test locally
-4. Submit pull request
-
-For more detailed instructions, see the [developer guide](DEVELOPER.md).
+Reference configs:
+- [defaults.conf](node/src/main/resources/defaults.conf) - All available options
+- [docker/conf/standalone-dev.conf](docker/conf/standalone-dev.conf) - Standalone development config
+- [docker/conf/default.conf](docker/conf/default.conf) - Shard config
 
 ## Troubleshooting
 
-### Common Issues and Solutions
+### SBT Build Issues
 
-#### SBT Build Issues
-
-**Problem**: Build failures or dependency issues
 ```bash
-# Clear coursier cache
 rm -rf ~/.cache/coursier/
-
-# Clean SBT
 sbt clean
 ```
 
-#### Node Compilation Issues
+### Node Compilation (StackOverflow)
 
-**Problem**: StackOverflow error during compilation
 ```bash
-# Option 1: Direct compile
-sbt "node/compile"
-
-# Option 2: Use SBT shell (recommended)
 sbt
 sbt:rchain> project node
 sbt:node> compile
 ```
 
-#### Docker Issues
+### Docker Issues
 
-**Problem**: Docker build failures
 ```bash
-# Reset Docker context
 docker context use default
-
-# Clean Docker system
 docker system prune -a
 ```
 
-#### Port Conflicts
+### Port Conflicts
 
-**Problem**: "Port already in use" errors
 ```bash
-# Find processes using F1r3fly ports
 lsof -i :40400-40404
-
-# Kill specific process
 kill -9 <PID>
 ```
 
 ## Support & Community
 
-### Discord Community
-
-Join the F1r3fly community for real-time support, tutorials, and project updates:
-
-🌐 **[F1r3fly Discord](https://discord.gg/NN59aFdAHM)**
-
-**Available Resources**:
-- Project tutorials and documentation
-- Development planning and discussions
-- Events calendar and announcements
-- Community support and Q&A
-
-### Getting Help
-
-1. **Documentation**: Start with this README and relevant documentation
-2. **Troubleshooting**: Check the [troubleshooting section](#troubleshooting)
-3. **Community**: Ask questions in Discord
-4. **Issues**: Report bugs in GitHub Issues
+- [F1r3fly Discord](https://discord.gg/NN59aFdAHM) - Tutorials, discussions, support
+- [GitHub Issues](https://github.com/F1R3FLY-io/f1r3fly/issues) - Bug reports and feature requests
 
 ## Caveats and Filing Issues
 
-### Known Issues
+This F1r3fly repository is under active development. Report issues at [GitHub Issues](https://github.com/F1R3FLY-io/f1r3fly/issues/new/choose).
 
-⚠️ **Pre-release Software**: F1r3fly is under active development
-
-**Current Issue Trackers**:
-- **F1r3fly Issues**: [GitHub Issues](https://github.com/F1R3FLY-io/f1r3fly/issues)
-Comment view
-- **Legacy Bug Reports**: [Legacy Bug Reports](https://github.com/F1R3FLY-io/f1r3fly/issues?q=is%3Aopen+is%3Aissue+label%3Abug)
-
-### Filing Bug Reports
-
-**Report Issues**: [Create New Issue](https://github.com/F1R3FLY-io/f1r3fly/issues/new/choose)
-
-**Include in your report**:
-- F1r3fly version
-- Operating system and version
-- Steps to reproduce
-- Expected vs actual behavior
-- Relevant logs or error messages
+Include: F1r3fly version, OS, steps to reproduce, expected vs actual behavior, logs.
 
 ## Acknowledgements
 
-**Performance Profiling**: 
-We use [YourKit](https://www.yourkit.com/) to profile F1r3fly performance. YourKit supports open source projects with their full-featured Java and .NET profilers.
-
-**Tools**:
-- [YourKit Java Profiler](https://www.yourkit.com/java/profiler/)
-- [YourKit .NET Profiler](https://www.yourkit.com/.net/profiler/)
+We use [YourKit](https://www.yourkit.com/) to profile F1r3fly performance.
 
 ## License Information
 
 F1r3fly is licensed under the **Apache License 2.0**.
-
-To get summary of licenses being used by the F1r3fly's dependencies, simply run:
-```bash
-sbt node/dumpLicenseReport
-```
-The report will be available under `node/target/license-reports/rnode-licenses.html`

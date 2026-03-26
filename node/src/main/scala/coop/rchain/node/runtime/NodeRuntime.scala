@@ -272,11 +272,7 @@ class NodeRuntime[F[_]: Monixable: ConcurrentEffect: Parallel: Timer: ContextShi
         }
 
     val rspaceInfo: F[Unit] =
-      if (nodeConf.rspacePlusPlus) Log[F].info(s"Starting node using rspace++.")
-      else
-        Log[F].info(
-          s"Starting node using rspace."
-        )
+      Log[F].info(s"Starting node using rspace.")
 
     val dynamicIpCheck: F[Unit] =
       if (nodeConf.protocolServer.dynamicIp)

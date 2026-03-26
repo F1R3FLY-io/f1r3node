@@ -2,80 +2,122 @@
 
 ## Quick Start
 
-### Standalone Node (Recommended for Development)
-The standalone setup runs a **single-validator node** optimized for fast development with instant finalization. This is the simplest way to get started.
+Pull the latest image and start a multi-validator shard:
 
-**Start standalone node:**
 ```bash
-docker-compose -f standalone.yml up --pull always -d
+docker compose -f shard.yml pull
+docker compose -f shard.yml up -d
 ```
+
+Wait for genesis (~2-3 minutes). All validators must transition to Running state:
+```bash
+docker compose -f shard.yml logs 2>&1 | grep "Making a transition to Running state"
+```
+
+Once all validators report Running, press `Ctrl+C`. The network is ready.
 
 **Follow logs:**
 ```bash
-docker-compose -f standalone.yml logs -f
+# All nodes
+docker compose -f shard.yml logs -f
+
+# Specific node
+docker compose -f shard.yml logs -f validator1
+docker compose -f shard.yml logs -f boot
+docker compose -f shard.yml logs -f readonly
 ```
 
-**Stop standalone node:**
+**Stop:**
 ```bash
-docker-compose -f standalone.yml down
+docker compose -f shard.yml down
 ```
 
-### Multi-Validator Network
-For testing multi-node consensus and advanced scenarios, use the full shard network with one bootstrap, 3 validators and observer.
-
-**Start the Network:**
+**Stop and wipe all data (fresh restart):**
 ```bash
-docker-compose -f shard-with-autopropose.yml up --pull always -d
+docker compose -f shard.yml down -v
 ```
 
-**Wait for Genesis (2-3 minutes):**
+## Build from Source
 
-All nodes need to complete the genesis ceremony and transition to running state before the network is ready.
+Requires Nix or a JDK 17+ environment. Build a local Docker image:
 ```bash
-# Monitor all nodes until they output 'Making a transition to Running state.'
-docker-compose -f shard-with-autopropose.yml logs -f | grep "Making a transition to Running state"
+sbt ";compile ;project node ;Docker/publishLocal ;project rchain"
 ```
 
-Once you see this message from all validators, the network is ready. Press `Ctrl+C` to stop watching logs.
-
-**Follow logs for all services in the shard:**
+Then start with the local image:
 ```bash
-docker-compose -f shard-with-autopropose.yml logs -f
+F1R3FLY_SCALA_IMAGE=f1r3flyindustries/f1r3fly-scala-node:latest docker compose -f shard.yml up -d
 ```
 
-**Follow logs for a specific node:**
+## Standalone Node (Single Validator)
+
+For local development with instant finalization:
 ```bash
-# For validator1
-docker-compose -f shard-with-autopropose.yml logs -f validator1
-
-# For validator2
-docker-compose -f shard-with-autopropose.yml logs -f validator2
-
-# For validator3
-docker-compose -f shard-with-autopropose.yml logs -f validator3
-
-# For bootstrap node
-docker-compose -f shard-with-autopropose.yml logs -f bootstrap
-
-# For observer
-docker-compose -f shard-with-autopropose.yml logs -f readonly
+docker compose -f standalone.yml up -d
+docker compose -f standalone.yml logs -f
+docker compose -f standalone.yml down
 ```
 
-**Stop the Network:**
+## Compose Files
+
+| File | Description |
+|------|-------------|
+| `shard.yml` | Full shard: bootstrap + 3 validators + observer |
+| `standalone.yml` | Single standalone node for development |
+| `validator4.yml` | Additional validator joining existing shard |
+| `observer.yml` | Additional read-only node joining existing shard |
+| `shard-monitoring.yml` | Prometheus + Grafana + cAdvisor overlay |
+
+## Configuration
+
+All compose files use 2 shared config files. Per-role behavior is controlled via CLI flags.
+
+| Config File | Used By | Purpose |
+|-------------|---------|---------|
+| `conf/default.conf` | All shard roles | Shared shard defaults |
+| `conf/standalone-dev.conf` | Standalone | `standalone = true`, instant finalization |
+
+CLI flags used per role:
+
+| Flag | Used by |
+|------|---------|
+| `--ceremony-master-mode` | Bootstrap |
+| `--heartbeat-disabled` | Bootstrap, Observer |
+| `--genesis-validator` | Validators 1-3 |
+
+Key settings in `default.conf`:
+- `fault-tolerance-threshold = 0.99` (near-unanimous finalization)
+- `synchrony-constraint-threshold = 0` (no synchrony gate on proposals)
+- `enable-mergeable-channel-gc = true`
+- `heartbeat.enabled = true` (overridden via `--heartbeat-disabled` for bootstrap/observer)
+
+## Port Mapping
+
+| Node | Protocol | gRPC Ext | gRPC Int | HTTP | Discovery | Admin |
+|------|----------|----------|----------|------|-----------|-------|
+| Bootstrap | 40400 | 40401 | 40402 | 40403 | 40404 | 40405 |
+| Validator1 | 40410 | 40411 | 40412 | 40413 | 40414 | 40415 |
+| Validator2 | 40420 | 40421 | 40422 | 40423 | 40424 | 40425 |
+| Validator3 | 40430 | 40431 | 40432 | 40433 | 40434 | 40435 |
+| Validator4 | 40440 | 40441 | 40442 | 40443 | 40444 | 40445 |
+| Observer | 40450 | 40451 | 40452 | 40453 | 40454 | 40455 |
+
+## Monitoring
+
+Start the monitoring stack after the shard is running:
+
 ```bash
-docker-compose -f shard-with-autopropose.yml down
+docker compose -f shard-monitoring.yml up -d    # Start
+docker compose -f shard-monitoring.yml down      # Stop
 ```
 
-### Fresh Restart
-When the network runs, a `data/` directory is created to store blockchain state and node data. 
+| Component | URL | Description |
+|---|---|---|
+| Prometheus | http://localhost:9090 | Metrics, targets, recording rules |
+| Grafana | http://localhost:3000 | Dashboards (admin/admin) |
+| cAdvisor | http://localhost:8080 | Container CPU/memory/IO metrics |
 
-**To completely reset the network to genesis state:**
-```bash
-# Remove all blockchain data 
-rm -rf data/
-```
-
-**⚠️ Warning**: Removing the `data/` directory will permanently delete all blockchain history, blocks, and state.
+Prometheus uses DNS-based service discovery — only running nodes get scraped (no false DOWN targets for standalone or partial shard).
 
 ## Adding Validator
 

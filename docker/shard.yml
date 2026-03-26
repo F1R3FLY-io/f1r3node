@@ -10,15 +10,17 @@ x-rnode: &default-rnode
 services:
   boot:
     <<: *default-rnode
-    container_name: $BOOTSTRAP_HOST
+    container_name: ${BOOTSTRAP_HOST:-rnode.bootstrap}
     restart: always
     command: [
         "-Dlogback.configurationFile=/var/lib/rnode/logback.xml",
         "run",
-        "--host=$BOOTSTRAP_HOST",
-        "--bootstrap=rnode://$BOOTSTRAP_NODE_ID@$BOOTSTRAP_HOST?protocol=40400&discovery=40404", # node will know it's bootstrap node
+        "--host=${BOOTSTRAP_HOST:-rnode.bootstrap}",
+        "--bootstrap=rnode://${BOOTSTRAP_NODE_ID:-1e780e5dfbe0a3d9470a2b414f502d59402e09c2}@${BOOTSTRAP_HOST:-rnode.bootstrap}?protocol=40400&discovery=40404", # node will know it's bootstrap node
         "--allow-private-addresses",
-        "--validator-private-key=$BOOTSTRAP_PRIVATE_KEY",
+        "--validator-private-key=${BOOTSTRAP_PRIVATE_KEY:-5f668a7ee96d944a4494cc947e4005e172d7ab3461ee5538f1f2a45a835e9657}",
+        "--ceremony-master-mode",
+        "--heartbeat-disabled",
       ]
     ports:
       - "40400:40400"
@@ -28,29 +30,28 @@ services:
       - "40404:40404"
       - "40405:40405"
     volumes:
-      # Bootstrap-specific configuration (ceremony master)
-      - ./conf/bootstrap-ceremony.conf:/var/lib/rnode/rnode.conf
+      - ./conf/default.conf:/var/lib/rnode/rnode.conf
       - ./genesis/wallets.txt:/var/lib/rnode/genesis/wallets.txt
       - ./genesis/bonds.txt:/var/lib/rnode/genesis/bonds.txt
       - ./conf/logback.xml:/var/lib/rnode/logback.xml
       # Node-specific volumes
-      - ./data/$BOOTSTRAP_HOST:/var/lib/rnode/
+      - ./data/${BOOTSTRAP_HOST:-rnode.bootstrap}:/var/lib/rnode/
       - ./certs/bootstrap/node.certificate.pem:/var/lib/rnode/node.certificate.pem:ro
       - ./certs/bootstrap/node.key.pem:/var/lib/rnode/node.key.pem:ro
 
   validator1:
     <<: *default-rnode
-    container_name: $VALIDATOR1_HOST
+    container_name: ${VALIDATOR1_HOST:-rnode.validator1}
     restart: always
     command:
       [
         "-Dlogback.configurationFile=/var/lib/rnode/logback.xml",
         "run",
-        "--host=$VALIDATOR1_HOST",
+        "--host=${VALIDATOR1_HOST:-rnode.validator1}",
         "--allow-private-addresses",
-        "--bootstrap=rnode://$BOOTSTRAP_NODE_ID@$BOOTSTRAP_HOST?protocol=40400&discovery=40404",
-        "--validator-public-key=$VALIDATOR1_PUBLIC_KEY",
-        "--validator-private-key=$VALIDATOR1_PRIVATE_KEY",
+        "--bootstrap=rnode://${BOOTSTRAP_NODE_ID:-1e780e5dfbe0a3d9470a2b414f502d59402e09c2}@${BOOTSTRAP_HOST:-rnode.bootstrap}?protocol=40400&discovery=40404",
+        "--validator-public-key=${VALIDATOR1_PUBLIC_KEY:-04fa70d7be5eb750e0915c0f6d19e7085d18bb1c22d030feb2a877ca2cd226d04438aa819359c56c720142fbc66e9da03a5ab960a3d8b75363a226b7c800f60420}",
+        "--validator-private-key=${VALIDATOR1_PRIVATE_KEY:-357cdc4201a5650830e0bc5a03299a30038d9934ba4c7ab73ec164ad82471ff9}",
         "--genesis-validator",
       ]
     ports:
@@ -61,27 +62,27 @@ services:
       - "40414:40404"
       - "40415:40405"
     volumes:
-      - ./conf/shared-rnode.conf:/var/lib/rnode/rnode.conf
+      - ./conf/default.conf:/var/lib/rnode/rnode.conf
       - ./genesis/wallets.txt:/var/lib/rnode/genesis/wallets.txt
       - ./genesis/bonds.txt:/var/lib/rnode/genesis/bonds.txt
       - ./conf/logback.xml:/var/lib/rnode/logback.xml
-      - ./data/$VALIDATOR1_HOST:/var/lib/rnode/
+      - ./data/${VALIDATOR1_HOST:-rnode.validator1}:/var/lib/rnode/
       - ./certs/validator1/node.certificate.pem:/var/lib/rnode/node.certificate.pem:ro
       - ./certs/validator1/node.key.pem:/var/lib/rnode/node.key.pem:ro
 
   validator2:
     <<: *default-rnode
-    container_name: $VALIDATOR2_HOST
+    container_name: ${VALIDATOR2_HOST:-rnode.validator2}
     restart: always
     command:
       [
         "-Dlogback.configurationFile=/var/lib/rnode/logback.xml",
         "run",
-        "--host=$VALIDATOR2_HOST",
+        "--host=${VALIDATOR2_HOST:-rnode.validator2}",
         "--allow-private-addresses",
-        "--bootstrap=rnode://$BOOTSTRAP_NODE_ID@$BOOTSTRAP_HOST?protocol=40400&discovery=40404",
-        "--validator-public-key=$VALIDATOR2_PUBLIC_KEY",
-        "--validator-private-key=$VALIDATOR2_PRIVATE_KEY",
+        "--bootstrap=rnode://${BOOTSTRAP_NODE_ID:-1e780e5dfbe0a3d9470a2b414f502d59402e09c2}@${BOOTSTRAP_HOST:-rnode.bootstrap}?protocol=40400&discovery=40404",
+        "--validator-public-key=${VALIDATOR2_PUBLIC_KEY:-04837a4cff833e3157e3135d7b40b8e1f33c6e6b5a4342b9fc784230ca4c4f9d356f258debef56ad4984726d6ab3e7709e1632ef079b4bcd653db00b68b2df065f}",
+        "--validator-private-key=${VALIDATOR2_PRIVATE_KEY:-2c02138097d019d263c1d5383fcaddb1ba6416a0f4e64e3a617fe3af45b7851d}",
         "--genesis-validator",
       ]
     ports:
@@ -92,27 +93,27 @@ services:
       - "40424:40404"
       - "40425:40405"
     volumes:
-      - ./conf/shared-rnode.conf:/var/lib/rnode/rnode.conf
+      - ./conf/default.conf:/var/lib/rnode/rnode.conf
       - ./genesis/wallets.txt:/var/lib/rnode/genesis/wallets.txt
       - ./genesis/bonds.txt:/var/lib/rnode/genesis/bonds.txt
       - ./conf/logback.xml:/var/lib/rnode/logback.xml
-      - ./data/$VALIDATOR2_HOST:/var/lib/rnode/
+      - ./data/${VALIDATOR2_HOST:-rnode.validator2}:/var/lib/rnode/
       - ./certs/validator2/node.certificate.pem:/var/lib/rnode/node.certificate.pem:ro
       - ./certs/validator2/node.key.pem:/var/lib/rnode/node.key.pem:ro
 
   validator3:
     <<: *default-rnode
-    container_name: $VALIDATOR3_HOST
+    container_name: ${VALIDATOR3_HOST:-rnode.validator3}
     restart: always
     command:
       [
         "-Dlogback.configurationFile=/var/lib/rnode/logback.xml",
         "run",
-        "--host=$VALIDATOR3_HOST",
+        "--host=${VALIDATOR3_HOST:-rnode.validator3}",
         "--allow-private-addresses",
-        "--bootstrap=rnode://$BOOTSTRAP_NODE_ID@$BOOTSTRAP_HOST?protocol=40400&discovery=40404",
-        "--validator-public-key=$VALIDATOR3_PUBLIC_KEY",
-        "--validator-private-key=$VALIDATOR3_PRIVATE_KEY",
+        "--bootstrap=rnode://${BOOTSTRAP_NODE_ID:-1e780e5dfbe0a3d9470a2b414f502d59402e09c2}@${BOOTSTRAP_HOST:-rnode.bootstrap}?protocol=40400&discovery=40404",
+        "--validator-public-key=${VALIDATOR3_PUBLIC_KEY:-0457febafcc25dd34ca5e5c025cd445f60e5ea6918931a54eb8c3a204f51760248090b0c757c2bdad7b8c4dca757e109f8ef64737d90712724c8216c94b4ae661c}",
+        "--validator-private-key=${VALIDATOR3_PRIVATE_KEY:-b67533f1f99c0ecaedb7d829e430b1c0e605bda10f339f65d5567cb5bd77cbcb}",
         "--genesis-validator",
       ]
     ports:
@@ -123,11 +124,11 @@ services:
       - "40434:40404"
       - "40435:40405"
     volumes:
-      - ./conf/shared-rnode.conf:/var/lib/rnode/rnode.conf
+      - ./conf/default.conf:/var/lib/rnode/rnode.conf
       - ./genesis/wallets.txt:/var/lib/rnode/genesis/wallets.txt
       - ./genesis/bonds.txt:/var/lib/rnode/genesis/bonds.txt
       - ./conf/logback.xml:/var/lib/rnode/logback.xml
-      - ./data/$VALIDATOR3_HOST:/var/lib/rnode/
+      - ./data/${VALIDATOR3_HOST:-rnode.validator3}:/var/lib/rnode/
       - ./certs/validator3/node.certificate.pem:/var/lib/rnode/node.certificate.pem:ro
       - ./certs/validator3/node.key.pem:/var/lib/rnode/node.key.pem:ro
 
@@ -136,7 +137,7 @@ services:
     user: root
     networks:
       - f1r3fly
-    container_name: $READONLY_HOST
+    container_name: ${READONLY_HOST:-rnode.readonly}
     restart: always
     ports:
       - "40451:40401"
@@ -144,18 +145,20 @@ services:
       - "40453:40403"
     command:
       - run
-      - --host=$READONLY_HOST
-      - --bootstrap=rnode://1e780e5dfbe0a3d9470a2b414f502d59402e09c2@$BOOTSTRAP_HOST?protocol=40400&discovery=40404
+      - --host=${READONLY_HOST:-rnode.readonly}
+      - --bootstrap=rnode://1e780e5dfbe0a3d9470a2b414f502d59402e09c2@${BOOTSTRAP_HOST:-rnode.bootstrap}?protocol=40400&discovery=40404
       - --no-upnp
       - --allow-private-addresses
+      - --heartbeat-disabled
       - -Dlogback.configurationFile=/var/lib/rnode/logback.xml
 
     volumes:
-      - ./conf/observer.conf:/var/lib/rnode/rnode.conf
+      - ./conf/default.conf:/var/lib/rnode/rnode.conf
       - ./conf/logback.xml:/var/lib/rnode/logback.xml
       - ./genesis/bonds.txt:/var/lib/rnode/genesis/bonds.txt
       - ./genesis/wallets.txt:/var/lib/rnode/genesis/wallets.txt
 
 networks:
   f1r3fly:
+    name: f1r3fly
     driver: bridge
