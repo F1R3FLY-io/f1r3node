@@ -11,10 +11,21 @@ docker compose -f shard.yml up -d
 
 Wait for genesis (~2-3 minutes). All validators must transition to Running state:
 ```bash
-docker compose -f shard.yml logs -f --tail=500 | grep "Making a transition to Running state"
+docker compose -f shard.yml logs 2>&1 | grep "Making a transition to Running state"
 ```
 
 Once all validators report Running, press `Ctrl+C`. The network is ready.
+
+**Follow logs:**
+```bash
+# All nodes
+docker compose -f shard.yml logs -f
+
+# Specific node
+docker compose -f shard.yml logs -f validator1
+docker compose -f shard.yml logs -f boot
+docker compose -f shard.yml logs -f readonly
+```
 
 **Stop:**
 ```bash
@@ -51,26 +62,35 @@ docker compose -f standalone.yml down -v
 
 | File | Description |
 |------|-------------|
-| `shard.yml` | Full shard: bootstrap + 3 validators + observer + Prometheus + Grafana |
+| `shard.yml` | Full shard: bootstrap + 3 validators + observer |
 | `standalone.yml` | Single standalone node for development |
 | `validator4.yml` | Additional validator joining existing shard |
 | `observer.yml` | Additional read-only node joining existing shard |
+| `shard-monitoring.yml` | Prometheus + Grafana + cAdvisor overlay |
 
 ## Configuration
 
-All compose files use `conf/default.conf` for validators/observers and `conf/bootstrap.conf` for the bootstrap node. Per-role behavior is controlled via CLI flags in the compose commands.
+All compose files use 2 shared config files. Per-role behavior is controlled via CLI flags in compose commands.
 
-| Config File | Used By | Key Difference |
-|-------------|---------|----------------|
-| `conf/default.conf` | Validators, Observer | `ceremony-master-mode = false` |
-| `conf/bootstrap.conf` | Bootstrap | `ceremony-master-mode = true` (includes default.conf) |
-| `conf/standalone-dev.conf` | Standalone | `standalone = true`, `fault-tolerance-threshold = 0.0` |
+| Config File | Used By | Purpose |
+|-------------|---------|---------|
+| `conf/default.conf` | All shard roles | Shared shard defaults |
+| `conf/standalone-dev.conf` | Standalone | `standalone = true`, instant finalization |
+
+CLI flags used per role:
+
+| Flag | Used by |
+|------|---------|
+| `--ceremony-master-mode` | Bootstrap |
+| `--heartbeat-disabled` | Bootstrap, Observer |
+| `--required-signatures N` | Bootstrap |
+| `--genesis-validator` | Validators 1-3 |
 
 Key settings in `default.conf`:
 - `fault-tolerance-threshold = 0.99` (near-unanimous finalization)
-- `synchrony-constraint-threshold = 0.67` (2/3 BFT requirement)
-- `enable-mergeable-channel-gc = true` (safe for Rust)
-- `heartbeat.enabled = true` (keeps finalization moving)
+- `synchrony-constraint-threshold = 0` (no synchrony gate on proposals)
+- `enable-mergeable-channel-gc = true`
+- `heartbeat.enabled = true` (overridden via `--heartbeat-disabled` for bootstrap/observer)
 
 ## Port Mapping
 
@@ -82,6 +102,23 @@ Key settings in `default.conf`:
 | Validator3 | 40430 | 40431 | 40432 | 40433 | 40434 | 40435 |
 | Validator4 | 40440 | 40441 | 40442 | 40443 | 40444 | 40445 |
 | Observer | 40450 | 40451 | 40452 | 40453 | 40454 | 40455 |
+
+## Monitoring
+
+Start the monitoring stack after the shard is running:
+
+```bash
+docker compose -f shard-monitoring.yml up -d    # Start
+docker compose -f shard-monitoring.yml down      # Stop
+```
+
+| Component | URL | Description |
+|---|---|---|
+| Prometheus | http://localhost:9090 | Metrics, targets, recording rules |
+| Grafana | http://localhost:3000 | Dashboards (admin/admin) |
+| cAdvisor | http://localhost:8080 | Container CPU/memory/IO metrics |
+
+Prometheus uses DNS-based service discovery — only running nodes get scraped (no false DOWN targets for standalone or partial shard).
 
 ## CI/Smoke Testing
 
@@ -117,13 +154,6 @@ The smoke test builds the rust-client binary and runs 30+ commands covering:
 - Load testing with concurrent transfers
 
 Results are logged to `logs/smoke_test_*.log` with pass/fail counters.
-
-## Monitoring
-
-Prometheus and Grafana are included in `shard.yml` and start automatically with the shard.
-
-- Prometheus: http://localhost:9090
-- Grafana: http://localhost:3000 (admin/admin)
 
 ## Genesis Configuration
 

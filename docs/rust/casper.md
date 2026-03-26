@@ -1,0 +1,151 @@
+> Last updated: 2026-03-23
+
+# Crate: casper (Consensus Layer)
+
+**Path**: `casper/`
+
+CBC Casper consensus: block creation, validation, DAG management, safety oracle, and finalization.
+
+## Core Traits
+
+```rust
+pub trait Casper {
+    // Snapshot of current consensus state
+    fn get_snapshot() -> Result<CasperSnapshot, CasperError>;
+    // Block validation
+    fn validate_block(block: &BlockMessage, snapshot: &CasperSnapshot)
+        -> Result<BlockStatus, CasperError>;
+    // Deploy management
+    fn add_deploy(deploy: Signed<DeployData>) -> Result<(), CasperError>;
+}
+
+pub trait MultiParentCasper: Casper {
+    // DAG operations
+    fn dag() -> &BlockDagKeyValueStorage;
+    // Block proposal
+    fn propose(snapshot: &CasperSnapshot) -> Result<ProposeResult, CasperError>;
+}
+
+pub trait Engine: Send + Sync {
+    // State machine progression
+    fn handle_message(msg: CasperMessage) -> Result<(), CasperError>;
+}
+```
+
+## CasperSnapshot
+
+State captured at discrete block intervals:
+
+```rust
+pub struct CasperSnapshot {
+    pub dag: KeyValueDagRepresentation,
+    pub last_finalized_block: BlockHash,
+    pub lca: BlockHash,
+    pub tips: Vec<BlockHash>,
+    pub parents: Vec<BlockMessage>,
+    pub justifications: HashSet<Justification>,
+    pub invalid_blocks: HashMap<Validator, BlockHash>,
+    pub deploys_in_scope: HashSet<Signed<DeployData>>,
+    pub max_block_num: i64,
+    pub max_seq_nums: HashMap<Validator, u64>,
+    pub on_chain_state: OnChainCasperState,
+}
+```
+
+## Block Creation Flow
+
+1. **Deploy selection** (`prepare_user_deploys`):
+   - Read unfinalized deploys from storage
+   - Filter by validity window (block number, expiration timestamp)
+   - Exclude deploys already in scope (prevent duplication)
+   - Remove expired deploys
+   - **Adaptive deploy cap**: EMA-based controller dynamically adjusts per-block deploy count to maintain a 1-second latency target. Controlled by `F1R3_ADAPTIVE_DEPLOY_CAP_*` env vars. Small batches (≤ 3 deploys) bypass the cap. A backlog floor mechanism prevents deploy starvation when many deploys are pending.
+
+2. **System deploy preparation**:
+   - Slashing deploys (punish equivocators)
+   - Close block deploys (finalize state)
+
+3. **Block assembly**:
+   - Header: version, timestamp, sender, block number, post-state hash
+   - Body: state, processed deploys, rejected deploys, system deploys
+   - Justifications, bonds cache
+   - Block hash via Blake2b256
+   - Sign with validator's Secp256k1 key
+   - **Timestamp hardening**: Guards against i64 overflow in timestamp conversion. If current time < max parent timestamp (clock skew), clamps to parent timestamp to avoid `InvalidTimestamp` validation errors.
+
+4. **Self-validation**:
+   - Pre/post-state hash mismatches return `BlockError::BlockException` instead of panicking (replaced `assert!` with proper error returns)
+
+## Block Validation
+
+**`BlockProcessor` pipeline**:
+1. Check interest (shard match, version, not old)
+2. Format and signature validation
+3. Dependency resolution (fetch missing parents)
+4. Full validation with CasperSnapshot:
+   - Block number progression
+   - Sender weight verification
+   - Repeat deploy detection
+   - Parent validity
+   - Justification consistency
+   - Bonds cache correctness
+   - Equivocation checks (simple + neglected)
+   - Timestamp/expiration validation
+   - Deploy execution and state hash verification
+
+**`BlockStatus`**: `Valid(ValidBlock)` or `Error(BlockError)`
+
+**`InvalidBlock`**: 25+ variants covering equivocation, format, signature, timing, sequence, deploy validity issues.
+
+## Fork Choice (LMD GHOST)
+
+**Estimator** implements Latest Message Driven Greedy Heaviest Observed Subtree:
+1. Calculate Lowest Common Ancestor (LCA) of all latest messages
+2. Score each latest message from LCA downward
+3. Rank and select non-conflicting subset with highest score
+4. Constraints: `max_number_of_parents`, `max_parent_depth`
+
+## Safety Oracle (Clique Oracle)
+
+Computes normalized fault tolerance between -1.0 and 1.0:
+1. Get weight map (stakes) from main parent
+2. Filter validators agreeing on target message
+3. Compute maximum clique of non-disagreeing validators
+4. Formula: `(2 * maxCliqueWeight - totalStake) / totalStake`
+5. If agreeing weight <= 50%, return MIN_FAULT_TOLERANCE (-1.0)
+
+## Finalization
+
+**Finalizer** scoped search from last finalized block (LFB) to tips:
+1. Find blocks with >50% stake agreement via main parent chain
+2. Execute Clique Oracle on candidates
+3. Output first block exceeding fault tolerance threshold
+4. Guarded by `FinalizationInProgress` atomic bool (prevents snapshot creation during finalization)
+
+## Equivocation Detection
+
+| Type | Description | Action |
+|------|-------------|--------|
+| Simple | Direct double-sign at same sequence number | Rejected |
+| Admissible | Block conflicts but referenced via justification | Allowed |
+| Ignorable | Standalone conflict | Rejected, not slashed |
+| Neglected | Failure to slash known equivocation | Block invalid |
+
+## Engine State Machine
+
+- `Initializing` -- Waiting for approved block
+- `GenesisValidator` -- Genesis ceremony
+- `GenesisCeremony` -- Multi-sig approval
+- `Running` -- Normal consensus
+
+## Merging
+
+`merging/dag_merger.rs` -- Multi-parent state merging for blocks with multiple parents.
+
+**Deterministic ordering**: Merge paths in `conflict_set_merger.rs` and casper-buffer eviction enforce deterministic tie-breaks to ensure consistent behavior across nodes.
+
+## Tests
+
+Feature-gated `test_utils` module (`#[cfg(feature = "test-utils")]`) provides test infrastructure: `helper/` (test_node, block_generator, block_dag_storage_fixture, block_util, bonding_util, no_ops_casper_effect) and `util/` (genesis_builder, test_mocks, rholang/resources, comm/transport_layer_test_impl). Integration tests for block_report_api and reporting_casper.
+
+[← Back to overview](./README.md)
