@@ -29,13 +29,11 @@ docker compose -f shard.yml logs -f readonly
 
 **Stop:**
 ```bash
-docker compose -f shard-monitoring.yml down   # stop monitoring first (if running)
 docker compose -f shard.yml down
 ```
 
 **Stop and wipe all data (fresh restart):**
 ```bash
-docker compose -f shard-monitoring.yml down   # stop monitoring first (if running)
 docker compose -f shard.yml down -v
 ```
 
@@ -110,7 +108,8 @@ Key settings in `default.conf`:
 Start the monitoring stack after the shard is running:
 
 ```bash
-docker compose -f shard-monitoring.yml up -d
+docker compose -f shard-monitoring.yml up -d    # Start
+docker compose -f shard-monitoring.yml down      # Stop
 ```
 
 | Component | URL | Description |
