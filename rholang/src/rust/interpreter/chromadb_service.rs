@@ -242,12 +242,12 @@ pub enum ChromaDBService {
 
 impl ChromaDBService {
     pub fn new_real() -> Self {
-        if let Ok(client) = ChromaDBClient::new() {
-            Self::Real(client)
-        }
-        else {
-            tracing::info!("ChromaDB service could not be started.");
-            Self::NoOp
+        match ChromaDBClient::new() {
+            Ok(client) => Self::Real(client),
+            Err(err) => {
+                tracing::info!("ChromaDB service could not be started: {err}");
+                Self::NoOp
+            }
         }
     }
 

@@ -1,6 +1,8 @@
+#[cfg(feature="chromadb")]
 use crate::rust::interpreter::chromadb_service::{
     CollectionEntries, Metadata, SharedChromaDBService
 };
+#[cfg(feature="chromadb")]
 use crate::rust::interpreter::rho_type::{Extractor, RhoList, RhoNil};
 
 use super::contract_call::ContractCall;
@@ -284,6 +286,7 @@ impl ProcessContext {
         openai_service: SharedOpenAIService,
         ollama_service: SharedOllamaService,
         grpc_client_service: GrpcClientService,
+        #[cfg(feature="chromadb")]
         chromadb_service: SharedChromaDBService,
     ) -> Self {
         ProcessContext {
@@ -300,6 +303,7 @@ impl ProcessContext {
                 openai_service,
                 ollama_service,
                 grpc_client_service,
+                #[cfg(feature="chromadb")]
                 chromadb_service,
             ),
         }
@@ -456,8 +460,9 @@ pub struct SystemProcesses {
     openai_service: SharedOpenAIService,
     ollama_service: SharedOllamaService,
     grpc_client_service: GrpcClientService,
-    chromadb_service: SharedChromaDBService,
     pretty_printer: PrettyPrinter,
+    #[cfg(feature="chromadb")]
+    chromadb_service: SharedChromaDBService,
 }
 
 impl SystemProcesses {
@@ -469,6 +474,7 @@ impl SystemProcesses {
         openai_service: SharedOpenAIService,
         ollama_service: SharedOllamaService,
         grpc_client_service: GrpcClientService,
+        #[cfg(feature="chromadb")]
         chromadb_service: SharedChromaDBService,
     ) -> Self {
         SystemProcesses {
@@ -479,8 +485,9 @@ impl SystemProcesses {
             openai_service,
             ollama_service,
             grpc_client_service,
-            chromadb_service,
             pretty_printer: PrettyPrinter::new(),
+            #[cfg(feature="chromadb")]
+            chromadb_service
         }
     }
 
@@ -1589,7 +1596,7 @@ impl SystemProcesses {
     }
 
     // ChromaDB section start
-
+    #[cfg(feature="chromadb")]
     pub async fn chroma_create_collection(
         &self,
         contract_args: (Vec<ListParWithRandom>, bool, Vec<Par>),
@@ -1634,6 +1641,7 @@ impl SystemProcesses {
         Ok(output)
     }
 
+    #[cfg(feature="chromadb")]
     pub async fn chroma_get_collection_meta(
         &self,
         contract_args: (Vec<ListParWithRandom>, bool, Vec<Par>),
@@ -1668,6 +1676,7 @@ impl SystemProcesses {
         Ok(output)
     }
 
+    #[cfg(feature="chromadb")]
     pub async fn chroma_upsert_entries(
         &self,
         contract_args: (Vec<ListParWithRandom>, bool, Vec<Par>),
@@ -1703,6 +1712,7 @@ impl SystemProcesses {
         Ok(vec![])
     }
 
+    #[cfg(feature="chromadb")]
     pub async fn chroma_query(
         &self,
         contract_args: (Vec<ListParWithRandom>, bool, Vec<Par>),
@@ -1744,6 +1754,7 @@ impl SystemProcesses {
         Ok(output)
     }
 
+    #[cfg(feature="chromadb")]
     pub async fn chroma_delete_documents(
         &self,
         contract_args: (Vec<ListParWithRandom>, bool, Vec<Par>),

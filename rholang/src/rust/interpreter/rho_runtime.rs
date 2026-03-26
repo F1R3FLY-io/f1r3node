@@ -26,6 +26,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
 
+#[cfg(feature="chromadb")]
 use crate::rust::interpreter::chromadb_service::SharedChromaDBService;
 use crate::rust::interpreter::external_services::ExternalServices;
 use crate::rust::interpreter::grpc_client_service::GrpcClientService;
@@ -933,6 +934,7 @@ fn std_rho_ai_processes() -> Vec<Definition> {
     ]
 }
 
+#[cfg(feature="chromadb")]
 fn std_rho_chroma_processes() -> Vec<Definition> {
     vec![
         Definition {
@@ -1025,6 +1027,11 @@ fn std_rho_chroma_processes() -> Vec<Definition> {
     ]
 }
 
+#[cfg(not(feature="chromadb"))]
+fn std_rho_chroma_processes() -> Vec<Definition> {
+    vec![]
+}
+
 fn dispatch_table_creator(
     space: RhoISpace,
     dispatcher: RhoDispatch,
@@ -1035,6 +1042,7 @@ fn dispatch_table_creator(
     openai_service: SharedOpenAIService,
     ollama_service: SharedOllamaService,
     grpc_client_service: GrpcClientService,
+    #[cfg(feature="chromadb")]
     chromadb_service: SharedChromaDBService,
 ) -> RhoDispatchMap {
     let mut dispatch_table = HashMap::new();
@@ -1059,6 +1067,7 @@ fn dispatch_table_creator(
             openai_service.clone(),
             ollama_service.clone(),
             grpc_client_service.clone(),
+            #[cfg(feature="chromadb")]
             chromadb_service.clone(),
         ));
 
@@ -1113,6 +1122,7 @@ async fn setup_reducer(
     openai_service: SharedOpenAIService,
     ollama_service: SharedOllamaService,
     grpc_client_service: GrpcClientService,
+    #[cfg(feature="chromadb")]
     chromadb_service: SharedChromaDBService,
     cost: _cost,
 ) -> Arc<DebruijnInterpreter> {
@@ -1135,6 +1145,7 @@ async fn setup_reducer(
         openai_service,
         ollama_service,
         grpc_client_service,
+        #[cfg(feature="chromadb")]
         chromadb_service,
     );
 
@@ -1181,8 +1192,8 @@ fn setup_maps_and_refs(
         .iter()
         .chain(rho_crypto_binding.iter())
         .chain(rho_ai_binding.iter())
-        .chain(rho_chroma_binding.iter())
         .chain(extra_system_processes.iter())
+        .chain(rho_chroma_binding.iter())
         .collect::<Vec<&Definition>>();
 
     let mut urn_map: HashMap<_, _> = basic_processes();
@@ -1240,6 +1251,7 @@ where
     let openai_service = external_services.openai.clone();
     let ollama_service = external_services.ollama.clone();
     let grpc_client_service = external_services.grpc_client.clone();
+    #[cfg(feature="chromadb")]
     let chromadb_service = external_services.chroma.clone();
     let reducer = setup_reducer(
         charging_rspace,
@@ -1253,6 +1265,7 @@ where
         openai_service,
         ollama_service,
         grpc_client_service,
+        #[cfg(feature="chromadb")]
         chromadb_service,
         cost,
     )

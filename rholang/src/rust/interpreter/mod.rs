@@ -1,6 +1,7 @@
 use errors::InterpreterError;
 
 pub mod accounting;
+#[cfg(feature="chromadb")]
 pub mod chromadb_service;
 pub mod compiler;
 pub mod contract_call;
