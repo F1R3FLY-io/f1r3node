@@ -358,7 +358,7 @@ object FileUploadAPI {
   }
 
   private def toHex(bytes: Array[Byte]): String =
-    bytes.map("%02x".format(_)).mkString
+    coop.rchain.shared.Base16.encode(bytes)
 }
 
 /**

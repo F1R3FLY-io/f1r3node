@@ -56,7 +56,8 @@ class FileDownloadAPISpec
   private def seedFile(size: Int = 1024 * 1024): (Path, String, Array[Byte]) = {
     val dir   = newDir()
     val bytes = Array.tabulate[Byte](size)(i => (i % 251).toByte)
-    val hash  = coop.rchain.crypto.hash.Blake2b256.hash(bytes).map("%02x".format(_)).mkString
+    val hash =
+      coop.rchain.shared.Base16.encode(coop.rchain.crypto.hash.Blake2b256.hash(bytes))
     Files.write(dir.resolve(hash), bytes)
     (dir, hash, bytes)
   }

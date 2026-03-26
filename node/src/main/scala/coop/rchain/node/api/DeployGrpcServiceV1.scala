@@ -434,7 +434,7 @@ object DeployGrpcServiceV1 {
                       )
                     )
                   case Right(signed) =>
-                    val deployIdHex = signed.sig.toByteArray.map("%02x".format(_)).mkString
+                    val deployIdHex = coop.rchain.shared.Base16.encode(signed.sig.toByteArray)
                     BlockAPI
                       .deploy[F](signed, triggerProposeF, minPhloPrice, isNodeReadOnly, shardId)
                       .toTask

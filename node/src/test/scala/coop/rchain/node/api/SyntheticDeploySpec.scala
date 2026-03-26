@@ -48,7 +48,8 @@ class SyntheticDeploySpec extends FlatSpec with Matchers with BeforeAndAfterAll 
 
   private def allBytes: Array[Byte] = (0 until numChunks).flatMap(i => makeChunkData(i)).toArray
 
-  private def referenceHash: String = Blake2b256.hash(allBytes).map("%02x".format(_)).mkString
+  private def referenceHash: String =
+    coop.rchain.shared.Base16.encode(Blake2b256.hash(allBytes))
 
   /** Build a stub Rholang term the client would construct. */
   private def stubTerm(fileHash: String = referenceHash): String =

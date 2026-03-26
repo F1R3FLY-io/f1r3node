@@ -42,7 +42,8 @@ class FileUploadAPISpec extends FlatSpec with Matchers with BeforeAndAfterAll {
 
   private def allBytes: Array[Byte] = (0 until numChunks).flatMap(i => makeChunkData(i)).toArray
 
-  private def referenceHash: String = Blake2b256.hash(allBytes).map("%02x".format(_)).mkString
+  private def referenceHash: String =
+    coop.rchain.shared.Base16.encode(Blake2b256.hash(allBytes))
 
   private def metadataChunk(
       fileHash: String = "",
@@ -133,7 +134,7 @@ class FileUploadAPISpec extends FlatSpec with Matchers with BeforeAndAfterAll {
     }
 
     // Verify hash matches reference
-    val refHash = Blake2b256.hash(expected).map("%02x".format(_)).mkString
+    val refHash = coop.rchain.shared.Base16.encode(Blake2b256.hash(expected))
     output.result.fileHash shouldBe refHash
 
     // Verify .meta.json was written
