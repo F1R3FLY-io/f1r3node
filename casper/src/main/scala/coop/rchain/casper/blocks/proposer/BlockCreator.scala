@@ -317,7 +317,12 @@ object BlockCreator {
   }
 
   private def notExpiredDeploy(earliestBlockNumber: Long, d: DeployData): Boolean =
-    d.validAfterBlockNumber > earliestBlockNumber
+    // Negative validAfterBlockNumber means "never expires by block count".
+    // This is used by large file-upload deploys (validAfterBlockNumber = -1) to prevent
+    // premature expiration during P2P file transfer.  Without this guard the boundary
+    // condition  -1 > -1 == false  would classify the deploy as expired, triggering
+    // OrphanFileCleanup to delete the data file while peers are still downloading it.
+    d.validAfterBlockNumber < 0 || d.validAfterBlockNumber > earliestBlockNumber
 
   private def notFutureDeploy(currentBlockNumber: Long, d: DeployData): Boolean =
     d.validAfterBlockNumber < currentBlockNumber

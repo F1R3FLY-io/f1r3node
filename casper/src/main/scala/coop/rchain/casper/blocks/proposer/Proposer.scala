@@ -191,6 +191,17 @@ class Proposer[F[_]: Concurrent: Log: Span: EventPublisher](
         ) >>
           proposeIdDef.complete(ProposerResult.empty).attempt.void >>
           (ProposeResult.failure(InternalDeployError), none[BlockMessage]).pure[F]
+      case ex =>
+        // Catch-all: any other error (MatchError from Rholang runtime, unexpected
+        // runtime exceptions, etc.) must NOT crash the node.  Log the error and
+        // skip this propose cycle; the heartbeat will trigger another attempt.
+        // Without this handler, a MatchError from "NumberChannel must have singleton
+        // value" kills the JVM, which is fatal for P2P file transfers in progress.
+        Log[F].error(
+          s"Propose failed with unexpected error (skipping cycle): ${ex.getClass.getName}: ${ex.getMessage}"
+        ) >>
+          proposeIdDef.complete(ProposerResult.empty).attempt.void >>
+          (ProposeResult.failure(InternalDeployError), none[BlockMessage]).pure[F]
     }
   }
 }
