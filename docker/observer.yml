@@ -17,13 +17,14 @@ services:
     restart: always
     networks:
       - f1r3fly
-    container_name: $READONLY_HOST
+    container_name: ${READONLY_HOST:-rnode.readonly}
     command:
       - run
-      - --host=$READONLY_HOST
-      - --bootstrap=rnode://$BOOTSTRAP_NODE_ID@$BOOTSTRAP_HOST?protocol=40400&discovery=40404
+      - --host=${READONLY_HOST:-rnode.readonly}
+      - --bootstrap=rnode://${BOOTSTRAP_NODE_ID:-1e780e5dfbe0a3d9470a2b414f502d59402e09c2}@${BOOTSTRAP_HOST:-rnode.bootstrap}?protocol=40400&discovery=40404
       - --no-upnp
       - --allow-private-addresses
+      - --heartbeat-disabled
     ports:
       - "40450:40400"
       - "40451:40401"
