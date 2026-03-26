@@ -249,7 +249,7 @@ in {
           new authValidCh, authValidEitherCh,
               sysDeleteCh, sysDeleteEitherCh,
               removeAckCh,
-              fileProc(`rho:io:file`),
+              fileProc(`rho:io:file:delete`),
               filteredCh, filterPred
           in {
             // Step 1 -- Validate AuthKey shape.

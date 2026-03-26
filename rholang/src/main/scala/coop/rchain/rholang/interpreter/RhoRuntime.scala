@@ -778,7 +778,8 @@ object RhoRuntime {
       mergeableTagName: Par,
       extraSystemProcesses: Seq[Definition[F]] = Seq.empty,
       initRegistry: Boolean = true,
-      externalServices: ExternalServices
+      externalServices: ExternalServices,
+      fileReplicationDir: Option[java.nio.file.Path] = None
   )(implicit costLog: FunctorTell[F, Chain[Cost]]): F[ReplayRhoRuntime[F]] =
     Span[F].trace(createReplayRuntime) {
       for {
@@ -791,7 +792,8 @@ object RhoRuntime {
             mergeChs,
             mergeableTagName,
             extraSystemProcesses,
-            externalServices
+            externalServices,
+            fileReplicationDir
           )
         }
         (reducer, blockRef, invalidBlocks, deployDataRef) = rhoEnv

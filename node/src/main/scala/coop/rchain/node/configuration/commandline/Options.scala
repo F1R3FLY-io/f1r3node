@@ -598,7 +598,6 @@ final case class Options(arguments: Seq[String]) extends ScallopConf(arguments) 
     val rspacePlusPlus = opt[Flag](
       descr = "Enable rpsace++"
     )
-    )
 
   }
   addSubcommand(run)

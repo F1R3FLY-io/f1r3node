@@ -871,14 +871,25 @@ object SystemProcesses {
       def fileDelete(
           fileReplicationDir: Option[Path]
       ): Contract[F] = {
-        // Replay branch — skip physical deletion, re-produce the captured output
+        // Replay branch — delete the physical file if it exists, but re-produce the captured output
         case isContractCall(
             produce,
             true,
             previousOutput,
-            Seq(RhoType.String("delete"), _, _, ack)
+            Seq(RhoType.String("delete"), RhoType.String(fileHash), _, ack)
             ) =>
-          produce(previousOutput, ack).map(_ => previousOutput)
+          for {
+            _ <- fileReplicationDir match {
+                  case Some(dir) =>
+                    val filePath = dir.resolve(fileHash)
+                    F.delay(Files.exists(filePath)).flatMap { exists =>
+                      if (exists) F.delay(Files.delete(filePath)).attempt.void
+                      else F.unit
+                    }
+                  case None => F.unit
+                }
+            _ <- produce(previousOutput, ack)
+          } yield previousOutput
 
         // Real execution — verify token, delete file, capture output
         case isContractCall(

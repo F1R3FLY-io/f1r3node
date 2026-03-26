@@ -86,7 +86,8 @@ final case class RuntimeManagerImpl[F[_]: Concurrent: Metrics: Span: Log: Contex
     mergeableTagName: Par,
     externalServices: ExternalServices,
     replayCache: Option[ReplayCache] = None,
-    stateHashCache: Option[StateHashCache] = None
+    stateHashCache: Option[StateHashCache] = None,
+    fileReplicationDir: Option[java.nio.file.Path] = None
 ) extends RuntimeManager[F] {
 
   def spawnRuntime: F[RhoRuntime[F]] =
@@ -101,7 +102,8 @@ final case class RuntimeManagerImpl[F[_]: Concurrent: Metrics: Span: Log: Contex
                   mergeableTagName,
                   true,
                   Seq.empty,
-                  externalServices
+                  externalServices,
+                  fileReplicationDir
                 )
     } yield runtime
 
@@ -121,7 +123,8 @@ final case class RuntimeManagerImpl[F[_]: Concurrent: Metrics: Span: Log: Contex
                   mergeableTagName,
                   Seq.empty,
                   true,
-                  externalServices
+                  externalServices,
+                  fileReplicationDir
                 )
     } yield runtime
 
@@ -334,7 +337,8 @@ object RuntimeManager {
       historyRepo: RhoHistoryRepository[F],
       mergeableStore: MergeableStore[F],
       mergeableTagName: Par,
-      externalServices: ExternalServices
+      externalServices: ExternalServices,
+      fileReplicationDir: Option[java.nio.file.Path]
   ): F[RuntimeManagerImpl[F]] =
     Sync[F].delay(
       RuntimeManagerImpl(
@@ -343,7 +347,8 @@ object RuntimeManager {
         historyRepo,
         mergeableStore,
         mergeableTagName,
-        externalServices
+        externalServices,
+        fileReplicationDir = fileReplicationDir
       )
     )
 
@@ -351,15 +356,18 @@ object RuntimeManager {
       store: RSpaceStore[F],
       mergeableStore: MergeableStore[F],
       mergeableTagName: Par,
-      externalServices: ExternalServices
+      externalServices: ExternalServices,
+      fileReplicationDir: Option[java.nio.file.Path]
   )(implicit ec: ExecutionContext): F[RuntimeManagerImpl[F]] =
-    createWithHistory(store, mergeableStore, mergeableTagName, externalServices).map(_._1)
+    createWithHistory(store, mergeableStore, mergeableTagName, externalServices, fileReplicationDir)
+      .map(_._1)
 
   def createWithHistory[F[_]: Concurrent: ContextShift: Parallel: Metrics: Span: Log](
       store: RSpaceStore[F],
       mergeableStore: MergeableStore[F],
       mergeableTagName: Par,
-      externalServices: ExternalServices
+      externalServices: ExternalServices,
+      fileReplicationDir: Option[java.nio.file.Path] = None
   )(implicit ec: ExecutionContext): F[(RuntimeManagerImpl[F], RhoHistoryRepository[F])] = {
     import coop.rchain.rholang.interpreter.storage._
     implicit val m: rspace.Match[F, BindPattern, ListParWithRandom] = matchListPar[F]
@@ -375,7 +383,8 @@ object RuntimeManager {
             historyRepo,
             mergeableStore,
             mergeableTagName,
-            externalServices
+            externalServices,
+            fileReplicationDir
           ).map((_, historyRepo))
       }
   }

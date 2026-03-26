@@ -186,7 +186,8 @@ object Setup {
                    rStores,
                    mergeStore,
                    Genesis.NonNegativeMergeableTagName,
-                   externalServices
+                   externalServices,
+                   Some(conf.storage.dataDir.resolve(conf.fileUpload.replicationDir))
                  )
         } yield rm
       }
