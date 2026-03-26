@@ -559,10 +559,6 @@ final case class Options(arguments: Seq[String]) extends ScallopConf(arguments) 
       descr = "Maximum age of last finalized block before triggering heartbeat"
     )
 
-    val rspacePlusPlus = opt[Flag](
-      descr = "Enable rpsace++"
-    )
-
     val ceremonyMasterMode = opt[Flag](
       descr = "Enable ceremony master mode for genesis block coordination"
     )
