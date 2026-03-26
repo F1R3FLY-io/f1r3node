@@ -16,6 +16,7 @@ import coop.rchain.rholang.interpreter.errors.{
   InterpreterError,
   NonDeterministicProcessFailure,
   OutOfPhlogistonsError,
+  ProduceFailureWithOutput,
   UserAbortError
 }
 
@@ -95,9 +96,12 @@ class InterpreterImpl[F[_]: Sync: Span](implicit C: _cost[F], mergeChs: Ref[F, S
       case error: OutOfPhlogistonsError.type =>
         EvaluateResult(initialCost, Vector(error), Set()).pure[F]
 
-      // For NonDeterministicProcessFailure and CanNotReplayFailedNonDeterministicProcess,
-      // the evaluation cost is used because the initial cost can be higher
+      // For NonDeterministicProcessFailure, ProduceFailureWithOutput, and
+      // CanNotReplayFailedNonDeterministicProcess, the evaluation cost is used
+      // because the initial cost can be higher
       case error: NonDeterministicProcessFailure =>
+        EvaluateResult(evalCost, Vector(error), Set()).pure[F]
+      case error: ProduceFailureWithOutput =>
         EvaluateResult(evalCost, Vector(error), Set()).pure[F]
       case error: CanNotReplayFailedNonDeterministicProcess.type =>
         EvaluateResult(evalCost, Vector(error), Set()).pure[F]

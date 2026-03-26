@@ -22,7 +22,11 @@ import coop.rchain.rholang.externalservices.ExternalServices
 import coop.rchain.rholang.interpreter.RhoRuntime.RhoTuplespace
 import coop.rchain.rholang.interpreter.registry.Registry
 import coop.rchain.rholang.interpreter.RholangAndScalaDispatcher.RhoDispatch
-import coop.rchain.rholang.interpreter.errors.{NonDeterministicProcessFailure, ReduceError}
+import coop.rchain.rholang.interpreter.errors.{
+  NonDeterministicProcessFailure,
+  ProduceFailureWithOutput,
+  ReduceError
+}
 import coop.rchain.rholang.interpreter.util.VaultAddress
 import coop.rchain.rspace.{ContResult, Result}
 import coop.rchain.shared.{Base16, Log}
@@ -486,15 +490,14 @@ object SystemProcesses {
 
           def mapOutput(response: String): Seq[Par] = Seq(RhoType.String(response))
 
-          def produceNonDeterministicOutput(output: Seq[Par]) =
+          callApi.map(mapOutput).flatMap { output =>
             produce(output, ack)
               .map(_ => output)
               .recoverWith {
-                case e => // usually happens when the cost is exhausted
-                  NonDeterministicProcessFailure(output.map(_.toByteArray), e).raiseError //return the not produced non-deterministic output to re-use in replay
+                case e =>
+                  ProduceFailureWithOutput(output.map(_.toByteArray), e).raiseError
               }
-
-          callApi.map(mapOutput).flatMap(produceNonDeterministicOutput)
+          }
         }
       }
 
@@ -514,15 +517,14 @@ object SystemProcesses {
 
           def mapOutput(response: String): Seq[Par] = Seq(RhoType.String(response))
 
-          def produceNonDeterministicOutput(output: Seq[Par]) =
+          callApi.map(mapOutput).flatMap { output =>
             produce(output, ack)
               .map(_ => output)
               .recoverWith {
-                case e => // usually happens when the cost is exhausted
-                  NonDeterministicProcessFailure(output.map(_.toByteArray), e).raiseError //return the not produced non-deterministic output to re-use in replay
+                case e =>
+                  ProduceFailureWithOutput(output.map(_.toByteArray), e).raiseError
               }
-
-          callApi.map(mapOutput).flatMap(produceNonDeterministicOutput)
+          }
         }
       }
 
@@ -542,15 +544,14 @@ object SystemProcesses {
 
           def mapOutput(bytes: Array[Byte]): Seq[Par] = Seq(RhoType.ByteArray(bytes))
 
-          def produceNonDeterministicOutput(output: Seq[Par]) =
+          callApi.map(mapOutput).flatMap { output =>
             produce(output, ack)
               .map(_ => output)
               .recoverWith {
-                case e => // usually happens when the cost is exhausted
-                  NonDeterministicProcessFailure(output.map(_.toByteArray), e).raiseError //return the not produced non-deterministic output to re-use in replay
+                case e =>
+                  ProduceFailureWithOutput(output.map(_.toByteArray), e).raiseError
               }
-
-          callApi.map(mapOutput).flatMap(produceNonDeterministicOutput)
+          }
         }
       }
 
@@ -568,14 +569,22 @@ object SystemProcesses {
             ) => {
 
           logger.info(s"ollamaChat: called in real mode: $prompt")
-          (for {
-            response <- externalServices.ollamaService.chatCompletion(model, prompt)
-            output   = Seq(RhoType.String(response))
-            _        <- produce(output, ack)
-          } yield output).recoverWith {
-            case e => // API error
-              NonDeterministicProcessFailure(outputNotProduced = Seq.empty, cause = e).raiseError
-          }
+          for {
+            response <- externalServices.ollamaService
+                         .chatCompletion(model, prompt)
+                         .recoverWith {
+                           case e =>
+                             NonDeterministicProcessFailure(
+                               outputNotProduced = Seq.empty,
+                               cause = e
+                             ).raiseError
+                         }
+            output = Seq(RhoType.String(response))
+            _ <- produce(output, ack).recoverWith {
+                  case e =>
+                    ProduceFailureWithOutput(output.map(_.toByteArray), e).raiseError
+                }
+          } yield output
         }
       }
 
@@ -589,14 +598,22 @@ object SystemProcesses {
             _,
             Seq(RhoType.String(model), RhoType.String(prompt), ack)
             ) => {
-          (for {
-            response <- externalServices.ollamaService.textGeneration(model, prompt)
-            output   = Seq(RhoType.String(response))
-            _        <- produce(output, ack)
-          } yield output).recoverWith {
-            case e => // API error
-              NonDeterministicProcessFailure(outputNotProduced = Seq.empty, cause = e).raiseError
-          }
+          for {
+            response <- externalServices.ollamaService
+                         .textGeneration(model, prompt)
+                         .recoverWith {
+                           case e =>
+                             NonDeterministicProcessFailure(
+                               outputNotProduced = Seq.empty,
+                               cause = e
+                             ).raiseError
+                         }
+            output = Seq(RhoType.String(response))
+            _ <- produce(output, ack).recoverWith {
+                  case e =>
+                    ProduceFailureWithOutput(output.map(_.toByteArray), e).raiseError
+                }
+          } yield output
         }
       }
 
@@ -605,15 +622,20 @@ object SystemProcesses {
           produce(previousOutput, ack).map(_ => previousOutput)
         }
         case isContractCall(produce, _, _, Seq(ack)) => {
-          (for {
-            models    <- externalServices.ollamaService.listModels()
+          for {
+            models <- externalServices.ollamaService
+                       .listModels()
+                       .recoverWith {
+                         case e =>
+                           NonDeterministicProcessFailure(outputNotProduced = Seq.empty, cause = e).raiseError
+                       }
             modelPars = models.map(model => Par(exprs = Seq(Expr(GString(model)))))
             output    = Seq(Par(exprs = Seq(EList(modelPars))))
-            _         <- produce(output, ack)
-          } yield output).recoverWith {
-            case e => // API error
-              NonDeterministicProcessFailure(outputNotProduced = Seq.empty, cause = e).raiseError
-          }
+            _ <- produce(output, ack).recoverWith {
+                  case e =>
+                    ProduceFailureWithOutput(output.map(_.toByteArray), e).raiseError
+                }
+          } yield output
         }
       }
 
