@@ -43,8 +43,9 @@ class RunningSpec extends WordSpec with BeforeAndAfterEach with Matchers {
       )
     )
 
-    implicit val casper    = NoOpsCasperEffect[Task]().unsafeRunSync
-    implicit val rspaceMan = RSpaceStateManagerTestImpl[Task]()
+    implicit val casper                             = NoOpsCasperEffect[Task]().unsafeRunSync
+    implicit val rspaceMan                          = RSpaceStateManagerTestImpl[Task]()
+    implicit val timerTask: cats.effect.Timer[Task] = Task.timer(scheduler)
 
     // File Requester setup
     import java.nio.file.Files

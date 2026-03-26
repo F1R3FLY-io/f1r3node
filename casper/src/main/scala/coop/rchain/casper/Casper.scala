@@ -137,6 +137,12 @@ final case class FileConf(
     //   6 GB @  10 Mbps ≈ 80 min → 2.hours needed
     //  10 GB @  10 Mbps ≈ 2.2 hr → increase to 3.hours
     fileSyncTimeout: FiniteDuration = 2.hours,
+    // How long to wait without receiving a chunk before the stall detector fires.
+    fileStallTimeout: FiniteDuration = 30.seconds,
+    // Maximum number of consecutive stall retries before aborting the download.
+    fileMaxRetries: Int = 10,
+    // Upper bound on exponential backoff: min(stallTimeout * 2^retry, maxBackoff).
+    fileMaxBackoff: FiniteDuration = 5.minutes,
     // DA consensus: maximum total referenced file size per block (bytes)
     maxFileDataSizePerBlock: Long = 50L * 1024 * 1024 * 1024, // 50 GB
     // DA consensus: maximum number of file-registration deploys per block

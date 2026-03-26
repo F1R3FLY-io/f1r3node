@@ -1,6 +1,6 @@
 package coop.rchain.casper.engine
 
-import cats.effect.Sync
+import cats.effect.{Sync, Timer}
 import cats.syntax.all._
 import coop.rchain.casper.{CasperShardConf, PrettyPrinter}
 import coop.rchain.casper.protocol.BlockMessage
@@ -28,7 +28,7 @@ object FileReplicationSetup {
     *
     * @return (FileRequester, DACallback) tuple
     */
-  def create[F[_]: cats.effect.Concurrent: Log: Time: TransportLayer: RPConfAsk: ConnectionsCell](
+  def create[F[_]: cats.effect.Concurrent: Log: Time: TransportLayer: RPConfAsk: ConnectionsCell: Timer](
       conf: CasperShardConf
   ): F[(FileRequester[F], DACallback[F])] =
     for {
@@ -42,7 +42,10 @@ object FileReplicationSetup {
       fileRequester = new FileRequester[F](
         dataDir,
         conf.fileConf.fileChunkSize,
-        conf.fileConf.fileSyncTimeout
+        conf.fileConf.fileSyncTimeout,
+        conf.fileConf.fileStallTimeout,
+        conf.fileConf.fileMaxRetries,
+        conf.fileConf.fileMaxBackoff
       )
       daCallback: DACallback[F] = (block: BlockMessage, missingHashes: List[String]) =>
         for {

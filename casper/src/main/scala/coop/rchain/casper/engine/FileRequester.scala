@@ -13,7 +13,7 @@ import java.nio.file.{Path, StandardOpenOption}
 import org.bouncycastle.crypto.digests.Blake2bDigest
 import scala.concurrent.duration._
 
-class FileRequester[F[_]: Concurrent: Log: Time: TransportLayer: RPConfAsk](
+class FileRequester[F[_]: Concurrent: Log: Time: TransportLayer: RPConfAsk: Timer](
     dataDir: Path,
     chunkSize: Int = 4 * 1024 * 1024, // configurable, defaults to 4MB
     // Maximum time to wait for file transfers before giving up.
@@ -21,15 +21,49 @@ class FileRequester[F[_]: Concurrent: Log: Time: TransportLayer: RPConfAsk](
     //   6 GB @ 100 Mbps ≈ 8 min  → 30.minutes is safe
     //   6 GB @  10 Mbps ≈ 80 min → 2.hours needed
     //  10 GB @  10 Mbps ≈ 2.2 hr → increase to 3.hours
-    syncTimeout: FiniteDuration = 2.hours
+    syncTimeout: FiniteDuration = 2.hours,
+    // How long to wait without receiving a chunk before re-requesting.
+    // If no FilePacket arrives within this window the stall detector
+    // fires a retry.  Keep it long enough to tolerate normal jitter
+    // (e.g. large-chunk serialisation delay) but short enough to
+    // recover quickly from a dropped packet.
+    stallTimeout: FiniteDuration = 30.seconds,
+    // Maximum number of stall-detector retries before aborting download.
+    // After this many consecutive retries without progress, the download
+    // is cleaned up and marked as failed.
+    maxRetries: Int = 10,
+    // Upper bound on exponential backoff between retries.
+    // Backoff = min(stallTimeout * 2^retryCount, maxBackoff).
+    maxBackoff: FiniteDuration = 5.minutes
 ) extends CasperMessageProtocol {
+
+  // ---------------------------------------------------------------------------
+  // Download state — lock-free safety
+  //
+  // `downloads` is a cats-effect `Ref` (atomic reference). All mutations go
+  // through `Ref.modify` or `Ref.update`, which use compare-and-swap (CAS)
+  // internally — no locks, no blocking, no possibility of deadlock.
+  //
+  // Key safety properties:
+  //   1. `handleFilePacket` uses `modify` to atomically claim an offset:
+  //      only one fiber wins for a given offset; duplicates are discarded.
+  //   2. The stall detector reads state via `modify` to atomically bump
+  //      `retryCount`; it never blocks the packet-handling path.
+  //   3. Multiple peers can send overlapping packets; the CAS loop in
+  //      `modify` ensures only the first matching packet is written.
+  //   4. No `synchronized`, no `Lock`, no blocking I/O inside `modify`.
+  // ---------------------------------------------------------------------------
 
   // State of file downloads: fileHash -> (Path, BytesReceived, ExpectedSize)
   case class DownloadState(
       tempPath: Path,
       digest: Blake2bDigest,
       bytesReceived: Long,
-      expectedSize: Option[Long]
+      expectedSize: Option[Long],
+      lastProgressMs: Long = System.currentTimeMillis(),
+      lastPeer: Option[PeerNode] = None,
+      knownPeers: Set[PeerNode] = Set.empty,
+      retryCount: Int = 0
   )
 
   private[engine] val downloads = Ref.unsafe[F, Map[String, DownloadState]](Map.empty)
@@ -62,16 +96,30 @@ class FileRequester[F[_]: Concurrent: Log: Time: TransportLayer: RPConfAsk](
                   if (!state.contains(hash)) {
                     val tempPath = dataDir.resolve(s"$hash.part")
                     val digest   = new Blake2bDigest(256)
-                    (state + (hash -> DownloadState(tempPath, digest, 0L, None)), true)
+                    val ds = DownloadState(
+                      tempPath,
+                      digest,
+                      0L,
+                      None,
+                      System.currentTimeMillis(),
+                      Some(peer),
+                      knownPeers = Set(peer)
+                    )
+                    (state + (hash -> ds), true)
                   } else {
-                    (state, false)
+                    // Add this peer to knownPeers and update lastPeer so
+                    // the stall detector can round-robin through all peers.
+                    val updated = state.get(hash).map { d =>
+                      d.copy(lastPeer = Some(peer), knownPeers = d.knownPeers + peer)
+                    }
+                    (updated.fold(state)(d => state + (hash -> d)), false)
                   }
                 }
                 .flatMap { wasNew =>
                   if (wasNew)
                     Log[F].info(
                       s"[FileRequester] requestFiles: registered download for ${hash.take(16)}... from $peer"
-                    )
+                    ) *> startStallDetector(hash)
                   else
                     Log[F].info(
                       s"[FileRequester] requestFiles: download already registered for ${hash
@@ -190,17 +238,42 @@ class FileRequester[F[_]: Concurrent: Log: Time: TransportLayer: RPConfAsk](
           )
       tempPath = dataDir.resolve(s"$fileHash.part")
       digest   = new Blake2bDigest(256)
-      _        <- downloads.update(_ + (fileHash -> DownloadState(tempPath, digest, 0L, None)))
+      ds = DownloadState(
+        tempPath,
+        digest,
+        0L,
+        None,
+        System.currentTimeMillis(),
+        Some(peer),
+        knownPeers = Set(peer)
+      )
+      _ <- downloads.update(_ + (fileHash -> ds))
+      _ <- startStallDetector(fileHash)
       // Request first chunk
       _ <- requestChunk(peer, fileHash, 0L)
     } yield ()
 
+  private def humanSize(bytes: Long): String =
+    if (bytes >= 1024L * 1024 * 1024) f"${bytes.toDouble / (1024L * 1024 * 1024)}%.2f GB"
+    else if (bytes >= 1024L * 1024) f"${bytes.toDouble / (1024L * 1024)}%.1f MB"
+    else if (bytes >= 1024L) f"${bytes.toDouble / 1024}%.1f KB"
+    else s"$bytes B"
+
   private def requestChunk(peer: PeerNode, fileHash: String, offset: Long): F[Unit] =
-    Log[F].info(
-      s"[FileRequester] Requesting chunk: hash=${fileHash.take(16)}..., offset=$offset, chunkSize=$chunkSize"
-    ) *> {
-      val req = FileRequest(fileHash, offset, chunkSize)
-      TransportLayer[F].streamToPeer(peer, req.toProto)
+    downloads.get.flatMap { state =>
+      val progress = state.get(fileHash).flatMap(_.expectedSize) match {
+        case Some(total) if total > 0 =>
+          f"${offset.toDouble / total * 100}%.1f%% (${humanSize(offset)} / ${humanSize(total)})"
+        case _ =>
+          humanSize(offset)
+      }
+      Log[F].info(
+        s"[FileRequester] Requesting chunk: hash=${fileHash.take(16)}..., offset=$offset, " +
+          s"chunkSize=$chunkSize, progress=$progress"
+      ) *> {
+        val req = FileRequest(fileHash, offset, chunkSize)
+        TransportLayer[F].streamToPeer(peer, req.toProto)
+      }
     }
 
   def handleFilePacket(peer: PeerNode, msg: FilePacket): F[Unit] =
@@ -217,7 +290,16 @@ class FileRequester[F[_]: Concurrent: Log: Time: TransportLayer: RPConfAsk](
             case Some(ds) if msg.offset == ds.bytesReceived =>
               // Claim this offset by advancing bytesReceived atomically
               val newBytesReceived = ds.bytesReceived + msg.data.size
-              val updated          = ds.copy(bytesReceived = newBytesReceived)
+              val nowMs            = System.currentTimeMillis()
+              // Reset retryCount on successful progress — the stall detector
+              // backoff resets so the next stall is detected quickly.
+              val updated = ds.copy(
+                bytesReceived = newBytesReceived,
+                lastProgressMs = nowMs,
+                lastPeer = Some(peer),
+                knownPeers = ds.knownPeers + peer,
+                retryCount = 0
+              )
               (state + (msg.fileHash -> updated), Some((ds, newBytesReceived)))
             case _ =>
               // Either not found, or offset doesn't match (duplicate/late packet)
@@ -226,9 +308,15 @@ class FileRequester[F[_]: Concurrent: Log: Time: TransportLayer: RPConfAsk](
         }
         .flatMap {
           case Some((ds, newBytesReceived)) =>
+            val progress = ds.expectedSize match {
+              case Some(total) if total > 0 =>
+                f"${newBytesReceived.toDouble / total * 100}%.1f%% (${humanSize(newBytesReceived)} / ${humanSize(total)})"
+              case _ =>
+                humanSize(newBytesReceived)
+            }
             Log[F].info(
               s"[FileRequester] Packet progress: hash=${msg.fileHash.take(16)}..., " +
-                s"bytesReceived=$newBytesReceived, expectedSize=${ds.expectedSize}"
+                s"bytesReceived=$newBytesReceived, progress=$progress"
             ) *> (
               // Size guard: abort if bytesReceived exceeds expected file size
               ds.expectedSize match {
@@ -295,7 +383,7 @@ class FileRequester[F[_]: Concurrent: Log: Time: TransportLayer: RPConfAsk](
       hexDigest <- Sync[F].delay {
                     val hashBytes = new Array[Byte](32)
                     ds.digest.doFinal(hashBytes, 0)
-                    hashBytes.map("%02x".format(_)).mkString
+                    coop.rchain.shared.Base16.encode(hashBytes)
                   }
       _ <- if (hexDigest == fileHash) {
             val finalPath = dataDir.resolve(fileHash)
@@ -317,6 +405,23 @@ class FileRequester[F[_]: Concurrent: Log: Time: TransportLayer: RPConfAsk](
           }
     } yield ()
 
+  /**
+    * Aborts a download: removes the entry from `downloads` and deletes the
+    * `.part` file.  Called when retries are exhausted or an unrecoverable
+    * error is detected.
+    */
+  private def abortDownload(fileHash: String, reason: String): F[Unit] =
+    downloads.modify(state => (state - fileHash, state.get(fileHash))).flatMap {
+      case Some(ds) =>
+        Sync[F].delay(java.nio.file.Files.deleteIfExists(ds.tempPath)) *>
+          Log[F].error(
+            s"[FileRequester] Aborted download ${fileHash.take(16)}...: $reason. " +
+              s"Deleted ${ds.tempPath}"
+          )
+      case None =>
+        ().pure[F]
+    }
+
   def handleFileRequest(peer: PeerNode, msg: FileRequest): F[Unit] = {
     val filePath = dataDir.resolve(msg.fileHash)
     // Wrap Files.exists in Sync[F].delay to avoid blocking the calling fiber's thread
@@ -326,20 +431,23 @@ class FileRequester[F[_]: Concurrent: Log: Time: TransportLayer: RPConfAsk](
           s"chunkSize=${msg.chunkSize}, fileExists=$exists, from=$peer"
       ) *> (if (exists) {
               for {
-                // Read chunk
+                // Read chunk using RandomAccessFile + heap byte array.
+                // IMPORTANT: Do NOT use FileChannel.read(ByteBuffer) here!
+                // FileChannel.read() internally calls sun.nio.ch.Util.getTemporaryDirectBuffer()
+                // which allocates a direct ByteBuffer matching the chunk size (16 MB).
+                // With 4+ peers requesting chunks concurrently, this exhausts the
+                // JVM's default direct buffer memory limit (128 MB), causing:
+                //   java.lang.OutOfMemoryError: Cannot reserve 16777216 bytes of direct buffer memory
+                // RandomAccessFile.read() uses heap byte arrays, avoiding this issue entirely.
                 result <- Sync[F].delay {
-                           val channel =
-                             java.nio.channels.FileChannel.open(filePath, StandardOpenOption.READ)
-                           val buf = java.nio.ByteBuffer.allocate(msg.chunkSize)
-                           channel.position(msg.offset)
-                           val read     = channel.read(buf)
-                           val fileSize = channel.size()
-                           channel.close()
+                           val raf      = new java.io.RandomAccessFile(filePath.toFile, "r")
+                           val fileSize = raf.length()
+                           raf.seek(msg.offset)
+                           val arr  = new Array[Byte](msg.chunkSize)
+                           val read = raf.read(arr)
+                           raf.close()
                            val bytes = if (read > 0) {
-                             buf.flip()
-                             val arr = new Array[Byte](read)
-                             buf.get(arr)
-                             com.google.protobuf.ByteString.copyFrom(arr)
+                             com.google.protobuf.ByteString.copyFrom(arr, 0, read)
                            } else {
                              com.google.protobuf.ByteString.EMPTY
                            }
@@ -361,4 +469,88 @@ class FileRequester[F[_]: Concurrent: Log: Time: TransportLayer: RPConfAsk](
             })
     }
   }
+
+  /**
+    * Background fiber that monitors a download for stalls and re-requests
+    * the current chunk when no progress is made within the backoff window.
+    *
+    * Retry strategy:
+    *   - Exponential backoff: `min(stallTimeout × 2^retryCount, maxBackoff)`
+    *   - Multi-peer round-robin: cycles through `knownPeers` on each retry
+    *   - Bounded: gives up after `maxRetries` consecutive retries without progress
+    *
+    * The fiber exits when the download completes, is removed, or retries are exhausted.
+    */
+  private def startStallDetector(fileHash: String): F[Unit] =
+    Concurrent[F].start {
+      def loop: F[Unit] =
+        Timer[F].sleep(stallTimeout) *>
+          downloads
+            .modify { state =>
+              state.get(fileHash) match {
+                case None =>
+                  // Download finished or was removed — signal exit
+                  (state, None)
+                case Some(ds) =>
+                  val now     = System.currentTimeMillis()
+                  val elapsed = now - ds.lastProgressMs
+                  // Exponential backoff: stallTimeout * 2^retryCount, capped at maxBackoff
+                  val backoffMs = {
+                    val factor      = Math.pow(2.0, ds.retryCount.min(10).toDouble)
+                    val backoffNano = (stallTimeout * factor).min(maxBackoff)
+                    backoffNano.toMillis
+                  }
+                  if (elapsed >= backoffMs) {
+                    val updated = ds.copy(retryCount = ds.retryCount + 1)
+                    (state + (fileHash -> updated), Some((updated, backoffMs)))
+                  } else {
+                    // Not stalled yet — re-check later
+                    (state, Some((ds, backoffMs)))
+                  }
+              }
+            }
+            .flatMap {
+              case None =>
+                // Download complete — exit
+                Log[F].info(
+                  s"[FileRequester] Stall detector exiting for ${fileHash.take(16)}... (download complete)"
+                )
+              case Some((ds, _)) if ds.retryCount > maxRetries =>
+                // Exhausted retries — abort download and exit
+                abortDownload(fileHash, s"exceeded $maxRetries stall retries") *>
+                  Log[F].error(
+                    s"[FileRequester] Download ${fileHash.take(16)}... FAILED after $maxRetries retries"
+                  )
+              case Some((ds, backoffMs)) =>
+                val justRetried = ds.retryCount > 0 && {
+                  val now     = System.currentTimeMillis()
+                  val elapsed = now - ds.lastProgressMs
+                  elapsed >= backoffMs
+                }
+                if (justRetried) {
+                  // Pick next peer via round-robin through knownPeers
+                  val peers = ds.knownPeers.toVector
+                  val peerOpt =
+                    if (peers.nonEmpty) Some(peers((ds.retryCount - 1) % peers.size))
+                    else ds.lastPeer
+                  peerOpt match {
+                    case Some(peer) =>
+                      Log[F].warn(
+                        s"[FileRequester] Stall detected for ${fileHash.take(16)}...: " +
+                          s"retry #${ds.retryCount}/$maxRetries, backoff=${backoffMs}ms, " +
+                          s"re-requesting offset=${ds.bytesReceived} from $peer"
+                      ) *> requestChunk(peer, fileHash, ds.bytesReceived) *> loop
+                    case None =>
+                      Log[F].warn(
+                        s"[FileRequester] Stall detected for ${fileHash.take(16)}... " +
+                          s"but no peer available to retry (retry #${ds.retryCount})"
+                      ) *> loop
+                  }
+                } else {
+                  // Not stalled yet — check again later
+                  loop
+                }
+            }
+      loop
+    }.void
 }
