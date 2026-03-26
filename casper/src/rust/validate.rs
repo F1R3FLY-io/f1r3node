@@ -10,6 +10,10 @@ use block_storage::rust::key_value_block_store::KeyValueBlockStore;
 use crypto::rust::hash::blake2b256::Blake2b256;
 use crypto::rust::signatures::secp256k1::Secp256k1;
 use crypto::rust::signatures::signatures_alg::SignaturesAlg;
+#[cfg(feature = "schnorr_secp256k1_experimental")]
+use crypto::rust::signatures::{
+    frost_secp256k1::FrostSecp256k1, schnorr_secp256k1::SchnorrSecp256k1,
+};
 use models::casper::Signature as ProtoSignature;
 use models::rust::{
     block_metadata::BlockMetadata,
@@ -50,6 +54,22 @@ impl Validate {
             Box::new(|data: &Vec<u8>, signature: &Vec<u8>, pub_key: &Vec<u8>| {
                 let secp256k1 = Secp256k1;
                 secp256k1.verify(data, signature, pub_key)
+            }) as Box<dyn Fn(&Data, &Signature, &PublicKey) -> bool>,
+        );
+        #[cfg(feature = "schnorr_secp256k1_experimental")]
+        map.insert(
+            SchnorrSecp256k1::name(),
+            Box::new(|data: &Vec<u8>, signature: &Vec<u8>, pub_key: &Vec<u8>| {
+                let schnorr = SchnorrSecp256k1;
+                schnorr.verify(data, signature, pub_key)
+            }) as Box<dyn Fn(&Data, &Signature, &PublicKey) -> bool>,
+        );
+        #[cfg(feature = "schnorr_secp256k1_experimental")]
+        map.insert(
+            FrostSecp256k1::name(),
+            Box::new(|data: &Vec<u8>, signature: &Vec<u8>, pub_key: &Vec<u8>| {
+                let frost = FrostSecp256k1;
+                frost.verify(data, signature, pub_key)
             }) as Box<dyn Fn(&Data, &Signature, &PublicKey) -> bool>,
         );
         map
