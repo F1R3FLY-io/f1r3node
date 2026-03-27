@@ -1,12 +1,15 @@
-# Scala release — auto-bumps minor version on merge to main
+# Scala release — auto-bumps version on merge to main or dev
 #
-# Triggers on every push to main. Determines the next minor version from
-# the latest scala-v* tag, bumps version.sbt, generates CHANGELOG.md via
-# git-cliff, commits, tags, and pushes. The tag push triggers the existing
-# required-workflow.yml which handles Docker release and package publishing.
+# - main: bumps minor (0.4.0 → 0.5.0)
+# - dev: bumps patch (0.4.0 → 0.4.1)
 #
-# Requires repository secret: RELEASE_PAT (a PAT with contents:write and
-# branch protection bypass so the tag push triggers downstream workflows).
+# Determines the next version from the latest scala-v* tag, bumps version.sbt,
+# generates CHANGELOG.md via git-cliff, commits, tags, and pushes. On main,
+# the tag push triggers the existing required-workflow.yml which handles
+# Docker release and package publishing.
+#
+# Requires repository secret: RELEASE_PAT (a PAT with contents:write so
+# the tag push triggers downstream workflows on main).
 
 name: Release (Scala)
 
@@ -14,6 +17,7 @@ on:
   push:
     branches:
       - main
+      - dev
   workflow_dispatch:
 
 jobs:
@@ -31,7 +35,6 @@ jobs:
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
-          token: ${{ secrets.RELEASE_PAT }}
 
       - name: Force-refresh tags
         run: git fetch origin --tags --force
@@ -50,10 +53,16 @@ jobs:
         id: version
         run: |
           source scripts/version.sh
-          bump_version minor
+          BRANCH="${GITHUB_REF#refs/heads/}"
+          if [ "$BRANCH" = "main" ]; then
+            bump_version minor
+          else
+            bump_version patch
+          fi
           echo "NEXT_VERSION=$NEXT_VERSION" >> "$GITHUB_OUTPUT"
           echo "TAG_NAME=$TAG_NAME" >> "$GITHUB_OUTPUT"
-          echo "Next version: $NEXT_VERSION (tag: $TAG_NAME)"
+          echo "BRANCH=$BRANCH" >> "$GITHUB_OUTPUT"
+          echo "Next version: $NEXT_VERSION (tag: $TAG_NAME) [branch: $BRANCH]"
 
       - name: Update version.sbt
         run: |
@@ -76,6 +85,7 @@ jobs:
             -m "Release scala v${{ steps.version.outputs.NEXT_VERSION }}"
 
       - name: Prepare next development cycle
+        if: steps.version.outputs.BRANCH == 'main'
         run: |
           NEXT="${{ steps.version.outputs.NEXT_VERSION }}"
           MAJOR=$(echo "$NEXT" | cut -d. -f1)
@@ -86,6 +96,10 @@ jobs:
           git add version.sbt
           git commit -m "chore: prepare next development cycle (${DEV_VERSION})"
 
-      - name: Push
+      - name: Push commits
         run: |
-          git push origin main --follow-tags
+          git push origin ${{ steps.version.outputs.BRANCH }}
+
+      - name: Push tag (using PAT to trigger downstream CI)
+        run: |
+          git push https://x-access-token:${{ secrets.RELEASE_PAT }}@github.com/F1R3FLY-io/f1r3node.git "${{ steps.version.outputs.TAG_NAME }}"
