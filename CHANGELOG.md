@@ -4,6 +4,21 @@ All notable changes to the Scala implementation of F1r3node will be documented i
 This changelog is automatically generated from conventional commits.
 
 
+## [v0.4.0] - 2026-03-27
+
+### Bug Fixes
+
+- mark releases as stable and include changelog in release body
+
+### Miscellaneous
+
+- prepare next development cycle (0.4.0-SNAPSHOT)
+
+### Refactoring
+
+- separate produce error handling from NonDeterministicProces… (#453)
+
+
 ## [v0.3.0] - 2026-03-26
 
 ### Bug Fixes
