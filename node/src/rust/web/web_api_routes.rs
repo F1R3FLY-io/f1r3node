@@ -46,6 +46,7 @@ impl WebApiRoutes {
             .route("/deploy/{deploy_id}", get(find_deploy_handler))
             .route("/is-finalized/{hash}", get(is_finalized_handler))
             .route("/transactions/{hash}", get(get_transaction_handler))
+            .route("/trie-stats", get(shared_handlers::trie_stats_handler))
     }
 }
 

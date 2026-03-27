@@ -81,6 +81,7 @@ pub fn normalize_p_contr<'ast>(
             source: Some(name_match_result.par.clone()),
             remainder: remainder_result.0.clone(),
             free_count: bound_count as i32,
+            peek: false,
         }],
         body: Some(body_result.par.clone()),
         persistent: true,
@@ -180,6 +181,7 @@ mod tests {
                 source: Some(new_boundvar_par(0, create_bit_vector(&vec![0]), false)),
                 remainder: None,
                 free_count: 3,
+                peek: false,
             }],
             body: Some(new_send_par(
                 new_boundvar_par(2, create_bit_vector(&vec![2]), false),
@@ -266,6 +268,7 @@ mod tests {
                 source: Some(new_boundvar_par(0, create_bit_vector(&vec![0]), false)),
                 remainder: None,
                 free_count: 1,
+                peek: false,
             }],
             body: Some(new_send_par(
                 new_boundvar_par(0, create_bit_vector(&vec![0]), false),

@@ -1,6 +1,7 @@
 // See rholang/src/main/scala/coop/rchain/rholang/interpreter/storage/ChargingRSpace.scala
 
 use std::collections::{BTreeSet, HashMap};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::rust::interpreter::{
     accounting::{
@@ -27,6 +28,19 @@ use rspace_plus_plus::rspace::{
 };
 
 pub struct ChargingRSpace;
+
+/// Global sequence counter for cost trace alignment across validator/observer.
+static COST_TRACE_SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// Reset the sequence counter (call at the start of each deploy evaluation).
+pub fn reset_cost_trace_seq() {
+    COST_TRACE_SEQ.store(0, Ordering::Relaxed);
+}
+
+fn next_cost_trace_seq() -> u64 {
+    COST_TRACE_SEQ.fetch_add(1, Ordering::Relaxed)
+}
+
 
 #[derive(Clone)]
 pub enum TriggeredBy {
@@ -82,11 +96,14 @@ impl ChargingRSpace {
                 MaybeConsumeResult<Par, BindPattern, ListParWithRandom, TaggedContinuation>,
                 RSpaceError,
             > {
-                self.cost.charge(storage_cost_consume(
+                let seq = next_cost_trace_seq();
+                let cost_before = self.cost.get().value;
+                let upfront = storage_cost_consume(
                     channels.clone(),
                     patterns.clone(),
                     continuation.clone(),
-                ))?;
+                );
+                self.cost.charge(upfront.clone())?;
 
                 let consume_res = self.space.consume(
                     channels.clone(),
@@ -96,6 +113,7 @@ impl ChargingRSpace {
                     peeks,
                 )?;
 
+                let comm_fired = consume_res.is_some();
                 let id = consume_id(continuation)?;
                 handle_result(
                     consume_res.clone(),
@@ -106,6 +124,32 @@ impl ChargingRSpace {
                     },
                     self.cost.clone(),
                 )?;
+                let cost_after = self.cost.get().value;
+                // Diagnostic 1: compute channel hashes for cross-node comparison
+                let channels_hash_str = if tracing::enabled!(target: "f1r3fly.rspace.cost_trace", tracing::Level::INFO) {
+                    channels.iter().map(|ch| {
+                        let bytes = bincode::serialize(ch).unwrap_or_default();
+                        let hash = Blake2b256Hash::new(&bytes);
+                        hex::encode(&hash.bytes()[..8])
+                    }).collect::<Vec<_>>().join(",")
+                } else {
+                    String::new()
+                };
+                tracing::info!(
+                    target: "f1r3fly.rspace.cost_trace",
+                    seq,
+                    op = "consume",
+                    channels_hash = %channels_hash_str,
+                    upfront_charge = upfront.value,
+                    comm_fired,
+                    persist,
+                    channels_count = channels.len(),
+                    cost_before,
+                    cost_after,
+                    net_delta = cost_after - cost_before,
+                                        "COST_TRACE_OP: seq={} op=consume ch=[{}] comm={} persist={} delta={} total={}",
+                    seq, channels_hash_str, comm_fired, persist, cost_after - cost_before, cost_after
+                );
                 Ok(consume_res)
             }
 
@@ -118,9 +162,20 @@ impl ChargingRSpace {
                 MaybeProduceResult<Par, BindPattern, ListParWithRandom, TaggedContinuation>,
                 RSpaceError,
             > {
-                self.cost
-                    .charge(storage_cost_produce(channel.clone(), data.clone()))?;
+                let seq = next_cost_trace_seq();
+                let cost_before = self.cost.get().value;
+                let upfront = storage_cost_produce(channel.clone(), data.clone());
+                self.cost.charge(upfront.clone())?;
+                // Diagnostic 1: compute channel hash before move
+                let channel_hash_str = if tracing::enabled!(target: "f1r3fly.rspace.cost_trace", tracing::Level::INFO) {
+                    let bytes = bincode::serialize(&channel).unwrap_or_default();
+                    let hash = Blake2b256Hash::new(&bytes);
+                    hex::encode(&hash.bytes()[..8])
+                } else {
+                    String::new()
+                };
                 let produce_res = self.space.produce(channel, data.clone(), persist)?;
+                let comm_fired = produce_res.is_some();
                 let common_result = produce_res
                     .clone()
                     .map(|(cont, data_list, _)| (cont, data_list));
@@ -133,6 +188,28 @@ impl ChargingRSpace {
                     },
                     self.cost.clone(),
                 )?;
+                let cost_after = self.cost.get().value;
+                let rand_hex = hex::encode(&data.random_state.iter().take(16).copied().collect::<Vec<u8>>());
+                let data_rand_hash = {
+                    hex::encode(Blake2b256Hash::new(&data.random_state).bytes())
+                };
+                tracing::info!(
+                    target: "f1r3fly.rspace.cost_trace",
+                    seq,
+                    op = "produce",
+                    channel_hash = %channel_hash_str,
+                    upfront_charge = upfront.value,
+                    comm_fired,
+                    persist,
+                    cost_before,
+                    cost_after,
+                    net_delta = cost_after - cost_before,
+                    rand_state = %rand_hex,
+                    data_rand_hash = %data_rand_hash,
+                    data_rand_len = data.random_state.len(),
+                                        "COST_TRACE_OP: seq={} op=produce ch={} comm={} persist={} rand_hash={} delta={} total={}",
+                    seq, channel_hash_str, comm_fired, persist, &data_rand_hash[..16], cost_after - cost_before, cost_after
+                );
                 Ok(produce_res)
             }
 
@@ -241,6 +318,14 @@ impl ChargingRSpace {
             fn update_produce(&mut self, produce: Produce) -> () {
                 self.space.update_produce(produce)
             }
+
+            fn pending_state_counts(&self) -> (usize, usize, usize, usize) {
+                self.space.pending_state_counts()
+            }
+
+            fn pending_continuation_channels_debug(&self) -> Vec<(String, usize, bool)> {
+                self.space.pending_continuation_channels_debug()
+            }
         }
 
         ChargingRSpace { space, cost }
@@ -273,19 +358,44 @@ fn handle_result(
             // We refund for non-persistent continuations, and for the persistent continuation triggering the comm.
             // That persistent continuation is going to be charged for (without refund) once it has no matches in TS.
             let consume_id_bytes = consume_id.to_bytes();
-            let refund_for_consume =
-                if !cont.persistent || consume_id_bytes == triggered_by_id_bytes {
-                    storage_cost_consume(
-                        cont.channels.clone(),
-                        cont.patterns.clone(),
-                        cont.continuation.clone(),
-                    )
-                } else {
-                    Cost::create(0, "refund_for_consume")
-                };
+            let consume_refund_applies =
+                !cont.persistent || consume_id_bytes == triggered_by_id_bytes;
+            let refund_for_consume = if consume_refund_applies {
+                storage_cost_consume(
+                    cont.channels.clone(),
+                    cont.patterns.clone(),
+                    cont.continuation.clone(),
+                )
+            } else {
+                Cost::create(0, "refund_for_consume")
+            };
 
             let refund_for_produces =
-                refund_for_removing_produces(data_list, cont.clone(), triggered_by);
+                refund_for_removing_produces(data_list.len(), data_list, cont.clone(), triggered_by);
+
+            let last_iteration = !triggered_by_persistent;
+            let event_cost = if last_iteration {
+                event_storage_cost(triggered_by_channels_count).value
+            } else {
+                0
+            };
+            let comm_cost = comm_event_storage_cost(cont.channels.len() as i64).value;
+
+            tracing::info!(
+                target: "f1r3fly.rspace.cost_trace",
+                consume_refund = refund_for_consume.value,
+                consume_refund_applies,
+                produce_refund = refund_for_produces.value,
+                cont_persistent = cont.persistent,
+                triggered_by_persistent,
+                last_iteration,
+                event_cost,
+                comm_cost,
+                data_count = cont.channels.len(),
+                "COST_TRACE_COMM: consume_refund={} produce_refund={} event={} comm={} cont_persist={} trig_persist={} last_iter={}",
+                refund_for_consume.value, refund_for_produces.value,
+                event_cost, comm_cost, cont.persistent, triggered_by_persistent, last_iteration
+            );
 
             cost.charge(Cost::create(
                 -refund_for_consume.value,
@@ -295,8 +405,6 @@ fn handle_result(
                 -refund_for_produces.value,
                 "produces storage refund",
             ))?;
-
-            let last_iteration = !triggered_by_persistent;
 
             if last_iteration {
                 cost.charge(event_storage_cost(triggered_by_channels_count))?;
@@ -309,6 +417,7 @@ fn handle_result(
 }
 
 fn refund_for_removing_produces(
+    total_data_count: usize,
     data_list: Vec<RSpaceResult<Par, ListParWithRandom>>,
     cont: ContResult<Par, BindPattern, TaggedContinuation>,
     triggered_by: TriggeredBy,
@@ -322,15 +431,31 @@ fn refund_for_removing_produces(
     let removed_data: Vec<(RSpaceResult<Par, ListParWithRandom>, Par)> = data_list
         .into_iter()
         .zip(cont.channels.into_iter())
+        .enumerate()
         // A persistent produce is charged for upfront before reaching the TS, and needs to be refunded
         // after each iteration it matches an existing consume. We treat it as 'removed' on each such iteration.
         // It is going to be 'not removed' and charged for on the last iteration, where it doesn't match anything.
-        .filter(|(data, _)| {
-            !data.persistent || data.removed_datum.random_state == triggered_id_bytes
+        .filter(|(i, (data, _))| {
+            let random_state_matches = data.removed_datum.random_state == triggered_id_bytes;
+            let passes = !data.persistent || random_state_matches;
+            tracing::info!(
+                target: "f1r3fly.rspace.cost_trace",
+                idx = i,
+                persistent = data.persistent,
+                random_state_matches,
+                passes,
+                random_state_hex = %hex::encode(&data.removed_datum.random_state),
+                triggered_id_hex = %hex::encode(&triggered_id_bytes),
+                "COST_TRACE_REFUND_FILTER: idx={} persistent={} rs_match={} passes={}",
+                i, data.persistent, random_state_matches, passes
+            );
+            passes
         })
+        .map(|(_, pair)| pair)
         .collect();
 
-    removed_data
+    let removed_count = removed_data.len();
+    let result = removed_data
         .into_iter()
         .map(|(data, channel)| storage_cost_produce(channel, data.removed_datum))
         .fold(
@@ -341,5 +466,16 @@ fn refund_for_removing_produces(
                     "refund_for_removing_produces operation",
                 )
             },
-        )
+        );
+
+    tracing::info!(
+        target: "f1r3fly.rspace.cost_trace",
+        total_data_count,
+        removed_count,
+        total_refund = result.value,
+        "COST_TRACE_REFUND_TOTAL: {}/{} items refunded, total={}",
+        removed_count, total_data_count, result.value
+    );
+
+    result
 }

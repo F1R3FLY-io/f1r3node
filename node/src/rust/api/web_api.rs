@@ -103,6 +103,17 @@ pub trait WebApi {
 
     /// Get transaction by hash
     async fn get_transaction(&self, hash: String) -> Result<TransactionResponse>;
+
+    /// Get trie statistics for LFS diagnostics
+    async fn trie_stats(&self) -> Result<TrieStats>;
+}
+
+/// Trie statistics for comparing validator and observer state completeness
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+pub struct TrieStats {
+    pub block_number: i64,
+    pub state_hash: String,
+    pub is_read_only: bool,
 }
 
 /// Web API implementation
@@ -397,6 +408,29 @@ where
 
     async fn get_transaction(&self, hash: String) -> Result<TransactionResponse> {
         self.cache_transaction_api.get_transaction(hash).await
+    }
+
+    async fn trie_stats(&self) -> Result<TrieStats> {
+        use models::rust::casper::pretty_printer::PrettyPrinter;
+
+        let eng = self.engine_cell.get().await;
+        let is_read_only = if let Some(casper) = eng.with_casper() {
+            let lfb = casper.last_finalized_block().await?;
+            let state_hash = casper::rust::util::proto_util::post_state_hash(&lfb);
+            let block_number = lfb.body.state.block_number;
+            return Ok(TrieStats {
+                block_number,
+                state_hash: PrettyPrinter::build_string_bytes(&state_hash),
+                is_read_only: casper.get_validator().is_none(),
+            });
+        } else {
+            true
+        };
+        Ok(TrieStats {
+            block_number: -1,
+            state_hash: "no_casper".to_string(),
+            is_read_only,
+        })
     }
 }
 

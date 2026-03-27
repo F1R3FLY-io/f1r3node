@@ -190,4 +190,12 @@ pub trait ISpace<C: Eq + std::hash::Hash, P: Clone, A: Clone, K: Clone> {
     fn is_replay(&self) -> bool;
 
     fn update_produce(&mut self, produce: Produce) -> ();
+
+    /// Returns lightweight pending state counts for diagnostics:
+    /// (data_channels, data_items, continuation_channels, continuation_items)
+    fn pending_state_counts(&self) -> (usize, usize, usize, usize);
+
+    /// Returns debug info for each pending continuation channel:
+    /// Vec of (channels_debug_string, num_continuations, has_peek)
+    fn pending_continuation_channels_debug(&self) -> Vec<(String, usize, bool)>;
 }

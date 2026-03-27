@@ -53,7 +53,9 @@ proptest! {
 
       let read_continuations = hot_store.get_continuations(&channels.clone());
       let cache = state.lock().unwrap();
-      assert_eq!(cache.continuations.get(&channels).unwrap().clone(), history_continuations);
+      // Read-only get should NOT cache into hot store state to avoid
+      // changes() re-emitting unchanged data with wrong channel serialization.
+      assert!(cache.continuations.get(&channels).is_none());
       assert_eq!(read_continuations, history_continuations);
   }
 
@@ -196,7 +198,9 @@ proptest! {
 
       let read_data = hot_store.get_data(&channel);
       let cache = state.lock().unwrap();
-      assert_eq!(cache.data.get(&channel).unwrap().clone(), history_data);
+      // Read-only get should NOT cache into hot store state to avoid
+      // changes() re-emitting unchanged data with wrong channel serialization.
+      assert!(cache.data.get(&channel).is_none());
       assert_eq!(read_data, history_data);
   }
 
@@ -283,7 +287,9 @@ proptest! {
 
       let read_joins = hot_store.get_joins(&channel.clone());
       let cache = state.lock().unwrap();
-      assert_eq!(cache.joins.get(&channel).unwrap().clone(), history_joins);
+      // Read-only get should NOT cache into hot store state to avoid
+      // changes() re-emitting unchanged joins with wrong channel serialization.
+      assert!(cache.joins.get(&channel).is_none());
       assert_eq!(read_joins, history_joins);
   }
 

@@ -76,6 +76,10 @@ pub struct RuntimeManager {
     /// Optional state hash cache for skipping known replays
     pub state_hash_cache: Option<Arc<StateHashCache>>,
     pub external_services: ExternalServices,
+    /// The state hash after bootstrap_registry — the genesis block's pre-state.
+    /// Set during compute_genesis(). Used by compute_parents_post_state for the
+    /// 0-parents (genesis) case instead of a hardcoded constant.
+    pub empty_state_hash: Option<StateHash>,
 }
 
 #[derive(Clone, Hash, PartialEq, Eq)]
@@ -264,12 +268,51 @@ impl RuntimeManager {
         let runtime = rho_runtime::create_rho_runtime(
             new_space,
             self.mergeable_tag_name.clone(),
-            true,
+            false, // Registry already in state from genesis — do not re-initialize per block
             &mut Vec::new(),
             self.external_services.clone(),
         )
         .await;
 
+        runtime
+    }
+
+    /// Spawns a runtime whose RSpace is positioned at the given state root.
+    ///
+    /// This avoids the bug where `spawn()` creates a child from the parent's
+    /// (potentially empty/stale) root, followed by a `reset()` that updates
+    /// the history repository but leaves the hot store's history reader stale.
+    /// By creating the child directly at the target state, the history reader
+    /// and hot store are consistent from the start.
+    pub async fn spawn_runtime_at(&self, hash: &StateHash) -> RhoRuntimeImpl {
+        let root = Blake2b256Hash::from_bytes_prost(hash);
+        tracing::info!(
+            target: "f1r3fly.rholang.diag",
+            state_hash = %hex::encode(hash),
+            "spawn_runtime_at: spawning child RSpace at target state hash"
+        );
+        let new_space = self
+            .space
+            .spawn_at(&root)
+            .expect("Failed to spawn RSpace at state hash");
+        tracing::info!(
+            target: "f1r3fly.rholang.diag",
+            state_hash = %hex::encode(hash),
+            "spawn_runtime_at: spawn_at succeeded, creating runtime (init_registry=false)"
+        );
+        let runtime = rho_runtime::create_rho_runtime(
+            new_space,
+            self.mergeable_tag_name.clone(),
+            false, // State already has registry — do not re-initialize
+            &mut Vec::new(),
+            self.external_services.clone(),
+        )
+        .await;
+        tracing::info!(
+            target: "f1r3fly.rholang.diag",
+            state_hash = %hex::encode(hash),
+            "spawn_runtime_at: create_rho_runtime completed (init_registry=false)"
+        );
         runtime
     }
 
@@ -282,7 +325,7 @@ impl RuntimeManager {
         let runtime = rho_runtime::create_replay_rho_runtime(
             new_replay_space,
             self.mergeable_tag_name.clone(),
-            true,
+            false, // State already has registry — do not re-initialize during replay
             &mut Vec::new(),
             self.external_services.clone(),
         )
@@ -556,6 +599,9 @@ impl RuntimeManager {
             &pre_state_hash,
         )?;
 
+        // Store the genesis pre-state hash for compute_parents_post_state
+        self.empty_state_hash = Some(pre_state.clone());
+
         Ok((pre_state, state_hash, processed_deploys))
     }
 
@@ -697,7 +743,7 @@ impl RuntimeManager {
         start: &StateHash,
         deploy: &Signed<DeployData>,
     ) -> Result<Vec<Par>, CasperError> {
-        let runtime = self.spawn_runtime().await;
+        let runtime = self.spawn_runtime_at(start).await;
         let mut runtime_ops = RuntimeOps::new(runtime);
         let computed = runtime_ops.capture_results(start, deploy).await?;
         Ok(computed)
@@ -711,7 +757,7 @@ impl RuntimeManager {
             return Ok(cached.clone());
         }
 
-        let runtime = self.spawn_runtime().await;
+        let runtime = self.spawn_runtime_at(start_hash).await;
         let mut runtime_ops = RuntimeOps::new(runtime);
         let computed = runtime_ops.get_active_validators(start_hash).await?;
 
@@ -726,7 +772,7 @@ impl RuntimeManager {
     }
 
     pub async fn compute_bonds(&self, hash: &StateHash) -> Result<Vec<Bond>, CasperError> {
-        let runtime = self.spawn_runtime().await;
+        let runtime = self.spawn_runtime_at(hash).await;
         let mut runtime_ops = RuntimeOps::new(runtime);
         let computed = runtime_ops.compute_bonds(hash).await?;
         Ok(computed)
@@ -738,17 +784,32 @@ impl RuntimeManager {
         term: String,
         hash: &StateHash,
     ) -> Result<Vec<Par>, CasperError> {
-        let runtime = self.spawn_runtime().await;
+        tracing::info!(
+            target: "f1r3fly.rholang.diag",
+            state_hash = %hex::encode(hash),
+            term_len = term.len(),
+            "play_exploratory_deploy: starting — spawning runtime at state hash"
+        );
+        let runtime = self.spawn_runtime_at(hash).await;
+        tracing::info!(
+            target: "f1r3fly.rholang.diag",
+            state_hash = %hex::encode(hash),
+            "play_exploratory_deploy: child runtime created, invoking play_exploratory_deploy on RuntimeOps"
+        );
         let mut runtime_ops = RuntimeOps::new(runtime);
         let computed = runtime_ops.play_exploratory_deploy(term, hash).await?;
+        tracing::info!(
+            target: "f1r3fly.rholang.diag",
+            state_hash = %hex::encode(hash),
+            result_count = computed.len(),
+            "play_exploratory_deploy: completed — returned {} result pars",
+            computed.len()
+        );
         Ok(computed)
     }
 
     pub async fn get_data(&self, hash: StateHash, channel: &Par) -> Result<Vec<Par>, CasperError> {
-        let mut runtime = self.spawn_runtime().await;
-
-        runtime.reset(&Blake2b256Hash::from_bytes_prost(&hash))?;
-
+        let runtime = self.spawn_runtime_at(&hash).await;
         let runtime_ops = RuntimeOps::new(runtime);
         let computed = runtime_ops.get_data_par(channel);
         Ok(computed)
@@ -759,10 +820,7 @@ impl RuntimeManager {
         hash: StateHash,
         channels: Vec<Par>,
     ) -> Result<Vec<(Vec<BindPattern>, Par)>, CasperError> {
-        let mut runtime = self.spawn_runtime().await;
-
-        runtime.reset(&Blake2b256Hash::from_bytes_prost(&hash))?;
-
+        let runtime = self.spawn_runtime_at(&hash).await;
         let runtime_ops = RuntimeOps::new(runtime);
         let computed = runtime_ops.get_continuation_par(channels);
         Ok(computed)
@@ -1011,16 +1069,12 @@ impl RuntimeManager {
         })
     }
 
-    /**
-     * This is a hard-coded value for `emptyStateHash` which is calculated by
-     * [[coop.rchain.casper.rholang.RuntimeOps.emptyStateHash]].
-     * Because of the value is actually the same all
-     * the time. For some situations, we can just use the value directly for better performance.
-     */
-    pub fn empty_state_hash_fixed() -> StateHash {
-        hex::decode("8baa451071791021dcc8461478b960cffc78372e0d1479988daa852fa3685083")
-            .unwrap()
-            .into()
+    /// Returns the genesis pre-state hash (state after bootstrap_registry).
+    /// Set during compute_genesis(). Panics if called before genesis is computed.
+    pub fn empty_state_hash(&self) -> StateHash {
+        self.empty_state_hash
+            .clone()
+            .expect("empty_state_hash not initialized; compute_genesis must be called first")
     }
 
     pub fn create_with_space(
@@ -1048,6 +1102,7 @@ impl RuntimeManager {
             state_hash_cache: (state_hash_cache_size > 0)
                 .then(|| Arc::new(StateHashCache::new(state_hash_cache_size))),
             external_services,
+            empty_state_hash: None,
         }
     }
 

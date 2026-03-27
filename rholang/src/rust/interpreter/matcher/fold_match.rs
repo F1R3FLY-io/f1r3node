@@ -23,20 +23,31 @@ impl FoldMatch<Par, Par> for SpatialMatcherContext {
         plist: Vec<Par>,
         remainder: Option<Var>,
     ) -> Option<Vec<Par>> {
-        // println!("\nHit fold_match");
-        // println!("\ntlist: {:?}", tlist);
-        // println!("\nplist: {:?}", plist);
-
         match (tlist.as_slice(), plist.as_slice()) {
             (&[], &[]) => {
-                // println!("\nHit Nil, Nil case in fold_match");
                 Some(Vec::new())
             }
 
-            (&[], _) => None,
+            (&[], _) => {
+                tracing::trace!(
+                    target: "f1r3fly.rholang.matcher",
+                    remaining_patterns = plist.len(),
+                    "fold_match: data exhausted but {} patterns remain → no match",
+                    plist.len()
+                );
+                None
+            }
 
             (trem, &[]) => match remainder {
-                None => None,
+                None => {
+                    tracing::trace!(
+                        target: "f1r3fly.rholang.matcher",
+                        remaining_data = trem.len(),
+                        "fold_match: patterns exhausted but {} data remain, no remainder → no match",
+                        trem.len()
+                    );
+                    None
+                }
 
                 Some(Var {
                     var_instance: Some(FreeVar(level)),
@@ -50,13 +61,26 @@ impl FoldMatch<Par, Par> for SpatialMatcherContext {
             },
 
             ([t, trem @ ..], [p, prem @ ..]) => {
-                // println!("\ncalling spatial_match in fold_match");
-                // println!("trem: {:?}", trem);
-                // println!("\nt: {:?}", t);
-                // println!("prem: {:?}", prem);
-                // println!("\np: {:?}", p);
+                let match_result = self.spatial_match(t.to_owned(), p.to_owned());
 
-                self.spatial_match(t.to_owned(), p.to_owned())
+                if match_result.is_none() {
+                    tracing::debug!(
+                        target: "f1r3fly.rholang.matcher",
+                        target_connective_used = t.connective_used,
+                        pattern_connective_used = p.connective_used,
+                        target_exprs = t.exprs.len(),
+                        pattern_exprs = p.exprs.len(),
+                        remaining_pairs = prem.len(),
+                        "fold_match: spatial_match FAILED at element {}/{} — \
+                         target.exprs={:?}, pattern.exprs={:?}",
+                        plist.len() - prem.len(),
+                        plist.len(),
+                        t.exprs.iter().map(|e| format!("{:?}", e.expr_instance)).collect::<Vec<_>>(),
+                        p.exprs.iter().map(|e| format!("{:?}", e.expr_instance)).collect::<Vec<_>>()
+                    );
+                }
+
+                match_result
                     .and_then(|_| self.fold_match(trem.to_vec(), prem.to_vec(), remainder))
             }
         }

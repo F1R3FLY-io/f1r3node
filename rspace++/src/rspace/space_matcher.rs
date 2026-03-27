@@ -10,9 +10,9 @@ type MatchingDataCandidate<C, A> = (ConsumeCandidate<C, A>, Vec<(Datum<A>, i32)>
 
 pub trait SpaceMatcher<C, P, A, K>: ISpace<C, P, A, K>
 where
-    C: Clone + std::hash::Hash + Eq,
-    P: Clone,
-    A: Clone,
+    C: Clone + std::hash::Hash + Eq + std::fmt::Debug,
+    P: Clone + std::fmt::Debug,
+    A: Clone + std::fmt::Debug,
     K: Clone,
 {
     /** Searches through data, looking for a match with a given pattern.
@@ -164,8 +164,36 @@ where
         match_candidates: Vec<(WaitingContinuation<P, K>, i32)>,
         channel_to_index_data: DashMap<C, Vec<(Datum<A>, i32)>>,
     ) -> Option<ProduceCandidate<C, P, A, K>> {
+        if tracing::enabled!(target: "f1r3fly.rspace.matcher", tracing::Level::DEBUG) {
+            let data_summary: Vec<_> = channel_to_index_data
+                .iter()
+                .map(|entry| {
+                    let datums: Vec<_> = entry.value().iter().map(|(d, idx)| (*idx, format!("{:?}", d.a))).collect();
+                    (format!("{:?}", entry.key()), datums)
+                })
+                .collect();
+            tracing::debug!(
+                target: "f1r3fly.rspace.matcher",
+                channels = ?channels,
+                num_candidates = match_candidates.len(),
+                data_summary = ?data_summary,
+                "extract_first_match: starting with {} candidates",
+                match_candidates.len()
+            );
+        }
+
         match match_candidates.last() {
             Some((cont @ WaitingContinuation { patterns, .. }, index)) => {
+                tracing::debug!(
+                    target: "f1r3fly.rspace.matcher",
+                    cont_index = *index,
+                    num_patterns = patterns.len(),
+                    persist = cont.persist,
+                    patterns = ?patterns,
+                    "extract_first_match: trying continuation #{} ({} patterns, persist={})",
+                    index, patterns.len(), cont.persist
+                );
+
                 let maybe_data_candidates: Option<Vec<ConsumeCandidate<C, A>>> = {
                     let data_candidates = self.extract_data_candidates(
                         matcher,
@@ -179,7 +207,16 @@ where
                         None
                     }
                 };
-                // println!("\nmaybe_data_candidates: {:?}", maybe_data_candidates);
+
+                let matched = maybe_data_candidates.is_some();
+                tracing::debug!(
+                    target: "f1r3fly.rspace.matcher",
+                    cont_index = *index,
+                    matched,
+                    "extract_first_match: continuation #{} → {}",
+                    index, if matched { "MATCHED" } else { "rejected" }
+                );
+
                 match maybe_data_candidates {
                     Some(data_candidates) => Some(ProduceCandidate {
                         channels,
@@ -199,7 +236,14 @@ where
                     }
                 }
             }
-            None => None,
+            None => {
+                tracing::debug!(
+                    target: "f1r3fly.rspace.matcher",
+                    channels = ?channels,
+                    "extract_first_match: no candidates matched"
+                );
+                None
+            }
         }
     }
 }

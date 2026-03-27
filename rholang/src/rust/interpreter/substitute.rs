@@ -456,6 +456,7 @@ impl SubstituteTrait<Receive> for Substitute {
                      source,
                      remainder,
                      free_count,
+                     peek,
                  }| {
                     let sub_channel =
                         self.substitute_no_sort(unwrap_option_safe(source)?, depth, env)?;
@@ -469,6 +470,7 @@ impl SubstituteTrait<Receive> for Substitute {
                         source: Some(sub_channel),
                         remainder,
                         free_count,
+                        peek,
                     })
                 },
             )

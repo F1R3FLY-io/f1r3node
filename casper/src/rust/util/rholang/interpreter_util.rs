@@ -55,8 +55,13 @@ pub async fn validate_block_checkpoint(
     let incoming_pre_state_hash = proto_util::pre_state_hash(block);
     let parents = proto_util::get_parents(block_store, block);
     tracing::debug!(target: "f1r3fly.casper", "before-compute-parents-post-state");
+    let genesis_pre_state = if parents.is_empty() {
+        Some(incoming_pre_state_hash.clone())
+    } else {
+        None
+    };
     let computed_parents_info =
-        compute_parents_post_state(block_store, parents.clone(), s, runtime_manager, None);
+        compute_parents_post_state(block_store, parents.clone(), s, runtime_manager, None, genesis_pre_state);
 
     tracing::info!(
         "Computed parents post state for {}.",
@@ -324,6 +329,17 @@ async fn replay_block(
     const MAX_RETRIES: usize = 3;
 
     loop {
+        tracing::info!(
+            target: "f1r3fly.rspace.lfs_diag",
+            block_number = block.body.state.block_number,
+            block_hash = %PrettyPrinter::build_string_bytes(&block.block_hash),
+            initial_state_hash = %PrettyPrinter::build_string_bytes(&initial_state_hash),
+            deploy_count = internal_deploys.len(),
+            system_deploy_count = internal_system_deploys.len(),
+            attempt = attempts,
+            "REPLAY BLOCK: starting replay"
+        );
+
         // Call the async replay_compute_state method
         let replay_result = runtime_manager
             .replay_compute_state(
@@ -345,21 +361,23 @@ async fn replay_block(
                 } else if attempts >= MAX_RETRIES {
                     // Give up after max retries
                     tracing::error!(
-                        "Replay block {} with {} got tuple space mismatch error with error hash {}, retries details: giving up after {} retries",
-                        PrettyPrinter::build_string_no_limit(&block.block_hash),
-                        PrettyPrinter::build_string_no_limit(&block.body.state.post_state_hash),
-                        PrettyPrinter::build_string_no_limit(&computed_state_hash),
-                        attempts
+                        target: "f1r3fly.rspace",
+                        block = %PrettyPrinter::build_string_no_limit(&block.block_hash),
+                        expected = %PrettyPrinter::build_string_no_limit(&block.body.state.post_state_hash),
+                        computed = %PrettyPrinter::build_string_no_limit(&computed_state_hash),
+                        attempt = attempts,
+                        "REPLAY HASH MISMATCH — giving up"
                     );
                     return Ok(Either::Right(computed_state_hash));
                 } else {
                     // Retry - log error and continue
                     tracing::error!(
-                        "Replay block {} with {} got tuple space mismatch error with error hash {}, retries details: will retry, attempt {}",
-                        PrettyPrinter::build_string_no_limit(&block.block_hash),
-                        PrettyPrinter::build_string_no_limit(&block.body.state.post_state_hash),
-                        PrettyPrinter::build_string_no_limit(&computed_state_hash),
-                        attempts + 1
+                        target: "f1r3fly.rspace",
+                        block = %PrettyPrinter::build_string_no_limit(&block.block_hash),
+                        expected = %PrettyPrinter::build_string_no_limit(&block.body.state.post_state_hash),
+                        computed = %PrettyPrinter::build_string_no_limit(&computed_state_hash),
+                        attempt = attempts + 1,
+                        "REPLAY HASH MISMATCH — will retry"
                     );
                     attempts += 1;
                 }
@@ -525,7 +543,7 @@ pub async fn compute_deploys_checkpoint(
     // Compute parents post state
     let parents_started = std::time::Instant::now();
     let computed_parents_info =
-        compute_parents_post_state(block_store, parents, s, runtime_manager, None)?;
+        compute_parents_post_state(block_store, parents, s, runtime_manager, None, None)?;
     let parents_ms = parents_started.elapsed().as_millis();
     let (pre_state_hash, rejected_deploys) = computed_parents_info;
 
@@ -575,6 +593,7 @@ pub fn compute_parents_post_state(
     s: &CasperSnapshot,
     runtime_manager: &RuntimeManager,
     disable_late_block_filtering_override: Option<bool>,
+    genesis_pre_state_hash: Option<StateHash>,
 ) -> Result<(StateHash, Vec<Bytes>), CasperError> {
     let total_started = std::time::Instant::now();
     const MAX_PARENT_MERGE_SCOPE_BLOCKS: usize = 512;
@@ -583,9 +602,10 @@ pub fn compute_parents_post_state(
     // Span guard must live until end of scope to maintain tracing context
     let _span = tracing::debug_span!(target: "f1r3fly.casper.compute-parents-post-state", "compute-parents-post-state").entered();
     match parents.len() {
-        // For genesis, use empty trie's root hash
+        // For genesis, use the pre-state hash (state after bootstrap_registry)
         0 => {
-            let state = RuntimeManager::empty_state_hash_fixed();
+            let state = genesis_pre_state_hash
+                .unwrap_or_else(|| runtime_manager.empty_state_hash());
             tracing::debug!(
                 target: "f1r3fly.compute_parents_post_state.timing",
                 "compute_parents_post_state timing: path=genesis, parents=0, total_ms={}",

@@ -34,6 +34,7 @@ fn bootstrap(channel: Par) -> New {
                     source: Some(channel.clone()),
                     remainder: None,
                     free_count: 1,
+                    peek: false,
                 }],
                 // x!(channel)
                 body: Some(Par::default().with_sends(vec![Send {

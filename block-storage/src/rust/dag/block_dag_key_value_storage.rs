@@ -814,16 +814,18 @@ impl BlockDagKeyValueStorage {
             // Lock is dropped here before .await
         };
 
-        // Execute async effect without holding lock
-        finalization_effect(&all_finalized).await?;
-
-        // Re-acquire lock to persist changes
+        // Persist finalized state BEFORE publishing events.
+        // This prevents a race where clients receive BlockFinalised events
+        // but explore-deploy still reads the old last_finalized_block.
         {
             let _lock_guard = self.global_lock.lock().unwrap();
             let mut block_metadata_index_guard = self.block_metadata_index.write().unwrap();
             block_metadata_index_guard
                 .record_finalized(directly_finalized_hash, indirectly_finalized)?;
         }
+
+        // Now safe to publish events — state is already persisted
+        finalization_effect(&all_finalized).await?;
 
         Ok(())
     }

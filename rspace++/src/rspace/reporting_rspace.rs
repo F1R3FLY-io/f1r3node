@@ -331,6 +331,14 @@ where
     fn update_produce(&mut self, produce: Produce) -> () {
         self.replay_rspace.update_produce(produce)
     }
+
+    fn pending_state_counts(&self) -> (usize, usize, usize, usize) {
+        self.replay_rspace.pending_state_counts()
+    }
+
+    fn pending_continuation_channels_debug(&self) -> Vec<(String, usize, bool)> {
+        self.replay_rspace.pending_continuation_channels_debug()
+    }
 }
 
 /// Logger used to collect reporting events from underlying replay space

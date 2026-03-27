@@ -318,6 +318,7 @@ async fn run_compute_parents_post_state_finalized_skew_regression() {
         &snapshot_without_skew,
         &runtime_manager,
         None,
+        None,
     )
     .expect("Failed to compute parents post-state without finalized skew");
 
@@ -341,6 +342,7 @@ async fn run_compute_parents_post_state_finalized_skew_regression() {
         parents,
         &snapshot_with_skew,
         &runtime_manager,
+        None,
         None,
     )
     .expect("Failed to compute parents post-state with finalized skew");
@@ -531,6 +533,7 @@ async fn run_compute_parents_post_state_missing_mergeable_regression() {
         vec![b2, b3],
         &snapshot,
         &runtime_manager,
+        None,
         None,
     );
 

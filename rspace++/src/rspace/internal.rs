@@ -3,8 +3,8 @@
 use std::collections::BTreeSet;
 use std::hash::Hash;
 
-use counter::Counter;
 use dashmap::DashMap;
+use smallvec::SmallVec;
 use proptest_derive::Arbitrary;
 use serde::{Deserialize, Serialize};
 
@@ -91,15 +91,25 @@ pub struct Install<P, K> {
     pub continuation: K,
 }
 
+/// Multiset multi-map that preserves insertion order per key.
+///
+/// Uses `SmallVec<[V; 4]>` instead of `Counter<V>` (HashMap) so that
+/// iteration order is deterministic — matching the event log order from
+/// `rig()`.  This is critical for replay correctness: when multiple COMMs
+/// exist for the same IOEvent (e.g. a persistent consume firing multiple
+/// times), `get_comm_or_candidate` tries them in iteration order and
+/// returns the FIRST match.  Non-deterministic HashMap ordering caused
+/// different COMMs to fire first on observer vs validator, producing
+/// different execution paths and cost mismatches.
 #[derive(Clone, Debug)]
-pub struct MultisetMultiMap<K: Hash + Eq, V: Hash + Eq> {
-    pub map: DashMap<K, Counter<V>>,
+pub struct MultisetMultiMap<K: Hash + Eq, V: PartialEq> {
+    pub map: DashMap<K, SmallVec<[V; 4]>>,
 }
 
 impl<K, V> MultisetMultiMap<K, V>
 where
     K: Eq + Hash,
-    V: Eq + Hash,
+    V: PartialEq,
 {
     pub fn empty() -> Self {
         MultisetMultiMap {
@@ -109,16 +119,13 @@ where
 
     pub fn add_binding(&self, k: K, v: V) {
         match self.map.get_mut(&k) {
-            Some(mut current) => match current.get_mut(&v) {
-                Some(count) => *count += 1,
-                None => {
-                    current.insert(v, 1);
-                }
-            },
+            Some(mut current) => {
+                current.push(v);
+            }
             None => {
-                let mut ms = Counter::new();
-                ms.insert(v, 1);
-                self.map.insert(k, ms);
+                let mut sv = SmallVec::new();
+                sv.push(v);
+                self.map.insert(k, sv);
             }
         }
     }
@@ -126,25 +133,15 @@ where
     pub fn clear(&self) { self.map.clear(); }
 
     pub fn is_empty(&self) -> bool { self.map.is_empty() }
-}
 
-impl<K: Hash + Eq, V: Hash + Eq> MultisetMultiMap<K, V> {
-    // In-place removal to avoid moving the whole map
+    // In-place removal to avoid moving the whole map.
+    // Removes the first occurrence of `v` from the vec at key `k`.
     pub fn remove_binding_in_place(&self, k: &K, v: &V) {
         let mut should_remove_key = false;
 
         if let Some(mut current) = self.map.get_mut(k) {
-            let mut should_remove_value = false;
-            if let Some(count) = current.get_mut(v) {
-                if *count > 1 {
-                    *count -= 1;
-                } else {
-                    should_remove_value = true;
-                }
-            }
-
-            if should_remove_value {
-                current.remove(v);
+            if let Some(pos) = current.iter().position(|x| x == v) {
+                current.remove(pos);
             }
 
             if current.is_empty() {
@@ -160,7 +157,7 @@ impl<K: Hash + Eq, V: Hash + Eq> MultisetMultiMap<K, V> {
 
 // This function remains for compatibility but delegates to in-place version and
 // returns the same map
-pub fn remove_binding<K: Hash + Eq, V: Hash + Eq>(
+pub fn remove_binding<K: Hash + Eq, V: PartialEq>(
     ms: MultisetMultiMap<K, V>,
     k: K,
     v: V,
@@ -174,34 +171,45 @@ mod tests {
     use super::MultisetMultiMap;
 
     #[test]
-    fn multiset_multimap_add_binding_increments_existing_count() {
+    fn multiset_multimap_add_binding_preserves_insertion_order() {
         let ms = MultisetMultiMap::empty();
-        ms.add_binding("k", "v");
-        ms.add_binding("k", "v");
+        ms.add_binding("k", "v1");
+        ms.add_binding("k", "v2");
+        ms.add_binding("k", "v1");
 
-        let count = ms
+        let vec: Vec<_> = ms
             .map
             .get(&"k")
-            .and_then(|counter| counter.get(&"v").copied())
-            .unwrap_or(0);
-        assert_eq!(count, 2);
+            .map(|v| v.to_vec())
+            .unwrap_or_default();
+        assert_eq!(vec, vec!["v1", "v2", "v1"]);
     }
 
     #[test]
-    fn multiset_multimap_remove_binding_decrements_before_removing() {
+    fn multiset_multimap_remove_binding_removes_first_occurrence() {
         let ms = MultisetMultiMap::empty();
-        ms.add_binding("k", "v");
-        ms.add_binding("k", "v");
+        ms.add_binding("k", "v1");
+        ms.add_binding("k", "v2");
+        ms.add_binding("k", "v1");
 
-        ms.remove_binding_in_place(&"k", &"v");
-        let count_after_one_remove = ms
+        ms.remove_binding_in_place(&"k", &"v1");
+        let vec_after_one_remove: Vec<_> = ms
             .map
             .get(&"k")
-            .and_then(|counter| counter.get(&"v").copied())
-            .unwrap_or(0);
-        assert_eq!(count_after_one_remove, 1);
+            .map(|v| v.to_vec())
+            .unwrap_or_default();
+        // First "v1" removed, leaving ["v2", "v1"]
+        assert_eq!(vec_after_one_remove, vec!["v2", "v1"]);
 
-        ms.remove_binding_in_place(&"k", &"v");
+        ms.remove_binding_in_place(&"k", &"v2");
+        let vec_after_two_removes: Vec<_> = ms
+            .map
+            .get(&"k")
+            .map(|v| v.to_vec())
+            .unwrap_or_default();
+        assert_eq!(vec_after_two_removes, vec!["v1"]);
+
+        ms.remove_binding_in_place(&"k", &"v1");
         assert!(ms.map.get(&"k").is_none());
     }
 }

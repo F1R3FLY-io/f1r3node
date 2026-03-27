@@ -91,5 +91,15 @@ fn main() {
         .collect::<Vec<String>>()
         .join("\n");
 
+    // Normalize locally_free in serde serialization — always serialize as empty vec.
+    // This is a transient analysis field (free-variable bit-vector) that must NOT
+    // affect Blake2b256 channel hashes. Using serialize_with preserves the field
+    // position in bincode (unlike skip_serializing) while ensuring the hash is
+    // consistent regardless of the actual locally_free content.
+    let modified_content = modified_content.replace(
+        "pub locally_free: ::prost::alloc::vec::Vec<u8>,",
+        "#[serde(serialize_with = \"crate::rust::serde_helpers::serialize_as_empty_bytes\")]\n    pub locally_free: ::prost::alloc::vec::Vec<u8>,",
+    );
+
     fs::write(file_path, modified_content).expect("Unable to write file");
 }

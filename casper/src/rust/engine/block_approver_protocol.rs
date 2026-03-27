@@ -240,8 +240,12 @@ impl<T: TransportLayer + Send + Sync + 'static> BlockApproverProtocol<T> {
             ));
         }
 
-        // State hash checks
-        let empty_state_hash = RuntimeManager::empty_state_hash_fixed();
+        // State hash checks — use the genesis block's own pre-state hash
+        // rather than a hardcoded constant. The pre-state hash is dynamically
+        // computed during genesis creation and is guaranteed to be in the
+        // roots store. A hardcoded constant breaks when evaluation order or
+        // trie hashing changes.
+        let empty_state_hash = block.body.state.pre_state_hash.clone();
         let state_hash = runtime_manager
             .replay_compute_state(
                 &empty_state_hash,

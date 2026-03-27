@@ -48,7 +48,7 @@ const BLOCK_CREATOR_PHASE_SUBSTEP_PROFILE_ENV: &str = "F1R3_BLOCK_CREATOR_PHASE_
 
 impl<C, P, A, K> HistoryRepositoryImpl<C, P, A, K>
 where
-    C: Clone + Send + Sync + Serialize,
+    C: Clone + Send + Sync + Serialize + std::fmt::Debug,
     P: Clone + Send + Sync + Serialize,
     A: Clone + Send + Sync + Serialize,
     K: Clone + Send + Sync + Serialize,
@@ -397,6 +397,30 @@ where
                     None
                 };
                 let key = hash(&i.channel);
+                // Enhanced diagnostic: log serialized bytes for GPrivate channels
+                // so we can compare with observer-side history reader lookups.
+                let ch_dbg = format!("{:?}", &i.channel);
+                if ch_dbg.contains("GPrivateBody") {
+                    let serialized = bincode::serialize(&i.channel).unwrap_or_default();
+                    tracing::info!(
+                        target: "f1r3fly.rholang.diag",
+                        trie_key = %key,
+                        serialized_hex = %hex::encode(&serialized),
+                        serialized_len = serialized.len(),
+                        data_count = i.data.len(),
+                        channel = %ch_dbg,
+                        "CHECKPOINT InsertData: hash={} serialized_len={} data_count={}",
+                        key, serialized.len(), i.data.len()
+                    );
+                } else {
+                    tracing::debug!(
+                        target: "f1r3fly.rholang.diag",
+                        channel = ?i.channel,
+                        trie_key = ?key,
+                        data_count = i.data.len(),
+                        "transform: InsertData"
+                    );
+                }
                 log_step_delta("after_hash_data_channel", before_hash);
                 let before_take = if mem_profile_enabled {
                     read_rss_kb()
@@ -422,6 +446,13 @@ where
                     None
                 };
                 let key = hash_from_vec(&i.channels);
+                tracing::debug!(
+                    target: "f1r3fly.rholang.diag",
+                    channels = ?i.channels,
+                    trie_key = ?key,
+                    cont_count = i.continuations.len(),
+                    "transform: InsertContinuations"
+                );
                 log_step_delta("after_hash_continuations_channels", before_hash);
                 let before_take = if mem_profile_enabled {
                     read_rss_kb()
@@ -472,6 +503,12 @@ where
                     None
                 };
                 let key = hash(&d.channel);
+                tracing::warn!(
+                    target: "f1r3fly.rholang.diag",
+                    channel = ?d.channel,
+                    trie_key = ?key,
+                    "transform: DeleteData"
+                );
                 log_step_delta("after_hash_delete_data_channel", before_hash);
                 let before_new = if mem_profile_enabled {
                     read_rss_kb()
@@ -490,6 +527,12 @@ where
                     None
                 };
                 let key = hash_from_vec(&d.channels);
+                tracing::warn!(
+                    target: "f1r3fly.rholang.diag",
+                    channels = ?d.channels,
+                    trie_key = ?key,
+                    "transform: DeleteContinuations"
+                );
                 log_step_delta("after_hash_delete_continuations_channels", before_hash);
                 let before_new = if mem_profile_enabled {
                     read_rss_kb()
@@ -508,6 +551,12 @@ where
                     None
                 };
                 let key = hash(&d.channel);
+                tracing::warn!(
+                    target: "f1r3fly.rholang.diag",
+                    channel = ?d.channel,
+                    trie_key = ?key,
+                    "transform: DeleteJoins"
+                );
                 log_step_delta("after_hash_delete_joins_channel", before_hash);
                 let before_new = if mem_profile_enabled {
                     read_rss_kb()
@@ -540,7 +589,7 @@ where
 
 impl<C, P, A, K> HistoryRepository<C, P, A, K> for HistoryRepositoryImpl<C, P, A, K>
 where
-    C: Clone + Send + Sync + Serialize + for<'a> Deserialize<'a> + 'static,
+    C: Clone + Send + Sync + Serialize + std::fmt::Debug + for<'a> Deserialize<'a> + 'static,
     P: Clone + Send + Sync + Serialize + for<'a> Deserialize<'a> + 'static,
     A: Clone + Send + Sync + Serialize + for<'a> Deserialize<'a> + 'static,
     K: Clone + Send + Sync + Serialize + for<'a> Deserialize<'a> + 'static,

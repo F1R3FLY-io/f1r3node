@@ -772,7 +772,7 @@ async fn capture_result_should_return_the_value_at_the_specified_channel_after_a
 
 #[tokio::test]
 async fn capture_result_should_handle_multiple_results_and_no_results_appropriately() {
-    with_runtime_manager(|runtime_manager, _, _| async move {
+    with_runtime_manager(|runtime_manager, genesis_context, _| async move {
         let n = 8;
         let returns = (1..=n)
             .map(|i| format!("return!({})", i))
@@ -785,12 +785,12 @@ async fn capture_result_should_handle_multiple_results_and_no_results_appropriat
             construct_deploy::source_deploy(term_no_res, 0, None, None, None, None, None).unwrap();
 
         let many_results = runtime_manager
-            .capture_results(&RuntimeManager::empty_state_hash_fixed(), &deploy)
+            .capture_results(&genesis_context.genesis_block.body.state.post_state_hash.clone(), &deploy)
             .await
             .unwrap();
 
         let no_results = runtime_manager
-            .capture_results(&RuntimeManager::empty_state_hash_fixed(), &deploy_no_res)
+            .capture_results(&genesis_context.genesis_block.body.state.post_state_hash.clone(), &deploy_no_res)
             .await
             .unwrap();
 
@@ -805,7 +805,7 @@ async fn capture_result_should_handle_multiple_results_and_no_results_appropriat
 
 #[tokio::test]
 async fn capture_result_should_throw_error_if_execution_fails() {
-    with_runtime_manager(|runtime_manager, _, _| async move {
+    with_runtime_manager(|runtime_manager, genesis_context, _| async move {
         let deploy = construct_deploy::source_deploy(
             "new return in { return.undefined() }".to_string(),
             0,
@@ -818,7 +818,7 @@ async fn capture_result_should_throw_error_if_execution_fails() {
         .unwrap();
 
         let result = runtime_manager
-            .capture_results(&RuntimeManager::empty_state_hash_fixed(), &deploy)
+            .capture_results(&genesis_context.genesis_block.body.state.post_state_hash.clone(), &deploy)
             .await;
 
         assert!(result.is_err());
@@ -834,7 +834,7 @@ async fn empty_state_hash_should_not_remember_previous_hot_store_state() {
             let deploy1 = construct_deploy::basic_deploy_data(0, None, None).unwrap();
             let deploy2 = construct_deploy::basic_deploy_data(0, None, None).unwrap();
 
-            let hash1 = RuntimeManager::empty_state_hash_fixed();
+            let hash1 = genesis_context.genesis_block.body.state.post_state_hash.clone();
             let _ = compute_state(
                 &mut runtime_manager,
                 &genesis_context,
@@ -843,7 +843,7 @@ async fn empty_state_hash_should_not_remember_previous_hot_store_state() {
             )
             .await;
 
-            let hash2 = RuntimeManager::empty_state_hash_fixed();
+            let hash2 = genesis_context.genesis_block.body.state.post_state_hash.clone();
             let _ = compute_state(
                 &mut runtime_manager,
                 &genesis_context,

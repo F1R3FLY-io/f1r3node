@@ -20,6 +20,7 @@ impl WebApiRoutesV1 {
             )
             .route("/blocks", get(shared_handlers::get_blocks_handler))
             .route("/block", get(shared_handlers::get_block_handler))
+            .route("/trie-stats", get(shared_handlers::trie_stats_handler))
     }
 
     pub fn create_admin_router() -> Router<AppState> {

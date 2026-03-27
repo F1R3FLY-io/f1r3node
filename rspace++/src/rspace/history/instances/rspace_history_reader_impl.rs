@@ -191,9 +191,33 @@ where
             K: Clone + for<'de> Deserialize<'de> + 'static + Sync + Send,
         {
             fn get_data_proj(&self, key: &C) -> Vec<Datum<A>> {
-                self.outer
-                    .get_data_proj(&hash(key))
-                    .expect("Failed to get data proj")
+                let channel_hash = hash(key);
+                let result = self.outer
+                    .get_data_proj(&channel_hash)
+                    .expect("Failed to get data proj");
+
+                if result.is_empty() {
+                    // Diagnostic: log serialized bytes and hash for empty lookups.
+                    // This enables comparison with checkpoint InsertData hashes.
+                    let serialized = bincode::serialize(key).unwrap_or_default();
+                    let serialized_hex = hex::encode(&serialized);
+                    // Heuristic: GPrivate channels have a recognizable pattern in
+                    // bincode — the unforgeable field (tag 7) contains id bytes.
+                    // Channels >50 serialized bytes are likely 32-byte GPrivate.
+                    if serialized.len() > 50 {
+                        tracing::warn!(
+                            target: "f1r3fly.rholang.diag",
+                            channel_hash = %channel_hash,
+                            serialized_hex = %serialized_hex,
+                            serialized_len = serialized.len(),
+                            "HISTORY READER DATA MISS: channel hash={} serialized_len={} — \
+                             compare with checkpoint InsertData entries",
+                            channel_hash, serialized.len()
+                        );
+                    }
+                }
+
+                result
             }
 
             fn get_continuations_proj(&self, key: &Vec<C>) -> Vec<WaitingContinuation<P, K>> {

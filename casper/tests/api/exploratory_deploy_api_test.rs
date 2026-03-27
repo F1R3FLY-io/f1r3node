@@ -197,6 +197,144 @@ async fn exploratory_deploy_should_get_data_from_read_only_node() {
     }
 }
 
+/// Exploratory deploy should invoke contract continuations (persistent receives)
+/// deployed in a finalized block.
+///
+/// This mirrors the embers pattern: deploy a contract with a persistent continuation,
+/// finalize the block, then invoke the contract via explore-deploy on a read-only node.
+///
+/// DAG structure (same as the data test):
+///     n1: genesis -> b1 -> b2
+///     n2: genesis ---------> b3 (main parent: b2)
+///     n3: genesis ---------> b4 (main parent: b3)
+#[tokio::test]
+async fn exploratory_deploy_should_invoke_contract_continuations() {
+    let parameters = GenesisBuilder::build_genesis_parameters_with_defaults(
+        Some(bonds_function),
+        None,
+    );
+    let genesis = GenesisBuilder::new()
+        .build_genesis_with_parameters(Some(parameters))
+        .await
+        .expect("Failed to build genesis");
+
+    let mut nodes = TestNode::create_network(
+        genesis.clone(),
+        3,
+        None,
+        None,
+        None,
+        Some(1),
+    )
+    .await
+    .expect("Failed to create network");
+
+    let shard_id = genesis.genesis_block.shard_id.clone();
+
+    // b1: deploy a persistent contract at @"test"
+    // The `contract` keyword creates a persistent for (i.e., it stays after matching)
+    let contract_deploy = construct_deploy::source_deploy(
+        r#"contract @"test"(@"get", @key, ret) = { ret!(key) }"#.to_string(),
+        1,
+        None,
+        None,
+        None,
+        None,
+        Some(shard_id.clone()),
+    )
+    .expect("Failed to create contract deploy");
+
+    let _b1 = TestNode::propagate_block_at_index(&mut nodes, 0, &[contract_deploy])
+        .await
+        .expect("n1 should create and propagate b1");
+
+    // b2-b4: propagate blocks to finalize b1's state
+    let produce_deploy_0 = construct_deploy::source_deploy(
+        "new x in { x!(0) }".to_string(),
+        2,
+        None,
+        None,
+        None,
+        None,
+        Some(shard_id.clone()),
+    )
+    .expect("Failed to create produce deploy 0");
+
+    let _b2 = TestNode::propagate_block_at_index(&mut nodes, 0, &[produce_deploy_0])
+        .await
+        .expect("n1 should create and propagate b2");
+
+    let produce_deploy_1 = construct_deploy::source_deploy(
+        "new x in { x!(1) }".to_string(),
+        3,
+        None,
+        None,
+        None,
+        None,
+        Some(shard_id.clone()),
+    )
+    .expect("Failed to create produce deploy 1");
+
+    let _b3 = TestNode::propagate_block_at_index(&mut nodes, 1, &[produce_deploy_1])
+        .await
+        .expect("n2 should create and propagate b3");
+
+    let produce_deploy_2 = construct_deploy::source_deploy(
+        "new x in { x!(2) }".to_string(),
+        4,
+        None,
+        None,
+        None,
+        None,
+        Some(shard_id.clone()),
+    )
+    .expect("Failed to create produce deploy 2");
+
+    let _b4 = TestNode::propagate_block_at_index(&mut nodes, 2, &[produce_deploy_2])
+        .await
+        .expect("n3 should create and propagate b4");
+
+    // Explore-deploy on the read-only node: invoke the contract
+    let read_only_node = &nodes[3];
+    let engine_cell = &read_only_node.engine_cell;
+
+    let exploratory_term =
+        r#"new return in { @"test"!("get", "hello", *return) }"#;
+
+    let result = BlockAPI::exploratory_deploy(
+        engine_cell,
+        exploratory_term.to_string(),
+        None,
+        false,
+        false,
+    )
+    .await;
+
+    match result {
+        Ok((pars, _last_finalized_block)) => {
+            assert!(
+                !pars.is_empty(),
+                "Exploratory deploy should return data from contract invocation"
+            );
+
+            let result_str = format!("{:?}", pars);
+            assert!(
+                result_str.contains("hello"),
+                "Result should contain 'hello' from contract invocation, got: {:?}",
+                pars
+            );
+
+            tracing::info!("Contract continuation test passed: {:?}", pars);
+        }
+        Err(e) => {
+            panic!(
+                "Exploratory deploy failed to invoke contract continuation: {:?}",
+                e
+            );
+        }
+    }
+}
+
 /// Exploratory deploy should return error on bonded validator.
 ///
 /// The exploratory deploy API should only work on read-only nodes.
