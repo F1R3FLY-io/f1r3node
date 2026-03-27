@@ -4,6 +4,13 @@ All notable changes to the Rust implementation of F1r3node will be documented in
 This changelog is automatically generated from conventional commits.
 
 
+## [v0.4.2] - 2026-03-27
+
+### Bug Fixes
+
+- use PAT checkout for tag triggers, disable integration tests, run tests in release mode
+
+
 ## [v0.4.1] - 2026-03-27
 
 ### Bug Fixes
