@@ -4,6 +4,13 @@ All notable changes to the Scala implementation of F1r3node will be documented i
 This changelog is automatically generated from conventional commits.
 
 
+## [v0.4.2] - 2026-03-27
+
+### Bug Fixes
+
+- use PAT checkout for tag triggers, disable integration tests temporarily
+
+
 ## [v0.4.1] - 2026-03-27
 
 ### Bug Fixes
