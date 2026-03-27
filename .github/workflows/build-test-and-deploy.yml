@@ -88,10 +88,15 @@ jobs:
           # Find related HEAD branch
           BRANCH=""
           if [[ $GITHUB_REF =~ ^refs/tags/ ]]; then
-            # Tag related to multiple branches leaves empty branch variable
-            RAW_BRANCH=$(git branch -r --contains ${{ github.ref }})
-            if [[ $RAW_BRANCH =~ ^[\ ]*origin/([^ ]*)$ ]]; then
-              BRANCH="${BASH_REMATCH[1]}"
+            # For tag pushes, determine release type from tag name
+            # patch .0 = main release, patch > 0 = dev release
+            TAG_NAME="${GITHUB_REF#refs/tags/}"
+            TAG_VERSION="${TAG_NAME#rust-v}"
+            PATCH=$(echo "$TAG_VERSION" | cut -d. -f3)
+            if [ "$PATCH" = "0" ]; then
+              BRANCH="rust/main"
+            else
+              BRANCH="rust/dev"
             fi
           elif [[ $GITHUB_REF =~ ^refs/heads/ ]]; then
             BRANCH=${GITHUB_REF#refs/*/}
@@ -430,6 +435,11 @@ jobs:
           SUFFIX=""
           CI_RUN=""
           TAG_PREFIX=""
+          IS_TAG_PUSH="false"
+
+          if [[ $GITHUB_REF =~ ^refs/tags/ ]]; then
+            IS_TAG_PUSH="true"
+          fi
 
           # Add suffix if trying or merging
           if [[ "$BRANCH" =~ ^(trying|staging)$ ]]; then
@@ -439,7 +449,8 @@ jobs:
             if [[ $BRANCH =~ ^trying$ ]]; then
               CI_RUN="-ci-$GITHUB_RUN_NUMBER"
             fi
-          elif [[ "$BRANCH" == "rust/dev" ]]; then
+          elif [[ "$BRANCH" == "rust/dev" && "$IS_TAG_PUSH" == "false" ]]; then
+            # Only prefix dev- for branch pushes (commit hashes), not tag releases
             TAG_PREFIX="dev-"
           fi
 
@@ -449,7 +460,7 @@ jobs:
           IMG_VERSION_RAW="$IMAGE_NAME:${TAG_PREFIX}$VERSION$CI_RUN"
           # Replace unsupported character `+`
           IMG_VERSION="${IMG_VERSION_RAW//[+]/__}"
-          if [[ -n "$TAG_PREFIX" ]]; then
+          if [[ "$BRANCH" == "rust/dev" ]]; then
             IMG_LATEST="$IMAGE_NAME:dev"
           else
             IMG_LATEST="$IMAGE_NAME:latest"
@@ -485,6 +496,9 @@ jobs:
       - build_rust_docker_image
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout (for CHANGELOG.md)
+        uses: actions/checkout@v4
+
       - name: Load Docker artifact (amd64)
         uses: actions/download-artifact@v4
         with:
