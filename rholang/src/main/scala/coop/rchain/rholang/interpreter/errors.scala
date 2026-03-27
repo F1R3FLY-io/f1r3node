@@ -109,6 +109,15 @@ object errors {
                                                         else cause.getMessage)
       )
 
+  final case class ProduceFailureWithOutput(
+      outputNotProduced: Seq[Array[Byte]],
+      cause: Throwable
+  ) extends InterpreterError(
+        s"Produce failed after non-deterministic call. Cause: " + (if (cause.getMessage == null)
+                                                                     cause
+                                                                   else cause.getMessage)
+      )
+
   final case object CanNotReplayFailedNonDeterministicProcess
       extends InterpreterError(
         "Can not replay failed non deterministic process."

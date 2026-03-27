@@ -697,8 +697,9 @@ jobs:
         uses: ncipollo/release-action@v1
         with:
           artifacts: /tmp/artifacts/*
-          prerelease: true
+          prerelease: false
           draft: false
           allowUpdates: true
           omitBodyDuringUpdate: true
+          bodyPath: CHANGELOG.md
           token: ${{ secrets.GITHUB_TOKEN }}
