@@ -139,19 +139,45 @@ object BlockCreator {
           (fileDeploys, nonFileDeploys) = validUnique.partition(
             d => OrphanFileCleanup.isFileRegistrationDeploy(d.data)
           )
+
+          missingFileDeploys <- s.onChainState.shardConf.fileConf.fileReplicationDir match {
+                                 case Some(dir) =>
+                                   fileDeploys.toList.filterA { d =>
+                                     Sync[F].delay {
+                                       OrphanFileCleanup.extractFileHash(d.data) match {
+                                         case Some(hash) =>
+                                           !java.nio.file.Files.exists(dir.resolve(hash))
+                                         case None => false
+                                       }
+                                     }
+                                   }
+                                 case None =>
+                                   List.empty[Signed[DeployData]].pure[F]
+                               }
+
+          _ <- missingFileDeploys.traverse_(
+                d =>
+                  Log[F].warn(
+                    s"Deploy ${Base16.encode(d.sig.toByteArray.take(8))}... FILTERED (missing file): " +
+                      s"phantom file registration ignored"
+                  )
+              )
+
+          locallyAvailableFileDeploys = fileDeploys -- missingFileDeploys
+
           // Apply count limit, then cumulative size limit (FIFO by timestamp)
-          limitedFileDeploys = fileDeploys.toList
+          limitedFileDeploys = locallyAvailableFileDeploys.toList
             .sortBy(_.data.timestamp)
             .take(maxFileDeploys)
             .foldLeft((0L, List.empty[Signed[DeployData]])) {
               case ((usedSize, accepted), d) =>
-                val size = OrphanFileCleanup.extractFileSize(d.data)
+                val size = OrphanFileCleanup.extractFileSize(d.data).getOrElse(Long.MaxValue)
                 if (usedSize + size <= maxFileDataSize) (usedSize + size, d :: accepted)
                 else (usedSize, accepted)
             }
             ._2
             .toSet
-          skippedCount = fileDeploys.size - limitedFileDeploys.size
+          skippedCount = locallyAvailableFileDeploys.size - limitedFileDeploys.size
           _ <- if (skippedCount > 0)
                 Log[F].info(
                   s"File-deploy backpressure: $skippedCount file deploy(s) deferred " +

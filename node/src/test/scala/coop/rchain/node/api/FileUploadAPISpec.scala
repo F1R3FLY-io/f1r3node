@@ -65,7 +65,9 @@ class FileUploadAPISpec extends FlatSpec with Matchers with BeforeAndAfterAll {
           validAfterBlockNumber = 0L,
           sigAlgorithm = "ed25519",
           sig = ByteString.EMPTY,
-          term = "new x in { x!(42) }" // stub term for validation
+          term = s"""new return, file(`rho:io:file`) in { file!("register", "${if (fileHash.isEmpty)
+            "0" * 64
+          else fileHash.padTo(64, '0')}", $fileSize, "test.bin", *return) }"""
         )
       )
     )

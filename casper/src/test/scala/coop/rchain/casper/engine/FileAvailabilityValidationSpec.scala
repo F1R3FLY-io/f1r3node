@@ -90,16 +90,27 @@ class FileAvailabilityValidationSpec extends FlatSpec with Matchers {
     TestNode.networkEff(genesis, networkSize = 2).use {
       case n1 +: n2 +: Seq() =>
         for {
-          // File does NOT exist on either node — impossible to replicate
+          // File exists ONLY on n1 initially to allow block creation (due to deploy filter)
+          _ <- monix.eval.Task.delay {
+                val dir1 = n1.dataDir.resolve("file-replication")
+                Files.write(dir1.resolve(testFileHash), testFileContent)
+              }
+
           deploy <- ConstructDeploy.sourceDeployNowF(
                      fileRegTerm(testFileHash),
                      shardId = genesis.genesisBlock.shardId
                    )
-          // Use createBlockUnsafe — it skips local validation, so n1 won't
-          // reject the block for missing files (file isn't on n1 either)
+
+          // n1 successfully creates the block because it has the file
           block <- n1.createBlockUnsafe(deploy)
 
-          // n2 processes the block — DA-gate can't find the file anywhere, rejects
+          // n1 maliciously (or accidentally) deletes the file before propagating the block
+          _ <- monix.eval.Task.delay {
+                val dir1 = n1.dataDir.resolve("file-replication")
+                Files.deleteIfExists(dir1.resolve(testFileHash))
+              }
+
+          // n2 processes the block — DA-gate can't find the file locally or from proposer, rejects
           result <- n2.processBlock(block)
           _      = result shouldBe Left(InvalidBlock.MissingFileData)
         } yield ()

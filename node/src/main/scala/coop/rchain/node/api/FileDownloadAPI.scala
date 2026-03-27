@@ -10,23 +10,28 @@ import java.nio.file.{Files, Path, StandardOpenOption}
 import java.util.concurrent.Semaphore
 import java.util.{Collections, LinkedHashMap}
 import org.slf4j.LoggerFactory
+import coop.rchain.shared.FileHashValidation
 
 object FileDownloadAPI {
 
   private val logger = LoggerFactory.getLogger("FileDownloadAPI")
 
-  private var _maxIpEntries: Int = 10000
+  // Initialized once in streamFile (from config) to prevent race conditions.
+  private val _maxIpEntries = new java.util.concurrent.atomic.AtomicInteger(-1)
+
+  private def getMaxIpEntries(configMax: Int): Int = {
+    _maxIpEntries.compareAndSet(-1, configMax)
+    _maxIpEntries.get()
+  }
+
   private lazy val ipSemaphores: java.util.Map[String, Semaphore] =
     Collections.synchronizedMap(
       new LinkedHashMap[String, Semaphore](128, 0.75f, true /* accessOrder */ ) {
         override def removeEldestEntry(
             eldest: java.util.Map.Entry[String, Semaphore]
-        ): Boolean = size() > _maxIpEntries
+        ): Boolean = size() > _maxIpEntries.get()
       }
     )
-
-  /** Regex for a valid Blake2b-256 hex hash (64 lowercase hex chars). */
-  private val HashPattern = "^[a-f0-9]{64}$".r
 
   /**
     * Stream a file to the client as `FileDownloadChunk` messages.
@@ -66,7 +71,7 @@ object FileDownloadAPI {
       maxCacheEntries: Int = 10000,
       finalizationChecker: String => Task[Boolean]
   ): Observable[FileDownloadChunk] = {
-    _maxIpEntries = maxCacheEntries
+    getMaxIpEntries(maxCacheEntries)
     val hash = request.fileHash
     logger.info(
       "[FileDownloadAPI] Download request: hash={}..., offset={}, readOnly={}, devMode={}",
@@ -85,8 +90,8 @@ object FileDownloadAPI {
         )
       )
     }
-    // Hash format validation
-    else if (!HashPattern.pattern.matcher(hash).matches()) {
+    // Hash format validation (use shared utility)
+    else if (!FileHashValidation.isValidFileHash(hash)) {
       logger.warn("[FileDownloadAPI] Rejected: invalid hash format '{}'", hash)
       Observable.raiseError(
         new IllegalArgumentException(s"INVALID_ARGUMENT: fileHash format invalid")
@@ -190,7 +195,23 @@ object FileDownloadAPI {
       offset: Long,
       chunkSize: Int
   ): Observable[FileDownloadChunk] = {
+    // Capture file size once to avoid duplicate syscalls
     val fileSize = Files.size(filePath)
+
+    // Validate offset before streaming
+    if (offset >= fileSize) {
+      logger.warn(
+        "[FileDownloadAPI] Rejected: offset={} >= fileSize={}, hash={}...",
+        offset.toString,
+        fileSize.toString,
+        fileHash.take(16)
+      )
+      return Observable.raiseError(
+        new IllegalArgumentException(
+          s"INVALID_ARGUMENT: offset $offset is beyond file size $fileSize"
+        )
+      )
+    }
 
     val metadataChunk = FileDownloadChunk(
       FileDownloadChunk.Chunk.Metadata(

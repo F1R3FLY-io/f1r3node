@@ -589,7 +589,7 @@ object RhoRuntime {
     // Data channel for fileRegister→FileRegistry delegation.
     // Read-only bundle: FileRegistry.rho consumes (reads), system process produces
     // to the raw GPrivate channel via produce() which bypasses bundle checks.
-    "rho:io:file:registerNotify" -> FixedChannels.FILE_REGISTRY_NOTIFY
+    "rho:io:file:registerNotify:1.0.0" -> FixedChannels.FILE_REGISTRY_NOTIFY
   )
 
   def setupReducer[F[_]: Concurrent: Parallel: _cost: Log: Metrics: Span](

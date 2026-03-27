@@ -48,19 +48,17 @@ class FileDeploySelectionSpec extends FlatSpec with Matchers {
     val (fileDeploys, nonFileDeploys) = deploys.partition(
       d => OrphanFileCleanup.isFileRegistrationDeploy(d.data)
     )
-    val limitedFileDeploys = {
-      var remaining = maxFileDataSize
-      fileDeploys.toList
-        .take(maxFileDeploys)
-        .takeWhile { d =>
-          val size = OrphanFileCleanup.extractFileSize(d.data)
-          if (remaining >= size) {
-            remaining -= size
-            true
-          } else false
-        }
-        .toSet
-    }
+    val limitedFileDeploys = fileDeploys.toList
+      .sortBy(_.data.timestamp)
+      .take(maxFileDeploys)
+      .foldLeft((0L, List.empty[Signed[DeployData]])) {
+        case ((usedSize, accepted), d) =>
+          val size = OrphanFileCleanup.extractFileSize(d.data).getOrElse(Long.MaxValue)
+          if (usedSize + size <= maxFileDataSize) (usedSize + size, d :: accepted)
+          else (usedSize, accepted)
+      }
+      ._2
+      .toSet
     nonFileDeploys ++ limitedFileDeploys
   }
 
@@ -68,17 +66,17 @@ class FileDeploySelectionSpec extends FlatSpec with Matchers {
 
   "extractFileSize" should "extract file size from a file-registration deploy" in {
     val deploy = mkSignedDeploy(fileRegTerm("a" * 64, 5242880))
-    OrphanFileCleanup.extractFileSize(deploy.data) shouldBe 5242880L
+    OrphanFileCleanup.extractFileSize(deploy.data) shouldBe Some(5242880L)
   }
 
-  it should "return 0 for non-file-registration deploys" in {
+  it should "return None for non-file-registration deploys" in {
     val deploy = mkSignedDeploy("new x in { x!(42) }")
-    OrphanFileCleanup.extractFileSize(deploy.data) shouldBe 0L
+    OrphanFileCleanup.extractFileSize(deploy.data) shouldBe None
   }
 
   it should "handle large file sizes (multi-GB)" in {
     val deploy = mkSignedDeploy(fileRegTerm("a" * 64, 53687091200L))
-    OrphanFileCleanup.extractFileSize(deploy.data) shouldBe 53687091200L
+    OrphanFileCleanup.extractFileSize(deploy.data) shouldBe Some(53687091200L)
   }
 
   // ---- count limit tests ----

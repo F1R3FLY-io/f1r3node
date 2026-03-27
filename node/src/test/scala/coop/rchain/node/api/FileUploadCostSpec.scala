@@ -55,7 +55,8 @@ class FileUploadCostSpec extends FlatSpec with Matchers with BeforeAndAfterAll {
           validAfterBlockNumber = 0L,
           sigAlgorithm = "ed25519",
           sig = ByteString.EMPTY,
-          term = "new x in { x!(42) }"
+          term =
+            s"""new return, file(`rho:io:file`) in { file!("register", "${"0" * 64}", $fileSize, "test.bin", *return) }"""
         )
       )
     )

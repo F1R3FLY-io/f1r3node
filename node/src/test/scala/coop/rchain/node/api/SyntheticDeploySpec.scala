@@ -53,7 +53,7 @@ class SyntheticDeploySpec extends FlatSpec with Matchers with BeforeAndAfterAll 
 
   /** Build a stub Rholang term the client would construct. */
   private def stubTerm(fileHash: String = referenceHash): String =
-    s"""new ret in { ret!(("register", "$fileHash", $totalBytes, "test.bin")) }"""
+    s"""new return, file(`rho:io:file`) in { file!("register", "$fileHash", $totalBytes, "test.bin", *return) }"""
 
   /**
     * Compute the client's deploy signature over the DeployData fields.

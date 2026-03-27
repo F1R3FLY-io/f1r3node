@@ -70,8 +70,7 @@ object ValidatorIdentity {
 
   def fromPrivateKeyWithLogging[F[_]: Applicative: Log](
       privKey: Option[String]
-  ): F[Option[ValidatorIdentity]] = {
-    System.out.println("privKey = " + privKey)
+  ): F[Option[ValidatorIdentity]] =
     privKey
       .map(fromHex)
       .fold(
@@ -79,5 +78,4 @@ object ValidatorIdentity {
           .warn("No private key detected, cannot create validator identification.")
           .as(none[ValidatorIdentity])
       )(_.pure)
-  }
 }

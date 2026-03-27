@@ -567,7 +567,8 @@ object TestNode {
                            rSpaceStore,
                            mStore,
                            Genesis.NonNegativeMergeableTagName,
-                           NoOpExternalServices
+                           NoOpExternalServices,
+                           Some(newStorageDir.resolve("file-replication"))
                          )
                        )
 

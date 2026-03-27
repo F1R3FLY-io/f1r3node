@@ -64,19 +64,15 @@ class DAGateSpec extends FlatSpec with Matchers {
       dir: Path,
       daFetchFiles: (BlockMessage, List[String]) => Task[List[String]]
   ): Task[Either[InvalidBlock, ValidBlock]] =
-    Task
-      .delay {
-        FileAvailability.findMissingFiles(block, dir)
-      }
-      .flatMap { missing =>
-        if (missing.isEmpty)
-          Task.pure(Right(BlockStatus.valid))
-        else
-          daFetchFiles(block, missing).map { stillMissing =>
-            if (stillMissing.isEmpty) Right(BlockStatus.valid)
-            else Left(InvalidBlock.MissingFileData)
-          }
-      }
+    FileAvailability.findMissingFiles[Task](block, dir).flatMap { missing =>
+      if (missing.isEmpty)
+        Task.pure(Right(BlockStatus.valid))
+      else
+        daFetchFiles(block, missing).map { stillMissing =>
+          if (stillMissing.isEmpty) Right(BlockStatus.valid)
+          else Left(InvalidBlock.MissingFileData)
+        }
+    }
 
   // ---- DA-gate tests ----
 

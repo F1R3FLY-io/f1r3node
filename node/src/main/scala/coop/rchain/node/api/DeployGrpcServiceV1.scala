@@ -30,11 +30,15 @@ import coop.rchain.node.web.{
 import coop.rchain.shared.Log
 import coop.rchain.shared.ThrowableOps._
 import coop.rchain.shared.syntax._
+import coop.rchain.shared.FileHashValidation
 import monix.eval.Task
 import monix.execution.Scheduler
 import monix.reactive.Observable
 
 object DeployGrpcServiceV1 {
+
+  /** URI of the FileRegistry contract registered in the rho:registry. */
+  val FILE_REGISTRY_URI = "rho:id:m6rqma7yas7o6ieos45ai4dskmc6zugs9rmsp6i3zan8qe5hsfqsdt"
 
   def apply[F[_]: Monixable: Concurrent: Log: SafetyOracle: BlockStore: Span: EngineCell: RPConfAsk: ConnectionsCell: NodeDiscovery: Metrics](
       apiMaxBlocksLimit: Int,
@@ -403,6 +407,13 @@ object DeployGrpcServiceV1 {
           response
         }).toTask
 
+      /** Delete the data file and metadata sidecar for a given hash. */
+      private def cleanupUploadedFile(hash: String): Task[Unit] =
+        Task.delay {
+          java.nio.file.Files.deleteIfExists(uploadDir.resolve(hash))
+          java.nio.file.Files.deleteIfExists(uploadDir.resolve(s"$hash.meta.json"))
+        }.void
+
       def uploadFile(request: Observable[FileUploadChunk]): Task[FileUploadResponse] =
         FileUploadAPI
           .processFileUpload(
@@ -421,12 +432,13 @@ object DeployGrpcServiceV1 {
                 // Validate client signature — same path as doDeploy
                 DeployData.from(proto) match {
                   case Left(sigErr) =>
-                    // Sig invalid — clean up saved file
+                    // Sig invalid — clean up saved file (only if NOT a dedup)
                     val hash = output.result.fileHash
-                    Task.delay {
-                      java.nio.file.Files.deleteIfExists(uploadDir.resolve(hash))
-                      java.nio.file.Files.deleteIfExists(uploadDir.resolve(s"$hash.meta.json"))
-                    } *> Task.now(
+                    // Check if the file existed before this upload (dedup case)
+                    // A dedup upload doesn't write a new file, so we must not delete the existing one.
+                    val isDedupUpload = output.result.storagePhloCost == 0L
+                    val cleanup       = if (!isDedupUpload) cleanupUploadedFile(hash) else Task.unit
+                    cleanup *> Task.now(
                       FileUploadResponse(
                         FileUploadResponse.Message.Error(
                           ServiceError(List(s"Invalid deploy signature: $sigErr"))
@@ -447,21 +459,14 @@ object DeployGrpcServiceV1 {
                         case Left(deployErr) =>
                           // Deploy rejected — clean up saved file
                           val hash = output.result.fileHash
-                          Task
-                            .delay {
-                              java.nio.file.Files.deleteIfExists(uploadDir.resolve(hash))
-                              java.nio.file.Files.deleteIfExists(
-                                uploadDir.resolve(s"$hash.meta.json")
-                              )
-                            }
-                            .map(
-                              _ =>
-                                FileUploadResponse(
-                                  FileUploadResponse.Message.Error(
-                                    ServiceError(List(s"Deploy submission failed: $deployErr"))
-                                  )
+                          cleanupUploadedFile(hash).map(
+                            _ =>
+                              FileUploadResponse(
+                                FileUploadResponse.Message.Error(
+                                  ServiceError(List(s"Deploy submission failed: $deployErr"))
                                 )
-                            )
+                              )
+                          )
                       }
                 }
 
@@ -515,13 +520,13 @@ object DeployGrpcServiceV1 {
         val log = org.slf4j.LoggerFactory.getLogger("FileDownloadAPI")
         fileHash: String =>
           require(
-            fileHash.matches("^[a-f0-9]{64}$"),
+            FileHashValidation.isValidFileHash(fileHash),
             s"Invalid hash for finalization check: $fileHash"
           )
           BlockAPI
             .exploratoryDeploy[F](
               s"""new return, rl(`rho:registry:lookup`), fileRegistryCh in {
-                 |  rl!(`rho:id:m6rqma7yas7o6ieos45ai4dskmc6zugs9rmsp6i3zan8qe5hsfqsdt`, *fileRegistryCh) |
+                 |  rl!(`${FILE_REGISTRY_URI}`, *fileRegistryCh) |
                  |  for(@(_, FileRegistry) <- fileRegistryCh) {
                  |    @FileRegistry!("lookup", "$fileHash", *return)
                  |  }

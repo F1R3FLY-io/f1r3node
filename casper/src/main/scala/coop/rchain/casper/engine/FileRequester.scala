@@ -8,7 +8,7 @@ import coop.rchain.comm.PeerNode
 import coop.rchain.comm.rp.Connect.RPConfAsk
 import coop.rchain.comm.transport.TransportLayer
 import coop.rchain.comm.syntax._
-import coop.rchain.shared.{Log, Time}
+import coop.rchain.shared.{FileHashValidation, Log, Time}
 import java.nio.file.{Path, StandardOpenOption}
 import org.bouncycastle.crypto.digests.Blake2bDigest
 import scala.concurrent.duration._
@@ -34,7 +34,9 @@ class FileRequester[F[_]: Concurrent: Log: Time: TransportLayer: RPConfAsk: Time
     maxRetries: Int = 10,
     // Upper bound on exponential backoff between retries.
     // Backoff = min(stallTimeout * 2^retryCount, maxBackoff).
-    maxBackoff: FiniteDuration = 5.minutes
+    maxBackoff: FiniteDuration = 5.minutes,
+    // Maximum number of entries in the `completed` set before pruning oldest.
+    maxCompletedEntries: Int = 10000
 ) extends CasperMessageProtocol {
 
   // ---------------------------------------------------------------------------
@@ -73,10 +75,13 @@ class FileRequester[F[_]: Concurrent: Log: Time: TransportLayer: RPConfAsk: Time
     * Checks whether a file is available locally (either on disk or download completed).
     */
   def isFileAvailable(fileHash: String): F[Boolean] =
-    for {
-      onDisk     <- Sync[F].delay(java.nio.file.Files.exists(dataDir.resolve(fileHash)))
-      isComplete <- completed.get.map(_.contains(fileHash))
-    } yield onDisk || isComplete
+    if (!FileHashValidation.isValidFileHash(fileHash))
+      false.pure[F]
+    else
+      for {
+        onDisk     <- Sync[F].delay(java.nio.file.Files.exists(dataDir.resolve(fileHash)))
+        isComplete <- completed.get.map(_.contains(fileHash))
+      } yield onDisk || isComplete
 
   /**
     * Triggers downloads for multiple missing file hashes by broadcasting FileRequests
@@ -84,7 +89,7 @@ class FileRequester[F[_]: Concurrent: Log: Time: TransportLayer: RPConfAsk: Time
     * Previously used handleHasFile which only started download from a single peer.
     */
   def requestFiles(peer: PeerNode, fileHashes: List[String]): F[Unit] =
-    fileHashes.traverse_ { hash =>
+    fileHashes.filter(FileHashValidation.isValidFileHash).traverse_ { hash =>
       for {
         isCompleted <- completed.get.map(_.contains(hash))
         onDisk      <- Sync[F].delay(java.nio.file.Files.exists(dataDir.resolve(hash)))
@@ -214,22 +219,27 @@ class FileRequester[F[_]: Concurrent: Log: Time: TransportLayer: RPConfAsk: Time
   }
 
   def handleHasFile(peer: PeerNode, msg: HasFile): F[Unit] =
-    for {
-      isCompleted   <- completed.get.map(_.contains(msg.fileHash))
-      onDisk        <- Sync[F].delay(java.nio.file.Files.exists(dataDir.resolve(msg.fileHash)))
-      isDownloading <- downloads.get.map(_.contains(msg.fileHash))
-      _ <- Log[F].info(
-            s"[FileRequester] handleHasFile: hash=${msg.fileHash.take(16)}..., peer=$peer, " +
-              s"completed=$isCompleted, onDisk=$onDisk, downloading=$isDownloading, dataDir=$dataDir"
-          )
-      _ <- if (!isCompleted && !onDisk && !isDownloading) {
-            startDownload(peer, msg.fileHash)
-          } else {
-            Log[F].info(
-              s"[FileRequester] Skipping download of ${msg.fileHash.take(16)}... (already handled)"
+    if (!FileHashValidation.isValidFileHash(msg.fileHash))
+      Log[F].warn(
+        s"[FileRequester] handleHasFile: rejecting invalid hash from $peer: ${msg.fileHash.take(20)}"
+      )
+    else
+      for {
+        isCompleted   <- completed.get.map(_.contains(msg.fileHash))
+        onDisk        <- Sync[F].delay(java.nio.file.Files.exists(dataDir.resolve(msg.fileHash)))
+        isDownloading <- downloads.get.map(_.contains(msg.fileHash))
+        _ <- Log[F].info(
+              s"[FileRequester] handleHasFile: hash=${msg.fileHash.take(16)}..., peer=$peer, " +
+                s"completed=$isCompleted, onDisk=$onDisk, downloading=$isDownloading, dataDir=$dataDir"
             )
-          }
-    } yield ()
+        _ <- if (!isCompleted && !onDisk && !isDownloading) {
+              startDownload(peer, msg.fileHash)
+            } else {
+              Log[F].info(
+                s"[FileRequester] Skipping download of ${msg.fileHash.take(16)}... (already handled)"
+              )
+            }
+      } yield ()
 
   private def startDownload(peer: PeerNode, fileHash: String): F[Unit] =
     for {
@@ -277,105 +287,109 @@ class FileRequester[F[_]: Concurrent: Log: Time: TransportLayer: RPConfAsk: Time
     }
 
   def handleFilePacket(peer: PeerNode, msg: FilePacket): F[Unit] =
-    Log[F].info(
-      s"[FileRequester] handleFilePacket: hash=${msg.fileHash.take(16)}..., offset=${msg.offset}, " +
-        s"dataSize=${msg.data.size}, eof=${msg.eof}, from=$peer"
-    ) *> {
-      // Atomically claim this offset: only one thread wins the race.
-      // This prevents the corruption bug where two FilePacket responses at the same
-      // offset both pass validation and both write to the .part file.
-      downloads
-        .modify { state =>
-          state.get(msg.fileHash) match {
-            case Some(ds) if msg.offset == ds.bytesReceived =>
-              // Claim this offset by advancing bytesReceived atomically
-              val newBytesReceived = ds.bytesReceived + msg.data.size
-              val nowMs            = System.currentTimeMillis()
-              // Reset retryCount on successful progress — the stall detector
-              // backoff resets so the next stall is detected quickly.
-              val updated = ds.copy(
-                bytesReceived = newBytesReceived,
-                lastProgressMs = nowMs,
-                lastPeer = Some(peer),
-                knownPeers = ds.knownPeers + peer,
-                retryCount = 0
-              )
-              (state + (msg.fileHash -> updated), Some((ds, newBytesReceived)))
-            case _ =>
-              // Either not found, or offset doesn't match (duplicate/late packet)
-              (state, None)
-          }
-        }
-        .flatMap {
-          case Some((ds, newBytesReceived)) =>
-            val progress = ds.expectedSize match {
-              case Some(total) if total > 0 =>
-                f"${newBytesReceived.toDouble / total * 100}%.1f%% (${humanSize(newBytesReceived)} / ${humanSize(total)})"
-              case _ =>
-                humanSize(newBytesReceived)
-            }
-            Log[F].info(
-              s"[FileRequester] Packet progress: hash=${msg.fileHash.take(16)}..., " +
-                s"bytesReceived=$newBytesReceived, progress=$progress"
-            ) *> (
-              // Size guard: abort if bytesReceived exceeds expected file size
-              ds.expectedSize match {
-                case Some(expected) if newBytesReceived > expected =>
-                  Log[F].error(
-                    s"File ${msg.fileHash} exceeded expected size ($newBytesReceived > $expected). " +
-                      s"Aborting download and deleting .tmp."
-                  ) >>
-                    Sync[F].delay(java.nio.file.Files.deleteIfExists(ds.tempPath)) >>
-                    downloads.update(_ - msg.fileHash)
+    if (!FileHashValidation.isValidFileHash(msg.fileHash))
+      Log[F].warn(
+        s"[FileRequester] handleFilePacket: rejecting invalid hash from $peer: ${msg.fileHash.take(20)}"
+      )
+    else {
+      val data = msg.data.toByteArray
+      Log[F].info(
+        s"[FileRequester] handleFilePacket: hash=${msg.fileHash.take(16)}..., offset=${msg.offset}, " +
+          s"dataSize=${msg.data.size}, eof=${msg.eof}, from=$peer"
+      ) *> {
+        // Atomically claim this offset: only one thread wins the race.
+        // This prevents the corruption bug where two FilePacket responses at the same
+        // offset both pass validation and both write to the .part file.
+        downloads
+          .modify { state =>
+            state.get(msg.fileHash) match {
+              case Some(ds) if msg.offset == ds.bytesReceived =>
+                // Claim this offset by advancing bytesReceived atomically
+                val newBytesReceived = ds.bytesReceived + msg.data.size
+                val nowMs            = System.currentTimeMillis()
 
-                case _ =>
-                  for {
-                    _ <- Sync[F].delay {
-                          // Append data to file and update digest
-                          val data = msg.data.toByteArray
-                          java.nio.file.Files.write(
-                            ds.tempPath,
-                            data,
-                            StandardOpenOption.CREATE,
-                            StandardOpenOption.APPEND
-                          )
-                          // IMPORTANT: `ds.digest` is a mutable Blake2bDigest object shared
-                          // by reference with the updated map entry.
-                          // The `modify` above updated `bytesReceived` but the `digest` field
-                          // aliases the SAME JVM object in both the old `ds` and the new entry.
-                          // This is safe because we hold exclusive ownership of this offset
-                          // (only one thread wins the `modify`), but any refactor making
-                          // DownloadState truly immutable must restructure this to update
-                          // the digest inside the `modify` block.
-                          ds.digest.update(data, 0, data.length)
-                        }
-                    _ <- if (msg.eof) {
-                          finalizeDownload(
-                            msg.fileHash,
-                            ds.copy(bytesReceived = newBytesReceived)
-                          )
-                        } else {
-                          requestChunk(peer, msg.fileHash, newBytesReceived)
-                        }
-                  } yield ()
-              }
-            )
-          case None =>
-            // Check if it's unknown or a duplicate
-            downloads.get.flatMap { state =>
-              state.get(msg.fileHash) match {
-                case Some(ds) =>
-                  Log[F].info(
-                    s"[FileRequester] Ignoring duplicate packet for ${msg.fileHash.take(16)}...: " +
-                      s"expected offset=${ds.bytesReceived}, got offset=${msg.offset}, from=$peer"
-                  )
-                case None =>
-                  Log[F].warn(
-                    s"[FileRequester] Received packet for UNKNOWN download ${msg.fileHash}"
-                  )
-              }
+                // CRITICAL FIX: clone BouncyCastle Blake2bDigest here!
+                // DownloadState is immutable, so we must not share or mutate the old digest.
+                val clonedDigest = new org.bouncycastle.crypto.digests.Blake2bDigest(ds.digest)
+                clonedDigest.update(data, 0, data.length)
+
+                // Reset retryCount on successful progress — the stall detector
+                // backoff resets so the next stall is detected quickly.
+                val updated = ds.copy(
+                  bytesReceived = newBytesReceived,
+                  lastProgressMs = nowMs,
+                  lastPeer = Some(peer),
+                  knownPeers = ds.knownPeers + peer,
+                  retryCount = 0,
+                  digest = clonedDigest
+                )
+                (state + (msg.fileHash -> updated), Some((updated, newBytesReceived)))
+              case _ =>
+                // Either not found, or offset doesn't match (duplicate/late packet)
+                (state, None)
             }
-        }
+          }
+          .flatMap {
+            case Some((ds, newBytesReceived)) =>
+              val progress = ds.expectedSize match {
+                case Some(total) if total > 0 =>
+                  f"${newBytesReceived.toDouble / total * 100}%.1f%% (${humanSize(newBytesReceived)} / ${humanSize(total)})"
+                case _ =>
+                  humanSize(newBytesReceived)
+              }
+              Log[F].info(
+                s"[FileRequester] Packet progress: hash=${msg.fileHash.take(16)}..., " +
+                  s"bytesReceived=$newBytesReceived, progress=$progress"
+              ) *> (
+                // Size guard: abort if bytesReceived exceeds expected file size
+                ds.expectedSize match {
+                  case Some(expected) if newBytesReceived > expected =>
+                    Log[F].error(
+                      s"File ${msg.fileHash} exceeded expected size ($newBytesReceived > $expected). " +
+                        s"Aborting download and deleting .tmp."
+                    ) >>
+                      Sync[F].delay(java.nio.file.Files.deleteIfExists(ds.tempPath)) >>
+                      downloads.update(_ - msg.fileHash)
+
+                  case _ =>
+                    for {
+                      _ <- Sync[F].delay {
+                            // Append data to file (digest is already updated and atomic in state)
+                            java.nio.file.Files.write(
+                              ds.tempPath,
+                              data,
+                              StandardOpenOption.CREATE,
+                              StandardOpenOption.APPEND
+                            )
+                          }
+                      _ <- if (msg.eof) {
+                            finalizeDownload(
+                              msg.fileHash,
+                              ds
+                            )
+                          } else {
+                            requestChunk(peer, msg.fileHash, newBytesReceived)
+                          }
+                    } yield ()
+                }
+              )
+            case None =>
+              // Check if it's unknown or a duplicate
+              downloads.get.flatMap { state =>
+                state.get(msg.fileHash) match {
+                  case Some(ds) =>
+                    Log[F].info(
+                      s"[FileRequester] Ignoring duplicate packet for ${msg.fileHash.take(16)}...: " +
+                        s"expected offset=${ds.bytesReceived}, got offset=${msg.offset}, from=$peer"
+                    )
+                  case None =>
+                    Log[F].warn(
+                      s"[FileRequester] Received packet for UNKNOWN download ${msg.fileHash}"
+                    )
+                }
+              }
+          }
+      }
     }
 
   private def finalizeDownload(fileHash: String, ds: DownloadState): F[Unit] =
@@ -391,17 +405,36 @@ class FileRequester[F[_]: Concurrent: Log: Time: TransportLayer: RPConfAsk: Time
               java.nio.file.Files
                 .move(ds.tempPath, finalPath, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
             ) >>
-              completed.update(_ + fileHash) >>
+              // Prune completed set if it exceeds the max size
+              completed.modify { set =>
+                val updated = set + fileHash
+                if (updated.size > maxCompletedEntries) {
+                  // Drop oldest entries (Set is unordered, so just drop excess)
+                  (updated.drop(updated.size - maxCompletedEntries), ())
+                } else (updated, ())
+              } >>
               downloads.update(_ - fileHash) >>
               Log[F].info(s"File $fileHash download complete and verified.")
           } else {
-            // TODO: When a PeerScore mechanism is added, apply a negative score penalty
-            // to the serving peer here. This deters serving corrupted/tampered files.
+            // Hash mismatch — retry from a different peer if available
+            val failedPeer = ds.lastPeer
+            val otherPeers = ds.knownPeers -- failedPeer.toSet
             Log[F].error(
-              s"File $fileHash download failed verification (calc: $hexDigest, exp: $fileHash). Deleting."
+              s"File $fileHash download failed verification (calc: $hexDigest, exp: $fileHash). " +
+                s"failedPeer=$failedPeer, otherPeers=${otherPeers.size}"
             ) >>
               Sync[F].delay(java.nio.file.Files.deleteIfExists(ds.tempPath)) >>
-              downloads.update(_ - fileHash)
+              downloads.update(_ - fileHash) >>
+              (if (otherPeers.nonEmpty) {
+                 val retryPeer = otherPeers.head
+                 Log[F].info(
+                   s"[FileRequester] Retrying download of ${fileHash.take(16)}... from $retryPeer (hash mismatch retry)"
+                 ) *> startDownload(retryPeer, fileHash)
+               } else {
+                 Log[F].error(
+                   s"[FileRequester] No alternative peers for ${fileHash.take(16)}..., giving up"
+                 )
+               })
           }
     } yield ()
 
@@ -423,12 +456,18 @@ class FileRequester[F[_]: Concurrent: Log: Time: TransportLayer: RPConfAsk: Time
     }
 
   def handleFileRequest(peer: PeerNode, msg: FileRequest): F[Unit] = {
+    if (!FileHashValidation.isValidFileHash(msg.fileHash))
+      return Log[F].warn(
+        s"[FileRequester] handleFileRequest: rejecting invalid hash from $peer: ${msg.fileHash.take(20)}"
+      )
     val filePath = dataDir.resolve(msg.fileHash)
+    // Clamp peer-supplied chunkSize to our local maximum to prevent OOM
+    val safeChunkSize = math.min(msg.chunkSize, chunkSize).max(1)
     // Wrap Files.exists in Sync[F].delay to avoid blocking the calling fiber's thread
     Sync[F].delay(java.nio.file.Files.exists(filePath)).flatMap { exists =>
       Log[F].info(
         s"[FileRequester] handleFileRequest: hash=${msg.fileHash.take(16)}..., offset=${msg.offset}, " +
-          s"chunkSize=${msg.chunkSize}, fileExists=$exists, from=$peer"
+          s"chunkSize=${msg.chunkSize} (clamped=$safeChunkSize), fileExists=$exists, from=$peer"
       ) *> (if (exists) {
               for {
                 // Read chunk using RandomAccessFile + heap byte array.
@@ -440,18 +479,21 @@ class FileRequester[F[_]: Concurrent: Log: Time: TransportLayer: RPConfAsk: Time
                 //   java.lang.OutOfMemoryError: Cannot reserve 16777216 bytes of direct buffer memory
                 // RandomAccessFile.read() uses heap byte arrays, avoiding this issue entirely.
                 result <- Sync[F].delay {
-                           val raf      = new java.io.RandomAccessFile(filePath.toFile, "r")
-                           val fileSize = raf.length()
-                           raf.seek(msg.offset)
-                           val arr  = new Array[Byte](msg.chunkSize)
-                           val read = raf.read(arr)
-                           raf.close()
-                           val bytes = if (read > 0) {
-                             com.google.protobuf.ByteString.copyFrom(arr, 0, read)
-                           } else {
-                             com.google.protobuf.ByteString.EMPTY
+                           val raf = new java.io.RandomAccessFile(filePath.toFile, "r")
+                           try {
+                             val fileSize = raf.length()
+                             raf.seek(msg.offset)
+                             val arr  = new Array[Byte](safeChunkSize)
+                             val read = raf.read(arr)
+                             val bytes = if (read > 0) {
+                               com.google.protobuf.ByteString.copyFrom(arr, 0, read)
+                             } else {
+                               com.google.protobuf.ByteString.EMPTY
+                             }
+                             (bytes, fileSize)
+                           } finally {
+                             raf.close()
                            }
-                           (bytes, fileSize)
                          }
                 (bytes, fileSize) = result
                 eof               = (msg.offset + bytes.size) >= fileSize

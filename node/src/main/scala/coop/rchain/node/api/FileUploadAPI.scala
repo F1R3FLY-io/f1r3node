@@ -9,6 +9,7 @@ import java.nio.ByteBuffer
 import java.nio.channels.FileChannel
 import java.nio.file.{Files, Path, StandardCopyOption, StandardOpenOption}
 import java.util.UUID
+import coop.rchain.shared.FileHashValidation
 
 /**
   * Result from [[FileUploadAPI.processFileUpload]].
@@ -248,7 +249,7 @@ object FileUploadAPI {
         s"File too large: ${metadata.fileSize} bytes exceeds maximum ${maxFileSize} bytes " +
           s"(${maxFileSize / (1024 * 1024)} MB)"
       )
-    else if (metadata.fileHash.nonEmpty && !metadata.fileHash.matches("^[a-f0-9]{64}$"))
+    else if (metadata.fileHash.nonEmpty && !FileHashValidation.isValidFileHash(metadata.fileHash))
       Left(s"Invalid fileHash format: must be 64 lowercase hex characters")
     else if (metadata.shardId != nodeShardId)
       Left(s"Invalid shardId: ${metadata.shardId} != $nodeShardId")
@@ -256,6 +257,8 @@ object FileUploadAPI {
       Left(s"Phlo price ${metadata.phloPrice} is lower than minimum $minPhloPrice")
     else if (metadata.term.isEmpty)
       Left("Missing required field: term (client must provide the signed Rholang term)")
+    else if (!coop.rchain.casper.util.OrphanFileCleanup.isCanonicalFileDeploy(metadata.term))
+      Left("Invalid file upload term: must be the canonical 'rho:io:file' registration format")
     else {
       val totalRequired =
         FileUploadCosts.totalRequired(metadata.fileSize, phloPerStorageByte, baseRegisterPhlo)
@@ -309,14 +312,9 @@ object FileUploadAPI {
         )
     else
       Task.delay {
-        val finalFile = uploadDir.resolve(computedHash)
-        if (Files.exists(finalFile)) {
-          Files.deleteIfExists(tempFile)
-        } else {
-          Files.move(tempFile, finalFile, StandardCopyOption.ATOMIC_MOVE)
-        }
-
-        // Write metadata sidecar
+        // Write metadata sidecar atomically: write to .tmp then rename.
+        // This prevents a race condition where concurrent dedup uploads
+        // or a JVM crash could leave a corrupt .meta.json.
         val meta = FileMetadata(
           fileName = metadata.fileName,
           fileSize = metadata.fileSize,
@@ -324,8 +322,24 @@ object FileUploadAPI {
           timestamp = metadata.timestamp,
           hash = computedHash
         )
-        val metaFile = uploadDir.resolve(s"$computedHash.meta.json")
-        Files.write(metaFile, FileMetadata.toJson(meta).getBytes("UTF-8"))
+        val metaFile    = uploadDir.resolve(s"$computedHash.meta.json")
+        val metaTmpFile = uploadDir.resolve(s"$computedHash.meta.json.tmp")
+        Files.write(metaTmpFile, FileMetadata.toJson(meta).getBytes("UTF-8"))
+        Files.move(
+          metaTmpFile,
+          metaFile,
+          StandardCopyOption.ATOMIC_MOVE,
+          StandardCopyOption.REPLACE_EXISTING
+        )
+
+        // Rename data file last — if JVM crashes between meta write and
+        // data rename, the meta sidecar is already consistent.
+        val finalFile = uploadDir.resolve(computedHash)
+        if (Files.exists(finalFile)) {
+          Files.deleteIfExists(tempFile)
+        } else {
+          Files.move(tempFile, finalFile, StandardCopyOption.ATOMIC_MOVE)
+        }
 
         buildOutput(metadata, computedHash, phloPerStorageByte, baseRegisterPhlo)
       }

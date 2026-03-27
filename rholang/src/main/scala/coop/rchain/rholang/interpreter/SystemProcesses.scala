@@ -218,7 +218,8 @@ object SystemProcesses {
     BodyRefs.OLLAMA_CHAT,
     BodyRefs.OLLAMA_GENERATE,
     BodyRefs.OLLAMA_MODELS,
-    BodyRefs.FILE_DELETE
+    BodyRefs.FILE_DELETE,
+    BodyRefs.FILE_REGISTER
   )
 
   final case class ProcessContext[F[_]: Concurrent: Span: Log: _cost](
@@ -793,7 +794,6 @@ object SystemProcesses {
             )
             ) =>
           for {
-            blockInfo <- blockData.get
             output <- if (fileSize <= 0) {
                        val result: Seq[Par] =
                          Seq(
@@ -806,6 +806,12 @@ object SystemProcesses {
                          )
                        produce(result, ack).map(_ => result)
                      } else {
+                       // TODO: Implement signature verification against the block proposer’s
+                       // public key. Currently `verified` is hardcoded to `true` because the
+                       // actual security boundary is the GSysAuthToken delegation to
+                       // FileRegistry.rho. The system process is never directly callable from
+                       // user Rholang — it only fires via the `rho:io:file` fixed channel which
+                       // is write-only from the Rholang side.
                        val verified = true
                        if (verified) {
                          // Charge storage-proportional phlo (consensus-enforced)
@@ -832,13 +838,13 @@ object SystemProcesses {
                                RhoType.String(fileHash),
                                RhoType.String(fileName),
                                deployerIdPar,
-                               sysAuthTokenPar
+                               sysAuthTokenPar,
+                               ack
                              )
                              // Produce to the direct channel that FileRegistry.rho
                              // consumes from. Must match the URN map entry exactly.
                              val notifyCh: Par = FixedChannels.FILE_REGISTRY_NOTIFY
-                             produce(notifyData, notifyCh) >>
-                               produce(result, ack).map(_ => result)
+                             produce(notifyData, notifyCh).map(_ => result)
                            }
                          }
                        } else {

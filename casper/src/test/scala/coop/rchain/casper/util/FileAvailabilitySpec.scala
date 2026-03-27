@@ -152,7 +152,7 @@ class FileAvailabilitySpec extends FlatSpec with Matchers {
     try {
       Files.write(dir.resolve(testHash), Array[Byte](1, 2, 3))
       val block   = mkBlock(fileRegTerm(testHash), fileRegTerm(testHash2))
-      val missing = FileAvailability.findMissingFiles(block, dir)
+      val missing = FileAvailability.findMissingFiles[Task](block, dir).runSyncUnsafe()
       missing shouldBe List(testHash2)
     } finally {
       dir.toFile.listFiles().foreach(_.delete())

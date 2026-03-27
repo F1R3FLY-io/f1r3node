@@ -65,9 +65,11 @@ object FileAvailability {
 
   /**
     * Returns the list of file hashes from a block that are not yet present locally.
+    * Wrapped in F[_] to avoid blocking I/O in a pure context.
     */
-  def findMissingFiles(block: BlockMessage, fileReplicationDir: Path): List[String] = {
-    val hashes = extractFileHashes(block)
-    hashes.filterNot(h => Files.exists(fileReplicationDir.resolve(h)))
-  }
+  def findMissingFiles[F[_]: Sync](block: BlockMessage, fileReplicationDir: Path): F[List[String]] =
+    Sync[F].delay {
+      val hashes = extractFileHashes(block)
+      hashes.filterNot(h => Files.exists(fileReplicationDir.resolve(h)))
+    }
 }

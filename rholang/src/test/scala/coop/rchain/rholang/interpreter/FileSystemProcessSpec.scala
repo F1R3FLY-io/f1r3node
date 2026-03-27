@@ -41,8 +41,17 @@ class FileSystemProcessSpec extends FlatSpec with Matchers {
     )
   }
 
-  it should "register with malformed hex signature returns (false, error)" in {
-    // Test removed since sig hex is no longer required
+  it should "register with invalid negative fileSize returns (false, error)" in {
+    val rho =
+      s"""new ret, file(`rho:io:file`) in {
+         |  file!("register", "$testFileHash", -1024, "$testFileName", *ret) |
+         |  for(@(success, msg) <- ret) {
+         |    @"result"!(success, msg)
+         |  }
+         |}""".stripMargin
+
+    val result = execute(rho)
+    result.errors shouldBe empty
   }
 
   it should "delete without valid SysAuthToken returns (false, error)" in {

@@ -52,7 +52,7 @@ new
   sysAuthTokenOps(`sys:authToken:ops`),
   // Fixed channel: the rho:io:file system process produces delegation data here
   // after successful sig verification + phlo charging.
-  registerNotify(`rho:io:file:registerNotify`),
+  registerNotify(`rho:io:file:registerNotify:1.0.0`),
   // Private unforgeable -- the "shape secret" for AuthKey.
   // Analogous to _systemVault in SystemVault.rho.
   // Never exposed outside this contract; makes AuthKeys unforgeable.
@@ -70,6 +70,8 @@ in {
   rl!(`rho:system:authKey`,    *AuthKeyCh)  |
   rl!(`rho:lang:either`,       *EitherCh)   |
   rl!(`rho:lang:treeHashMap`,  *TreeHashMapCh) |
+  
+  _tokenInitFlag!(true) |
 
   for (@(_, AuthKey)  <- AuthKeyCh &
        @(_, Either)   <- EitherCh  &
@@ -139,16 +141,24 @@ in {
         // deployerId, sysAuthToken) here after successful sig verification
         // and phlo charging.
         //
-        // M7 FIX: Unconditionally store the sysAuthToken. The token is always
+        // M7 FIX: Unconditionally store the sysAuthToken ONCE. The token is always
         // the same unforgeable value, so repeated produces are idempotent.
-        // _deleteTemplate reads with peek (`<<-`), so it only reads the first
-        // value and does not consume it.
-        //
-        contract registerNotify(@fileHash, @fileName, ownerDeployerId, @sysAuthToken) = {
+        // We use the `_tokenInitFlag` one-shot channel to ensure it is stored exactly once.
+        contract registerNotify(@fileHash, @fileName, ownerDeployerId, @sysAuthToken, ack) = {
           new regAckCh in {
-            // Idempotent: always produce the token. _deleteTemplate reads with peek.
-            _sysAuthTokenCh!(sysAuthToken) |
-            FileRegistry!("register", fileHash, fileName, *ownerDeployerId, sysAuthToken, *regAckCh)
+            // Exactly one of the many notify calls will consume _tokenInitFlag(true)
+            // and produce the unforgeable sysAuthToken to the persistent channel.
+            for (_ <- _tokenInitFlag) {
+              _sysAuthTokenCh!(sysAuthToken)
+            } |
+            FileRegistry!("register", fileHash, fileName, *ownerDeployerId, sysAuthToken, *regAckCh) |
+            for (@res <- regAckCh) {
+              match res {
+                (true, _) => ack!((true, fileHash))
+                (false, msg) => ack!((false, msg))
+                _ => ack!((false, "Unknown error from FileRegistry"))
+              }
+            }
           }
         } |
 

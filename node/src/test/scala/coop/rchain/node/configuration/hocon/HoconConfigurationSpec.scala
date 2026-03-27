@@ -86,7 +86,7 @@ class HoconConfigurationSpec extends FunSuite with Matchers {
         )
       ), // defaults from config
       fileUpload = FileUploadConf(
-        chunkSize = 4194304,
+        chunkSize = 16777216,
         replicationDir = "file-replication",
         phloPerStorageByte = 1,
         baseRegisterPhlo = 300,
@@ -125,7 +125,7 @@ class HoconConfigurationSpec extends FunSuite with Matchers {
         grpcMaxRecvMessageSize = 16777216,
         portHttp = 40403,
         portAdminHttp = 40405,
-        maxBlocksLimit = 50,
+        maxBlocksLimit = 100,
         enableReporting = false,
         keepAliveTime = 2.hours,
         keepAliveTimeout = 20.seconds,
@@ -158,7 +158,7 @@ class HoconConfigurationSpec extends FunSuite with Matchers {
         maxParentDepth = Some(2147483647),
         forkChoiceStaleThreshold = 10.minutes,
         forkChoiceCheckIfStaleInterval = 11.minutes,
-        synchronyConstraintThreshold = 0.67,
+        synchronyConstraintThreshold = 0.0,
         heightConstraintThreshold = 1000,
         roundRobinDispatcher = RoundRobinDispatcher(
           maxPeerQueueSize = 100,

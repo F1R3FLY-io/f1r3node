@@ -62,7 +62,7 @@ class FileUploadConfigSpec extends FunSuite with Matchers {
 
   test("Parse defaults.conf: file-upload defaults are present") {
     val conf = loadConf()
-    conf.fileUpload.chunkSize shouldEqual 4194304L // 4 MB
+    conf.fileUpload.chunkSize shouldEqual 16777216L // 16 MB
     conf.fileUpload.replicationDir shouldEqual "file-replication"
     conf.fileUpload.phloPerStorageByte shouldEqual 1L
     conf.fileUpload.baseRegisterPhlo shouldEqual 300L

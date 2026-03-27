@@ -107,8 +107,7 @@ object CasperLaunch {
           disableStateExporter: Boolean
       ): F[Unit] = {
         def askPeersForForkChoiceTips = CommUtil[F].sendForkChoiceTipRequest
-        def sendBufferPendantsToCasper(casper: Casper[F]) = {
-          System.out.println("sendBufferPendantsToCasper")
+        def sendBufferPendantsToCasper(casper: Casper[F]) =
           for {
             pendants <- CasperBufferStorage[F].getPendants
             // pendantsReceived are either
@@ -143,7 +142,6 @@ object CasperLaunch {
                       } yield ()
                   )
           } yield ()
-        }
 
         for {
           validatorId                 <- ValidatorIdentity.fromPrivateKeyWithLogging[F](conf.validatorPrivateKey)
@@ -181,8 +179,7 @@ object CasperLaunch {
         } yield ()
       }
 
-      private def connectAsGenesisValidator(): F[Unit] = {
-        System.out.println("connectAsGenesisValidator")
+      private def connectAsGenesisValidator(): F[Unit] =
         for {
           timestamp <- conf.genesisBlockData.deployTimestamp.fold(Time[F].currentMillis)(_.pure[F])
           bonds <- BondsParser.parse[F](
@@ -218,10 +215,8 @@ object CasperLaunch {
                 )
               )
         } yield ()
-      }
 
-      private def initBootstrap(disableStateExporter: Boolean): F[Unit] = {
-        System.out.println("initBootstrap")
+      private def initBootstrap(disableStateExporter: Boolean): F[Unit] =
         for {
           validatorId <- ValidatorIdentity.fromPrivateKeyWithLogging[F](conf.validatorPrivateKey)
           abp <- ApproveBlockProtocol
@@ -258,7 +253,6 @@ object CasperLaunch {
               )
           _ <- EngineCell[F].set(new GenesisCeremonyMaster[F](abp))
         } yield ()
-      }
 
       private def connectAndQueryApprovedBlock(
           trimState: Boolean,

@@ -458,29 +458,31 @@ class MultiParentCasperImpl[F[_]
                      "file-availability",
                      casperShardConf.fileConf.fileReplicationDir match {
                        case Some(dir) =>
-                         val missing = FileAvailability.findMissingFiles(b, dir)
-                         if (missing.isEmpty)
-                           BlockStatus.valid.asRight[BlockError].pure[F]
-                         else
-                           for {
-                             _ <- Log[F].info(
-                                   s"DA-gate: ${missing.size} file(s) missing for block " +
-                                     s"${PrettyPrinter.buildString(b.blockHash)}, " +
-                                     s"triggering P2P fetch: ${missing.mkString(", ")}"
-                                 )
-                             stillMissing <- daFetchFiles(b, missing)
-                             _ <- if (stillMissing.nonEmpty)
-                                   Log[F].warn(
-                                     s"DA-gate: ${stillMissing.size} file(s) still missing after timeout " +
-                                       s"for block ${PrettyPrinter.buildString(b.blockHash)}: " +
-                                       s"${stillMissing.mkString(", ")}"
-                                   )
-                                 else ().pure[F]
-                           } yield
-                             if (stillMissing.isEmpty)
-                               BlockStatus.valid.asRight[BlockError]
+                         FileAvailability.findMissingFiles[F](b, dir).flatMap {
+                           missing =>
+                             if (missing.isEmpty)
+                               BlockStatus.valid.asRight[BlockError].pure[F]
                              else
-                               BlockStatus.missingFileData.asLeft[ValidBlock]
+                               for {
+                                 _ <- Log[F].info(
+                                       s"DA-gate: ${missing.size} file(s) missing for block " +
+                                         s"${PrettyPrinter.buildString(b.blockHash)}, " +
+                                         s"triggering P2P fetch: ${missing.mkString(", ")}"
+                                     )
+                                 stillMissing <- daFetchFiles(b, missing)
+                                 _ <- if (stillMissing.nonEmpty)
+                                       Log[F].warn(
+                                         s"DA-gate: ${stillMissing.size} file(s) still missing after timeout " +
+                                           s"for block ${PrettyPrinter.buildString(b.blockHash)}: " +
+                                           s"${stillMissing.mkString(", ")}"
+                                       )
+                                     else ().pure[F]
+                               } yield
+                                 if (stillMissing.isEmpty)
+                                   BlockStatus.valid.asRight[BlockError]
+                                 else
+                                   BlockStatus.missingFileData.asLeft[ValidBlock]
+                         } // end flatMap
                        case None =>
                          // No fileReplicationDir configured — skip file availability check
                          BlockStatus.valid.asRight[BlockError].pure[F]
@@ -662,6 +664,16 @@ class MultiParentCasperImpl[F[_]
       case ib: InvalidBlock if InvalidBlock.isSlashable(ib) =>
         handleInvalidBlockEffect(ib, block)
 
+      case InvalidBlock.MissingFileData =>
+        // MissingFileData is NOT permanent — the files may still be in transit.
+        // Return the block to CasperBuffer for retry instead of discarding.
+        Log[F]
+          .warn(
+            s"Block ${PrettyPrinter.buildString(block.blockHash)} has MissingFileData — " +
+              s"returning to buffer for retry when files arrive."
+          )
+          .as(dag)
+
       case ib: InvalidBlock =>
         CasperBufferStorage[F].remove(block.blockHash) >> Log[F]
           .warn(
@@ -674,13 +686,10 @@ class MultiParentCasperImpl[F[_]
 
 object MultiParentCasperImpl {
 
-  // TODO: Extract hardcoded deployLifespan from shard config
-  // Size of deploy safety range.
-  // Validators will try to put deploy in a block only for next `deployLifespan` blocks.
-  // Required to enable protection from re-submitting duplicate deploys.
-  // Set to 250 to accommodate 6 GB P2P file replication with default casper-loop-interval=30s:
-  // at ~6s/block the LFB lags 100+ blocks while a large block validates; a lifespan of 250
-  // (≈ 25 min) ensures the file deploy is never evicted before replication completes.
+  // Deploy lifespan: how many blocks a deploy stays eligible for inclusion.
+  // This value is now configurable via CasperShardConf.deployLifespan.
+  // The constant below is kept only as a fallback for code paths that
+  // don't have access to the config (e.g. Initializing.scala bootstrap).
   val deployLifespan = 250
 
   def addedEvent(block: BlockMessage): RChainEvent = {

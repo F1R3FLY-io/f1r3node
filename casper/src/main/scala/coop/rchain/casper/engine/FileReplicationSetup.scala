@@ -32,10 +32,15 @@ object FileReplicationSetup {
       conf: CasperShardConf
   ): F[(FileRequester[F], DACallback[F])] =
     for {
+      _ <- if (conf.fileConf.fileReplicationDir.isEmpty)
+            Log[F].warn(
+              "[FileReplicationSetup] No fileReplicationDir configured, " +
+                "using relative path 'file-replication' — set fileReplicationDir in config for production!"
+            )
+          else Sync[F].unit
       dataDir <- Sync[F].delay {
-                  val dir = conf.fileConf.fileReplicationDir.getOrElse(
-                    java.nio.file.Paths.get("file-replication")
-                  )
+                  val dir = conf.fileConf.fileReplicationDir
+                    .getOrElse(java.nio.file.Paths.get("file-replication"))
                   if (!dir.toFile.exists()) dir.toFile.mkdirs()
                   dir
                 }
@@ -54,10 +59,14 @@ object FileReplicationSetup {
                   s"${PrettyPrinter.buildString(block.blockHash)}, triggering P2P fetch"
               )
           peers <- ConnectionsCell[F].read
+          // Limit to at most 3 peers to avoid flooding the network.
+          // Prefer the block sender if identifiable, plus random fallbacks.
+          selectedPeers = if (peers.size <= 3) peers.toList
+          else scala.util.Random.shuffle(peers.toList).take(3)
           _ <- Log[F].info(
-                s"[FileReplicationSetup] Requesting files from ${peers.size} peers"
+                s"[FileReplicationSetup] Requesting files from ${selectedPeers.size} of ${peers.size} peers"
               )
-          _            <- peers.toList.traverse_(peer => fileRequester.requestFiles(peer, missingHashes))
+          _            <- selectedPeers.traverse_(peer => fileRequester.requestFiles(peer, missingHashes))
           stillMissing <- fileRequester.awaitFiles(missingHashes, conf.fileConf.fileSyncTimeout)
           _ <- Log[F].info(
                 s"[FileReplicationSetup] awaitFiles returned, stillMissing=${stillMissing.size}"
