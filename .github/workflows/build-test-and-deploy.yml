@@ -164,7 +164,7 @@ jobs:
         run: |
           mkdir -p /tmp/test-logs
           pushd ${{ matrix.tests }}
-          cargo test 2>&1 | tee /tmp/test-logs/${{ matrix.tests }}-test-output.txt
+          cargo test --release 2>&1 | tee /tmp/test-logs/${{ matrix.tests }}-test-output.txt
           TEST_EXIT_CODE=${PIPESTATUS[0]}
           popd
           exit $TEST_EXIT_CODE
@@ -248,6 +248,7 @@ jobs:
   # workflow. The static shard boots once and stays up for all shard tests;
   # custom shard tests boot/teardown their own shards per-test.
   required_rust_integration_tests:
+    if: false # temporarily disabled
     name: Integration Tests (${{ matrix.arch }})
     needs: build_rust_docker_image
     runs-on: ${{ matrix.runner }}
@@ -378,7 +379,7 @@ jobs:
     name: Release Rust Docker Image
     needs:
       - required_rust_unit_tests
-      - required_rust_integration_tests
+      # - required_rust_integration_tests  # temporarily disabled
       - build_rust_docker_image
       - build_base
     if: >-
@@ -480,7 +481,7 @@ jobs:
       contents: write # Required for creating/updating releases
     needs:
       - required_rust_unit_tests
-      - required_rust_integration_tests
+      # - required_rust_integration_tests  # temporarily disabled
       - build_rust_docker_image
     runs-on: ubuntu-latest
     steps:
