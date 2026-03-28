@@ -532,5 +532,5 @@ jobs:
           draft: false
           allowUpdates: true
           omitBodyDuringUpdate: true
-          bodyPath: CHANGELOG.md
+          bodyFile: CHANGELOG.md
           token: ${{ secrets.GITHUB_TOKEN }}
