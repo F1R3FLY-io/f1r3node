@@ -4,6 +4,13 @@ All notable changes to the Rust implementation of F1r3node will be documented in
 This changelog is automatically generated from conventional commits.
 
 
+## [v0.4.4] - 2026-03-28
+
+### Bug Fixes
+
+- use bodyFile instead of bodyPath for release changelog
+
+
 ## [v0.4.3] - 2026-03-27
 
 ### Bug Fixes
