@@ -437,7 +437,6 @@ jobs:
   # workflow. The static shard boots once and stays up for all shard tests;
   # custom shard tests boot/teardown their own shards per-test.
   required_integration_tests:
-    if: false # temporarily disabled
     name: Integration Tests (${{ matrix.arch }})
     needs: build_docker_image
     runs-on: ${{ matrix.runner }}
@@ -587,7 +586,7 @@ jobs:
     name: Release Docker Image
     needs:
       - required_scala_unit_tests
-      # - required_integration_tests  # temporarily disabled
+      - required_integration_tests
       - build_docker_image
       - build_base
     if: >-
@@ -695,7 +694,7 @@ jobs:
       contents: write # Required for creating/updating releases
     needs:
       - required_scala_unit_tests
-      # - required_integration_tests  # temporarily disabled
+      - required_integration_tests
       - build_packages
     if: "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/scala-v')"
     runs-on: ubuntu-22.04

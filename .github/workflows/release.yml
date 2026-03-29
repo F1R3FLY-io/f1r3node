@@ -76,9 +76,11 @@ jobs:
           args: --tag ${{ steps.version.outputs.TAG_NAME }} -o CHANGELOG.md
 
       - name: Commit release
+        id: release_commit
         run: |
           git add version.sbt CHANGELOG.md
           git commit -m "chore(release): scala v${{ steps.version.outputs.NEXT_VERSION }}"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Prepare next development cycle
         if: steps.version.outputs.BRANCH == 'main'
@@ -105,9 +107,8 @@ jobs:
             const tagName = '${{ steps.version.outputs.TAG_NAME }}';
             const sha = '${{ github.sha }}';
 
-            // Get the SHA of the release commit (HEAD after our commits)
-            const { execSync } = require('child_process');
-            const commitSha = execSync('git rev-parse HEAD').toString().trim();
+            // Use the release commit SHA (before SNAPSHOT commit)
+            const commitSha = '${{ steps.release_commit.outputs.sha }}';
 
             // Create annotated tag object
             const tagObject = await github.rest.git.createTag({
