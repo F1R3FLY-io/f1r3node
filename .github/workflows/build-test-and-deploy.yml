@@ -15,12 +15,6 @@ on:
       - rust/main
       - "feature/**"
 
-# Prevent interleaving of integration test jobs on single-runner-per-arch
-# self-hosted runners. A second workflow run for the same ref queues until
-# the first completes rather than cancelling it.
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-
 env:
   # Enable AES/SSE2 CPU features for gxhash dependency (required by PathMap crate)
   # GitHub Actions runners support these features on x86_64
@@ -182,7 +176,7 @@ jobs:
           path: /tmp/test-logs/
           retention-days: 7
 
-  # Build Rust Docker image natively on each arch using self-hosted runners.
+  # Build Rust Docker image natively on each arch using GitHub-hosted runners.
   build_rust_docker_image:
     name: Build Rust Docker Image (${{ matrix.arch }})
     needs: build_base
@@ -191,42 +185,21 @@ jobs:
       matrix:
         include:
           - platform: linux/amd64
-            runner: [self-hosted, Linux, X64, f1r3fly-rust-ci]
+            runner: ubuntu-latest
             arch: amd64
           - platform: linux/arm64
-            runner: [self-hosted, Linux, ARM64, f1r3fly-rust-ci]
+            runner: ubuntu-24.04-arm
             arch: arm64
     steps:
-      - name: Clean self-hosted runner state
-        shell: bash {0}
-        run: |
-          sudo rm -rf system-integration/integration-tests/data
-          rm -rf ../artifacts /tmp/rust-node-docker.tar.gz /tmp/f1r3fly-worktree.tar.gz
-
       - name: Clone Repository
         uses: actions/checkout@v4
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Enable Containerd Image Store
-        shell: bash -ex {0}
-        run: |
-          sudo mkdir -p /etc/docker
-          DESIRED='{"features": {"containerd-snapshotter": true}}'
-          CURRENT=$(cat /etc/docker/daemon.json 2>/dev/null || echo '{}')
-          if [ "$CURRENT" != "$DESIRED" ]; then
-            echo "$DESIRED" | sudo tee /etc/docker/daemon.json | jq
-            sudo systemctl restart docker
-            echo "Docker daemon restarted (config changed)"
-          else
-            echo "Docker daemon config already up to date, skipping restart"
-          fi
-
       - name: Build Docker Image
         shell: bash -ex {0}
         run: |
-          docker context use default
           docker buildx build \
             --platform ${{ matrix.platform }} \
             --file node/Dockerfile \
@@ -237,8 +210,8 @@ jobs:
       - name: Export Docker Image
         shell: bash -ex {0}
         run: |
-          mkdir -p ../artifacts
-          git describe --tags --always >../artifacts/version.txt
+          mkdir -p /tmp/artifacts
+          git describe --tags --always >/tmp/artifacts/version.txt
           docker image save f1r3flyindustries/f1r3fly-rust-node:${{ matrix.arch }} \
               | gzip > /tmp/rust-node-docker.tar.gz
 
@@ -248,29 +221,36 @@ jobs:
           name: artifacts-docker-${{ matrix.arch }}
           path: /tmp/rust-node-docker.tar.gz
 
-  # Integration tests on OCI self-hosted runners (one runner per arch).
-  # All tests run in a single pytest invocation per arch, matching local dev
-  # workflow. The static shard boots once and stays up for all shard tests;
-  # custom shard tests boot/teardown their own shards per-test.
+  # Integration tests on GitHub-hosted runners, parallelized by test module.
+  # Each test module gets its own ephemeral runner (2 arches × 16 modules = 32 jobs).
   required_rust_integration_tests:
-    name: Integration Tests (${{ matrix.arch }})
+    name: Integration Tests (${{ matrix.arch.name }}/${{ matrix.test }})
     needs: build_rust_docker_image
-    runs-on: ${{ matrix.runner }}
+    runs-on: ${{ matrix.arch.runner }}
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - arch: amd64
-            runner: [self-hosted, Linux, X64, f1r3fly-rust-ci]
-          - arch: arm64
-            runner: [self-hosted, Linux, ARM64, f1r3fly-rust-ci]
+        arch:
+          - { runner: ubuntu-latest, name: amd64 }
+          - { runner: ubuntu-24.04-arm, name: arm64 }
+        test:
+          - test_asymmetric_bonds
+          - test_bonding_validators
+          - test_consensus_health
+          - test_dag_correctness
+          - test_deployment
+          - test_finalization
+          - test_genesis_ceremony
+          - test_heartbeat
+          - test_propose
+          - test_slash
+          - test_storage
+          - test_synchrony_constraint
+          - test_trim_state
+          - test_unbond
+          - test_wallets
+          - test_web_api
     steps:
-      - name: Clean self-hosted runner state
-        shell: bash {0}
-        run: |
-          sudo rm -rf system-integration/integration-tests/data
-          rm -f /tmp/rust-node-docker.tar.gz /tmp/*.log
-
       - name: Clone Repository
         uses: actions/checkout@v4
 
@@ -296,32 +276,14 @@ jobs:
       - name: Load Docker Image
         uses: actions/download-artifact@v4
         with:
-          name: artifacts-docker-${{ matrix.arch }}
+          name: artifacts-docker-${{ matrix.arch.name }}
           path: /tmp
 
       - name: Import Docker Image
         shell: bash -ex {0}
         run: |
           zcat /tmp/rust-node-docker.tar.gz | docker image load
-          docker tag f1r3flyindustries/f1r3fly-rust-node:${{ matrix.arch }} f1r3flyindustries/f1r3fly-rust-node
-
-      - name: Install docker-compose
-        shell: bash -ex {0}
-        run: |
-          if ! command -v docker-compose &>/dev/null; then
-            sudo curl -L "https://github.com/docker/compose/releases/download/v2.32.4/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-            sudo chmod +x /usr/local/bin/docker-compose
-          fi
-          docker-compose --version
-
-      - name: Reset Docker networking
-        shell: bash {0}
-        run: |
-          docker rm -f $(docker ps -aq) 2>/dev/null || true
-          docker network prune -f 2>/dev/null || true
-          echo "Restarting Docker daemon to clear any TIME_WAIT sockets from previous runs"
-          sudo systemctl restart docker
-          sleep 3
+          docker tag f1r3flyindustries/f1r3fly-rust-node:${{ matrix.arch.name }} f1r3flyindustries/f1r3fly-rust-node
 
       - name: Install system-integration dependencies
         shell: bash -ex {0}
@@ -337,17 +299,17 @@ jobs:
         run: |
           cd system-integration
           SCALE_FLAG=""
-          if [ "${{ matrix.arch }}" = "arm64" ]; then
+          if [ "${{ matrix.arch.name }}" = "arm64" ]; then
             SCALE_FLAG="--timeout-scale=1.5"
           fi
-          poetry run pytest integration-tests/test/ -v --tb=short --log-cli-level=WARNING \
+          poetry run pytest integration-tests/test/${{ matrix.test }}.py -v --tb=short --log-cli-level=WARNING \
             --startup-timeout=600 --command-timeout=300 --timeout=600 $SCALE_FLAG
 
       - name: Upload Integration Test Logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: integration-logs-${{ matrix.arch }}
+          name: integration-logs-${{ matrix.arch.name }}-${{ matrix.test }}
           path: system-integration/integration-tests/
           retention-days: 7
 
@@ -355,20 +317,10 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: docker-logs-${{ matrix.arch }}
+          name: docker-logs-${{ matrix.arch.name }}-${{ matrix.test }}
           path: /tmp/*.log
           if-no-files-found: ignore
           retention-days: 7
-
-      - name: Clean Docker state
-        if: always()
-        shell: bash {0}
-        run: |
-          docker rm -f rnode.bootstrap rnode.validator1 rnode.validator2 rnode.validator3 rnode.readonly \
-            rnode.standalone rnode.custom.boot rnode.custom.validator1 rnode.custom.validator2 \
-            rnode.custom.validator3 rnode.custom.joiner 2>/dev/null
-          docker network rm f1r3fly-shard_f1r3fly-test-shard f1r3fly-standalone_f1r3fly-test-standalone f1r3fly-custom_f1r3fly-test-custom 2>/dev/null
-          sudo rm -rf system-integration/integration-tests/data
 
   # release_* jobs make built artifacts available to public and run only on new
   # tags or pushes to "staging" or "trying" branches used by Bors (bors r+ and bors try).
