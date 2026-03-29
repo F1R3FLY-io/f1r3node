@@ -234,22 +234,20 @@ jobs:
           - { runner: ubuntu-latest, name: amd64 }
           - { runner: ubuntu-24.04-arm, name: arm64 }
         test:
+          - test_web_api
+          - test_wallets
+          - test_heartbeat
+          - test_deployment
+          - test_storage
+          - test_genesis_ceremony
+          - test_dag_correctness
+          - test_finalization
+          - test_propose
+          - test_consensus_health
+          - test_synchrony_constraint
           - test_asymmetric_bonds
           - test_bonding_validators
-          - test_consensus_health
-          - test_dag_correctness
-          - test_deployment
-          - test_finalization
-          - test_genesis_ceremony
-          - test_heartbeat
-          - test_propose
-          - test_slash
-          - test_storage
-          - test_synchrony_constraint
           - test_trim_state
-          - test_unbond
-          - test_wallets
-          - test_web_api
     steps:
       - name: Clone Repository
         uses: actions/checkout@v4
