@@ -624,7 +624,7 @@ proptest! {
         hot_store.put_datum(&key.clone(), d);
       }
 
-      hot_store.remove_datum(&key.clone(), index - 1);
+      let _ = hot_store.remove_datum(&key.clone(), index - 1);
       let res = hot_store.get_data(&key);
       let expected: Vec<Datum<String>> = data.into_iter()
          .filter(|d| d.a != datum_value.clone() + &(11 - index).to_string())
