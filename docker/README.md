@@ -86,9 +86,9 @@ CLI flags used per role:
 | `--required-signatures N` | Bootstrap |
 | `--genesis-validator` | Validators 1-3 |
 
-Key settings in `default.conf`:
-- `fault-tolerance-threshold = 0.99` (near-unanimous finalization)
-- `synchrony-constraint-threshold = 0` (no synchrony gate on proposals)
+Key settings in `default.conf` (see [Consensus Configuration Guide](https://github.com/F1R3FLY-io/system-integration/blob/main/docs/consensus-configuration.md) for detailed semantics):
+- `fault-tolerance-threshold = 0.1` (tolerates 1 expelled validator in 3-validator set)
+- `synchrony-constraint-threshold = 0` (no synchrony gate on proposals — correct for multi-parent DAG)
 - `enable-mergeable-channel-gc = true`
 - `heartbeat.enabled = true` (overridden via `--heartbeat-disabled` for bootstrap/observer)
 
