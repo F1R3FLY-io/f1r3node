@@ -243,6 +243,7 @@ jobs:
           - test_dag_correctness
           - test_finalization
           - test_propose
+          - test_replay_determinism
           - test_consensus_health
           - test_synchrony_constraint
           - test_asymmetric_bonds
@@ -307,8 +308,13 @@ jobs:
           if [ "${{ matrix.arch.name }}" = "arm64" ]; then
             SCALE_FLAG="--timeout-scale=1.5"
           fi
+          DESELECT_FLAG=""
+          if [ "${{ matrix.test }}" = "test_replay_determinism" ]; then
+            # Skip test_network_recovers_from_slow_deploy — see f1r3node#463
+            DESELECT_FLAG="--deselect integration-tests/test/test_replay_determinism.py::test_network_recovers_from_slow_deploy"
+          fi
           poetry run pytest integration-tests/test/${{ matrix.test }}.py -v --tb=short --log-cli-level=WARNING \
-            --startup-timeout=600 --command-timeout=300 --timeout=600 $SCALE_FLAG
+            --startup-timeout=600 --command-timeout=300 --timeout=600 $SCALE_FLAG $DESELECT_FLAG
 
       - name: Upload Integration Test Logs
         if: always()

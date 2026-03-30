@@ -714,7 +714,6 @@ where
                         (consume_result.0, consume_result.1, p.unwrap_or_else(|| produce_ref))
                     })),
                     None => {
-                        // println!("\nwas none");
                         Ok(self.store_data(channel, data, persist, produce_ref))
                     }
                 }
@@ -800,19 +799,13 @@ where
     }
 
     fn matches(&self, comm: COMM, datum_with_index: (Datum<A>, i32)) -> bool {
-        // println!("\ncomm in matches: {:?}", comm);
         let datum = datum_with_index.0;
         let x = comm.produces.contains(&datum.source);
         let res = x && self.was_repeated_enough_times(comm, datum);
-        // println!("\ncomm.produce.contains: {:?}", x);
-        // println!("\nmatches result: {:?}", res);
         res
     }
 
     fn was_repeated_enough_times(&self, comm: COMM, datum: Datum<A>) -> bool {
-        // println!("\ncomm in was_repeated_enough_times: {:?}", comm);
-        // println!("\n\ndatum in was_repeated_enough_times: {:?}", datum);
-        // println!("\nproduce_counter: {:?}", self.produce_counter);
         if !datum.persist {
             let x = *comm.times_repeated.get(&datum.source).unwrap_or(&0) ==
                 self.get_produce_count(&datum.source);
@@ -1071,7 +1064,7 @@ where
                 } = consume_candidate;
 
                 if !persist {
-                    self.store.remove_datum(&channel, datum_index)
+                    self.store.remove_datum(&channel, datum_index).ok()
                 } else {
                     Some(())
                 }
@@ -1222,7 +1215,9 @@ where
 
                 let channels_clone = channels.clone();
                 if datum_index >= 0 && !persist {
-                    self.store.remove_datum(&channel, datum_index);
+                    if self.store.remove_datum(&channel, datum_index).is_err() {
+                        return None;
+                    }
                 }
                 self.store.remove_join(&channel, &channels_clone);
 
