@@ -174,7 +174,7 @@ class ProposerSpec extends FlatSpec with Matchers with BlockDagStorageFixture {
       }
   }
   it should "crash the node on structural validation failure (e.g. InvalidFormat)" in {
-    an[Throwable] should be thrownBy {
+    a[StructuralValidationError] should be thrownBy {
       withStorage { implicit blockStore => implicit blockDagStorage =>
         {
           runtimeManagerResource

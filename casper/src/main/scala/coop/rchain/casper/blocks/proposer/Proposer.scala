@@ -35,6 +35,8 @@ object ProposerResult {
   def started(seqNumber: Int): ProposerResult = ProposerStarted(seqNumber)
 }
 
+final case class StructuralValidationError(msg: String) extends Exception(msg)
+
 class Proposer[F[_]: Concurrent: Log: Span: EventPublisher](
     // base state on top of which block will be created
     getCasperSnapshot: Casper[F] => F[CasperSnapshot[F]],
@@ -111,7 +113,7 @@ class Proposer[F[_]: Concurrent: Log: Span: EventPublisher](
                                   // the problem immediately visible to the operator.
                                   case _ =>
                                     Concurrent[F].raiseError[(ProposeResult, Option[BlockMessage])](
-                                      new Throwable(
+                                      StructuralValidationError(
                                         s"Self-created block validation failed with structural error: $v -- this indicates a bug in block creation"
                                       )
                                     )
@@ -191,6 +193,8 @@ class Proposer[F[_]: Concurrent: Log: Span: EventPublisher](
         ) >>
           proposeIdDef.complete(ProposerResult.empty).attempt.void >>
           (ProposeResult.failure(InternalDeployError), none[BlockMessage]).pure[F]
+      case ex: StructuralValidationError =>
+        Concurrent[F].raiseError(ex)
       case ex =>
         // Catch-all: any other error (MatchError from Rholang runtime, unexpected
         // runtime exceptions, etc.) must NOT crash the node.  Log the error and
