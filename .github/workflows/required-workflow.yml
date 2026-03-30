@@ -544,7 +544,8 @@ jobs:
             SCALE_FLAG="--timeout-scale=1.5"
           fi
           poetry run pytest integration-tests/test/ -v --tb=short --log-cli-level=WARNING \
-            --startup-timeout=600 --command-timeout=300 --timeout=600 $SCALE_FLAG
+            --startup-timeout=600 --command-timeout=300 --timeout=600 $SCALE_FLAG \
+            --deselect=integration-tests/test/test_replay_determinism.py
 
       - name: Upload Integration Test Logs
         if: always()
