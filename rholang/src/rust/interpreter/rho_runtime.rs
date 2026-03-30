@@ -933,7 +933,7 @@ fn std_rho_ai_processes() -> Vec<Definition> {
     ]
 }
 
-#[cfg(feature="chromadb")]
+#[cfg(feature = "chromadb")]
 fn std_rho_chroma_processes() -> Vec<Definition> {
     vec![
         Definition {
@@ -1024,7 +1024,7 @@ fn std_rho_chroma_processes() -> Vec<Definition> {
     ]
 }
 
-#[cfg(not(feature="chromadb"))]
+#[cfg(not(feature = "chromadb"))]
 fn std_rho_chroma_processes() -> Vec<Definition> {
     vec![]
 }

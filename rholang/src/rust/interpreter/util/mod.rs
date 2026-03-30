@@ -8,7 +8,7 @@ use super::matcher::has_locally_free::HasLocallyFree;
 pub mod address_tools;
 pub mod base58;
 pub mod vault_address;
-#[cfg(feature="chromadb")]
+#[cfg(feature = "chromadb")]
 pub mod sbert_embeddings;
 
 // Helper enum. This is 'GeneratedMessage' in Scala

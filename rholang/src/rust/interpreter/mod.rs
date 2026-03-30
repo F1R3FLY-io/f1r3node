@@ -1,9 +1,9 @@
 use errors::InterpreterError;
 
 pub mod accounting;
-#[cfg(feature="chromadb")]
+#[cfg(feature = "chromadb")]
 pub mod chromadb_service;
-#[cfg(not(feature="chromadb"))]
+#[cfg(not(feature = "chromadb"))]
 #[path = "chromadb_service_stub.rs"]
 pub mod chromadb_service;
 pub mod compiler;
