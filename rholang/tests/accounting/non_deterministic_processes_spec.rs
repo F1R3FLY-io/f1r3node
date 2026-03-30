@@ -13,7 +13,6 @@ use rholang::rust::interpreter::{
     openai_service::{create_mock_openai_service, create_noop_openai_service, OpenAIMockConfig},
     rho_runtime::RhoRuntime,
 };
-#[cfg(feature="chromadb")]
 use rholang::rust::interpreter::chromadb_service::create_noop_chromadb_service;
 use rspace_plus_plus::rspace::history::history_repository::HistoryRepository;
 use rspace_plus_plus::rspace::shared::{
@@ -38,7 +37,6 @@ fn create_test_external_services(
         openai_enabled: true,
         ollama_enabled: false,
         is_validator: true,
-        #[cfg(feature="chromadb")]
         chroma: create_noop_chromadb_service(),
     }
 }
@@ -53,7 +51,6 @@ fn create_test_external_services_grpc(grpc_mock: GrpcClientMockConfig) -> Extern
         openai_enabled: false,
         ollama_enabled: false,
         is_validator: true,
-        #[cfg(feature="chromadb")]
         chroma: create_noop_chromadb_service(),
     }
 }

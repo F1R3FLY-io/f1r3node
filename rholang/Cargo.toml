@@ -70,4 +70,4 @@ chroma = { version = "0.10.0", optional = true }
 cc = "1.0"
 
 [features]
-chromadb = []
+chromadb = ["dep:chroma", "dep:rust-bert"]

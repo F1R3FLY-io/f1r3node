@@ -442,10 +442,6 @@ impl ChromaDBService {
                         ))
                     })?;
 
-                // Q (chase): There are a lot of parameters to query with but we
-                // currently do it via document text. Do we need to support any
-                // of the others (e.g N for n nearest neighbours, "where 
-                // document/metadata =", ids etc)?
                 let raw_res = collection
                     .query(
                         embeddings,
@@ -457,7 +453,7 @@ impl ChromaDBService {
                     .await
                     .map_err(|err| {
                         InterpreterError::ChromaDBError(format!(
-                            "Failed to upsert entries in collection {collection_name}: {}",
+                            "Failed to query entries in collection {collection_name}: {}",
                             err
                         ))
                     })?;
@@ -548,7 +544,7 @@ pub fn create_chromadb_service() -> SharedChromaDBService {
     Arc::new(ChromaDBService::new_real())
 }
 
-/// Create a NoOp OpenAI service
+/// Create a NoOp ChromaDB service
 pub fn create_noop_chromadb_service() -> SharedChromaDBService {
     Arc::new(ChromaDBService::new_noop())
 }

@@ -1,6 +1,7 @@
+use crate::rust::interpreter::chromadb_service::SharedChromaDBService;
 #[cfg(feature="chromadb")]
 use crate::rust::interpreter::chromadb_service::{
-    CollectionEntries, Metadata, SharedChromaDBService
+    CollectionEntries, Metadata
 };
 #[cfg(feature="chromadb")]
 use crate::rust::interpreter::rho_type::{Extractor, RhoList, RhoNil};
@@ -287,7 +288,6 @@ impl ProcessContext {
         openai_service: SharedOpenAIService,
         ollama_service: SharedOllamaService,
         grpc_client_service: GrpcClientService,
-        #[cfg(feature="chromadb")]
         chromadb_service: SharedChromaDBService,
     ) -> Self {
         ProcessContext {
@@ -304,7 +304,6 @@ impl ProcessContext {
                 openai_service,
                 ollama_service,
                 grpc_client_service,
-                #[cfg(feature="chromadb")]
                 chromadb_service,
             ),
         }
@@ -462,7 +461,7 @@ pub struct SystemProcesses {
     ollama_service: SharedOllamaService,
     grpc_client_service: GrpcClientService,
     pretty_printer: PrettyPrinter,
-    #[cfg(feature="chromadb")]
+    #[allow(dead_code)] // Note: This isn't dead when the chromadb flag is used
     chromadb_service: SharedChromaDBService,
 }
 
@@ -475,7 +474,6 @@ impl SystemProcesses {
         openai_service: SharedOpenAIService,
         ollama_service: SharedOllamaService,
         grpc_client_service: GrpcClientService,
-        #[cfg(feature="chromadb")]
         chromadb_service: SharedChromaDBService,
     ) -> Self {
         SystemProcesses {
@@ -487,7 +485,6 @@ impl SystemProcesses {
             ollama_service,
             grpc_client_service,
             pretty_printer: PrettyPrinter::new(),
-            #[cfg(feature="chromadb")]
             chromadb_service
         }
     }
@@ -1743,9 +1740,10 @@ impl SystemProcesses {
             .upsert_entries(&collection_name, entries)
             .await?;
 
-        let p = RhoString::create_par(collection_name);
-        produce(&[p], ack).await?;
-        Ok(vec![])
+        let result_par = RhoString::create_par(collection_name);
+        let output = vec![result_par];
+        produce(&output, ack).await?;
+        Ok(output)
     }
 
     #[cfg(feature="chromadb")]
@@ -1821,9 +1819,10 @@ impl SystemProcesses {
             .delete_documents(&collection_name, doc_ids)
             .await?;
 
-        let p = RhoString::create_par(collection_name);
-        produce(&[p], ack).await?;
-        Ok(vec![])
+        let result_par = RhoString::create_par(collection_name);
+        let output = vec![result_par];
+        produce(&output, ack).await?;
+        Ok(output)
     }
 
     // ChromaDB section end

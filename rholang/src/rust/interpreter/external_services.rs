@@ -3,7 +3,7 @@
 //
 // Uses enum-based dispatch instead of trait objects for async compatibility.
 
-#[cfg(feature="chromadb")]
+
 use super::chromadb_service::{create_noop_chromadb_service, create_chromadb_service, SharedChromaDBService};
 use super::errors::InterpreterError;
 use super::grpc_client_service::GrpcClientService;
@@ -25,7 +25,7 @@ pub struct ExternalServices {
     pub openai_enabled: bool,
     pub ollama_enabled: bool,
     pub is_validator: bool,
-    #[cfg(feature="chromadb")]
+    
     pub chroma: SharedChromaDBService,
 }
 
@@ -39,7 +39,6 @@ impl ExternalServices {
             openai_enabled: openai_config.enabled,
             ollama_enabled: ollama_config.enabled,
             is_validator: true,
-            #[cfg(feature="chromadb")]
             chroma: create_chromadb_service(),
         }
     }
@@ -54,8 +53,7 @@ impl ExternalServices {
             openai_enabled: false,
             ollama_enabled: false,
             is_validator: false,
-            #[cfg(feature="chromadb")]
-            chroma: create_chromadb_service(),
+            chroma: create_noop_chromadb_service(),
         }
     }
 
@@ -69,7 +67,6 @@ impl ExternalServices {
             openai_enabled: false,
             ollama_enabled: false,
             is_validator: false,
-            #[cfg(feature="chromadb")]
             chroma: create_noop_chromadb_service(),
         }
     }
@@ -103,7 +100,6 @@ impl ExternalServices {
             openai_enabled: openai_config.enabled,
             ollama_enabled: ollama_config.enabled,
             is_validator: true,
-            #[cfg(feature="chromadb")]
             chroma: create_chromadb_service(),
         })
     }
