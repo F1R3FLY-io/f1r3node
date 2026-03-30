@@ -1,7 +1,15 @@
 [package]
 name = "node"
-version = "0.1.0"
+version = "0.4.5"
 edition = "2021"
+
+[features]
+default = []
+schnorr_secp256k1_experimental = [
+    "crypto/schnorr_secp256k1_experimental",
+    "casper/schnorr_secp256k1_experimental",
+    "models/schnorr_secp256k1_experimental",
+]
 
 [lib]
 doctest = false
@@ -16,6 +24,7 @@ comm = { path = "../comm" }
 rspace_plus_plus = { path = "../rspace++" }
 graphz = { path = "../graphz" }
 block-storage = { path = "../block-storage" }
+base64 = "0.22"
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 itertools = { workspace = true }
@@ -31,7 +40,7 @@ tonic = { workspace = true }
 prost = { workspace = true }
 tonic-prost = { workspace = true }
 colored = "3.0"
-rholang-parser = { git = "https://github.com/F1R3FLY-io/rholang-rs", branch = "f1r3node_dependecies" }
+rholang-parser = { git = "https://github.com/F1R3FLY-io/rholang-rs", rev = "d25f953a" }
 rustyline = "13.0"
 rpassword = "7.4"
 tracing = { workspace = true }

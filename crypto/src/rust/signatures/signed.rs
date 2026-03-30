@@ -6,6 +6,8 @@ use crate::rust::{
     public_key::PublicKey,
 };
 
+#[cfg(feature = "schnorr_secp256k1_experimental")]
+use super::{frost_secp256k1::FrostSecp256k1, schnorr_secp256k1::SchnorrSecp256k1};
 use super::{secp256k1_eth::Secp256k1Eth, signatures_alg::SignaturesAlg};
 
 pub trait ToMessage {
@@ -69,6 +71,14 @@ impl<A: std::fmt::Debug + serde::Serialize + ToMessage> Signed<A> {
                 let mut combined = prefix;
                 combined.extend(serialized_data);
                 Keccak256::hash(combined)
+            }
+            #[cfg(feature = "schnorr_secp256k1_experimental")]
+            name if name == SchnorrSecp256k1::name() => {
+                SchnorrSecp256k1::domain_separated_hash(&serialized_data)
+            }
+            #[cfg(feature = "schnorr_secp256k1_experimental")]
+            name if name == FrostSecp256k1::name() => {
+                FrostSecp256k1::domain_separated_hash(&serialized_data)
             }
 
             _ => Blake2b256::hash(serialized_data),

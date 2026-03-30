@@ -25,7 +25,7 @@ impl KeyValueStore for LmdbKeyValueStore {
             .into_iter()
             .map(|key| db.get(&reader, &key).map_err(|e| e.into()))
             .collect();
-        reader.commit()?;
+        drop(reader);
         results
     }
 
@@ -76,7 +76,29 @@ impl KeyValueStore for LmdbKeyValueStore {
             let (key, value) = result?;
             f(key.to_vec(), value);
         }
-        reader.commit()?;
+        drop(reader);
+        Ok(())
+    }
+
+    fn iterate_while(
+        &self,
+        f: &mut dyn FnMut(ByteBuffer, ByteBuffer) -> Result<bool, KvStoreError>,
+    ) -> Result<(), KvStoreError> {
+        let db = self.db.lock().map_err(|_| {
+            KvStoreError::LockError(
+                "LMDB Key Value Store: Failed to acquire lock on db".to_string(),
+            )
+        })?;
+
+        let reader = self.env.read_txn()?;
+        let iter = db.iter(&reader)?;
+        for result in iter {
+            let (key, value) = result?;
+            if !f(key.to_vec(), value)? {
+                break;
+            }
+        }
+        drop(reader);
         Ok(())
     }
 
@@ -98,7 +120,7 @@ impl KeyValueStore for LmdbKeyValueStore {
             let (key, value) = result?;
             map.insert(key.to_vec(), value);
         }
-        reader.commit()?;
+        drop(reader);
         Ok(map)
     }
 
@@ -133,7 +155,7 @@ impl KeyValueStore for LmdbKeyValueStore {
             let mut iter = db.iter(&reader)?;
             iter.next().is_some()
         };
-        reader.commit()?;
+        drop(reader);
         Ok(has_first)
     }
 }

@@ -228,7 +228,26 @@ message Expr {
     EMinusMinus e_minus_minus_body = 30;          // set difference
 
     EMod e_mod_body = 31;
+
+    // Fields 32-33 reserved for future use
+
+    // Extended numeric types (Rholang numeric types spec, 2025-11-13)
+    // fixed64 (not protobuf double) to preserve bit-exact IEEE 754 semantics (-0.0 vs 0.0, NaN payloads)
+    fixed64 g_double = 34;         // IEEE 754 f64 stored as raw bits (covers f32 losslessly)
+    bytes g_big_int = 35;          // Arbitrary-precision signed integer (big-endian two's complement)
+    GBigRational g_big_rat = 36;   // Exact rational number
+    GFixedPoint g_fixed_point = 37; // Fixed-point decimal
   }
+}
+
+message GBigRational {
+  bytes numerator = 1;             // BigInt as big-endian two's complement
+  bytes denominator = 2;           // BigInt as big-endian two's complement, always > 0
+}
+
+message GFixedPoint {
+  bytes unscaled = 1;              // BigInt as big-endian two's complement
+  uint32 scale = 2;                // Number of decimal digits: actual_value = unscaled / 10^scale
 }
 
 message EList {

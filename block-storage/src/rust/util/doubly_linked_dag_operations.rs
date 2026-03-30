@@ -1,46 +1,35 @@
 // See block-storage/src/main/scala/coop/rchain/blockstorage/util/DoublyLinkedDagOperations.scala
 
-use dashmap::{DashMap, DashSet};
 use shared::rust::store::key_value_store::KvStoreError;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use models::rust::block_hash::BlockHashSerde;
 
 #[derive(Debug, Clone)]
 pub struct BlockDependencyDag {
-    pub parent_to_child_adjacency_list: DashMap<BlockHashSerde, DashSet<BlockHashSerde>>,
-    pub child_to_parent_adjacency_list: DashMap<BlockHashSerde, DashSet<BlockHashSerde>>,
-    pub dependency_free: DashSet<BlockHashSerde>,
+    pub parent_to_child_adjacency_list: HashMap<BlockHashSerde, HashSet<BlockHashSerde>>,
+    pub child_to_parent_adjacency_list: HashMap<BlockHashSerde, HashSet<BlockHashSerde>>,
+    pub dependency_free: HashSet<BlockHashSerde>,
 }
 
 impl BlockDependencyDag {
     pub fn empty() -> Self {
         BlockDependencyDag {
-            parent_to_child_adjacency_list: DashMap::new(),
-            child_to_parent_adjacency_list: DashMap::new(),
-            dependency_free: DashSet::new(),
+            parent_to_child_adjacency_list: HashMap::new(),
+            child_to_parent_adjacency_list: HashMap::new(),
+            dependency_free: HashSet::new(),
         }
     }
 
-    pub fn add(&self, parent: BlockHashSerde, child: BlockHashSerde) {
-        if let Some(set) = self.parent_to_child_adjacency_list.get_mut(&parent) {
-            set.insert(child.clone());
-        } else {
-            let set = DashSet::new();
-            set.insert(child.clone());
-            self.parent_to_child_adjacency_list
-                .insert(parent.clone(), set);
-        }
-
-        if let Some(set) = self.child_to_parent_adjacency_list.get_mut(&child) {
-            set.insert(parent.clone());
-        } else {
-            let set = DashSet::new();
-            set.insert(parent.clone());
-            self.child_to_parent_adjacency_list
-                .insert(child.clone(), set);
-        }
-
+    pub fn add(&mut self, parent: BlockHashSerde, child: BlockHashSerde) {
+        self.parent_to_child_adjacency_list
+            .entry(parent.clone())
+            .or_default()
+            .insert(child.clone());
+        self.child_to_parent_adjacency_list
+            .entry(child.clone())
+            .or_default()
+            .insert(parent.clone());
         if !self.child_to_parent_adjacency_list.contains_key(&parent) {
             self.dependency_free.insert(parent);
         }
@@ -49,7 +38,7 @@ impl BlockDependencyDag {
     }
 
     pub fn remove(
-        &self,
+        &mut self,
         element: BlockHashSerde,
     ) -> Result<
         (
@@ -61,11 +50,11 @@ impl BlockDependencyDag {
     > {
         let mut orphaned_parents = HashSet::new();
 
-        let parent_links: Vec<BlockHashSerde> =
-            match self.child_to_parent_adjacency_list.get(&element) {
-                Some(parents) => parents.iter().map(|parent| parent.key().clone()).collect(),
-                None => Vec::new(),
-            };
+        let parent_links: Vec<BlockHashSerde> = self
+            .child_to_parent_adjacency_list
+            .get(&element)
+            .map(|parents| parents.iter().cloned().collect())
+            .unwrap_or_default();
 
         // Remove incoming links from all direct parents so this node does not
         // remain as a dangling child after removal.
@@ -86,17 +75,11 @@ impl BlockDependencyDag {
         }
 
         // Get children first and release the lock
-        let children: Vec<BlockHashSerde> = match self.parent_to_child_adjacency_list.get(&element)
-        {
-            Some(children) => {
-                let mut vec = Vec::new();
-                for child in children.value().iter() {
-                    vec.push(child.clone());
-                }
-                vec
-            }
-            None => Vec::new(),
-        };
+        let children: Vec<BlockHashSerde> = self
+            .parent_to_child_adjacency_list
+            .get(&element)
+            .map(|children| children.iter().cloned().collect())
+            .unwrap_or_default();
 
         self.child_to_parent_adjacency_list.remove(&element);
 
@@ -107,21 +90,11 @@ impl BlockDependencyDag {
         // Process each child independently
         for child in children {
             // Get parents and release the lock
-            let parents: HashSet<BlockHashSerde> =
-                match self.child_to_parent_adjacency_list.get(&child) {
-                    Some(parents) => {
-                        let mut set = HashSet::new();
-                        for parent in parents.value().iter() {
-                            set.insert(parent.clone());
-                        }
-                        set
-                    }
-                    None => {
-                        // A stale forward edge can exist in parent_to_child without a reverse edge.
-                        // Treat it as a removable orphan relation and continue.
-                        HashSet::new()
-                    }
-                };
+            let parents: HashSet<BlockHashSerde> = self
+                .child_to_parent_adjacency_list
+                .get(&child)
+                .cloned()
+                .unwrap_or_default();
 
             // Create new parents set without the element
             let updated_parents: HashSet<_> =
@@ -132,12 +105,8 @@ impl BlockDependencyDag {
                 new_dependency_free.insert(child.clone());
                 children_removed.insert(child);
             } else {
-                let dash_set = DashSet::new();
-                for parent in updated_parents {
-                    dash_set.insert(parent);
-                }
                 self.child_to_parent_adjacency_list
-                    .insert(child.clone(), dash_set);
+                    .insert(child.clone(), updated_parents);
                 children_affected.insert(child);
             }
         }
@@ -180,7 +149,7 @@ mod tests {
 
     #[test]
     fn test_add_single_edge() {
-        let dag = BlockDependencyDag::empty();
+        let mut dag = BlockDependencyDag::empty();
         let parent = create_block_hash(b"parent");
         let child = create_block_hash(b"child");
 
@@ -209,7 +178,7 @@ mod tests {
 
     #[test]
     fn test_add_multiple_children() {
-        let dag = BlockDependencyDag::empty();
+        let mut dag = BlockDependencyDag::empty();
         let parent = create_block_hash(b"parent");
         let child1 = create_block_hash(b"child1");
         let child2 = create_block_hash(b"child2");
@@ -242,7 +211,7 @@ mod tests {
 
     #[test]
     fn test_remove_leaf_node() {
-        let dag = BlockDependencyDag::empty();
+        let mut dag = BlockDependencyDag::empty();
         let parent = create_block_hash(b"parent");
         let child = create_block_hash(b"child");
 
@@ -264,7 +233,7 @@ mod tests {
 
     #[test]
     fn test_remove_child_cleans_orphan_parent_from_dependency_free() {
-        let dag = BlockDependencyDag::empty();
+        let mut dag = BlockDependencyDag::empty();
         let parent = create_block_hash(b"orphan-parent");
         let child = create_block_hash(b"child");
 
@@ -283,7 +252,7 @@ mod tests {
 
     #[test]
     fn test_remove_node_with_multiple_children() {
-        let dag = BlockDependencyDag::empty();
+        let mut dag = BlockDependencyDag::empty();
         let parent = create_block_hash(b"parent");
         let child1 = create_block_hash(b"child1");
         let child2 = create_block_hash(b"child2");
@@ -309,7 +278,7 @@ mod tests {
 
     #[test]
     fn test_remove_node_with_remaining_parents() {
-        let dag = BlockDependencyDag::empty();
+        let mut dag = BlockDependencyDag::empty();
         let parent1 = create_block_hash(b"parent1");
         let parent2 = create_block_hash(b"parent2");
         let child = create_block_hash(b"child");
@@ -338,7 +307,7 @@ mod tests {
 
     #[test]
     fn test_remove_node_with_parents_only() {
-        let dag = BlockDependencyDag::empty();
+        let mut dag = BlockDependencyDag::empty();
         let parent = create_block_hash(b"parent");
         let child = create_block_hash(b"child");
 
@@ -357,7 +326,7 @@ mod tests {
 
     #[test]
     fn test_remove_node_with_children_but_no_parents() {
-        let dag = BlockDependencyDag::empty();
+        let mut dag = BlockDependencyDag::empty();
         let parent = create_block_hash(b"tempblock");
         let child = create_block_hash(b"child");
 
@@ -376,7 +345,7 @@ mod tests {
 
     #[test]
     fn test_remove_tolerates_stale_parent_links() {
-        let dag = BlockDependencyDag::empty();
+        let mut dag = BlockDependencyDag::empty();
         let valid_parent = create_block_hash(b"valid-parent");
         let stale_parent = create_block_hash(b"stale-parent");
         let child = create_block_hash(b"child");
@@ -409,7 +378,7 @@ mod tests {
 
     #[test]
     fn test_remove_tolerates_stale_child_to_parent_entry() {
-        let dag = BlockDependencyDag::empty();
+        let mut dag = BlockDependencyDag::empty();
         let parent = create_block_hash(b"parent");
         let child = create_block_hash(b"child");
 

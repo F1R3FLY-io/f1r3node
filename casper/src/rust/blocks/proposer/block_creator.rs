@@ -1,6 +1,5 @@
 // See casper/src/main/scala/coop/rchain/casper/blocks/proposer/BlockCreator.scala
 
-use dashmap::DashSet;
 use prost::bytes::Bytes;
 use std::sync::OnceLock;
 use std::sync::{Arc, Mutex};
@@ -97,7 +96,7 @@ async fn prepare_user_deploys(
         .collect();
 
     // Filter valid deploys (not expired by block, not expired by time, and not future)
-    let valid: DashSet<Signed<DeployData>> = unfinalized
+    let valid: HashSet<Signed<DeployData>> = unfinalized
         .iter()
         .filter(|deploy| {
             not_future_deploy(block_number, &deploy.data)
@@ -241,6 +240,9 @@ async fn prepare_user_deploys(
                     ordered.iter().take(oldest_take).cloned().collect();
                 if let Some(newest) = ordered.iter().last().cloned() {
                     picked.insert(newest);
+                }
+                if max_user_deploys <= ordered.len() {
+                    debug_assert_eq!(picked.len(), max_user_deploys);
                 }
                 (picked, "oldest-plus-newest")
             }
@@ -576,7 +578,7 @@ fn update_adaptive_user_deploy_cap(
     guard.current_cap = guard.current_cap.clamp(min_cap, max_cap);
 
     const EMA_ALPHA: f64 = 0.35;
-    let prev_ema = guard.ema_create_block_ms.unwrap_or(sample_ms);
+    let prev_ema = guard.ema_create_block_ms.unwrap_or(target_ms);
     let ema_ms = prev_ema + EMA_ALPHA * (sample_ms - prev_ema);
     guard.ema_create_block_ms = Some(ema_ms);
 
@@ -725,13 +727,7 @@ fn quarantine_refund_failure_deploy(
     let mut guard = deploy_storage
         .lock()
         .map_err(|e| CasperError::LockError(e.to_string()))?;
-    let all = guard.read_all()?;
-    let to_remove: Vec<Signed<DeployData>> = all.into_iter().filter(|d| d.sig == sig).collect();
-    if to_remove.is_empty() {
-        return Ok(false);
-    }
-    guard.remove(to_remove)?;
-    Ok(true)
+    guard.remove_by_sig(&sig).map_err(CasperError::KvStoreError)
 }
 
 pub async fn create(
@@ -843,11 +839,8 @@ pub async fn create(
 
     let selected_user_deploy_count = user_deploys.len();
 
-    // Combine all deploys, removing those already in scope
-    let mut all_deploys: HashSet<Signed<DeployData>> = user_deploys
-        .into_iter()
-        .filter(|deploy| !casper_snapshot.deploys_in_scope.contains(&deploy.sig))
-        .collect();
+    // Combine all deploys. prepare_user_deploys already removed deploys in scope.
+    let mut all_deploys: HashSet<Signed<DeployData>> = user_deploys;
 
     // Add dummy deploys
     all_deploys.extend(dummy_deploys);

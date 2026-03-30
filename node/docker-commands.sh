@@ -8,6 +8,10 @@ set -e
 DOCKER_REPOSITORY="f1r3flyindustries"
 IMAGE_NAME="f1r3fly-rust-node"
 FULL_IMAGE_NAME="${DOCKER_REPOSITORY}/${IMAGE_NAME}"
+# Auto-detect version from Cargo.toml if not set via env
+if [ -z "${VERSION:-}" ]; then
+    VERSION=$(grep '^version = ' node/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+fi
 VERSION="${VERSION:-latest}"
 
 # Build the Docker image
@@ -35,12 +39,13 @@ docker_build() {
 }
 
 # Build for local use (publishLocal equivalent)
+# Tags with :local to distinguish from registry-pulled :latest
 docker_build_local() {
     echo "Building Docker image for local use..."
     docker build \
         --file node/Dockerfile \
-        --tag "${IMAGE_NAME}:latest" \
-        --tag "${FULL_IMAGE_NAME}:latest" \
+        --tag "${IMAGE_NAME}:local" \
+        --tag "${FULL_IMAGE_NAME}:local" \
         .
 }
 

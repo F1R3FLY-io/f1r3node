@@ -12,6 +12,10 @@ pub trait KeyValueStore: Send + Sync {
     fn delete(&self, keys: Vec<ByteBuffer>) -> Result<usize, KvStoreError>;
 
     fn iterate(&self, f: fn(ByteBuffer, ByteBuffer)) -> Result<(), KvStoreError>;
+    fn iterate_while(
+        &self,
+        f: &mut dyn FnMut(ByteBuffer, ByteBuffer) -> Result<bool, KvStoreError>,
+    ) -> Result<(), KvStoreError>;
 
     fn clone_box(&self) -> Box<dyn KeyValueStore>;
 
