@@ -10,6 +10,8 @@ use rspace_plus_plus::rspace::rspace::{RSpace, RSpaceStore};
 
 use crate::rust::interpreter::external_services::ExternalServices;
 use crate::rust::interpreter::matcher::r#match::Matcher;
+#[cfg(feature = "chromadb")]
+use crate::rust::interpreter::{ollama_service::OllamaConfig, openai_service::OpenAIConfig};
 use crate::rust::interpreter::rho_runtime;
 use crate::rust::interpreter::rho_runtime::{create_replay_rho_runtime, create_rho_runtime};
 use crate::rust::interpreter::system_processes::Definition;
@@ -56,17 +58,22 @@ where
 
     let mut store_manager = mk_rspace_store_manager(temp_dir.path().to_path_buf(), 100 * MB);
     let rspace_store = store_manager.r_space_stores().await.unwrap();
+
+    #[cfg(feature = "chromadb")]
+    let external_services = ExternalServices::for_validator(
+        &OpenAIConfig::disabled(),
+        &OllamaConfig::disabled()
+    );
+    #[cfg(not(feature = "chromadb"))]
+    let external_services = ExternalServices::noop();
+
     let runtime = rho_runtime::create_runtime_from_kv_store(
         rspace_store,
         Par::default(),
         false,
         &mut Vec::new(),
         Arc::new(Box::new(Matcher)),
-        
-        #[cfg(feature = "chromadb")]
-        ExternalServices::for_observer(),
-        #[cfg(not(feature = "chromadb"))]
-        ExternalServices::noop(),
+        external_services
     )
     .await;
 

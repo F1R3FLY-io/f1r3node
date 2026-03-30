@@ -25,7 +25,6 @@ pub struct ExternalServices {
     pub openai_enabled: bool,
     pub ollama_enabled: bool,
     pub is_validator: bool,
-    
     pub chroma: SharedChromaDBService,
 }
 
