@@ -243,6 +243,7 @@ jobs:
           - test_dag_correctness
           - test_finalization
           - test_propose
+          - test_replay_determinism
           - test_consensus_health
           - test_synchrony_constraint
           - test_asymmetric_bonds
