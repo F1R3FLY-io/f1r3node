@@ -4,6 +4,20 @@ All notable changes to the Rust implementation of F1r3node will be documented in
 This changelog is automatically generated from conventional commits.
 
 
+## [v0.4.7] - 2026-03-30
+
+### Bug Fixes
+
+- always compute real fault tolerance instead of hardcoded shortcut
+- update rholang test expectations for receives-first eval order
+- handle unused Result from remove_datum in test
+
+### CI
+
+- skip test_network_recovers_from_slow_deploy (f1r3node#463)
+- add test_replay_determinism to integration test matrix
+
+
 ## [v0.4.6] - 2026-03-30
 
 ### Bug Fixes
@@ -43,6 +57,8 @@ This changelog is automatically generated from conventional commits.
 ### Bug Fixes
 
 - use PAT checkout for tag triggers, disable integration tests, run tests in release mode
+- replay determinism for duplicate channel sends and join consumes
+- shard recovery from block rejection and DAG tip divergence
 
 
 ## [v0.4.1] - 2026-03-27
