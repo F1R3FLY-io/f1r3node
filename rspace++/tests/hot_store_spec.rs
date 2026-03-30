@@ -254,7 +254,7 @@ proptest! {
       let res = hot_store.remove_datum(&channel.clone(), index);
 
       let cache = state.lock().unwrap();
-      assert!(check_removal_works_or_fails_on_error(res, cache.data.get(&channel).map_or(Vec::new(), |x| x.clone()), history_data, index).is_ok());
+      assert!(check_datum_removal_works_or_fails_on_error(res, cache.data.get(&channel).map_or(Vec::new(), |x| x.clone()), history_data, index).is_ok());
   }
 
   #[test]
@@ -269,7 +269,7 @@ proptest! {
 
       let res = hot_store.remove_datum(&channel.clone(), index);
       let cache = state.lock().unwrap();
-      assert!(check_removal_works_or_fails_on_error(res, cache.data.get(&channel).unwrap().clone(), cached_data, index).is_ok());
+      assert!(check_datum_removal_works_or_fails_on_error(res, cache.data.get(&channel).unwrap().clone(), cached_data, index).is_ok());
   }
 
   #[test]
@@ -800,6 +800,31 @@ where
         assert_eq!(actual, initial);
     } else {
         assert!(res.is_some());
+        let expected: Vec<T> = initial
+            .iter()
+            .enumerate()
+            .filter(|&(i, _)| i as i32 != index)
+            .map(|(_, item)| item.clone())
+            .collect();
+        assert_eq!(actual, expected);
+    }
+    Ok(())
+}
+
+fn check_datum_removal_works_or_fails_on_error<T>(
+    res: Result<(), rspace_plus_plus::rspace::errors::RSpaceError>,
+    actual: Vec<T>,
+    initial: Vec<T>,
+    index: i32,
+) -> Result<(), Box<dyn std::error::Error>>
+where
+    T: PartialEq + Debug + Clone,
+{
+    if index < 0 || index >= initial.len().try_into().unwrap() {
+        assert!(res.is_err());
+        assert_eq!(actual, initial);
+    } else {
+        assert!(res.is_ok());
         let expected: Vec<T> = initial
             .iter()
             .enumerate()

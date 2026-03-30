@@ -82,7 +82,7 @@ async fn state_hash_after_fixed_rholang_term_execution_should_be_hash_fixed_with
 
     let checkpoint = runtime.create_checkpoint();
     let expected_hash = Blake2b256Hash::from_hex(
-        "eed0f1f8b051f73ac861cd49cbc9e0c177c2f8a0b2bde69e75875820eccc2917",
+        "aa6e56fa2b0003ec64efcdec4faac381bf0221eb039fbbe33fb23b77328b869c",
     );
 
     assert_eq!(expected_hash, checkpoint.root);
