@@ -4,6 +4,47 @@ All notable changes to the Rust implementation of F1r3node will be documented in
 This changelog is automatically generated from conventional commits.
 
 
+## [v0.4.6] - 2026-03-30
+
+### Bug Fixes
+
+- add retry logic to gRPC server port binding
+- kill stale processes on test ports before integration tests
+- align integration test matrix with python_files config
+
+### CI
+
+- migrate Rust CI from self-hosted Oracle runners to GitHub-hosted runners
+
+
+## [v0.4.5] - 2026-03-29
+
+### Bug Fixes
+
+- re-enable integration tests, run unit tests in release mode
+
+
+## [v0.4.4] - 2026-03-28
+
+### Bug Fixes
+
+- use bodyFile instead of bodyPath for release changelog
+
+
+## [v0.4.3] - 2026-03-27
+
+### Bug Fixes
+
+- split credential push, fix Docker tag logic, add changelog to releases
+
+
+## [v0.4.2] - 2026-03-27
+
+### Bug Fixes
+
+- use PAT checkout for tag triggers, disable integration tests, run tests in release mode
+
+
 ## [v0.4.1] - 2026-03-27
 
 ### Bug Fixes

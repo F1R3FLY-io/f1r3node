@@ -1,8 +1,51 @@
 // See shared/src/main/scala/coop/rchain/grpc/GrpcServer.scala
 
+use std::net::SocketAddr;
 use std::time::Duration;
 use tokio::time::timeout;
+use tokio_stream::wrappers::TcpListenerStream;
 use tonic::transport::Server as TonicServer;
+
+const GRPC_BIND_RETRY_ATTEMPTS: usize = 60;
+const GRPC_BIND_RETRY_DELAY: Duration = Duration::from_millis(500);
+
+/// Bind a TCP listener with retry logic to handle TIME_WAIT sockets.
+/// Matches the HTTP server retry pattern in servers_instances.rs.
+async fn bind_tcp_listener_with_retry(
+    addr: SocketAddr,
+) -> Result<tokio::net::TcpListener, Box<dyn std::error::Error + Send + Sync>> {
+    let mut attempt: usize = 1;
+    loop {
+        match tokio::net::TcpListener::bind(addr).await {
+            Ok(listener) => {
+                if attempt > 1 {
+                    tracing::info!(
+                        "gRPC server bound to {} after {} attempts",
+                        addr, attempt
+                    );
+                }
+                return Ok(listener);
+            }
+            Err(e)
+                if e.kind() == std::io::ErrorKind::AddrInUse
+                    && attempt < GRPC_BIND_RETRY_ATTEMPTS =>
+            {
+                tracing::warn!(
+                    "gRPC server bind attempt {}/{} failed at {}: {}. Retrying in {:?}",
+                    attempt, GRPC_BIND_RETRY_ATTEMPTS, addr, e, GRPC_BIND_RETRY_DELAY
+                );
+                attempt += 1;
+                tokio::time::sleep(GRPC_BIND_RETRY_DELAY).await;
+            }
+            Err(e) => {
+                return Err(format!(
+                    "Failed to bind gRPC server at {} after {} attempt(s): {}",
+                    addr, attempt, e
+                ).into());
+            }
+        }
+    }
+}
 
 /// A gRPC server wrapper that provides lifecycle management
 pub struct GrpcServer {
@@ -43,14 +86,15 @@ impl GrpcServer {
             return Err("Server is already running".into());
         }
 
-        // Bind to 0.0.0.0 to accept connections from all interfaces (matching Scala NettyServerBuilder.forPort behavior)
-        let addr = ([0, 0, 0, 0], self.port).into();
+        let addr: SocketAddr = ([0, 0, 0, 0], self.port).into();
+        let listener = bind_tcp_listener_with_retry(addr).await?;
+        let incoming = TcpListenerStream::new(listener);
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
 
         let server_handler = tokio::spawn(async move {
             TonicServer::builder()
                 .add_service(service)
-                .serve_with_shutdown(addr, async {
+                .serve_with_incoming_shutdown(incoming, async {
                     shutdown_rx.await.ok();
                 })
                 .await
@@ -71,13 +115,14 @@ impl GrpcServer {
             return Err("Server is already running".into());
         }
 
-        // Bind to 0.0.0.0 to accept connections from all interfaces (matching Scala NettyServerBuilder.forPort behavior)
-        let addr = ([0, 0, 0, 0], self.port).into();
+        let addr: SocketAddr = ([0, 0, 0, 0], self.port).into();
+        let listener = bind_tcp_listener_with_retry(addr).await?;
+        let incoming = TcpListenerStream::new(listener);
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
 
         let server_future = tokio::spawn(async move {
             router
-                .serve_with_shutdown(addr, async {
+                .serve_with_incoming_shutdown(incoming, async {
                     shutdown_rx.await.ok();
                 })
                 .await

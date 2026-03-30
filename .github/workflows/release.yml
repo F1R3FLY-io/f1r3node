@@ -5,11 +5,11 @@
 #
 # Determines the next version from the latest rust-v* tag, bumps
 # node/Cargo.toml and node/Dockerfile, generates CHANGELOG.md via git-cliff,
-# commits, tags, and pushes. On rust/main, the tag push triggers the existing
-# build-test-and-deploy.yml which handles Docker release and package publishing.
+# commits, and pushes. The tag is created via the GitHub API with a PAT so it
+# triggers the existing CI workflow for Docker release and package publishing.
 #
-# Requires repository secret: RELEASE_PAT (a PAT with contents:write so
-# the tag push triggers downstream workflows on rust/main).
+# Commit push uses GITHUB_TOKEN (no workflow triggers).
+# Tag creation uses RELEASE_PAT (triggers on:push:tags workflows).
 
 name: Release (Rust)
 
@@ -34,6 +34,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Force-refresh tags
         run: git fetch origin --tags --force
@@ -85,15 +86,38 @@ jobs:
           git add node/Cargo.toml node/Dockerfile Cargo.lock CHANGELOG.md
           git commit -m "chore(release): rust v${{ steps.version.outputs.NEXT_VERSION }}"
 
-      - name: Create tag
+      - name: Push commits (GITHUB_TOKEN — no workflow triggers)
         run: |
-          git tag -a "${{ steps.version.outputs.TAG_NAME }}" \
-            -m "Release rust v${{ steps.version.outputs.NEXT_VERSION }}"
-
-      - name: Push commits
-        run: |
+          git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
           git push origin ${{ steps.version.outputs.BRANCH }}
 
-      - name: Push tag (using PAT to trigger downstream CI)
-        run: |
-          git push https://x-access-token:${{ secrets.RELEASE_PAT }}@github.com/F1R3FLY-io/f1r3node.git "${{ steps.version.outputs.TAG_NAME }}"
+      - name: Create tag via API (PAT — triggers downstream CI)
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.RELEASE_PAT }}
+          script: |
+            const tagName = '${{ steps.version.outputs.TAG_NAME }}';
+
+            // Get the SHA of the release commit (HEAD after our commits)
+            const { execSync } = require('child_process');
+            const commitSha = execSync('git rev-parse HEAD').toString().trim();
+
+            // Create annotated tag object
+            const tagObject = await github.rest.git.createTag({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag: tagName,
+              message: `Release ${tagName}`,
+              object: commitSha,
+              type: 'commit'
+            });
+
+            // Create tag reference
+            await github.rest.git.createRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: `refs/tags/${tagName}`,
+              sha: tagObject.data.sha
+            });
+
+            console.log(`Created tag ${tagName} -> ${commitSha}`);
