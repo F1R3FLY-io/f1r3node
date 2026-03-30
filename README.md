@@ -330,6 +330,7 @@ Reference configs:
 - [defaults.conf](node/src/main/resources/defaults.conf) - All available options
 - [docker/conf/standalone-dev.conf](docker/conf/standalone-dev.conf) - Standalone development config
 - [docker/conf/default.conf](docker/conf/default.conf) - Shard config
+- [Consensus Configuration Guide](https://github.com/F1R3FLY-io/system-integration/blob/main/docs/consensus-configuration.md) - FTT, synchrony threshold semantics, finalization formula, recommended values
 
 ## Rust Codebase Documentation
 

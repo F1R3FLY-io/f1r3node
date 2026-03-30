@@ -84,3 +84,4 @@ The Cargo workspace contains 11 crates:
 |----------|-------------|
 | [Data Flows](./data-flows.md) | Block lifecycle and deploy execution flows |
 | [Patterns & Conventions](./patterns.md) | Concurrency, error handling, serialization, env vars |
+| [Consensus Configuration](https://github.com/F1R3FLY-io/system-integration/blob/main/docs/consensus-configuration.md) | FTT and synchrony threshold semantics, finalization formula, recommended values per validator set size |

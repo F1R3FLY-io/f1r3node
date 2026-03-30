@@ -554,12 +554,23 @@ async fn check_lfb_and_propose(
         && lag_recovery_leader
         && stale_recovery_window_open
         && (!self_proposed_too_recently || deploy_grace_active);
+    // Convergence recovery: when the LFB is stale and we have unjustified peer blocks,
+    // propose a convergence block that references all known tips. This breaks the deadlock
+    // where validators diverge into independent forks and normal throttling prevents any
+    // validator from proposing a multi-parent convergence block.
+    let convergence_recovery_due = lfb_is_stale
+        && has_new_parents
+        && self_recently_proposed
+        && !can_chase_frontier_while_ahead
+        && frontier_is_stale
+        && stale_recovery_window_open;
     let should_propose = pending_deploys_due
         || pending_deploy_backstop_due
         || frontier_follow_due
         || stale_lfb_recovery_due
         || stale_lfb_leader_recovery_due
-        || high_lag_recovery_due;
+        || high_lag_recovery_due
+        || convergence_recovery_due;
 
     if should_propose {
         let reason = if pending_deploy_backstop_due {
@@ -603,6 +614,13 @@ async fn check_lfb_and_propose(
                 moderate_lag_recovery_threshold,
                 deploy_grace_active,
                 heartbeat_stale_recovery_min_interval_ms()
+            )
+        } else if convergence_recovery_due {
+            format!(
+                "convergence recovery: LFB stale ({}ms), frontier stale ({}ms), unjustified peer blocks exist, lag={}; proposing multi-parent convergence block to break fork deadlock",
+                time_since_lfb,
+                frontier_age_ms,
+                lfb_lag_blocks
             )
         } else if high_lag_recovery_due {
             format!(

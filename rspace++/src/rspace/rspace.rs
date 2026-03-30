@@ -892,7 +892,7 @@ where
                 } = consume_candidate;
 
                 if !persist {
-                    self.store.remove_datum(channel, *datum_index)
+                    self.store.remove_datum(channel, *datum_index).ok()
                 } else {
                     Some(())
                 }
@@ -1036,7 +1036,9 @@ where
                 } = consume_candidate;
 
                 if *datum_index >= 0 && !persist {
-                    self.store.remove_datum(&channel, *datum_index);
+                    if self.store.remove_datum(&channel, *datum_index).is_err() {
+                        return None;
+                    }
                 }
                 self.store.remove_join(&channel, &channels);
 
