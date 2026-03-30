@@ -4,6 +4,19 @@ All notable changes to the Rust implementation of F1r3node will be documented in
 This changelog is automatically generated from conventional commits.
 
 
+## [v0.4.6] - 2026-03-30
+
+### Bug Fixes
+
+- add retry logic to gRPC server port binding
+- kill stale processes on test ports before integration tests
+- align integration test matrix with python_files config
+
+### CI
+
+- migrate Rust CI from self-hosted Oracle runners to GitHub-hosted runners
+
+
 ## [v0.4.5] - 2026-03-29
 
 ### Bug Fixes
