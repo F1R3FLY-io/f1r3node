@@ -290,6 +290,13 @@ jobs:
           poetry lock --no-update
           poetry install --with integration
 
+      - name: Ensure test ports are free
+        shell: bash {0}
+        run: |
+          for port in $(seq 40400 40545); do
+            fuser -k $port/tcp 2>/dev/null || true
+          done
+
       - name: Run Integration Tests
         shell: bash -ex {0}
         env:
