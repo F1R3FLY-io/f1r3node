@@ -1098,13 +1098,16 @@ where
     }
 
     fn shuffle_with_index<D>(&self, t: Vec<D>) -> Vec<(D, i32)> {
-        let mut rng = thread_rng();
-        let mut indexed_vec = t
-            .into_iter()
+        // Deterministic ordering — no shuffle. Ensures replay picks the same
+        // datum as play when duplicate datums exist (same produce hash but
+        // different random_state from different Blake2b512Random splits).
+        // With shuffle, a different datum can be matched during play vs replay,
+        // causing the continuation to generate different unforgeable names and
+        // producing a ReplayCostMismatch (176 phlogiston delta).
+        // See docs/replay-cost-mismatch-investigation.md
+        t.into_iter()
             .enumerate()
             .map(|(i, d)| (d, i as i32))
-            .collect::<Vec<_>>();
-        indexed_vec.shuffle(&mut rng);
-        indexed_vec
+            .collect()
     }
 }

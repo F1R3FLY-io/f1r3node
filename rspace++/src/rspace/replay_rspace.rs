@@ -1277,13 +1277,10 @@ where
     }
 
     fn shuffle_with_index<D>(&self, t: Vec<D>) -> Vec<(D, i32)> {
-        let mut rng = thread_rng();
-        let mut indexed_vec = t
-            .into_iter()
+        // Deterministic ordering — matches play RSpace. See rspace.rs.
+        t.into_iter()
             .enumerate()
             .map(|(i, d)| (d, i as i32))
-            .collect::<Vec<_>>();
-        indexed_vec.shuffle(&mut rng);
-        indexed_vec
+            .collect()
     }
 }
