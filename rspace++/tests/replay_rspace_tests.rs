@@ -20,7 +20,7 @@ use rspace_plus_plus::rspace::rspace::RSpace;
 use rspace_plus_plus::rspace::rspace_interface::{ContResult, ISpace, RSpaceResult};
 use rspace_plus_plus::rspace::shared::in_mem_store_manager::InMemoryStoreManager;
 use rspace_plus_plus::rspace::shared::key_value_store_manager::KeyValueStoreManager;
-use rspace_plus_plus::rspace::trace::event::{Consume, IOEvent, Produce};
+use rspace_plus_plus::rspace::trace::event::Produce;
 use serde::{Deserialize, Serialize};
 
 static METRICS_RECORDER: OnceLock<(DebuggingRecorder, Snapshotter)> = OnceLock::new();
