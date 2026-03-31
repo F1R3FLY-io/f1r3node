@@ -543,9 +543,23 @@ jobs:
           if [ "${{ matrix.arch }}" = "arm64" ]; then
             SCALE_FLAG="--timeout-scale=1.5"
           fi
-          poetry run pytest integration-tests/test/ -v --tb=short --log-cli-level=WARNING \
-            --startup-timeout=600 --command-timeout=300 --timeout=600 $SCALE_FLAG \
-            --deselect=integration-tests/test/test_replay_determinism.py
+          poetry run pytest \
+            integration-tests/test/test_web_api.py \
+            integration-tests/test/test_wallets.py \
+            integration-tests/test/test_heartbeat.py \
+            integration-tests/test/test_deployment.py \
+            integration-tests/test/test_storage.py \
+            integration-tests/test/test_genesis_ceremony.py \
+            integration-tests/test/test_dag_correctness.py \
+            integration-tests/test/test_finalization.py \
+            integration-tests/test/test_propose.py \
+            integration-tests/test/test_consensus_health.py \
+            integration-tests/test/test_synchrony_constraint.py \
+            integration-tests/test/test_asymmetric_bonds.py \
+            integration-tests/test/test_bonding_validators.py \
+            integration-tests/test/test_trim_state.py \
+            -v --tb=short --log-cli-level=WARNING \
+            --startup-timeout=600 --command-timeout=300 --timeout=600 $SCALE_FLAG
 
       - name: Upload Integration Test Logs
         if: always()
@@ -719,6 +733,11 @@ jobs:
             echo "prerelease=true" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Extract release notes for this version
+        run: |
+          # Extract only the latest version section from CHANGELOG.md
+          awk '/^## \[/{if(found) exit; found=1} found' CHANGELOG.md > RELEASE_NOTES.md
+
       - name: Update release and release artifacts
         uses: ncipollo/release-action@v1
         with:
@@ -727,5 +746,5 @@ jobs:
           draft: false
           allowUpdates: true
           omitBodyDuringUpdate: true
-          bodyFile: CHANGELOG.md
+          bodyFile: RELEASE_NOTES.md
           token: ${{ secrets.GITHUB_TOKEN }}
