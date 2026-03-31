@@ -2,7 +2,7 @@
 
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use std::{
-    collections::{BTreeSet, HashMap, HashSet},
+    collections::{BTreeSet, HashMap, HashSet, VecDeque},
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc, RwLock,
@@ -374,25 +374,30 @@ impl KeyValueDagRepresentation {
 
     pub fn non_finalized_blocks(&self) -> Result<HashSet<BlockHash>, KvStoreError> {
         let mut result = HashSet::new();
-        let mut tips = self
+        let mut visited = HashSet::new();
+        let mut tips: VecDeque<BlockHash> = self
             .latest_messages()?
             .values()
             .map(|metadata| metadata.block_hash.clone())
-            .collect::<Vec<_>>();
+            .collect::<VecDeque<_>>();
 
-        while !tips.is_empty() {
-            let mut next_level = Vec::new();
-
-            for hash in &tips {
-                if !self.is_finalized(hash) {
-                    result.insert(hash.clone());
-
-                    let metadata = self.lookup_unsafe(hash)?;
-                    next_level.extend(metadata.parents.clone());
-                }
+        while let Some(hash) = tips.pop_front() {
+            if !visited.insert(hash.clone()) {
+                continue;
             }
 
-            tips = next_level;
+            if self.is_finalized(&hash) {
+                continue;
+            }
+
+            result.insert(hash.clone());
+
+            let metadata = self.lookup_unsafe(&hash)?;
+            for parent in metadata.parents {
+                if !visited.contains(&parent) {
+                    tips.push_back(parent);
+                }
+            }
         }
 
         Ok(result)
@@ -791,42 +796,73 @@ impl BlockDagKeyValueStorage {
         F: FnMut(&HashSet<BlockHash>) -> Fut,
         Fut: std::future::Future<Output = Result<(), KvStoreError>>,
     {
-        // Compute finalized blocks under lock (must drop before .await)
-        let (indirectly_finalized, all_finalized) = {
-            let _lock_guard = self.global_lock.lock().unwrap();
+        const MAX_FINALIZATION_RECONCILE_LOOPS: usize = 128;
 
-            let dag = self.get_representation_internal();
-            if !dag.contains(&directly_finalized_hash) {
-                return Err(KvStoreError::InvalidArgument(format!(
-                    "Attempting to finalize nonexistent hash {}",
-                    PrettyPrinter::build_string_bytes(&directly_finalized_hash)
-                )));
+        // Close TOCTOU race by repeatedly applying effects for newly observed finalized
+        // hashes until the lock-protected snapshot is stable. Keep metadata persistence
+        // aligned with already-applied effects when exiting due to errors or retry cap.
+        let persist_effect_applied =
+            |force_direct: bool, effect_applied: &HashSet<BlockHash>| -> Result<(), KvStoreError> {
+                if !force_direct && effect_applied.is_empty() {
+                    return Ok(());
+                }
+
+                let indirectly_finalized: HashSet<BlockHash> = effect_applied
+                    .iter()
+                    .filter(|hash| *hash != &directly_finalized_hash)
+                    .cloned()
+                    .collect();
+
+                let _lock_guard = self.global_lock.lock().unwrap();
+                let mut block_metadata_index_guard = self.block_metadata_index.write().unwrap();
+                block_metadata_index_guard
+                    .record_finalized(directly_finalized_hash.clone(), indirectly_finalized)
+            };
+
+        let mut effect_applied: HashSet<BlockHash> = HashSet::new();
+        for _attempt in 0..MAX_FINALIZATION_RECONCILE_LOOPS {
+            let pending_effect: HashSet<BlockHash> = {
+                let _lock_guard = self.global_lock.lock().unwrap();
+
+                let dag = self.get_representation_internal();
+                if !dag.contains(&directly_finalized_hash) {
+                    return Err(KvStoreError::InvalidArgument(format!(
+                        "Attempting to finalize nonexistent hash {}",
+                        PrettyPrinter::build_string_bytes(&directly_finalized_hash)
+                    )));
+                }
+
+                let indirectly_finalized = dag
+                    .ancestors(directly_finalized_hash.clone(), |hash| {
+                        !dag.is_finalized(&hash)
+                    })?;
+
+                let mut all_finalized = indirectly_finalized.clone();
+                all_finalized.insert(directly_finalized_hash.clone());
+
+                let pending: HashSet<BlockHash> =
+                    all_finalized.difference(&effect_applied).cloned().collect();
+
+                pending
+            };
+
+            if pending_effect.is_empty() {
+                return persist_effect_applied(true, &effect_applied);
             }
 
-            let indirectly_finalized = dag.ancestors(directly_finalized_hash.clone(), |hash| {
-                !dag.is_finalized(&hash)
-            })?;
-
-            let mut all_finalized = indirectly_finalized.clone();
-            all_finalized.insert(directly_finalized_hash.clone());
-
-            (indirectly_finalized, all_finalized)
-            // Lock is dropped here before .await
-        };
-
-        // Persist finalized state BEFORE publishing events.
-        // This prevents a race where clients receive BlockFinalised events
-        // but explore-deploy still reads the old last_finalized_block.
-        {
-            let _lock_guard = self.global_lock.lock().unwrap();
-            let mut block_metadata_index_guard = self.block_metadata_index.write().unwrap();
-            block_metadata_index_guard
-                .record_finalized(directly_finalized_hash, indirectly_finalized)?;
+            // Execute async effect without holding lock.
+            if let Err(err) = finalization_effect(&pending_effect).await {
+                persist_effect_applied(false, &effect_applied)?;
+                return Err(err);
+            }
+            effect_applied.extend(pending_effect);
         }
 
-        // Now safe to publish events — state is already persisted
-        finalization_effect(&all_finalized).await?;
-
-        Ok(())
+        persist_effect_applied(false, &effect_applied)?;
+        Err(KvStoreError::IoError(format!(
+            "record_directly_finalized exceeded {} reconcile loops for {}",
+            MAX_FINALIZATION_RECONCILE_LOOPS,
+            PrettyPrinter::build_string_bytes(&directly_finalized_hash)
+        )))
     }
 }

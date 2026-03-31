@@ -361,8 +361,22 @@ impl<T: TransportLayer + Send + Sync> BlockProcessor<T> {
                             .effects_for_invalid_block(casper, block, i, &snapshot)
                             .await
                     }
+                    BlockError::BlockException(ref err) => {
+                        tracing::warn!(
+                            "Block {} raised BlockException ({}); recording as InvalidTransaction to prevent dependent-block stall.",
+                            PrettyPrinter::build_string_bytes(&block.block_hash),
+                            err
+                        );
+                        self.dependencies
+                            .effects_for_invalid_block(
+                                casper,
+                                block,
+                                &InvalidBlock::InvalidTransaction,
+                                &snapshot,
+                            )
+                            .await
+                    }
                     _ => {
-                        // this should never happen
                         Ok(snapshot.dag.clone())
                     }
                 }

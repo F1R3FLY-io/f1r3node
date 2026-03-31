@@ -1,0 +1,272 @@
+# =================================================================
+# F1R3FLY RUST NODE - SHARD DOCKER COMPOSE
+# =================================================================
+# Runs a multi-node shard: bootstrap + 3 validators + observer.
+#
+# Usage:
+#   docker compose -f shard.yml up -d
+#   docker compose -f shard.yml logs -f
+#   docker compose -f shard.yml down        # stop, keep data
+#   docker compose -f shard.yml down -v     # stop and wipe all data
+#
+# Port Mapping:
+#   Bootstrap:   40400-40405
+#   Validator1:  40410-40415
+#   Validator2:  40420-40425
+#   Validator3:  40430-40435
+#   Observer:    40450-40455
+#   Prometheus:  9090
+#   Grafana:     3000 (admin/admin)
+
+x-rnode: &default-rnode
+  image: ${F1R3FLY_RUST_IMAGE:-f1r3flyindustries/f1r3fly-rust-node:latest}
+  user: root
+  restart: always
+  networks:
+    - f1r3fly
+  environment:
+    - OPENAI_ENABLED=${OPENAI_ENABLED:-false}
+    - OPENAI_SCALA_CLIENT_API_KEY=${OPENAI_SCALA_CLIENT_API_KEY:-}
+    # Limit glibc arena proliferation and return freed heap pages faster.
+    - MALLOC_ARENA_MAX=2
+    - MALLOC_TRIM_THRESHOLD_=131072
+    - MALLOC_MMAP_THRESHOLD_=131072
+    # --- F1R3_* runtime tuning (read via OnceLock on first use) ---
+    - F1R3_MALLOC_TRIM_EVERY_BLOCKS=${F1R3_MALLOC_TRIM_EVERY_BLOCKS:-8}
+    - F1R3_SYNCHRONY_RECOVERY_STALL_WINDOW_SECONDS=${F1R3_SYNCHRONY_RECOVERY_STALL_WINDOW_SECONDS:-60}
+    - F1R3_SYNCHRONY_RECOVERY_COOLDOWN_SECONDS=${F1R3_SYNCHRONY_RECOVERY_COOLDOWN_SECONDS:-20}
+    - F1R3_SYNCHRONY_RECOVERY_MAX_BYPASSES=${F1R3_SYNCHRONY_RECOVERY_MAX_BYPASSES:-2}
+    - F1R3_SYNCHRONY_CONSTRAINT_THRESHOLD=${F1R3_SYNCHRONY_CONSTRAINT_THRESHOLD:-0}
+    - F1R3_SYNCHRONY_FINALIZED_BASELINE_ENABLED=${F1R3_SYNCHRONY_FINALIZED_BASELINE_ENABLED:-1}
+    - F1R3_SYNCHRONY_FINALIZED_BASELINE_MAX_DISTANCE=${F1R3_SYNCHRONY_FINALIZED_BASELINE_MAX_DISTANCE:-2048}
+    - F1R3_HEARTBEAT_FRONTIER_CHASE_MAX_LAG=${F1R3_HEARTBEAT_FRONTIER_CHASE_MAX_LAG:-0}
+    - F1R3_HEARTBEAT_SELF_PROPOSE_COOLDOWN_MS=${F1R3_HEARTBEAT_SELF_PROPOSE_COOLDOWN_MS:-15000}
+    - F1R3_BLOCK_RETRIEVER_DEDUP_QUERIED_PEERS=${F1R3_BLOCK_RETRIEVER_DEDUP_QUERIED_PEERS:-0}
+    - F1R3_BLOCK_RETRIEVER_PEER_REQUERY_COOLDOWN_MS=${F1R3_BLOCK_RETRIEVER_PEER_REQUERY_COOLDOWN_MS:-500}
+    - F1R3_BLOCK_RETRIEVER_BROADCAST_ONLY_COOLDOWN_MS=${F1R3_BLOCK_RETRIEVER_BROADCAST_ONLY_COOLDOWN_MS:-500}
+    - F1R3_BLOCK_RETRIEVER_DEPENDENCY_RECOVERY_COOLDOWN_MS=${F1R3_BLOCK_RETRIEVER_DEPENDENCY_RECOVERY_COOLDOWN_MS:-500}
+    - F1R3_BLOCK_RETRIEVER_STALE_REQUEST_LIFETIME_MULTIPLIER=${F1R3_BLOCK_RETRIEVER_STALE_REQUEST_LIFETIME_MULTIPLIER:-6}
+    - F1R3_BLOCK_RETRIEVER_MAX_RETRIES_PER_HASH=${F1R3_BLOCK_RETRIEVER_MAX_RETRIES_PER_HASH:-32}
+    - F1R3_BLOCK_RETRIEVER_KNOWN_PEER_REQUERY_SOFT_LIMIT=${F1R3_BLOCK_RETRIEVER_KNOWN_PEER_REQUERY_SOFT_LIMIT:-8}
+    - F1R3_BLOCK_RETRIEVER_MIN_REREQUEST_INTERVAL_MS=${F1R3_BLOCK_RETRIEVER_MIN_REREQUEST_INTERVAL_MS:-500}
+    - F1R3_BLOCK_RETRIEVER_RETRY_BUDGET_QUARANTINE_MS=${F1R3_BLOCK_RETRIEVER_RETRY_BUDGET_QUARANTINE_MS:-10000}
+    - F1R3_FIND_DEPLOY_SCAN_DEPTH=${F1R3_FIND_DEPLOY_SCAN_DEPTH:-128}
+    - F1R3_MAIN_PARENT_NEAR_TIP_TOLERANCE=${F1R3_MAIN_PARENT_NEAR_TIP_TOLERANCE:-0}
+    - F1R3_MAX_BLOCKS_IN_PROCESSING=${F1R3_MAX_BLOCKS_IN_PROCESSING:-2048}
+    - F1R3_MISSING_DEPENDENCY_ATTEMPTS_MAX=${F1R3_MISSING_DEPENDENCY_ATTEMPTS_MAX:-32}
+    - F1R3_MISSING_DEPENDENCY_QUARANTINE_MS=${F1R3_MISSING_DEPENDENCY_QUARANTINE_MS:-10000}
+    - F1R3_CASPER_BUFFER_MAX_APPROX_NODES=${F1R3_CASPER_BUFFER_MAX_APPROX_NODES:-16384}
+    - F1R3_CASPER_BUFFER_STALE_TTL_MS=${F1R3_CASPER_BUFFER_STALE_TTL_MS:-180000}
+    - F1R3_CASPER_BUFFER_MAX_PRUNE_BATCH=${F1R3_CASPER_BUFFER_MAX_PRUNE_BATCH:-512}
+    - F1R3_CASPER_BUFFER_PRUNE_INTERVAL_MS=${F1R3_CASPER_BUFFER_PRUNE_INTERVAL_MS:-5000}
+    - F1R3_GENESIS_SEEN_CANDIDATES_MAX_ENTRIES=${F1R3_GENESIS_SEEN_CANDIDATES_MAX_ENTRIES:-4096}
+    - F1R3_BLOCK_INDEX_CACHE_MAX_ENTRIES=${F1R3_BLOCK_INDEX_CACHE_MAX_ENTRIES:-32}
+    - F1R3_PARENTS_POST_STATE_CACHE_MAX_ENTRIES=${F1R3_PARENTS_POST_STATE_CACHE_MAX_ENTRIES:-64}
+    - F1R3_REPLAY_CACHE_MAX_ENTRIES=${F1R3_REPLAY_CACHE_MAX_ENTRIES:-192}
+    - F1R3_REPLAY_CACHE_MAX_EVENT_LOG_ENTRIES=${F1R3_REPLAY_CACHE_MAX_EVENT_LOG_ENTRIES:-1536}
+    - F1R3_BLOCK_PROTO_DECODE_BUFFER_BYTES=${F1R3_BLOCK_PROTO_DECODE_BUFFER_BYTES:-65536}
+    - F1R3_FINALIZER_WORK_BUDGET_MS=${F1R3_FINALIZER_WORK_BUDGET_MS:-8000}
+    - F1R3_FINALIZER_STEP_TIMEOUT_MS=${F1R3_FINALIZER_STEP_TIMEOUT_MS:-1000}
+    - F1R3_FINALIZER_CATCHUP_WORK_BUDGET_MS=${F1R3_FINALIZER_CATCHUP_WORK_BUDGET_MS:-8000}
+    - F1R3_FINALIZER_CATCHUP_STEP_TIMEOUT_MS=${F1R3_FINALIZER_CATCHUP_STEP_TIMEOUT_MS:-1000}
+    - F1R3_BLOCK_STORE_DEPLOY_SIG_CACHE_MAX_ENTRIES=${F1R3_BLOCK_STORE_DEPLOY_SIG_CACHE_MAX_ENTRIES:-1024}
+    - F1R3_FINALIZER_MAX_CLIQUE_CANDIDATES=${F1R3_FINALIZER_MAX_CLIQUE_CANDIDATES:-128}
+    - F1R3_FINALIZER_CANDIDATE_RANKING=${F1R3_FINALIZER_CANDIDATE_RANKING:-recency_stake}
+    - F1R3_MAX_USER_DEPLOYS_PER_BLOCK=${F1R3_MAX_USER_DEPLOYS_PER_BLOCK:-32}
+
+services:
+  # =================================================================
+  # BOOTSTRAP NODE (Ceremony Master)
+  # =================================================================
+  # Coordinates genesis ceremony but is NOT a validator (not in bonds.txt).
+  boot:
+    <<: *default-rnode
+    container_name: ${BOOTSTRAP_HOST:-rnode.bootstrap}
+    command:
+      - run
+      - --host=${BOOTSTRAP_HOST:-rnode.bootstrap}
+      - --bootstrap=rnode://${BOOTSTRAP_NODE_ID:-1e780e5dfbe0a3d9470a2b414f502d59402e09c2}@${BOOTSTRAP_HOST:-rnode.bootstrap}?protocol=40400&discovery=40404
+      - --allow-private-addresses
+      - --validator-private-key=${BOOTSTRAP_PRIVATE_KEY:-5f668a7ee96d944a4494cc947e4005e172d7ab3461ee5538f1f2a45a835e9657}
+      - --required-signatures
+      - "2"
+      - --ceremony-master-mode
+      - --heartbeat-disabled
+    ports:
+      - "40400:40400"
+      - "40401:40401"
+      - "40402:40402"
+      - "40403:40403"
+      - "40404:40404"
+      - "40405:40405"
+    volumes:
+      - boot-data:/var/lib/rnode/
+      - ./conf/default.conf:/var/lib/rnode/rnode.conf
+      - ./genesis/wallets.txt:/var/lib/rnode/genesis/wallets.txt
+      - ./genesis/bonds.txt:/var/lib/rnode/genesis/bonds.txt
+      - ./certs/bootstrap/node.certificate.pem:/var/lib/rnode/node.certificate.pem:ro
+      - ./certs/bootstrap/node.key.pem:/var/lib/rnode/node.key.pem:ro
+
+  # =================================================================
+  # VALIDATOR 1
+  # =================================================================
+  validator1:
+    <<: *default-rnode
+    container_name: ${VALIDATOR1_HOST:-rnode.validator1}
+    command:
+      - run
+      - --host=${VALIDATOR1_HOST:-rnode.validator1}
+      - --allow-private-addresses
+      - --bootstrap=rnode://${BOOTSTRAP_NODE_ID:-1e780e5dfbe0a3d9470a2b414f502d59402e09c2}@${BOOTSTRAP_HOST:-rnode.bootstrap}?protocol=40400&discovery=40404
+      - --validator-public-key=${VALIDATOR1_PUBLIC_KEY:-04fa70d7be5eb750e0915c0f6d19e7085d18bb1c22d030feb2a877ca2cd226d04438aa819359c56c720142fbc66e9da03a5ab960a3d8b75363a226b7c800f60420}
+      - --validator-private-key=${VALIDATOR1_PRIVATE_KEY:-357cdc4201a5650830e0bc5a03299a30038d9934ba4c7ab73ec164ad82471ff9}
+      - --genesis-validator
+    ports:
+      - "40410:40400"
+      - "40411:40401"
+      - "40412:40402"
+      - "40413:40403"
+      - "40414:40404"
+      - "40415:40405"
+    volumes:
+      - validator1-data:/var/lib/rnode/
+      - ./conf/default.conf:/var/lib/rnode/rnode.conf
+      - ./genesis/wallets.txt:/var/lib/rnode/genesis/wallets.txt
+      - ./genesis/bonds.txt:/var/lib/rnode/genesis/bonds.txt
+      - ./certs/validator1/node.certificate.pem:/var/lib/rnode/node.certificate.pem:ro
+      - ./certs/validator1/node.key.pem:/var/lib/rnode/node.key.pem:ro
+
+  # =================================================================
+  # VALIDATOR 2
+  # =================================================================
+  validator2:
+    <<: *default-rnode
+    container_name: ${VALIDATOR2_HOST:-rnode.validator2}
+    command:
+      - run
+      - --host=${VALIDATOR2_HOST:-rnode.validator2}
+      - --allow-private-addresses
+      - --bootstrap=rnode://${BOOTSTRAP_NODE_ID:-1e780e5dfbe0a3d9470a2b414f502d59402e09c2}@${BOOTSTRAP_HOST:-rnode.bootstrap}?protocol=40400&discovery=40404
+      - --validator-public-key=${VALIDATOR2_PUBLIC_KEY:-04837a4cff833e3157e3135d7b40b8e1f33c6e6b5a4342b9fc784230ca4c4f9d356f258debef56ad4984726d6ab3e7709e1632ef079b4bcd653db00b68b2df065f}
+      - --validator-private-key=${VALIDATOR2_PRIVATE_KEY:-2c02138097d019d263c1d5383fcaddb1ba6416a0f4e64e3a617fe3af45b7851d}
+      - --genesis-validator
+    ports:
+      - "40420:40400"
+      - "40421:40401"
+      - "40422:40402"
+      - "40423:40403"
+      - "40424:40404"
+      - "40425:40405"
+    volumes:
+      - validator2-data:/var/lib/rnode/
+      - ./conf/default.conf:/var/lib/rnode/rnode.conf
+      - ./genesis/wallets.txt:/var/lib/rnode/genesis/wallets.txt
+      - ./genesis/bonds.txt:/var/lib/rnode/genesis/bonds.txt
+      - ./certs/validator2/node.certificate.pem:/var/lib/rnode/node.certificate.pem:ro
+      - ./certs/validator2/node.key.pem:/var/lib/rnode/node.key.pem:ro
+
+  # =================================================================
+  # VALIDATOR 3
+  # =================================================================
+  validator3:
+    <<: *default-rnode
+    container_name: ${VALIDATOR3_HOST:-rnode.validator3}
+    command:
+      - run
+      - --host=${VALIDATOR3_HOST:-rnode.validator3}
+      - --allow-private-addresses
+      - --bootstrap=rnode://${BOOTSTRAP_NODE_ID:-1e780e5dfbe0a3d9470a2b414f502d59402e09c2}@${BOOTSTRAP_HOST:-rnode.bootstrap}?protocol=40400&discovery=40404
+      - --validator-public-key=${VALIDATOR3_PUBLIC_KEY:-0457febafcc25dd34ca5e5c025cd445f60e5ea6918931a54eb8c3a204f51760248090b0c757c2bdad7b8c4dca757e109f8ef64737d90712724c8216c94b4ae661c}
+      - --validator-private-key=${VALIDATOR3_PRIVATE_KEY:-b67533f1f99c0ecaedb7d829e430b1c0e605bda10f339f65d5567cb5bd77cbcb}
+      - --genesis-validator
+    ports:
+      - "40430:40400"
+      - "40431:40401"
+      - "40432:40402"
+      - "40433:40403"
+      - "40434:40404"
+      - "40435:40405"
+    volumes:
+      - validator3-data:/var/lib/rnode/
+      - ./conf/default.conf:/var/lib/rnode/rnode.conf
+      - ./genesis/wallets.txt:/var/lib/rnode/genesis/wallets.txt
+      - ./genesis/bonds.txt:/var/lib/rnode/genesis/bonds.txt
+      - ./certs/validator3/node.certificate.pem:/var/lib/rnode/node.certificate.pem:ro
+      - ./certs/validator3/node.key.pem:/var/lib/rnode/node.key.pem:ro
+
+  # =================================================================
+  # OBSERVER (Read-Only Node)
+  # =================================================================
+  # Syncs state from validators but does not participate in consensus.
+  readonly:
+    <<: *default-rnode
+    container_name: ${READONLY_HOST:-rnode.readonly}
+    command:
+      - run
+      - --host=${READONLY_HOST:-rnode.readonly}
+      - --bootstrap=rnode://${BOOTSTRAP_NODE_ID:-1e780e5dfbe0a3d9470a2b414f502d59402e09c2}@${BOOTSTRAP_HOST:-rnode.bootstrap}?protocol=40400&discovery=40404
+      - --no-upnp
+      - --allow-private-addresses
+      - --heartbeat-disabled
+    ports:
+      - "40450:40400"
+      - "40451:40401"
+      - "40452:40402"
+      - "40453:40403"
+      - "40454:40404"
+      - "40455:40405"
+    volumes:
+      - readonly-data:/var/lib/rnode/
+      - ./conf/default.conf:/var/lib/rnode/rnode.conf
+      - ./genesis/bonds.txt:/var/lib/rnode/genesis/bonds.txt
+      - ./genesis/wallets.txt:/var/lib/rnode/genesis/wallets.txt
+
+  # =================================================================
+  # PROMETHEUS
+  # =================================================================
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    restart: unless-stopped
+    networks:
+      - f1r3fly
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/prometheus-rules.yml:/etc/prometheus/rules/prometheus-rules.yml:ro
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+
+  # =================================================================
+  # GRAFANA
+  # =================================================================
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+    networks:
+      - f1r3fly
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_USERS_DEFAULT_THEME=light
+      - GF_INSTALL_PLUGINS=grafana-piechart-panel
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/etc/grafana/dashboards:ro
+
+volumes:
+  boot-data:
+  validator1-data:
+  validator2-data:
+  validator3-data:
+  readonly-data:
+
+networks:
+  f1r3fly:
+    name: f1r3fly
+    driver: bridge

@@ -439,7 +439,7 @@ where
         }
     }
 
-    fn is_replay(&self) -> bool { false }
+    fn is_replay(&self) -> bool { true }
 
     fn update_produce(&mut self, produce_ref: Produce) -> () {
         for event in self.event_log.iter_mut() {
@@ -1333,7 +1333,7 @@ where
                 let is_peeked = peeks.contains(&channel_idx);
 
                 if !persist && !is_peeked {
-                    self.store.remove_datum(&channel, datum_index)
+                    self.store.remove_datum(&channel, datum_index).ok()
                 } else {
                     Some(())
                 }
@@ -1491,7 +1491,9 @@ where
 
                 let channels_clone = channels.clone();
                 if datum_index >= 0 && !persist && !is_peeked {
-                    self.store.remove_datum(&channel, datum_index);
+                    if self.store.remove_datum(&channel, datum_index).is_err() {
+                        return None;
+                    }
                 } else if datum_index < 0 && is_peeked {
                     // On-the-fly produced data matched a waiting peek continuation.
                     // The data was never stored, but peek semantics require it to

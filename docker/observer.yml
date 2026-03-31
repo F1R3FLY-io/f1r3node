@@ -1,28 +1,47 @@
+# =================================================================
+# F1R3FLY RUST NODE - OBSERVER (READ-ONLY)
+# =================================================================
+# Joins an existing shard to provide read-only API access.
+# Does not participate in consensus or produce blocks.
+#
+# Usage:
+#   docker compose -f observer.yml up -d
+#
+# Prerequisites:
+#   - A running shard network (docker compose -f shard.yml up -d)
+
 services:
   readonly:
-    image: f1r3flyindustries/f1r3fly-rust-node:latest
+    image: ${F1R3FLY_RUST_IMAGE:-f1r3flyindustries/f1r3fly-rust-node:latest}
     user: root
+    restart: always
     networks:
       - f1r3fly
-    container_name: $READONLY_HOST
+    container_name: ${READONLY_HOST:-rnode.readonly}
+    command:
+      - run
+      - --host=${READONLY_HOST:-rnode.readonly}
+      - --bootstrap=rnode://${BOOTSTRAP_NODE_ID:-1e780e5dfbe0a3d9470a2b414f502d59402e09c2}@${BOOTSTRAP_HOST:-rnode.bootstrap}?protocol=40400&discovery=40404
+      - --no-upnp
+      - --allow-private-addresses
+      - --heartbeat-disabled
     ports:
+      - "40450:40400"
       - "40451:40401"
       - "40452:40402"
       - "40453:40403"
-    command:
-    - run
-    - --host=$READONLY_HOST
-    - --bootstrap=rnode://1e780e5dfbe0a3d9470a2b414f502d59402e09c2@$BOOTSTRAP_HOST?protocol=40400&discovery=40404
-    - --no-upnp
-    - --allow-private-addresses
-
+      - "40454:40404"
+      - "40455:40405"
     volumes:
-      - ./conf/observer.conf:/var/lib/rnode/rnode.conf
-      - ./conf/logback.xml:/var/lib/rnode/logback.xml
+      - readonly-data:/var/lib/rnode/
+      - ./conf/default.conf:/var/lib/rnode/rnode.conf
       - ./genesis/bonds.txt:/var/lib/rnode/genesis/bonds.txt
       - ./genesis/wallets.txt:/var/lib/rnode/genesis/wallets.txt
+
+volumes:
+  readonly-data:
 
 networks:
   f1r3fly:
     external: true
-    name: docker_f1r3fly
+    name: f1r3fly

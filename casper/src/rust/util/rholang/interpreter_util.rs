@@ -1,7 +1,7 @@
 // See casper/src/main/scala/coop/rchain/casper/util/rholang/InterpreterUtil.scala
 
 use prost::bytes::Bytes;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use block_storage::rust::{
     dag::block_dag_key_value_storage::KeyValueDagRepresentation,
@@ -45,6 +45,37 @@ use super::{replay_failure::ReplayFailure, runtime_manager::RuntimeManager};
 
 pub fn mk_term(rho: &str, normalizer_env: HashMap<String, Par>) -> Result<Par, InterpreterError> {
     Compiler::source_to_adt_with_normalizer_env(rho, normalizer_env)
+}
+
+fn with_ancestors_capped(
+    dag: &KeyValueDagRepresentation,
+    block_hash: &BlockHash,
+    max_nodes: usize,
+) -> Result<Option<HashSet<BlockHash>>, CasperError> {
+    if max_nodes == 0 {
+        return Ok(None);
+    }
+
+    let mut visited: HashSet<BlockHash> = HashSet::new();
+    let mut queue: VecDeque<BlockHash> = VecDeque::from([block_hash.clone()]);
+
+    while let Some(current_hash) = queue.pop_front() {
+        if !visited.insert(current_hash.clone()) {
+            continue;
+        }
+        if visited.len() >= max_nodes {
+            return Ok(None);
+        }
+
+        let metadata = dag.lookup_unsafe(&current_hash)?;
+        for parent in metadata.parents {
+            if !visited.contains(&parent) {
+                queue.push_back(parent);
+            }
+        }
+    }
+
+    Ok(Some(visited))
 }
 
 // Returns (None, checkpoints) if the block's tuplespace hash
@@ -630,6 +661,7 @@ pub fn compute_parents_post_state(
     let total_started = std::time::Instant::now();
     const MAX_PARENT_MERGE_SCOPE_BLOCKS: usize = 512;
     const MAX_LCA_DISTANCE_BLOCKS: i64 = 256;
+    const MAX_FULL_ANCESTOR_SCAN_NODES: usize = 8_192;
 
     // Span guard must live until end of scope to maintain tracing context
     let _span = tracing::debug_span!(target: "f1r3fly.casper.compute-parents-post-state", "compute-parents-post-state").entered();
@@ -700,12 +732,13 @@ pub fn compute_parents_post_state(
                 let parent_hashes: HashSet<BlockHash> =
                     parents.iter().map(|p| p.block_hash.clone()).collect();
                 for candidate in &parents {
-                    let Ok(mut candidate_closure) =
-                        s.dag.with_ancestors(candidate.block_hash.clone(), |_| true)
-                    else {
+                    let Ok(Some(candidate_closure)) = with_ancestors_capped(
+                        &s.dag,
+                        &candidate.block_hash,
+                        MAX_FULL_ANCESTOR_SCAN_NODES,
+                    ) else {
                         continue;
                     };
-                    candidate_closure.insert(candidate.block_hash.clone());
 
                     let covers_all = parent_hashes
                         .iter()
@@ -739,6 +772,7 @@ pub fn compute_parents_post_state(
                 .unwrap_or(s.on_chain_state.shard_conf.disable_late_block_filtering);
             let cache_key = super::runtime_manager::ParentsPostStateCacheKey {
                 sorted_parent_hashes: parent_hashes_for_key,
+                snapshot_lfb_hash: s.last_finalized_block.clone(),
                 disable_late_block_filtering,
             };
             if let Some((cached_state, cached_rejected)) =
@@ -891,13 +925,25 @@ pub fn compute_parents_post_state(
             // perform a full ancestry intersection that is independent of finalized state.
             if common_ancestors.is_empty() {
                 let mut full_ancestor_sets_with_parents: Vec<HashSet<BlockHash>> = Vec::new();
+                let mut full_fallback_capped = false;
                 for parent_hash in &parent_hashes {
-                    let mut ancestors = s.dag.with_ancestors(parent_hash.clone(), |_| true)?;
-                    ancestors.insert(parent_hash.clone());
-                    full_ancestor_sets_with_parents.push(ancestors);
+                    match with_ancestors_capped(&s.dag, parent_hash, MAX_FULL_ANCESTOR_SCAN_NODES)?
+                    {
+                        Some(ancestors) => full_ancestor_sets_with_parents.push(ancestors),
+                        None => {
+                            full_fallback_capped = true;
+                            break;
+                        }
+                    }
                 }
 
-                if !full_ancestor_sets_with_parents.is_empty() {
+                if full_fallback_capped {
+                    tracing::warn!(
+                        target: "f1r3fly.compute_parents_post_state.fallback",
+                        "Skipping full LCA fallback due to capped ancestor scan (cap={} per parent); falling back to snapshot LFB",
+                        MAX_FULL_ANCESTOR_SCAN_NODES
+                    );
+                } else if !full_ancestor_sets_with_parents.is_empty() {
                     let first = full_ancestor_sets_with_parents[0].clone();
                     common_ancestors = full_ancestor_sets_with_parents
                         .iter()

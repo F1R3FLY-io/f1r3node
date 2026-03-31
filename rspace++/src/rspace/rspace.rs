@@ -1406,7 +1406,7 @@ where
                             );
                         }
                     }
-                    self.store.remove_datum(channel, *datum_index)
+                    self.store.remove_datum(channel, *datum_index).ok()
                 } else {
                     Some(())
                 }
@@ -1601,7 +1601,9 @@ where
                             );
                         }
                     }
-                    self.store.remove_datum(&channel, *datum_index);
+                    if self.store.remove_datum(&channel, *datum_index).is_err() {
+                        return None;
+                    }
                 } else if *datum_index < 0 && is_peeked {
                     // On-the-fly produced data matched a waiting peek continuation.
                     // The data was never stored, but peek semantics require it to

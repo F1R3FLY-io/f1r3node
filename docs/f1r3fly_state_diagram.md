@@ -178,5 +178,5 @@ flowchart TD
 
 **Clique Oracle Safety** (`SafetyOracle`): Computes mathematical finality via `(cliqueWeight * 2 - totalStake) / totalStake`, finding maximum validator cliques that agree on target blocks.
 
-**Key Parameters**: `fault-tolerance-threshold=0.99`, `synchrony-constraint-threshold=0.67`, `height-constraint-threshold=1000`
+**Key Parameters**: `fault-tolerance-threshold=0.1`, `synchrony-constraint-threshold=0`, `height-constraint-threshold=1000`
 

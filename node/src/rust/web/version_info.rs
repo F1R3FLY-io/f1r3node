@@ -14,7 +14,7 @@ pub fn get_version_info() -> (&'static str, &'static str) {
 
 pub fn get_version_info_str() -> String {
     let (version, git_hash) = get_version_info();
-    format!("F1r3fly Node {} ({})", version, git_hash)
+    format!("F1r3node Rust {} ({})", version, git_hash)
 }
 
 pub struct VersionInfo;

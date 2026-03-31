@@ -68,6 +68,18 @@ impl ReplayRuntimeOps {
         }
     }
 
+    fn discard_event_log(&mut self, phase: &str, error_path: bool) {
+        let drained = self.runtime_ops.runtime.take_event_log();
+        if error_path {
+            tracing::warn!(
+                target: "f1r3fly.casper.replay-rho-runtime",
+                "Discarded {} replay events during {} error path",
+                drained.len(),
+                phase
+            );
+        }
+    }
+
     /* REPLAY Compute state with deploys (genesis block) and System deploys (regular block) */
 
     /**
@@ -240,14 +252,14 @@ impl ReplayRuntimeOps {
 
         match precharge_result {
             Ok((_, mut system_eval_result)) => {
-                let _ = self.runtime_ops.runtime.take_event_log();
+                self.discard_event_log("precharge", false);
                 if system_eval_result.errors.is_empty() {
                     mergeable_channels.extend(system_eval_result.mergeable.drain());
                 }
                 tracing::debug!(target: "f1r3fly.casper.replay-rho-runtime", "precharge-done");
             }
             Err(err) => {
-                let _ = self.runtime_ops.runtime.take_event_log();
+                self.discard_event_log("precharge", true);
                 return Err(err);
             }
         };
@@ -273,14 +285,14 @@ impl ReplayRuntimeOps {
 
             match refund_result {
                 Ok((_, mut system_eval_result)) => {
-                    let _ = self.runtime_ops.runtime.take_event_log();
+                    self.discard_event_log("refund", false);
                     if system_eval_result.errors.is_empty() {
                         mergeable_channels.extend(system_eval_result.mergeable.drain());
                     }
                     tracing::debug!(target: "f1r3fly.casper.replay-rho-runtime", "refund-done");
                 }
                 Err(err) => {
-                    let _ = self.runtime_ops.runtime.take_event_log();
+                    self.discard_event_log("refund", true);
                     return Err(err);
                 }
             }
@@ -319,7 +331,7 @@ impl ReplayRuntimeOps {
 
         rholang::rust::interpreter::storage::charging_rspace::reset_cost_trace_seq();
         let mut user_eval_result = self.runtime_ops.evaluate(&processed_deploy.deploy).await?;
-        let _ = self.runtime_ops.runtime.take_event_log();
+        self.discard_event_log("user-deploy", false);
 
         let eval_successful = user_eval_result.errors.is_empty();
 
@@ -404,7 +416,7 @@ impl ReplayRuntimeOps {
                     .replay_system_deploy_internal(&mut slash_deploy, &None)
                     .await
                     .map(|(_, eval_result)| {
-                        let _ = self.runtime_ops.runtime.take_event_log();
+                        self.discard_event_log("slash-system-deploy", false);
 
                         // Time checkpoint-mergeable operation for slash deploy
                         let checkpoint_mergeable_start = Instant::now();
@@ -438,7 +450,7 @@ impl ReplayRuntimeOps {
                     .replay_system_deploy_internal(&mut close_block_deploy, &None)
                     .await
                     .map(|(_, eval_result)| {
-                        let _ = self.runtime_ops.runtime.take_event_log();
+                        self.discard_event_log("close-block-system-deploy", false);
 
                         // Time checkpoint-mergeable operation for close block deploy
                         let checkpoint_mergeable_start = Instant::now();

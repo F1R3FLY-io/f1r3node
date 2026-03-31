@@ -45,7 +45,7 @@ use block_storage::rust::dag::block_dag_key_value_storage::KeyValueDagRepresenta
 use crate::rust::ProposeFunction;
 
 use crate::rust::safety_oracle::{
-    CliqueOracleImpl, SafetyOracle, MAX_FAULT_TOLERANCE, MIN_FAULT_TOLERANCE,
+    CliqueOracleImpl, SafetyOracle, MAX_FAULT_TOLERANCE,
 };
 use block_storage::rust::dag::block_dag_key_value_storage::DeployId;
 use rspace_plus_plus::rspace::history::Either;
@@ -1242,23 +1242,10 @@ impl BlockAPI {
         constructor: fn(&BlockMessage, f32) -> A,
     ) -> ApiErr<A> {
         let dag = casper.block_dag().await?;
-        // TODO: Scala this is temporary solution to not calculate fault tolerance all the blocks
-        let old_block =
-            Some(dag.latest_block_number() - block.body.state.block_number).map(|diff| diff > 100);
-        let block_in_dag = dag.contains(&block.block_hash);
-
-        let normalized_fault_tolerance = if old_block.unwrap_or(false) || !block_in_dag {
-            if dag.is_finalized(&block.block_hash) {
-                MAX_FAULT_TOLERANCE
-            } else {
-                MIN_FAULT_TOLERANCE
-            }
-        } else {
-            let safety_oracle = CliqueOracleImpl;
-            safety_oracle
-                .normalized_fault_tolerance(&dag, &block.block_hash)
-                .await?
-        };
+        let safety_oracle = CliqueOracleImpl;
+        let normalized_fault_tolerance = safety_oracle
+            .normalized_fault_tolerance(&dag, &block.block_hash)
+            .await?;
 
         let weights_map = proto_util::weight_map(block);
         let weights_u64: HashMap<Bytes, u64> = weights_map

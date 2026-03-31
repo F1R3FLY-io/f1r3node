@@ -2,10 +2,10 @@
 // See casper/src/main/scala/coop/rchain/casper/util/rholang/RuntimeManagerSyntax.scala
 
 use dashmap::DashMap;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::hash::Hash;
 use std::sync::Arc;
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
 use crypto::rust::hash::blake2b256::Blake2b256;
 use crypto::rust::signatures::signed::Signed;
@@ -14,10 +14,9 @@ use models::rhoapi::{BindPattern, ListParWithRandom, Par, TaggedContinuation};
 use models::rust::block::state_hash::{StateHash, StateHashSerde};
 use models::rust::block_hash::BlockHash;
 use models::rust::casper::protocol::casper_message::{
-    Bond, DeployData, Event, ProcessedDeploy, ProcessedSystemDeploy,
+    Bond, DeployData, Event, ProcessedDeploy, ProcessedSystemDeploy, SystemDeployData,
 };
 use models::rust::validator::Validator;
-use prost::Message;
 use rholang::rust::interpreter::external_services::ExternalServices;
 use rholang::rust::interpreter::matcher::r#match::Matcher;
 use rholang::rust::interpreter::merging::rholang_merging_logic::{
@@ -68,9 +67,12 @@ pub struct RuntimeManager {
     pub mergeable_tag_name: Par,
     // TODO: make proper storage for block indices - OLD
     pub block_index_cache: Arc<DashMap<BlockHash, BlockIndex>>,
+    pub block_index_cache_order: Arc<Mutex<VecDeque<BlockHash>>>,
     pub active_validators_cache: Arc<DashMap<StateHash, Vec<Validator>>>,
+    pub active_validators_cache_order: Arc<Mutex<VecDeque<StateHash>>>,
     /// Cache for merged parent post-state computation keyed by parent-set snapshot context.
     pub parents_post_state_cache: Arc<DashMap<ParentsPostStateCacheKey, ParentsPostStateCacheVal>>,
+    pub parents_post_state_cache_order: Arc<Mutex<VecDeque<ParentsPostStateCacheKey>>>,
     /// Optional replay cache for delta replay optimization
     pub replay_cache: Option<Arc<InMemoryReplayCache>>,
     /// Optional state hash cache for skipping known replays
@@ -85,9 +87,8 @@ pub struct RuntimeManager {
 #[derive(Clone, Hash, PartialEq, Eq)]
 pub struct ParentsPostStateCacheKey {
     pub sorted_parent_hashes: Vec<BlockHash>,
-    // Snapshot LFB is intentionally excluded from the cache key.
-    // Parent-post-state merge is derived from the parent set and config; keying by
-    // moving LFB destroys cache locality and causes repeated recomputation.
+    // Snapshot LFB participates in visible-ancestor filtering, so cache key must include it.
+    pub snapshot_lfb_hash: BlockHash,
     pub disable_late_block_filtering: bool,
 }
 
@@ -147,19 +148,54 @@ impl RuntimeManager {
         sys_processed: &[ProcessedSystemDeploy],
         is_genesis: bool,
     ) -> Vec<u8> {
+        #[inline]
+        fn push_len_prefixed(bytes: &mut Vec<u8>, data: &[u8]) {
+            bytes.extend_from_slice(&(data.len() as u64).to_le_bytes());
+            bytes.extend_from_slice(data);
+        }
+
         // Fingerprint replay-relevant payload so cache keys stay safe under adversarial input.
         let mut bytes = Vec::new();
         bytes.extend_from_slice(&(usr_processed.len() as u64).to_le_bytes());
         for pd in usr_processed {
-            let encoded = pd.clone().to_proto().encode_to_vec();
-            bytes.extend_from_slice(&(encoded.len() as u64).to_le_bytes());
-            bytes.extend_from_slice(&encoded);
+            push_len_prefixed(&mut bytes, &pd.deploy.sig);
+            bytes.extend_from_slice(&pd.cost.cost.to_le_bytes());
+            bytes.push(u8::from(pd.is_failed));
+            match &pd.system_deploy_error {
+                Some(err) => {
+                    bytes.push(1);
+                    push_len_prefixed(&mut bytes, err.as_bytes());
+                }
+                None => bytes.push(0),
+            }
         }
         bytes.extend_from_slice(&(sys_processed.len() as u64).to_le_bytes());
         for psd in sys_processed {
-            let encoded = psd.clone().to_proto().encode_to_vec();
-            bytes.extend_from_slice(&(encoded.len() as u64).to_le_bytes());
-            bytes.extend_from_slice(&encoded);
+            match psd {
+                ProcessedSystemDeploy::Succeeded { system_deploy, .. } => {
+                    bytes.push(0);
+                    match system_deploy {
+                        SystemDeployData::Slash {
+                            invalid_block_hash,
+                            issuer_public_key,
+                        } => {
+                            bytes.push(0);
+                            push_len_prefixed(&mut bytes, invalid_block_hash);
+                            push_len_prefixed(&mut bytes, &issuer_public_key.bytes);
+                        }
+                        SystemDeployData::CloseBlockSystemDeployData => {
+                            bytes.push(1);
+                        }
+                        SystemDeployData::Empty => {
+                            bytes.push(2);
+                        }
+                    }
+                }
+                ProcessedSystemDeploy::Failed { error_msg, .. } => {
+                    bytes.push(1);
+                    push_len_prefixed(&mut bytes, error_msg.as_bytes());
+                }
+            }
         }
         bytes.push(u8::from(is_genesis));
         Blake2b256::hash(bytes)
@@ -253,13 +289,31 @@ impl RuntimeManager {
         Self::maybe_trim_allocator();
     }
 
-    fn evict_one_dashmap_entry<K, V>(map: &DashMap<K, V>)
+    fn touch_cache_key<K>(order: &Mutex<VecDeque<K>>, key: &K)
+    where
+        K: Eq + Clone,
+    {
+        // LRU touch is O(n) due VecDeque::position/remove. This is intentional for now:
+        // these caches are tightly bounded (64-256 entries by default), so linear touch
+        // remains cheaper than introducing additional synchronized index maps.
+        if let Ok(mut guard) = order.lock() {
+            if let Some(pos) = guard.iter().position(|existing| existing == key) {
+                guard.remove(pos);
+            }
+            guard.push_back(key.clone());
+        }
+    }
+
+    fn evict_fifo_entry<K, V>(map: &DashMap<K, V>, order: &Mutex<VecDeque<K>>)
     where
         K: Eq + Hash + Clone,
     {
-        let evict_key = map.iter().next().map(|entry| entry.key().clone());
-        if let Some(key) = evict_key {
-            map.remove(&key);
+        if let Ok(mut guard) = order.lock() {
+            while let Some(evict_key) = guard.pop_front() {
+                if map.remove(&evict_key).is_some() {
+                    break;
+                }
+            }
         }
     }
 
@@ -440,17 +494,9 @@ impl RuntimeManager {
         ),
         CasperError,
     > {
-        let mem_profile_enabled = std::env::var("F1R3_BLOCK_CREATOR_PHASE_SUBSTEP_PROFILE")
-            .ok()
-            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-            .unwrap_or(false);
+        let mem_profile_enabled = crate::rust::util::rholang::mem_profiler::mem_profile_enabled();
         let read_vm_rss_kb = || -> Option<usize> {
-            let status = std::fs::read_to_string("/proc/self/status").ok()?;
-            status
-                .lines()
-                .find(|line| line.starts_with("VmRSS:"))
-                .and_then(|line| line.split_whitespace().nth(1))
-                .and_then(|value| value.parse::<usize>().ok())
+            crate::rust::util::rholang::mem_profiler::read_vm_rss_kb()
         };
         let mut rss_baseline = if mem_profile_enabled {
             read_vm_rss_kb()
@@ -653,6 +699,13 @@ impl RuntimeManager {
                 let no_user_deploys = terms.is_empty();
                 let no_system_deploys = system_deploys.is_empty();
                 if no_user_deploys && no_system_deploys {
+                    if cached_post != *start_hash {
+                        tracing::warn!(
+                            "[CACHE] StateHashCache hit mismatch for empty block (seq={}): pre_state != cached_post, forcing full replay",
+                            seq_num
+                        );
+                        // Continue to full replay path for validation.
+                    } else {
                     let pre_state_hash = Blake2b256Hash::from_bytes_prost(start_hash);
                     let post_state_hash = Blake2b256Hash::from_bytes_prost(&cached_post);
                     self.save_mergeable_channels(
@@ -667,6 +720,7 @@ impl RuntimeManager {
                         seq_num
                     );
                     return Ok(cached_post);
+                    }
                 }
 
                 tracing::warn!(
@@ -754,6 +808,7 @@ impl RuntimeManager {
         start_hash: &StateHash,
     ) -> Result<Vec<Validator>, CasperError> {
         if let Some(cached) = self.active_validators_cache.get(start_hash) {
+            Self::touch_cache_key(&self.active_validators_cache_order, start_hash);
             return Ok(cached.clone());
         }
 
@@ -763,10 +818,11 @@ impl RuntimeManager {
 
         let max_entries = Self::max_active_validators_cache_entries();
         if self.active_validators_cache.len() >= max_entries {
-            Self::evict_one_dashmap_entry(&self.active_validators_cache);
+            Self::evict_fifo_entry(&self.active_validators_cache, &self.active_validators_cache_order);
         }
         self.active_validators_cache
             .insert(start_hash.clone(), computed.clone());
+        Self::touch_cache_key(&self.active_validators_cache_order, start_hash);
 
         Ok(computed)
     }
@@ -841,6 +897,7 @@ impl RuntimeManager {
         mergeable_chs: &Vec<NumberChannelsDiff>,
     ) -> Result<BlockIndex, CasperError> {
         if let Some(cached) = self.block_index_cache.get(block_hash) {
+            Self::touch_cache_key(&self.block_index_cache_order, block_hash);
             metrics::gauge!(BLOCK_INDEX_CACHE_SIZE_METRIC, "source" => CASPER_METRICS_SOURCE)
                 .set(self.block_index_cache.len() as f64);
             return Ok(cached.clone());
@@ -861,11 +918,12 @@ impl RuntimeManager {
         // Avoid DashMap re-entrant calls while holding an entry guard.
         let max_entries = Self::max_block_index_cache_entries();
         if self.block_index_cache.len() >= max_entries {
-            Self::evict_one_dashmap_entry(&self.block_index_cache);
+            Self::evict_fifo_entry(&self.block_index_cache, &self.block_index_cache_order);
         }
 
         self.block_index_cache
             .insert(block_hash.clone(), block_index.clone());
+        Self::touch_cache_key(&self.block_index_cache_order, block_hash);
         metrics::gauge!(BLOCK_INDEX_CACHE_SIZE_METRIC, "source" => CASPER_METRICS_SOURCE)
             .set(self.block_index_cache.len() as f64);
         Ok(block_index)
@@ -882,10 +940,10 @@ impl RuntimeManager {
         &self,
         key: &ParentsPostStateCacheKey,
     ) -> Option<ParentsPostStateCacheVal> {
-        let result = self
-            .parents_post_state_cache
-            .get(key)
-            .map(|entry| entry.value().clone());
+        let result = self.parents_post_state_cache.get(key).map(|entry| {
+            Self::touch_cache_key(&self.parents_post_state_cache_order, key);
+            entry.value().clone()
+        });
         metrics::gauge!(PARENTS_POST_STATE_CACHE_SIZE_METRIC, "source" => CASPER_METRICS_SOURCE)
             .set(self.parents_post_state_cache.len() as f64);
         result
@@ -899,9 +957,13 @@ impl RuntimeManager {
         // Keep cache bounded with simple eviction strategy.
         let max_entries = Self::max_parents_post_state_cache_entries();
         if self.parents_post_state_cache.len() >= max_entries {
-            Self::evict_one_dashmap_entry(&self.parents_post_state_cache);
+            Self::evict_fifo_entry(
+                &self.parents_post_state_cache,
+                &self.parents_post_state_cache_order,
+            );
         }
-        self.parents_post_state_cache.insert(key, value);
+        self.parents_post_state_cache.insert(key.clone(), value);
+        Self::touch_cache_key(&self.parents_post_state_cache_order, &key);
         metrics::gauge!(PARENTS_POST_STATE_CACHE_SIZE_METRIC, "source" => CASPER_METRICS_SOURCE)
             .set(self.parents_post_state_cache.len() as f64);
     }
@@ -991,7 +1053,7 @@ impl RuntimeManager {
         pre_state_hash: &Blake2b256Hash,
     ) -> Result<(), CasperError> {
         // Calculate difference values from final values on number channels
-        let diffs = self.convert_number_channels_to_diff(channels_data, pre_state_hash);
+        let diffs = self.convert_number_channels_to_diff(channels_data, pre_state_hash)?;
 
         // Convert to storage types
         let deploy_channels = diffs
@@ -1035,11 +1097,14 @@ impl RuntimeManager {
         channels_data: Vec<NumberChannelsEndVal>,
         // Used to calculate value difference from final values
         pre_state_hash: &Blake2b256Hash,
-    ) -> Vec<NumberChannelsDiff> {
+    ) -> Result<Vec<NumberChannelsDiff>, CasperError> {
         let history_repo = self.history_repo.clone();
-        let reader = history_repo
-            .get_history_reader(pre_state_hash)
-            .unwrap_or_else(|e| panic!("Failed to get history reader for pre-state hash: {:?}", e));
+        let reader = history_repo.get_history_reader(pre_state_hash).map_err(|e| {
+            CasperError::RuntimeError(format!(
+                "Failed to get history reader for pre-state hash: {:?}",
+                e
+            ))
+        })?;
 
         // Build a one-shot base-value map to avoid repeatedly creating history readers per key.
         let unique_channels = channels_data
@@ -1048,14 +1113,16 @@ impl RuntimeManager {
             .collect::<std::collections::BTreeSet<_>>();
         let mut initial_values: BTreeMap<Blake2b256Hash, i64> = BTreeMap::new();
         for ch in unique_channels {
-            let data = reader
-                .get_data(&ch)
-                .unwrap_or_else(|e| panic!("Error getting data for channel {:?}: {:?}", ch, e));
-            assert!(
-                data.len() <= 1,
-                "To calculate difference on a number channel, single value is expected, found {:?}",
-                data
-            );
+            let data = reader.get_data(&ch).map_err(|e| {
+                CasperError::RuntimeError(format!("Error getting data for channel {:?}: {:?}", ch, e))
+            })?;
+            if data.len() > 1 {
+                return Err(CasperError::RuntimeError(format!(
+                    "Expected at most one value for number channel {:?}, found {}",
+                    ch,
+                    data.len()
+                )));
+            }
             let value = data
                 .first()
                 .map(|datum| RholangMergingLogic::get_number_with_rnd(&datum.a).0)
@@ -1064,9 +1131,10 @@ impl RuntimeManager {
         }
 
         // Calculate difference values from final values on number channels
-        RholangMergingLogic::calculate_num_channel_diff(channels_data, move |ch| {
-            initial_values.get(ch).copied()
-        })
+        Ok(RholangMergingLogic::calculate_num_channel_diff(
+            channels_data,
+            move |ch| initial_values.get(ch).copied(),
+        ))
     }
 
     /// Returns the genesis pre-state hash (state after bootstrap_registry).
@@ -1095,8 +1163,11 @@ impl RuntimeManager {
             mergeable_store,
             mergeable_tag_name,
             block_index_cache: Arc::new(DashMap::new()),
+            block_index_cache_order: Arc::new(Mutex::new(VecDeque::new())),
             active_validators_cache: Arc::new(DashMap::new()),
+            active_validators_cache_order: Arc::new(Mutex::new(VecDeque::new())),
             parents_post_state_cache: Arc::new(DashMap::new()),
+            parents_post_state_cache_order: Arc::new(Mutex::new(VecDeque::new())),
             replay_cache: (replay_cache_size > 0)
                 .then(|| Arc::new(InMemoryReplayCache::new(replay_cache_size))),
             state_hash_cache: (state_hash_cache_size > 0)

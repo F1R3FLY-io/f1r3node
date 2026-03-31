@@ -50,6 +50,8 @@ impl COMM {
         //         b.persistent,
         //     ))
         // });
+        // Note: this sort uses (channel_hash, hash, persistent) for COMM event identity,
+        // which differs from Produce::Ord (hash-only). Do not replace with .sort().
         produce_refs.sort_by(|a, b| {
             a.channel_hash
                 .cmp(&b.channel_hash)
@@ -86,18 +88,18 @@ impl Hash for COMM {
 
 // The 'Arbitrary' macro is needed here for proptest in hot_store_spec.rs
 // The 'Default' macro is needed here for hot_store_spec.rs
+//
+// Custom PartialEq/Eq/Hash/Ord: identity is determined solely by the `hash`
+// field (a cryptographic hash of channel + data + persist). Metadata fields
+// like `is_deterministic`, `output_value`, and `failed` are set after creation
+// (e.g. via mark_as_non_deterministic) and must NOT affect identity.
 #[derive(
     Serialize,
     Deserialize,
     Clone,
     Debug,
-    PartialEq,
-    Eq,
-    Hash,
     Arbitrary,
     Default,
-    Ord,
-    PartialOrd
 )]
 pub struct Produce {
     pub channel_hash: Blake2b256Hash,
@@ -109,6 +111,32 @@ pub struct Produce {
     /// non-deterministic process. Used for replay safety of external
     /// service calls (OpenAI, Ollama, gRPC).
     pub failed: bool,
+}
+
+impl PartialEq for Produce {
+    fn eq(&self, other: &Self) -> bool {
+        self.hash == other.hash
+    }
+}
+
+impl Eq for Produce {}
+
+impl std::hash::Hash for Produce {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.hash.hash(state);
+    }
+}
+
+impl Ord for Produce {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.hash.cmp(&other.hash)
+    }
+}
+
+impl PartialOrd for Produce {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
 }
 
 impl Produce {

@@ -13,6 +13,8 @@ use proptest::prelude::*;
 use rand::{Rng, thread_rng};
 use tracing::warn;
 
+use super::errors::RSpaceError;
+
 use crate::rspace::history::history_reader::HistoryReaderBase;
 use crate::rspace::hot_store_action::{
     DeleteAction, DeleteContinuations, DeleteData, DeleteJoins, HotStoreAction, InsertAction,
@@ -50,7 +52,7 @@ pub trait HotStore<C: Clone + Hash + Eq, P: Clone, A: Clone, K: Clone>: Sync + S
 
     fn get_data(&self, channel: &C) -> Vec<Datum<A>>;
     fn put_datum(&self, channel: &C, d: Datum<A>) -> ();
-    fn remove_datum(&self, channel: &C, index: i32) -> Option<()>;
+    fn remove_datum(&self, channel: &C, index: i32) -> Result<(), RSpaceError>;
 
     fn get_joins(&self, channel: &C) -> Vec<Vec<C>>;
     fn put_join(&self, channel: &C, join: &[C]) -> Option<()>;
@@ -448,7 +450,7 @@ where
         Self::update_hot_store_state_metrics(&state);
     }
 
-    fn remove_datum(&self, channel: &C, index: i32) -> Option<()> {
+    fn remove_datum(&self, channel: &C, index: i32) -> Result<(), RSpaceError> {
 
         // Phase 5e: log remove_datum calls on 32-byte GPrivate channels — this is the
         // primary suspect for spurious DeleteData on peek-only channels like treeHashMapCh.
@@ -489,24 +491,30 @@ where
             Entry::Occupied(mut occupied) => {
                 let out_of_bounds = index < 0 || index as usize >= occupied.get().len();
                 if out_of_bounds {
-                    warn!(index, "Index out of bounds when removing datum");
-                    None
+                    Err(RSpaceError::BugFoundError(format!(
+                        "Index {} out of bounds when removing datum (len={})",
+                        index,
+                        occupied.get().len()
+                    )))
                 } else {
                     occupied.get_mut().remove(index as usize);
-                    Some(())
+                    Ok(())
                 }
             }
             Entry::Vacant(vacant) => {
                 let mut from_history_store = self.get_data_from_history_store(channel);
                 let out_of_bounds = index < 0 || index as usize >= from_history_store.len();
                 if out_of_bounds {
-                    warn!(index, "Index out of bounds when removing datum");
+                    let len = from_history_store.len();
                     vacant.insert(from_history_store);
-                    None
+                    Err(RSpaceError::BugFoundError(format!(
+                        "Index {} out of bounds when removing datum (len={})",
+                        index, len
+                    )))
                 } else {
                     from_history_store.remove(index as usize);
                     vacant.insert(from_history_store);
-                    Some(())
+                    Ok(())
                 }
             }
         };

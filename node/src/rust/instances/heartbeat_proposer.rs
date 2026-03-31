@@ -8,7 +8,9 @@ use casper::rust::blocks::proposer::{
 use casper::rust::casper::{CasperSnapshot, MultiParentCasper};
 use casper::rust::casper_conf::HeartbeatConf;
 use casper::rust::engine::engine_cell::EngineCell;
-use casper::rust::heartbeat_signal::{HeartbeatSignal, HeartbeatSignalRef};
+use casper::rust::heartbeat_signal::{
+    install_heartbeat_signal, HeartbeatSignal, HeartbeatSignalRef,
+};
 use casper::rust::system_deploy::is_system_deploy_id;
 use casper::rust::validator_identity::ValidatorIdentity;
 use models::rust::block_hash::BlockHash;
@@ -186,15 +188,11 @@ impl HeartbeatProposer {
             notify: notify.clone(),
         });
 
-        // Store the signal in the shared reference so Casper can use it
-        // Use try_write() since we're being called from sync context within async runtime
-        match heartbeat_signal_ref.try_write() {
-            Ok(mut signal_guard) => {
-                *signal_guard = Some(signal);
-            }
-            Err(_) => {
-                tracing::warn!("Heartbeat: Could not acquire write lock for signal ref, signal-based wake may not work");
-            }
+        // Store the signal in the shared reference so Casper can use it.
+        if !install_heartbeat_signal(&heartbeat_signal_ref, signal) {
+            tracing::warn!(
+                "Heartbeat: signal ref already initialized; keeping existing signal handle"
+            );
         }
 
         let initial_delay = random_initial_delay(config.check_interval);
@@ -556,12 +554,23 @@ async fn check_lfb_and_propose(
         && lag_recovery_leader
         && stale_recovery_window_open
         && (!self_proposed_too_recently || deploy_grace_active);
+    // Convergence recovery: when the LFB is stale and we have unjustified peer blocks,
+    // propose a convergence block that references all known tips. This breaks the deadlock
+    // where validators diverge into independent forks and normal throttling prevents any
+    // validator from proposing a multi-parent convergence block.
+    let convergence_recovery_due = lfb_is_stale
+        && has_new_parents
+        && self_recently_proposed
+        && !can_chase_frontier_while_ahead
+        && frontier_is_stale
+        && stale_recovery_window_open;
     let should_propose = pending_deploys_due
         || pending_deploy_backstop_due
         || frontier_follow_due
         || stale_lfb_recovery_due
         || stale_lfb_leader_recovery_due
-        || high_lag_recovery_due;
+        || high_lag_recovery_due
+        || convergence_recovery_due;
 
     if should_propose {
         let reason = if pending_deploy_backstop_due {
@@ -605,6 +614,13 @@ async fn check_lfb_and_propose(
                 moderate_lag_recovery_threshold,
                 deploy_grace_active,
                 heartbeat_stale_recovery_min_interval_ms()
+            )
+        } else if convergence_recovery_due {
+            format!(
+                "convergence recovery: LFB stale ({}ms), frontier stale ({}ms), unjustified peer blocks exist, lag={}; proposing multi-parent convergence block to break fork deadlock",
+                time_since_lfb,
+                frontier_age_ms,
+                lfb_lag_blocks
             )
         } else if high_lag_recovery_due {
             format!(

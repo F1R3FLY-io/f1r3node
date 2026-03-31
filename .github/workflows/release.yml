@@ -1,0 +1,123 @@
+# Rust release — auto-bumps version on merge to rust/main or rust/dev
+#
+# - rust/main: bumps minor (0.4.0 → 0.5.0)
+# - rust/dev: bumps patch (0.4.0 → 0.4.1)
+#
+# Determines the next version from the latest rust-v* tag, bumps
+# node/Cargo.toml and node/Dockerfile, generates CHANGELOG.md via git-cliff,
+# commits, and pushes. The tag is created via the GitHub API with a PAT so it
+# triggers the existing CI workflow for Docker release and package publishing.
+#
+# Commit push uses GITHUB_TOKEN (no workflow triggers).
+# Tag creation uses RELEASE_PAT (triggers on:push:tags workflows).
+
+name: Release (Rust)
+
+on:
+  push:
+    branches:
+      - rust/main
+      - rust/dev
+  workflow_dispatch:
+
+jobs:
+  release:
+    name: Bump Version & Tag
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      !startsWith(github.event.head_commit.message, 'chore(release)')
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Force-refresh tags
+        run: git fetch origin --tags --force
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Install git-cliff
+        uses: orhun/git-cliff-action@v4
+        with:
+          args: --version
+
+      - name: Determine next version
+        id: version
+        run: |
+          source scripts/version.sh
+          BRANCH="${GITHUB_REF#refs/heads/}"
+          if [ "$BRANCH" = "rust/main" ]; then
+            bump_version minor
+          else
+            bump_version patch
+          fi
+          echo "NEXT_VERSION=$NEXT_VERSION" >> "$GITHUB_OUTPUT"
+          echo "TAG_NAME=$TAG_NAME" >> "$GITHUB_OUTPUT"
+          echo "BRANCH=$BRANCH" >> "$GITHUB_OUTPUT"
+          echo "Next version: $NEXT_VERSION (tag: $TAG_NAME) [branch: $BRANCH]"
+
+      - name: Update node/Cargo.toml version
+        run: |
+          sed -i "0,/^version = \".*\"/s//version = \"${{ steps.version.outputs.NEXT_VERSION }}\"/" node/Cargo.toml
+
+      - name: Update Dockerfile LABEL
+        run: |
+          sed -i 's/^LABEL version=".*"/LABEL version="${{ steps.version.outputs.NEXT_VERSION }}"/' node/Dockerfile
+
+      - name: Update Cargo.lock
+        run: cargo generate-lockfile
+
+      - name: Generate CHANGELOG
+        uses: orhun/git-cliff-action@v4
+        with:
+          config: cliff.toml
+          args: --tag ${{ steps.version.outputs.TAG_NAME }} -o CHANGELOG.md
+
+      - name: Commit release
+        run: |
+          git add node/Cargo.toml node/Dockerfile Cargo.lock CHANGELOG.md
+          git commit -m "chore(release): rust v${{ steps.version.outputs.NEXT_VERSION }}"
+
+      - name: Push commits (GITHUB_TOKEN — no workflow triggers)
+        run: |
+          git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
+          git push origin ${{ steps.version.outputs.BRANCH }}
+
+      - name: Create tag via API (PAT — triggers downstream CI)
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.RELEASE_PAT }}
+          script: |
+            const tagName = '${{ steps.version.outputs.TAG_NAME }}';
+
+            // Get the SHA of the release commit (HEAD after our commits)
+            const { execSync } = require('child_process');
+            const commitSha = execSync('git rev-parse HEAD').toString().trim();
+
+            // Create annotated tag object
+            const tagObject = await github.rest.git.createTag({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag: tagName,
+              message: `Release ${tagName}`,
+              object: commitSha,
+              type: 'commit'
+            });
+
+            // Create tag reference
+            await github.rest.git.createRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: `refs/tags/${tagName}`,
+              sha: tagObject.data.sha
+            });
+
+            console.log(`Created tag ${tagName} -> ${commitSha}`);

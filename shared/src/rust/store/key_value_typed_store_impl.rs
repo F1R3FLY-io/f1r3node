@@ -103,6 +103,23 @@ where
             None => Ok(else_value),
         }
     }
+
+    pub fn any_value<F>(&self, mut predicate: F) -> Result<bool, KvStoreError>
+    where
+        F: FnMut(&V) -> Result<bool, KvStoreError>,
+    {
+        let mut matched = false;
+        self.store.iterate_while(&mut |_, value_bytes| {
+            let value = self.decode_value(&value_bytes)?;
+            if predicate(&value)? {
+                matched = true;
+                Ok(false)
+            } else {
+                Ok(true)
+            }
+        })?;
+        Ok(matched)
+    }
 }
 
 impl<K, V> KeyValueTypedStore<K, V> for KeyValueTypedStoreImpl<K, V>

@@ -62,6 +62,34 @@ fn create_block_creator<'a>(
     }
 }
 
+#[test]
+fn cannot_be_orphaned_should_return_false_for_non_positive_agreeing_stake() {
+    let v1 = generate_validator(Some("v1"));
+    let v2 = generate_validator(Some("v2"));
+
+    let message_weight_map = HashMap::from([(v1.clone(), 10_i64), (v2.clone(), 10_i64)]);
+    let agreeing_weight_map = HashMap::from([(v1.clone(), 10_i64), (v2.clone(), 0_i64)]);
+
+    assert!(!Finalizer::cannot_be_orphaned(
+        &message_weight_map,
+        &agreeing_weight_map
+    ));
+}
+
+#[test]
+fn cannot_be_orphaned_should_return_false_on_stake_sum_overflow() {
+    let v1 = generate_validator(Some("v1"));
+    let v2 = generate_validator(Some("v2"));
+
+    let message_weight_map = HashMap::from([(v1.clone(), i64::MAX), (v2.clone(), 1_i64)]);
+    let agreeing_weight_map = HashMap::from([(v1.clone(), i64::MAX)]);
+
+    assert!(!Finalizer::cannot_be_orphaned(
+        &message_weight_map,
+        &agreeing_weight_map
+    ));
+}
+
 //   *  *            b8 b9
 //   *               b7         <- should not be LFB
 //   *  *  *  *  *   b2 b3 b4 b5 b6
