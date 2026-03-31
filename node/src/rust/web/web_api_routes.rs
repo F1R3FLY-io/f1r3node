@@ -55,6 +55,7 @@ impl WebApiRoutes {
             .route("/deploy/{deploy_id}", get(find_deploy_handler))
             .route("/is-finalized/{hash}", get(is_finalized_handler))
             .route("/transactions/{hash}", get(get_transaction_handler))
+            .route("/trie-stats", get(shared_handlers::trie_stats_handler))
     }
 }
 
@@ -377,6 +378,9 @@ mod tests {
             unimplemented!()
         }
         async fn get_transaction(&self, _: String) -> eyre::Result<TransactionResponse> {
+            unimplemented!()
+        }
+        async fn trie_stats(&self) -> eyre::Result<crate::rust::api::web_api::TrieStats> {
             unimplemented!()
         }
     }

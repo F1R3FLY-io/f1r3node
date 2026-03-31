@@ -72,7 +72,7 @@ impl COMM {
     }
 }
 
-// Needed for 'counter' crate
+// Needed for DashMap key usage (Event::Comm(COMM) requires Hash)
 impl Hash for COMM {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.consume.hash(state);

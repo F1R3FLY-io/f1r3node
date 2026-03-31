@@ -47,6 +47,7 @@ impl ReceiveSortMatcher {
                 source: Some(sorted_channel.term),
                 remainder: bind.remainder,
                 free_count: bind.free_count,
+                peek: bind.peek,
             },
             score: Tree::Node(
                 vec![sorted_channel.score]

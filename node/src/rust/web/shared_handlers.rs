@@ -233,3 +233,19 @@ pub async fn get_block_handler(
         Err(e) => AppError(e).into_response(),
     }
 }
+
+/// LFS diagnostic endpoint — compare trie stats between validator and observer
+#[utoipa::path(
+    get,
+    path = "/trie-stats",
+    responses(
+        (status = 200, description = "Trie statistics", body = super::super::api::web_api::TrieStats),
+    ),
+    tag = "Diagnostics"
+)]
+pub async fn trie_stats_handler(State(app_state): State<AppState>) -> Response {
+    match app_state.web_api.trie_stats().await {
+        Ok(response) => Json(response).into_response(),
+        Err(e) => AppError(e).into_response(),
+    }
+}

@@ -171,6 +171,7 @@ pub fn generate_receive(depth: usize) -> BoxedStrategy<Receive> {
                     source: Some(source),
                     remainder,
                     free_count,
+                    peek: false,
                 }),
             0..1,
         ),

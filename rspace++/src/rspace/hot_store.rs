@@ -68,6 +68,14 @@ pub trait HotStore<C: Clone + Hash + Eq, P: Clone, A: Clone, K: Clone>: Sync + S
 
     // See rspace/src/test/scala/coop/rchain/rspace/test/package.scala
     fn is_empty(&self) -> bool;
+
+    /// Returns lightweight pending state counts for diagnostics:
+    /// (data_channels, data_items, continuation_channels, continuation_items)
+    fn state_counts(&self) -> (usize, usize, usize, usize);
+
+    /// Returns debug info for each pending continuation channel:
+    /// Vec of (channels_debug_string, num_continuations, has_peek)
+    fn continuation_channels_debug(&self) -> Vec<(String, usize, bool)>;
 }
 
 pub fn new_dashmap<K: std::cmp::Eq + std::hash::Hash, V>() -> DashMap<K, V> { DashMap::new() }
@@ -198,24 +206,29 @@ where
             }
             (Some(conts), None) => conts,
             (None, Some(inst)) => {
+                // Read-only fallthrough: return history continuations WITHOUT caching in
+                // hot store state. Caching here would cause changes() to re-emit unchanged
+                // continuations with potentially different channel serialization.
                 let from_history_store = self.get_cont_from_history_store(channels);
-                self.hot_store_state
-                    .lock()
-                    .unwrap()
-                    .continuations
-                    .insert(channels.to_vec(), from_history_store.clone());
                 let mut result = Vec::with_capacity(from_history_store.len() + 1);
                 result.push(inst);
                 result.extend(from_history_store);
                 result
             }
             (None, None) => {
+                // Read-only fallthrough: return history continuations WITHOUT caching in
+                // hot store state. Caching here would cause changes() to re-emit unchanged
+                // continuations with potentially different channel serialization.
                 let from_history_store = self.get_cont_from_history_store(channels);
-                self.hot_store_state
-                    .lock()
-                    .unwrap()
-                    .continuations
-                    .insert(channels.to_vec(), from_history_store.clone());
+                let persistent_count = from_history_store.iter().filter(|wc| wc.persist).count();
+                tracing::debug!(
+                    target: "f1r3fly.rspace",
+                    channels = ?channels,
+                    history_conts = from_history_store.len(),
+                    persistent_conts = persistent_count,
+                    "get_continuations: fell through to history, found {}",
+                    from_history_store.len()
+                );
                 from_history_store
             }
         };
@@ -225,7 +238,7 @@ where
     }
 
     fn put_continuation(&self, channels: &[C], wc: WaitingContinuation<P, K>) -> Option<bool> {
-        // println!("\nHit put_continuation");
+
         let mut inserted = false;
         let has_existing = {
             let state = self.hot_store_state.lock().unwrap();
@@ -280,6 +293,7 @@ where
     }
 
     fn remove_continuation(&self, channels: &[C], index: i32) -> Option<()> {
+
         let state = self.hot_store_state.lock().unwrap();
         let is_installed = state.installed_continuations.get(channels).is_some();
         let removing_installed = is_installed && index == 0;
@@ -333,25 +347,84 @@ where
                 .map(|data| data.clone())
         };
 
+        let hot_state_had_entry = maybe_data.is_some();
         let result = if let Some(data) = maybe_data {
+            tracing::debug!(
+                target: "f1r3fly.rspace.history",
+                channel = ?channel,
+                data_count = data.len(),
+                source = "hot_state",
+                "get_data: hot state hit ({} datums)",
+                data.len()
+            );
             data
         } else {
+            // Read-only fallthrough: return history data WITHOUT caching in hot store state.
+            // The history_store_cache provides read caching. Caching here would cause
+            // changes() to re-emit unchanged data with a potentially different channel
+            // serialization, orphaning the original trie entry.
             let data = self.get_data_from_history_store(channel);
-            self.hot_store_state
-                .lock()
-                .unwrap()
-                .data
-                .insert(channel.clone(), data.clone());
+            tracing::debug!(
+                target: "f1r3fly.rspace.history",
+                channel = ?channel,
+                data_count = data.len(),
+                source = "history_fallback",
+                "get_data: hot state miss, fell through to history ({} datums)",
+                data.len()
+            );
             data
         };
+        // LFS diagnostic: log when get_data returns empty for 32-byte GPrivate channels.
+        // These are the channels that trigger DEAD END during treeHashMap replay.
+        if result.is_empty() {
+            let ch_dbg = format!("{:?}", channel);
+            if ch_dbg.contains("GPrivateBody") && ch_dbg.len() > 200 {
+                tracing::warn!(
+                    target: "f1r3fly.rspace.lfs_diag",
+                    channel = %ch_dbg,
+                    hot_state_had_entry,
+                    "GET_DATA EMPTY: 32-byte GPrivate channel returned 0 datums \
+                     (hot_state={}, history=empty)",
+                    if hot_state_had_entry { "had-entry-but-empty" } else { "miss" }
+                );
+            }
+        }
         let state = self.hot_store_state.lock().unwrap();
         Self::update_hot_store_state_metrics(&state);
         result
     }
 
     fn put_datum(&self, channel: &C, d: Datum<A>) -> () {
-        // println!("\nHit put_datum, channel: {:?}, data: {:?}", channel, d);
-        // println!("\nHit put_datum, data: {:?}", d);
+
+        // Phase 5e: log put_datum calls on 32-byte GPrivate channels to trace
+        // spurious data mutations on peek-only channels like treeHashMapCh
+        if tracing::enabled!(target: "f1r3fly.rholang.diag", tracing::Level::WARN) {
+            let ch_dbg = format!("{:?}", channel);
+            if ch_dbg.contains("GPrivateBody") && ch_dbg.len() > 200 {
+                let gprivate_hex: String = ch_dbg
+                    .find("id: [")
+                    .and_then(|start| {
+                        ch_dbg[start..].find(']').map(|end| {
+                            ch_dbg[start + 5..start + end].to_string()
+                        })
+                    })
+                    .unwrap_or_else(|| "<unknown>".to_string());
+                let existing_count = {
+                    let state = self.hot_store_state.lock().unwrap();
+                    state.data.get(channel).map(|d| d.len())
+                };
+                tracing::warn!(
+                    target: "f1r3fly.rholang.diag",
+                    gprivate_id = %gprivate_hex,
+                    persist = d.persist,
+                    existing_in_hot_state = ?existing_count,
+                    "PUT_DATUM called on 32-byte GPrivate channel — \
+                     existing_in_hot_state={:?}, persist={}",
+                    existing_count, d.persist
+                );
+            }
+        }
+
         let has_existing = {
             let state = self.hot_store_state.lock().unwrap();
             let has = state.data.get(channel).is_some();
@@ -378,6 +451,41 @@ where
     }
 
     fn remove_datum(&self, channel: &C, index: i32) -> Result<(), RSpaceError> {
+
+        // Phase 5e: log remove_datum calls on 32-byte GPrivate channels — this is the
+        // primary suspect for spurious DeleteData on peek-only channels like treeHashMapCh.
+        // When remove_datum hits the Vacant path, it loads from history (1 datum), removes
+        // it, and stores the resulting empty vector — which changes() then emits as DeleteData.
+        if tracing::enabled!(target: "f1r3fly.rholang.diag", tracing::Level::WARN) {
+            let ch_dbg = format!("{:?}", channel);
+            if ch_dbg.contains("GPrivateBody") && ch_dbg.len() > 200 {
+                let gprivate_hex: String = ch_dbg
+                    .find("id: [")
+                    .and_then(|start| {
+                        ch_dbg[start..].find(']').map(|end| {
+                            ch_dbg[start + 5..start + end].to_string()
+                        })
+                    })
+                    .unwrap_or_else(|| "<unknown>".to_string());
+                let existing_in_hot = {
+                    let state = self.hot_store_state.lock().unwrap();
+                    state.data.get(channel).map(|d| d.len())
+                };
+                tracing::warn!(
+                    target: "f1r3fly.rholang.diag",
+                    gprivate_id = %gprivate_hex,
+                    index,
+                    existing_in_hot_state = ?existing_in_hot,
+                    "REMOVE_DATUM called on 32-byte GPrivate channel — \
+                     index={}, existing_in_hot_state={:?}. \
+                     If existing_in_hot_state=None, this will load from history and \
+                     store the result (potentially empty) in hot state, causing \
+                     spurious DeleteData on peek-only channels.",
+                    index, existing_in_hot
+                );
+            }
+        }
+
         let state = self.hot_store_state.lock().unwrap();
         let result = match state.data.entry(channel.clone()) {
             Entry::Occupied(mut occupied) => {
@@ -438,14 +546,18 @@ where
                 result
             }
             None => {
+                // Read-only fallthrough: return history joins WITHOUT caching in
+                // hot store state. Caching here would cause changes() to re-emit
+                // unchanged joins with a potentially different channel serialization,
+                // orphaning the original trie entry.
                 let from_history_store = self.get_joins_from_history_store(channel);
-                self.hot_store_state
-                    .lock()
-                    .unwrap()
-                    .joins
-                    .insert(channel.clone(), from_history_store.clone());
-                // println!("No joins found in store");
-                // println!("Inserted into store. Returning from history");
+                tracing::debug!(
+                    target: "f1r3fly.rspace",
+                    channel = ?channel,
+                    history_joins = from_history_store.len(),
+                    "get_joins: fell through to history, found {}",
+                    from_history_store.len()
+                );
 
                 let mut result = Vec::new();
                 if let Some(installed) = installed_joins {
@@ -461,6 +573,7 @@ where
     }
 
     fn put_join(&self, channel: &C, join: &[C]) -> Option<()> {
+
         let has_existing = {
             let state = self.hot_store_state.lock().unwrap();
             let has = state.joins.get(channel).is_some();
@@ -471,6 +584,21 @@ where
         } else {
             Some(self.get_joins_from_history_store(channel))
         };
+
+        let ch_dbg_hash = {
+            let dbg = format!("{:?}", channel);
+            super::hashing::blake2b256_hash::Blake2b256Hash::new(dbg.as_bytes())
+        };
+        tracing::info!(
+            target: "f1r3fly.rspace.cost_trace",
+            ch = %hex::encode(&ch_dbg_hash.bytes()[..8]),
+            has_existing,
+            history_joins = from_history_store.as_ref().map_or(0, |j| j.len()),
+            "PUT_JOIN: ch={} has_existing={} history_joins={}",
+            hex::encode(&ch_dbg_hash.bytes()[..8]),
+            has_existing,
+            from_history_store.as_ref().map_or(0, |j| j.len())
+        );
 
         let state = self.hot_store_state.lock().unwrap();
         match state.joins.entry(channel.clone()) {
@@ -509,8 +637,8 @@ where
     }
 
     fn remove_join(&self, channel: &C, join: &[C]) -> Option<()> {
+
         let state = self.hot_store_state.lock().unwrap();
-        let has_join_in_state = state.joins.get(channel).is_some();
         let current_continuations = {
             let mut conts = state
                 .installed_continuations
@@ -531,11 +659,27 @@ where
         // continuations are present in which case we just want to skip removal.
         let do_remove = current_continuations.is_empty();
 
+        let ch_dbg_hash = {
+            let dbg = format!("{:?}", channel);
+            super::hashing::blake2b256_hash::Blake2b256Hash::new(dbg.as_bytes())
+        };
+        let has_hot_entry = state.joins.get(channel).is_some();
+        tracing::info!(
+            target: "f1r3fly.rspace.cost_trace",
+            ch = %hex::encode(&ch_dbg_hash.bytes()[..8]),
+            do_remove,
+            conts_count = current_continuations.len(),
+            has_hot_entry,
+            "REMOVE_JOIN: ch={} do_remove={} conts={} hot_entry={}",
+            hex::encode(&ch_dbg_hash.bytes()[..8]),
+            do_remove, current_continuations.len(), has_hot_entry
+        );
+
         let result = if !do_remove {
-            if !has_join_in_state {
-                let joins_in_history_store = self.get_joins_from_history_store(channel);
-                state.joins.insert(channel.clone(), joins_in_history_store);
-            }
+            // Continuations still exist, so we skip removal. No need to cache
+            // history joins into hot store state — doing so would cause changes()
+            // to re-emit unchanged joins with a potentially different channel
+            // serialization, orphaning the original trie entry.
             Some(())
         } else {
             match state.joins.entry(channel.clone()) {
@@ -567,6 +711,13 @@ where
     }
 
     fn changes(&self) -> Vec<HotStoreAction<C, P, A, K>> {
+        // NOTE: Channel normalization (clearing locally_free) is performed upstream
+        // in produce_inner/consume_inner before channels enter the hot store. Ideally
+        // we would also normalize here as a defensive measure, but C is generic and
+        // adding a NormalizeForHashing trait bound would ripple through HotStore,
+        // ISpace, RSpace, ReplayRSpace, ReportingRSpace, and all test files. Instead,
+        // we use the Debug representation as a canary to detect if any non-normalized
+        // channel ever reaches changes().
         let cache = self.hot_store_state.lock().unwrap();
         let continuations: Vec<HotStoreAction<C, P, A, K>> = cache
             .continuations
@@ -574,6 +725,11 @@ where
             .map(|entry| {
                 let (k, v) = entry.pair();
                 if v.is_empty() {
+                    tracing::warn!(
+                        target: "f1r3fly.rspace",
+                        channels = ?k,
+                        "changes(): emitting DeleteContinuations — channel will be cleared from trie"
+                    );
                     HotStoreAction::Delete(DeleteAction::DeleteContinuations(DeleteContinuations {
                         channels: k.clone(),
                     }))
@@ -592,6 +748,11 @@ where
             .map(|entry| {
                 let (k, v) = entry.pair();
                 if v.is_empty() {
+                    tracing::warn!(
+                        target: "f1r3fly.rholang.diag",
+                        channel = ?k,
+                        "changes(): emitting DeleteData for channel"
+                    );
                     HotStoreAction::Delete(DeleteAction::DeleteData(DeleteData {
                         channel: k.clone(),
                     }))
@@ -610,6 +771,11 @@ where
             .map(|entry| {
                 let (k, v) = entry.pair();
                 if v.is_empty() {
+                    tracing::warn!(
+                        target: "f1r3fly.rholang.diag",
+                        channel = ?k,
+                        "changes(): emitting DeleteJoins for channel"
+                    );
                     HotStoreAction::Delete(DeleteAction::DeleteJoins(DeleteJoins {
                         channel: k.clone(),
                     }))
@@ -622,7 +788,87 @@ where
             })
             .collect();
 
-        [continuations, data, joins].concat()
+        let all = [continuations, data, joins].concat();
+
+        // Canary: detect non-normalized channels (non-empty locally_free) that
+        // slipped past produce_inner/consume_inner normalization. The Debug repr
+        // of Par includes "locally_free: [...]" — if it contains non-empty content,
+        // the channel hash will differ from normalized versions, causing trie
+        // lookup failures.
+        if tracing::enabled!(target: "f1r3fly.rholang.diag", tracing::Level::WARN) {
+            for action in &all {
+                let channel_debug = match action {
+                    HotStoreAction::Insert(InsertAction::InsertData(i)) => {
+                        Some(format!("{:?}", i.channel))
+                    }
+                    HotStoreAction::Delete(DeleteAction::DeleteData(d)) => {
+                        Some(format!("{:?}", d.channel))
+                    }
+                    HotStoreAction::Insert(InsertAction::InsertJoins(i)) => {
+                        Some(format!("{:?}", i.channel))
+                    }
+                    HotStoreAction::Delete(DeleteAction::DeleteJoins(d)) => {
+                        Some(format!("{:?}", d.channel))
+                    }
+                    _ => None, // Continuations use Vec<C> keys, checked separately
+                };
+                if let Some(debug_str) = channel_debug {
+                    // Check for non-empty locally_free in the Debug output.
+                    // A normalized channel has "locally_free: []" — anything else
+                    // indicates the channel was not normalized before entering the
+                    // hot store.
+                    if let Some(pos) = debug_str.find("locally_free: [") {
+                        let after = &debug_str[pos + "locally_free: [".len()..];
+                        if !after.starts_with(']') {
+                            tracing::error!(
+                                target: "f1r3fly.rholang.diag",
+                                channel_debug = %debug_str,
+                                "changes(): CANARY — channel has non-empty locally_free! \
+                                 This will cause trie hash mismatch. Channel was not \
+                                 normalized in produce_inner/consume_inner."
+                            );
+                        }
+                    }
+                }
+                // Check continuation channels (Vec<C>)
+                let cont_channels_debug = match action {
+                    HotStoreAction::Insert(InsertAction::InsertContinuations(i)) => {
+                        Some(format!("{:?}", i.channels))
+                    }
+                    HotStoreAction::Delete(DeleteAction::DeleteContinuations(d)) => {
+                        Some(format!("{:?}", d.channels))
+                    }
+                    _ => None,
+                };
+                if let Some(debug_str) = cont_channels_debug {
+                    if let Some(pos) = debug_str.find("locally_free: [") {
+                        let after = &debug_str[pos + "locally_free: [".len()..];
+                        if !after.starts_with(']') {
+                            tracing::error!(
+                                target: "f1r3fly.rholang.diag",
+                                channels_debug = %debug_str,
+                                "changes(): CANARY — continuation channels have non-empty \
+                                 locally_free! This will cause trie hash mismatch."
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        tracing::info!(
+            target: "f1r3fly.rholang.diag",
+            total_actions = all.len(),
+            data_inserts = all.iter().filter(|a| matches!(a, HotStoreAction::Insert(InsertAction::InsertData(_)))).count(),
+            data_deletes = all.iter().filter(|a| matches!(a, HotStoreAction::Delete(DeleteAction::DeleteData(_)))).count(),
+            cont_inserts = all.iter().filter(|a| matches!(a, HotStoreAction::Insert(InsertAction::InsertContinuations(_)))).count(),
+            cont_deletes = all.iter().filter(|a| matches!(a, HotStoreAction::Delete(DeleteAction::DeleteContinuations(_)))).count(),
+            join_inserts = all.iter().filter(|a| matches!(a, HotStoreAction::Insert(InsertAction::InsertJoins(_)))).count(),
+            join_deletes = all.iter().filter(|a| matches!(a, HotStoreAction::Delete(DeleteAction::DeleteJoins(_)))).count(),
+            "changes(): checkpoint action summary"
+        );
+
+        all
     }
 
     fn to_map(&self) -> HashMap<Vec<C>, Row<P, A, K>> {
@@ -656,6 +902,7 @@ where
 
         let mut map = HashMap::new();
 
+        // Include channels with data (and their continuations if any)
         for (k, v) in data.into_iter() {
             let row = Row {
                 data: v,
@@ -665,6 +912,14 @@ where
                 map.insert(k, row);
             }
         }
+
+        // Include channels with only continuations (no data)
+        for (k, v) in all_continuations.into_iter() {
+            if !map.contains_key(&k) && !v.is_empty() {
+                map.insert(k, Row { data: Vec::new(), wks: v });
+            }
+        }
+
         map
     }
 
@@ -775,6 +1030,31 @@ where
 
         !has_insert_actions
     }
+
+    fn state_counts(&self) -> (usize, usize, usize, usize) {
+        let state = self.hot_store_state.lock().expect("hot_store_state lock poisoned");
+        let data_channels = state.data.len();
+        let data_items: usize = state.data.iter().map(|e| e.value().len()).sum();
+        let cont_channels = state.continuations.len();
+        let cont_items: usize = state.continuations.iter().map(|e| e.value().len()).sum();
+        (data_channels, data_items, cont_channels, cont_items)
+    }
+
+    fn continuation_channels_debug(&self) -> Vec<(String, usize, bool)> {
+        let state = self.hot_store_state.lock().expect("hot_store_state lock poisoned");
+        state
+            .continuations
+            .iter()
+            .filter(|entry| !entry.value().is_empty())
+            .map(|entry| {
+                let channels_dbg = format!("{:?}", entry.key());
+                let count = entry.value().len();
+                let has_peek = entry.value().iter().any(|wc| !wc.peeks.is_empty());
+                (channels_dbg, count, has_peek)
+            })
+            .collect()
+    }
+
 }
 
 impl<C, P, A, K> InMemHotStore<C, P, A, K>
@@ -943,9 +1223,45 @@ where
         let channels_vec = channels.to_vec();
         let entry = cache.continuations.entry(channels_vec.clone());
         let result = match entry {
-            Entry::Occupied(o) => o.get().clone(),
+            Entry::Occupied(o) => {
+                let cached = o.get().clone();
+                tracing::debug!(
+                    target: "f1r3fly.rspace.history",
+                    channels = ?channels,
+                    cont_count = cached.len(),
+                    source = "cache",
+                    "get_cont_from_history_store: cache hit ({} continuations)",
+                    cached.len()
+                );
+                cached
+            }
             Entry::Vacant(v) => {
                 let ks = self.history_reader_base.get_continuations(&channels_vec);
+
+                tracing::debug!(
+                    target: "f1r3fly.rspace.history",
+                    channels = ?channels,
+                    cont_count = ks.len(),
+                    source = "history_reader",
+                    "get_cont_from_history_store: cache miss, history returned {} continuations",
+                    ks.len()
+                );
+
+                if tracing::enabled!(target: "f1r3fly.rspace.matcher", tracing::Level::DEBUG) {
+                    for (i, wc) in ks.iter().enumerate() {
+                        tracing::debug!(
+                            target: "f1r3fly.rspace.matcher",
+                            channels = ?channels,
+                            cont_idx = i,
+                            num_patterns = wc.patterns.len(),
+                            persist = wc.persist,
+                            patterns = ?wc.patterns,
+                            "get_cont_from_history_store: loaded continuation #{} ({} patterns, persist={})",
+                            i, wc.patterns.len(), wc.persist
+                        );
+                    }
+                }
+
                 v.insert(ks.clone());
                 ks
             }
@@ -959,10 +1275,78 @@ where
         Self::enforce_history_cache_bounds(&cache);
         let entry = cache.datums.entry(channel.clone());
         let result = match entry {
-            Entry::Occupied(o) => o.get().clone(),
+            Entry::Occupied(o) => {
+                let cached = o.get().clone();
+                tracing::debug!(
+                    target: "f1r3fly.rspace.history",
+                    channel = ?channel,
+                    data_count = cached.len(),
+                    source = "cache",
+                    "get_data_from_history_store: cache hit ({} datums)",
+                    cached.len()
+                );
+                cached
+            }
             Entry::Vacant(v) => {
                 let datums = self.history_reader_base.get_data(channel);
-                // println!("\ndatums from history store: {:?}", datums);
+                tracing::debug!(
+                    target: "f1r3fly.rspace.history",
+                    channel = ?channel,
+                    data_count = datums.len(),
+                    source = "history_reader",
+                    "get_data_from_history_store: cache miss, history returned {} datums",
+                    datums.len()
+                );
+
+                // Phase 5d Step 3: for GPrivate channels returning 0 datums,
+                // log channel identity for cross-referencing with init deploy
+                // checkpoint InsertData entries.
+                if datums.is_empty() {
+                    let ch_dbg = format!("{:?}", channel);
+                    // Heuristic: 32-byte GPrivate channels have long debug
+                    // representations (>200 chars) containing "id: [...]"
+                    if ch_dbg.len() > 200 || ch_dbg.contains("GPrivateBody") {
+                        let gprivate_hex: String = ch_dbg
+                            .find("id: [")
+                            .and_then(|start| {
+                                ch_dbg[start..].find(']').map(|end| {
+                                    ch_dbg[start + 5..start + end].to_string()
+                                })
+                            })
+                            .unwrap_or_else(|| "<unknown>".to_string());
+
+                        // Check ALL locally_free occurrences in the Debug string,
+                        // not just the top-level one. Nested structures (Send,
+                        // Receive, New, Match) also have locally_free that
+                        // affects bincode serialization and thus the history hash.
+                        let locally_free_fields: Vec<String> = ch_dbg
+                            .match_indices("locally_free: [")
+                            .filter_map(|(pos, _)| {
+                                let after = &ch_dbg[pos + "locally_free: [".len()..];
+                                if after.starts_with(']') {
+                                    None // empty, skip
+                                } else {
+                                    // Extract the content up to the closing bracket
+                                    after.find(']').map(|end| {
+                                        format!("@{}: [{}]", pos, &after[..end])
+                                    })
+                                }
+                            })
+                            .collect();
+
+                        tracing::warn!(
+                            target: "f1r3fly.rholang.diag",
+                            gprivate_id = %gprivate_hex,
+                            nonempty_locally_free_count = locally_free_fields.len(),
+                            nonempty_locally_free = ?locally_free_fields,
+                            channel = %ch_dbg,
+                            "HISTORY DATA MISS: GPrivate channel returned 0 \
+                             datums from history. gprivate_id={}, non-empty locally_free={}",
+                            gprivate_hex, locally_free_fields.len()
+                        );
+                    }
+                }
+
                 v.insert(datums.clone());
                 datums
             }
@@ -974,11 +1358,59 @@ where
     fn get_joins_from_history_store(&self, channel: &C) -> Vec<Vec<C>> {
         let cache = self.history_store_cache.lock().unwrap();
         Self::enforce_history_cache_bounds(&cache);
+        let ch_dbg = format!("{:?}", channel);
+        let is_byte_name_14 = ch_dbg.contains("id: [14]");
         let entry = cache.joins.entry(channel.clone());
         let result = match entry {
-            Entry::Occupied(o) => o.get().clone(),
+            Entry::Occupied(o) => {
+                let cached = o.get().clone();
+                if is_byte_name_14 {
+                    tracing::info!(
+                        target: "f1r3fly.rholang.diag",
+                        cached_joins = cached.len(),
+                        channel_debug = %ch_dbg,
+                        "get_joins_from_history_store byte_name(14): CACHE HIT, {} joins",
+                        cached.len()
+                    );
+                } else {
+                    tracing::debug!(
+                        target: "f1r3fly.rspace",
+                        channel = ?channel,
+                        cached_joins = cached.len(),
+                        "get_joins_from_history_store: cache hit"
+                    );
+                }
+                cached
+            }
             Entry::Vacant(v) => {
                 let joins = self.history_reader_base.get_joins(&channel);
+                if is_byte_name_14 {
+                    // Log each join group for byte_name(14) at INFO level
+                    for (i, join_group) in joins.iter().enumerate() {
+                        let join_dbg: Vec<String> = join_group.iter().map(|c| format!("{:?}", c)).collect();
+                        tracing::info!(
+                            target: "f1r3fly.rholang.diag",
+                            join_idx = i,
+                            join_channels = ?join_dbg,
+                            "get_joins_from_history_store byte_name(14): history join group #{}: {:?}",
+                            i, join_dbg
+                        );
+                    }
+                    tracing::info!(
+                        target: "f1r3fly.rholang.diag",
+                        history_joins = joins.len(),
+                        channel_debug = %ch_dbg,
+                        "get_joins_from_history_store byte_name(14): CACHE MISS, history returned {} joins",
+                        joins.len()
+                    );
+                } else {
+                    tracing::debug!(
+                        target: "f1r3fly.rspace",
+                        channel = ?channel,
+                        history_joins = joins.len(),
+                        "get_joins_from_history_store: cache miss, queried history"
+                    );
+                }
                 v.insert(joins.clone());
                 joins
             }

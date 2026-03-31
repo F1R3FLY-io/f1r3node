@@ -2,7 +2,6 @@
 
 use crate::helper::test_node::TestNode;
 use crate::util::{genesis_builder::GenesisBuilder, rholang::resources::with_runtime_manager};
-use casper::rust::util::rholang::runtime_manager::RuntimeManager;
 use casper::rust::util::{construct_deploy, proto_util};
 use crypto::rust::{
     private_key::PrivateKey, signatures::secp256k1::Secp256k1,
@@ -23,7 +22,7 @@ fn default_sec2() -> PrivateKey {
 
 #[tokio::test]
 async fn deployer_id_should_be_equal_to_the_deployers_public_key() {
-    with_runtime_manager(|runtime_manager, _, _| async move {
+    with_runtime_manager(|runtime_manager, genesis_context, _| async move {
         let sk = PrivateKey::from_bytes(
             &hex::decode("b18e1d0045995ec3d010c387ccfeb984d783af8fbb0f40fa7db126d889f6dadd")
                 .unwrap(),
@@ -40,9 +39,8 @@ async fn deployer_id_should_be_equal_to_the_deployers_public_key() {
         )
         .unwrap();
 
-        let empty_state_hash = RuntimeManager::empty_state_hash_fixed();
         let result = runtime_manager
-            .capture_results(&empty_state_hash, &deploy)
+            .capture_results(&genesis_context.genesis_block.body.state.post_state_hash, &deploy)
             .await
             .unwrap();
 

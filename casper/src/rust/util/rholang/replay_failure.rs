@@ -24,6 +24,10 @@ pub enum ReplayFailure {
         play_error: String,
         replay_error: String,
     },
+
+    InvalidPreStateHash {
+        msg: String,
+    },
 }
 
 impl ReplayFailure {
@@ -54,6 +58,10 @@ impl ReplayFailure {
             play_error,
             replay_error,
         }
+    }
+
+    pub fn invalid_pre_state_hash(msg: String) -> Self {
+        ReplayFailure::InvalidPreStateHash { msg }
     }
 }
 
@@ -95,6 +103,9 @@ impl std::fmt::Display for ReplayFailure {
                     "System deploy error mismatch:\n  Play error: {}\n  Replay error: {}",
                     play_error, replay_error
                 )
+            }
+            ReplayFailure::InvalidPreStateHash { msg } => {
+                write!(f, "Invalid pre-state hash: {}", msg)
             }
         }
     }

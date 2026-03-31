@@ -70,7 +70,7 @@ pub const PREFIX_JOINS: u8 = 0x02;
 
 impl<C, P, A, K> HistoryRepositoryInstances<C, P, A, K>
 where
-    C: Clone + Send + Sync + Serialize + for<'a> Deserialize<'a> + 'static,
+    C: Clone + Send + Sync + Serialize + std::fmt::Debug + for<'a> Deserialize<'a> + 'static,
     P: Clone + Send + Sync + Serialize + for<'a> Deserialize<'a> + 'static,
     A: Clone + Send + Sync + Serialize + for<'a> Deserialize<'a> + 'static,
     K: Clone + Send + Sync + Serialize + for<'a> Deserialize<'a> + 'static,

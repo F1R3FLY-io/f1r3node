@@ -124,6 +124,7 @@ message ReceiveBind {
   Par source = 2 [(scalapb.field).no_box = true];
   Var remainder = 3;
   int32 freeCount = 4;
+  bool peek = 5;  // per-bind peek flag: true if this bind uses <<- (peek)
 }
 
 message BindPattern {

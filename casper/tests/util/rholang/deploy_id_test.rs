@@ -2,7 +2,6 @@
 
 use crate::helper::test_node::TestNode;
 use crate::util::{genesis_builder::GenesisBuilder, rholang::resources::with_runtime_manager};
-use casper::rust::util::rholang::runtime_manager::RuntimeManager;
 use casper::rust::util::{construct_deploy, proto_util};
 use crypto::rust::{private_key::PrivateKey, signatures::signed::Signed};
 use models::rhoapi::{
@@ -49,7 +48,7 @@ async fn deploy_id_should_be_equal_to_deploy_signature() {
         );
 
         let result = runtime_manager
-            .capture_results(&RuntimeManager::empty_state_hash_fixed(), &d)
+            .capture_results(&genesis_context.genesis_block.body.state.post_state_hash, &d)
             .await
             .unwrap();
 

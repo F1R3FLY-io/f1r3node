@@ -303,8 +303,11 @@ async fn producing_then_consuming_on_same_channel_should_return_continuation_and
 }
 
 #[tokio::test]
-async fn producing_then_consuming_on_same_channel_with_peek_should_return_continuation_and_data_and_remove_peeked_data()
+async fn producing_then_consuming_on_same_channel_with_peek_should_return_continuation_and_data_and_preserve_peeked_data()
  {
+    // Peek semantics: peeked channels should NOT have their data removed.
+    // Both the consume path (store_persistent_data) and the produce path
+    // (remove_matched_datum_and_join) now honor the peeks set.
     let mut rspace = create_rspace().await;
     let channel = "ch1".to_string();
     let key = vec![channel.clone()];
@@ -325,7 +328,7 @@ async fn producing_then_consuming_on_same_channel_with_peek_should_return_contin
         std::iter::once(0).collect(),
     );
     let d2 = rspace.store.get_data(&channel);
-    assert_eq!(d2.len(), 0);
+    assert_eq!(d2.len(), 1);
 
     let c2 = rspace.store.get_continuations(&key);
     assert_eq!(c2.len(), 0);
@@ -334,20 +337,17 @@ async fn producing_then_consuming_on_same_channel_with_peek_should_return_contin
     let cont_results = run_k(r2.unwrap());
     assert!(check_same_elements(cont_results, vec![vec!["datum".to_string()]]));
 
-    let insert_actions: Vec<InsertAction<_, _, _, _>> =
-        filter_enum_variants(rspace.store.changes(), |e| {
-            if let HotStoreAction::Insert(i) = e {
-                Some(i)
-            } else {
-                None
-            }
-        });
-    assert!(insert_actions.is_empty());
+    // With peek semantics, data is preserved so there will be insert actions
+    // for the remaining datum. We just verify the continuation fired correctly.
 }
 
 #[tokio::test]
-async fn consuming_then_producing_on_same_channel_with_peek_should_return_continuation_and_data_and_remove_peeked_data()
+async fn consuming_then_producing_on_same_channel_with_peek_should_return_continuation_and_data_and_preserve_peeked_data()
  {
+    // Peek semantics: in the consume-then-produce path, the produce matches
+    // the waiting peek continuation on-the-fly (datum_index = -1). Since the
+    // channel is peeked, the data must persist for future consumers, so RSpace
+    // stores it during remove_matched_datum_and_join.
     let mut rspace = create_rspace().await;
     let channel = "ch1".to_string();
     let key = vec![channel.clone()];
@@ -365,7 +365,7 @@ async fn consuming_then_producing_on_same_channel_with_peek_should_return_contin
 
     let r2 = rspace.produce(channel.clone(), "datum".to_string(), false);
     let d1 = rspace.store.get_data(&channel);
-    assert!(d1.is_empty());
+    assert_eq!(d1.len(), 1);
 
     let c2 = rspace.store.get_continuations(&key);
     assert_eq!(c2.len(), 0);
@@ -373,16 +373,6 @@ async fn consuming_then_producing_on_same_channel_with_peek_should_return_contin
 
     let cont_results = run_produce_k(r2.unwrap());
     assert!(check_same_elements(cont_results, vec![vec!["datum".to_string()]]));
-
-    let insert_actions: Vec<InsertAction<_, _, _, _>> =
-        filter_enum_variants(rspace.store.changes(), |e| {
-            if let HotStoreAction::Insert(i) = e {
-                Some(i)
-            } else {
-                None
-            }
-        });
-    assert!(insert_actions.is_empty());
 }
 
 #[tokio::test]
@@ -1863,4 +1853,777 @@ async fn revert_to_soft_checkpoint_should_inject_the_event_log() {
     let _ = rspace.revert_to_soft_checkpoint(s1.clone());
     let s3 = rspace.create_soft_checkpoint();
     assert_eq!(s3.log, s1.log);
+}
+
+// =============================================================================
+// Property-based tests for peek (<<-) semantics
+// =============================================================================
+//
+// These tests vary *structural* parameters -- number of channels, which
+// indices are peeked, persistence flags, number of sequential peek reads,
+// number of waiting continuations, and operation ordering -- so that each
+// proptest iteration exercises a genuinely different scenario rather than
+// replaying the same fixed topology with different string values.
+
+/// Generate a list of N *distinct* channel names.
+fn distinct_channels(n: usize) -> Vec<String> {
+    (0..n).map(|i| format!("ch{}", i)).collect()
+}
+
+/// Strategy: pick a channel count in 1..=max_channels, then for each channel
+/// decide independently whether it is peeked.  Returns (channels, peek_set).
+fn channels_and_peeks_strategy(
+    max_channels: usize,
+) -> impl Strategy<Value = (Vec<String>, BTreeSet<i32>)> {
+    (1..=max_channels)
+        .prop_flat_map(|n| {
+            // For each of the n channels, independently decide peek (true) or
+            // not (false).
+            proptest::collection::vec(proptest::bool::ANY, n).prop_map(move |peek_flags| {
+                let channels = distinct_channels(n);
+                let peeks: BTreeSet<i32> = peek_flags
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, &is_peeked)| is_peeked)
+                    .map(|(i, _)| i as i32)
+                    .collect();
+                (channels, peeks)
+            })
+        })
+}
+
+/// Strategy: generate (channels, peeks) where the peek set is guaranteed
+/// non-empty (at least one channel is peeked).
+fn channels_with_at_least_one_peek(
+    max_channels: usize,
+) -> impl Strategy<Value = (Vec<String>, BTreeSet<i32>)> {
+    channels_and_peeks_strategy(max_channels)
+        .prop_filter("need at least one peek", |(_, peeks)| !peeks.is_empty())
+}
+
+/// Strategy: generate (channels, peeks) where at least one channel is peeked
+/// AND at least one channel is NOT peeked (mixed mode).
+fn channels_with_mixed_peeks() -> impl Strategy<Value = (Vec<String>, BTreeSet<i32>)> {
+    channels_and_peeks_strategy(5).prop_filter(
+        "need at least one peeked and one non-peeked channel",
+        |(channels, peeks)| {
+            !peeks.is_empty() && peeks.len() < channels.len()
+        },
+    )
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig {
+        cases: 50,
+        .. ProptestConfig::default()
+    })]
+
+    // =========================================================================
+    // 1. Peek preserves data (produce-then-consume path)
+    // =========================================================================
+    //
+    // For a randomly-chosen number of channels (1..=4) with a randomly-chosen
+    // non-empty peek set, produce data on every channel, then consume with
+    // peek.  All peeked channels must retain their data afterward.
+
+    #[test]
+    fn peek_preserves_data_produce_then_consume(
+        (channels, peeks) in channels_with_at_least_one_peek(4),
+    ) {
+        let rt = Runtime::new().expect("failed to create tokio runtime");
+        rt.block_on(async {
+            let mut rspace = create_rspace().await;
+            let n = channels.len();
+            let data: Vec<String> = (0..n).map(|i| format!("datum{}", i)).collect();
+            let patterns: Vec<Pattern> = vec![Pattern::Wildcard; n];
+
+            // Produce data on every channel.
+            for i in 0..n {
+                let r = rspace.produce(channels[i].clone(), data[i].clone(), false);
+                prop_assert!(r.unwrap().is_none());
+            }
+
+            // Consume with peek.
+            let r = rspace.consume(
+                channels.clone(),
+                patterns,
+                StringsCaptor::new(),
+                false,
+                peeks.clone(),
+            );
+
+            // Should match and fire the continuation.
+            prop_assert!(r.clone().unwrap().is_some());
+            let cont_results = run_k(r.unwrap());
+            prop_assert_eq!(cont_results, vec![data.clone()]);
+
+            // Peeked channels must retain data; non-peeked channels must not.
+            for i in 0..n {
+                let d = rspace.store.get_data(&channels[i]);
+                if peeks.contains(&(i as i32)) {
+                    prop_assert_eq!(d.len(), 1,
+                        "peeked channel {} should retain data", channels[i]);
+                    prop_assert_eq!(&d[0].a, &data[i]);
+                } else {
+                    prop_assert_eq!(d.len(), 0,
+                        "non-peeked channel {} should have data removed", channels[i]);
+                }
+            }
+
+            Ok(())
+        })?;
+    }
+
+    // =========================================================================
+    // 2. Peek preserves data (consume-then-produce path)
+    // =========================================================================
+    //
+    // Register a peek consume on N channels (none have data yet), then produce
+    // data on each channel one at a time.  The last produce completes the
+    // match.  Peeked channel data must persist afterward.
+
+    #[test]
+    fn peek_preserves_data_consume_then_produce(
+        (channels, peeks) in channels_with_at_least_one_peek(4),
+    ) {
+        let rt = Runtime::new().expect("failed to create tokio runtime");
+        rt.block_on(async {
+            let mut rspace = create_rspace().await;
+            let n = channels.len();
+            let data: Vec<String> = (0..n).map(|i| format!("datum{}", i)).collect();
+            let patterns: Vec<Pattern> = vec![Pattern::Wildcard; n];
+
+            // Consume with peek (no data yet -- stores waiting continuation).
+            let r_consume = rspace.consume(
+                channels.clone(),
+                patterns,
+                StringsCaptor::new(),
+                false,
+                peeks.clone(),
+            );
+            prop_assert!(r_consume.unwrap().is_none());
+
+            // Produce data on all channels except the last (no match yet).
+            for i in 0..n.saturating_sub(1) {
+                let r = rspace.produce(channels[i].clone(), data[i].clone(), false);
+                prop_assert!(r.unwrap().is_none(),
+                    "produce on channel {} should not complete match yet", channels[i]);
+            }
+
+            // Produce on the last channel -- this should complete the match.
+            let last = n - 1;
+            let r_last = rspace.produce(channels[last].clone(), data[last].clone(), false);
+            prop_assert!(r_last.clone().unwrap().is_some(),
+                "final produce should complete the multi-channel match");
+
+            let cont_results = run_produce_k(r_last.unwrap());
+            prop_assert_eq!(cont_results, vec![data.clone()]);
+
+            // Verify peek/non-peek data retention.
+            for i in 0..n {
+                let d = rspace.store.get_data(&channels[i]);
+                if peeks.contains(&(i as i32)) {
+                    prop_assert_eq!(d.len(), 1,
+                        "peeked channel {} should retain data", channels[i]);
+                } else {
+                    prop_assert_eq!(d.len(), 0,
+                        "non-peeked channel {} should have data removed", channels[i]);
+                }
+            }
+
+            // No waiting continuations should remain.
+            let c = rspace.store.get_continuations(&channels);
+            prop_assert_eq!(c.len(), 0);
+
+            Ok(())
+        })?;
+    }
+
+    // =========================================================================
+    // 3. Non-peek always removes data (both paths, random structure)
+    // =========================================================================
+    //
+    // With an empty peek set (standard consume), data should be removed
+    // from ALL channels after a match, regardless of how many channels
+    // are involved.  Tests both produce-then-consume and consume-then-produce
+    // paths via a boolean toggle.
+
+    #[test]
+    fn non_peek_removes_all_data(
+        num_channels in 1usize..=4,
+        produce_first in proptest::bool::ANY,
+    ) {
+        let rt = Runtime::new().expect("failed to create tokio runtime");
+        rt.block_on(async {
+            let mut rspace = create_rspace().await;
+            let channels = distinct_channels(num_channels);
+            let data: Vec<String> = (0..num_channels).map(|i| format!("datum{}", i)).collect();
+            let patterns: Vec<Pattern> = vec![Pattern::Wildcard; num_channels];
+
+            if produce_first {
+                // Produce-then-consume path.
+                for i in 0..num_channels {
+                    let r = rspace.produce(channels[i].clone(), data[i].clone(), false);
+                    prop_assert!(r.unwrap().is_none());
+                }
+                let r = rspace.consume(
+                    channels.clone(), patterns, StringsCaptor::new(),
+                    false, BTreeSet::default(),
+                );
+                prop_assert!(r.clone().unwrap().is_some());
+                let cont_results = run_k(r.unwrap());
+                prop_assert_eq!(cont_results, vec![data.clone()]);
+            } else {
+                // Consume-then-produce path.
+                let r_consume = rspace.consume(
+                    channels.clone(), patterns, StringsCaptor::new(),
+                    false, BTreeSet::default(),
+                );
+                prop_assert!(r_consume.unwrap().is_none());
+
+                for i in 0..num_channels.saturating_sub(1) {
+                    let r = rspace.produce(channels[i].clone(), data[i].clone(), false);
+                    prop_assert!(r.unwrap().is_none());
+                }
+                let last = num_channels - 1;
+                let r_last = rspace.produce(channels[last].clone(), data[last].clone(), false);
+                prop_assert!(r_last.clone().unwrap().is_some());
+                let cont_results = run_produce_k(r_last.unwrap());
+                prop_assert_eq!(cont_results, vec![data.clone()]);
+            }
+
+            // ALL data should be removed.
+            for i in 0..num_channels {
+                let d = rspace.store.get_data(&channels[i]);
+                prop_assert_eq!(d.len(), 0,
+                    "non-peek should remove data from channel {}", channels[i]);
+            }
+
+            Ok(())
+        })?;
+    }
+
+    // =========================================================================
+    // 4. Mixed peek/non-peek on multiple channels (produce-then-consume)
+    // =========================================================================
+    //
+    // With 2..=5 channels where at least one is peeked and at least one is
+    // not, only non-peeked channels should have data removed.
+
+    #[test]
+    fn mixed_peek_selective_removal_produce_then_consume(
+        (channels, peeks) in channels_with_mixed_peeks(),
+    ) {
+        let rt = Runtime::new().expect("failed to create tokio runtime");
+        rt.block_on(async {
+            let mut rspace = create_rspace().await;
+            let n = channels.len();
+            let data: Vec<String> = (0..n).map(|i| format!("d{}", i)).collect();
+            let patterns: Vec<Pattern> = vec![Pattern::Wildcard; n];
+
+            for i in 0..n {
+                let r = rspace.produce(channels[i].clone(), data[i].clone(), false);
+                prop_assert!(r.unwrap().is_none());
+            }
+
+            let r = rspace.consume(
+                channels.clone(), patterns, StringsCaptor::new(),
+                false, peeks.clone(),
+            );
+            prop_assert!(r.clone().unwrap().is_some());
+            let cont_results = run_k(r.unwrap());
+            prop_assert_eq!(cont_results, vec![data.clone()]);
+
+            for i in 0..n {
+                let d = rspace.store.get_data(&channels[i]);
+                if peeks.contains(&(i as i32)) {
+                    prop_assert_eq!(d.len(), 1,
+                        "peeked channel {} must retain data", channels[i]);
+                } else {
+                    prop_assert_eq!(d.len(), 0,
+                        "non-peeked channel {} must lose data", channels[i]);
+                }
+            }
+
+            Ok(())
+        })?;
+    }
+
+    // =========================================================================
+    // 4b. Mixed peek/non-peek on multiple channels (consume-then-produce)
+    // =========================================================================
+
+    #[test]
+    fn mixed_peek_selective_removal_consume_then_produce(
+        (channels, peeks) in channels_with_mixed_peeks(),
+    ) {
+        let rt = Runtime::new().expect("failed to create tokio runtime");
+        rt.block_on(async {
+            let mut rspace = create_rspace().await;
+            let n = channels.len();
+            let data: Vec<String> = (0..n).map(|i| format!("d{}", i)).collect();
+            let patterns: Vec<Pattern> = vec![Pattern::Wildcard; n];
+
+            let r_consume = rspace.consume(
+                channels.clone(), patterns, StringsCaptor::new(),
+                false, peeks.clone(),
+            );
+            prop_assert!(r_consume.unwrap().is_none());
+
+            // Produce on all but the last (no match yet).
+            for i in 0..n.saturating_sub(1) {
+                let r = rspace.produce(channels[i].clone(), data[i].clone(), false);
+                prop_assert!(r.unwrap().is_none());
+            }
+
+            // Final produce completes the match.
+            let last = n - 1;
+            let r_last = rspace.produce(channels[last].clone(), data[last].clone(), false);
+            prop_assert!(r_last.clone().unwrap().is_some());
+            let cont_results = run_produce_k(r_last.unwrap());
+            prop_assert_eq!(cont_results, vec![data.clone()]);
+
+            for i in 0..n {
+                let d = rspace.store.get_data(&channels[i]);
+                if peeks.contains(&(i as i32)) {
+                    prop_assert_eq!(d.len(), 1,
+                        "peeked channel {} must retain data", channels[i]);
+                } else {
+                    prop_assert_eq!(d.len(), 0,
+                        "non-peeked channel {} must lose data", channels[i]);
+                }
+            }
+
+            Ok(())
+        })?;
+    }
+
+    // =========================================================================
+    // 5. Persistent + peek: data remains (varying persist and peek booleans)
+    // =========================================================================
+    //
+    // With persist=true on produce and peek on consume, data must remain.
+    // Also tests the four combinations: {persist, no-persist} x {peek, no-peek}
+    // to verify the differential behavior.
+
+    #[test]
+    fn persist_and_peek_interaction(
+        persist_data in proptest::bool::ANY,
+        use_peek in proptest::bool::ANY,
+    ) {
+        let rt = Runtime::new().expect("failed to create tokio runtime");
+        rt.block_on(async {
+            let mut rspace = create_rspace().await;
+            let channel = "ch0".to_string();
+            let key = vec![channel.clone()];
+            let datum = "value".to_string();
+
+            let _ = rspace.produce(channel.clone(), datum.clone(), persist_data);
+
+            let peeks: BTreeSet<i32> = if use_peek {
+                std::iter::once(0).collect()
+            } else {
+                BTreeSet::default()
+            };
+
+            let r = rspace.consume(
+                key.clone(), vec![Pattern::Wildcard], StringsCaptor::new(),
+                false, peeks,
+            );
+            prop_assert!(r.clone().unwrap().is_some());
+            let cont_results = run_k(r.unwrap());
+            prop_assert_eq!(cont_results, vec![vec![datum.clone()]]);
+
+            let d = rspace.store.get_data(&channel);
+
+            // Data survives if persist OR peek (or both).
+            let should_survive = persist_data || use_peek;
+            if should_survive {
+                prop_assert_eq!(d.len(), 1,
+                    "data should survive (persist={}, peek={})", persist_data, use_peek);
+            } else {
+                prop_assert_eq!(d.len(), 0,
+                    "data should be removed (persist={}, peek={})", persist_data, use_peek);
+            }
+
+            Ok(())
+        })?;
+    }
+
+    // =========================================================================
+    // 5b. Persistent consume + peek: continuation and data both survive
+    // =========================================================================
+    //
+    // A persistent consume with peek: after produce, the continuation
+    // should remain (persistent) AND the data should remain (peeked).
+
+    #[test]
+    fn persistent_consume_with_peek_preserves_both(
+        num_produces in 1usize..=3,
+    ) {
+        let rt = Runtime::new().expect("failed to create tokio runtime");
+        rt.block_on(async {
+            let mut rspace = create_rspace().await;
+            let channel = "ch0".to_string();
+            let key = vec![channel.clone()];
+
+            // Persistent consume with peek.
+            let peeks: BTreeSet<i32> = std::iter::once(0).collect();
+            let r = rspace.consume(
+                key.clone(), vec![Pattern::Wildcard], StringsCaptor::new(),
+                true, peeks,
+            );
+            prop_assert!(r.unwrap().is_none());
+
+            // Produce num_produces times; each should fire the persistent
+            // continuation and leave data (peeked).
+            for i in 0..num_produces {
+                let datum = format!("datum{}", i);
+                let r_prod = rspace.produce(channel.clone(), datum.clone(), false);
+                prop_assert!(r_prod.clone().unwrap().is_some(),
+                    "produce #{} should match persistent peek continuation", i);
+
+                let cont_results = run_produce_k(r_prod.unwrap());
+                prop_assert_eq!(cont_results, vec![vec![datum.clone()]]);
+
+                // Continuation must remain (persistent).
+                let c = rspace.store.get_continuations(&key);
+                prop_assert!(!c.is_empty(),
+                    "persistent continuation should remain after produce #{}", i);
+            }
+
+            // Data should be present (all peeked produces accumulated).
+            let d = rspace.store.get_data(&channel);
+            prop_assert!(d.len() >= 1,
+                "at least the peeked data should remain");
+
+            Ok(())
+        })?;
+    }
+
+    // =========================================================================
+    // 6. Multiple sequential peeks do not consume data
+    // =========================================================================
+    //
+    // Produce once, then peek-consume N times in a row (2..=10).  Data must
+    // survive every iteration.  The structural parameter is the repeat count.
+
+    #[test]
+    fn multiple_peeks_do_not_consume_data(
+        num_peeks in 2u32..=10,
+    ) {
+        let rt = Runtime::new().expect("failed to create tokio runtime");
+        rt.block_on(async {
+            let mut rspace = create_rspace().await;
+            let channel = "ch0".to_string();
+            let key = vec![channel.clone()];
+            let datum = "datum".to_string();
+
+            let r = rspace.produce(channel.clone(), datum.clone(), false);
+            prop_assert!(r.unwrap().is_none());
+
+            for i in 0..num_peeks {
+                let peeks: BTreeSet<i32> = std::iter::once(0).collect();
+                let r = rspace.consume(
+                    key.clone(), vec![Pattern::Wildcard], StringsCaptor::new(),
+                    false, peeks,
+                );
+                prop_assert!(r.clone().unwrap().is_some(),
+                    "peek #{} should find data", i);
+                let cont_results = run_k(r.unwrap());
+                prop_assert_eq!(cont_results, vec![vec![datum.clone()]],
+                    "peek #{} should return the correct datum", i);
+
+                let d = rspace.store.get_data(&channel);
+                prop_assert_eq!(d.len(), 1, "data must survive peek #{}", i);
+            }
+
+            Ok(())
+        })?;
+    }
+
+    // =========================================================================
+    // 6b. Multiple waiting peek consumes, then a single produce
+    // =========================================================================
+    //
+    // Register N (2..=5) waiting peek consumes, then produce once.  One
+    // continuation should fire, data should remain, and N-1 continuations
+    // should still be waiting.
+
+    #[test]
+    fn multiple_waiting_peek_consumes_then_produce(
+        num_waiters in 2usize..=5,
+    ) {
+        let rt = Runtime::new().expect("failed to create tokio runtime");
+        rt.block_on(async {
+            let mut rspace = create_rspace().await;
+            let channel = "ch0".to_string();
+            let key = vec![channel.clone()];
+            let datum = "datum".to_string();
+
+            // Register num_waiters peek consumes (all waiting).
+            let peeks: BTreeSet<i32> = std::iter::once(0).collect();
+            for i in 0..num_waiters {
+                let r = rspace.consume(
+                    key.clone(), vec![Pattern::Wildcard],
+                    StringsCaptor::with_id(i as u64),
+                    false, peeks.clone(),
+                );
+                prop_assert!(r.unwrap().is_none());
+            }
+
+            let c = rspace.store.get_continuations(&key);
+            prop_assert_eq!(c.len(), num_waiters,
+                "should have {} waiting continuations", num_waiters);
+
+            // Produce fires one of them.
+            let r_prod = rspace.produce(channel.clone(), datum.clone(), false);
+            prop_assert!(r_prod.clone().unwrap().is_some());
+            let cont_results = run_produce_k(r_prod.unwrap());
+            prop_assert_eq!(cont_results, vec![vec![datum.clone()]]);
+
+            // Data remains (peek).
+            let d = rspace.store.get_data(&channel);
+            prop_assert_eq!(d.len(), 1, "data should remain after peek produce-match");
+
+            // N-1 continuations remain.
+            let c2 = rspace.store.get_continuations(&key);
+            prop_assert_eq!(c2.len(), num_waiters - 1,
+                "should have {} waiting continuations remaining", num_waiters - 1);
+
+            Ok(())
+        })?;
+    }
+
+    // =========================================================================
+    // Peek vs non-peek differential: same structure, peek flag toggles outcome
+    // =========================================================================
+    //
+    // Run the same scenario (N channels, produce-then-consume) twice -- once
+    // with peek on all channels, once without.  The returned data must be
+    // identical, but peek must preserve data while non-peek must remove it.
+
+    #[test]
+    fn peek_vs_non_peek_differential(
+        num_channels in 1usize..=4,
+    ) {
+        let rt = Runtime::new().expect("failed to create tokio runtime");
+        rt.block_on(async {
+            let channels = distinct_channels(num_channels);
+            let data: Vec<String> = (0..num_channels).map(|i| format!("d{}", i)).collect();
+            let patterns: Vec<Pattern> = vec![Pattern::Wildcard; num_channels];
+            let all_peeked: BTreeSet<i32> = (0..num_channels as i32).collect();
+
+            // --- Peek scenario ---
+            let mut rspace_peek = create_rspace().await;
+            for i in 0..num_channels {
+                let _ = rspace_peek.produce(channels[i].clone(), data[i].clone(), false);
+            }
+            let r_peek = rspace_peek.consume(
+                channels.clone(), patterns.clone(), StringsCaptor::new(),
+                false, all_peeked,
+            );
+            prop_assert!(r_peek.clone().unwrap().is_some());
+            let peek_results = run_k(r_peek.unwrap());
+
+            // --- Non-peek scenario ---
+            let mut rspace_normal = create_rspace().await;
+            for i in 0..num_channels {
+                let _ = rspace_normal.produce(channels[i].clone(), data[i].clone(), false);
+            }
+            let r_normal = rspace_normal.consume(
+                channels.clone(), patterns, StringsCaptor::new(),
+                false, BTreeSet::default(),
+            );
+            prop_assert!(r_normal.clone().unwrap().is_some());
+            let normal_results = run_k(r_normal.unwrap());
+
+            // Both return the same data.
+            prop_assert_eq!(&peek_results, &normal_results);
+
+            // Peek preserves; non-peek removes.
+            for i in 0..num_channels {
+                let d_peek = rspace_peek.store.get_data(&channels[i]);
+                let d_normal = rspace_normal.store.get_data(&channels[i]);
+                prop_assert_eq!(d_peek.len(), 1,
+                    "peek should preserve data on channel {}", channels[i]);
+                prop_assert_eq!(d_normal.len(), 0,
+                    "non-peek should remove data on channel {}", channels[i]);
+            }
+
+            Ok(())
+        })?;
+    }
+
+    // =========================================================================
+    // Peek then non-peek removes data (sequential transitions)
+    // =========================================================================
+    //
+    // Produce once, peek K times (data survives), then non-peek once (data
+    // removed).  Verifies that peek does not corrupt internal state and that
+    // a subsequent normal consume still works correctly.
+
+    #[test]
+    fn peek_then_non_peek_removes_data(
+        num_peeks_before in 1u32..=5,
+    ) {
+        let rt = Runtime::new().expect("failed to create tokio runtime");
+        rt.block_on(async {
+            let mut rspace = create_rspace().await;
+            let channel = "ch0".to_string();
+            let key = vec![channel.clone()];
+            let datum = "datum".to_string();
+
+            let _ = rspace.produce(channel.clone(), datum.clone(), false);
+
+            // Peek num_peeks_before times -- data survives.
+            for i in 0..num_peeks_before {
+                let peeks: BTreeSet<i32> = std::iter::once(0).collect();
+                let r = rspace.consume(
+                    key.clone(), vec![Pattern::Wildcard], StringsCaptor::new(),
+                    false, peeks,
+                );
+                prop_assert!(r.unwrap().is_some(), "peek #{} should succeed", i);
+                let d = rspace.store.get_data(&channel);
+                prop_assert_eq!(d.len(), 1, "data should survive peek #{}", i);
+            }
+
+            // Non-peek consume -- data removed.
+            let r = rspace.consume(
+                key.clone(), vec![Pattern::Wildcard], StringsCaptor::new(),
+                false, BTreeSet::default(),
+            );
+            prop_assert!(r.clone().unwrap().is_some());
+            let cont_results = run_k(r.unwrap());
+            prop_assert_eq!(cont_results, vec![vec![datum.clone()]]);
+
+            let d = rspace.store.get_data(&channel);
+            prop_assert_eq!(d.len(), 0, "non-peek should remove data after peeks");
+
+            // Further consume should find nothing.
+            let r2 = rspace.consume(
+                key.clone(), vec![Pattern::Wildcard], StringsCaptor::new(),
+                false, BTreeSet::default(),
+            );
+            prop_assert!(r2.unwrap().is_none());
+
+            Ok(())
+        })?;
+    }
+
+    // =========================================================================
+    // Peek with StringMatch: matching vs non-matching pattern
+    // =========================================================================
+    //
+    // Vary the number of channels, using StringMatch patterns that exactly
+    // match the produced data.  Verify peek preserves data.  Then do a
+    // consume with a deliberately wrong pattern on one channel to verify
+    // no match.
+
+    #[test]
+    fn peek_with_string_match_patterns(
+        num_channels in 1usize..=3,
+    ) {
+        let rt = Runtime::new().expect("failed to create tokio runtime");
+        rt.block_on(async {
+            let mut rspace = create_rspace().await;
+            let channels = distinct_channels(num_channels);
+            let data: Vec<String> = (0..num_channels).map(|i| format!("val{}", i)).collect();
+            let patterns: Vec<Pattern> = data.iter()
+                .map(|d| Pattern::StringMatch(d.clone()))
+                .collect();
+            let all_peeked: BTreeSet<i32> = (0..num_channels as i32).collect();
+
+            for i in 0..num_channels {
+                let _ = rspace.produce(channels[i].clone(), data[i].clone(), false);
+            }
+
+            // Matching StringMatch patterns + peek: should match, data preserved.
+            let r = rspace.consume(
+                channels.clone(), patterns, StringsCaptor::new(),
+                false, all_peeked.clone(),
+            );
+            prop_assert!(r.clone().unwrap().is_some());
+            let cont_results = run_k(r.unwrap());
+            prop_assert_eq!(cont_results, vec![data.clone()]);
+
+            for i in 0..num_channels {
+                let d = rspace.store.get_data(&channels[i]);
+                prop_assert_eq!(d.len(), 1, "peek should preserve data on channel {}", channels[i]);
+            }
+
+            // Non-matching pattern on the first channel: should NOT match.
+            let mut bad_patterns: Vec<Pattern> = data.iter()
+                .map(|d| Pattern::StringMatch(d.clone()))
+                .collect();
+            bad_patterns[0] = Pattern::StringMatch("WILL_NEVER_MATCH_XYZ".to_string());
+            let r2 = rspace.consume(
+                channels.clone(), bad_patterns, StringsCaptor::new(),
+                false, all_peeked,
+            );
+            prop_assert!(r2.unwrap().is_none(),
+                "non-matching StringMatch should cause consume to wait");
+
+            // Data still present (peek from earlier + no consumption from failed match).
+            for i in 0..num_channels {
+                let d = rspace.store.get_data(&channels[i]);
+                prop_assert_eq!(d.len(), 1,
+                    "data should still be present on channel {}", channels[i]);
+            }
+
+            Ok(())
+        })?;
+    }
+
+    // =========================================================================
+    // Non-peek after peek finds nothing: ordering matters
+    // =========================================================================
+    //
+    // Produce, then non-peek consume (removes data), then peek consume
+    // (should find nothing and wait).  Verifies that peek does not
+    // resurrect data that was already consumed by a non-peek.
+
+    #[test]
+    fn peek_after_non_peek_finds_nothing(
+        num_channels in 1usize..=3,
+    ) {
+        let rt = Runtime::new().expect("failed to create tokio runtime");
+        rt.block_on(async {
+            let mut rspace = create_rspace().await;
+            let channels = distinct_channels(num_channels);
+            let data: Vec<String> = (0..num_channels).map(|i| format!("d{}", i)).collect();
+            let patterns: Vec<Pattern> = vec![Pattern::Wildcard; num_channels];
+            let all_peeked: BTreeSet<i32> = (0..num_channels as i32).collect();
+
+            for i in 0..num_channels {
+                let _ = rspace.produce(channels[i].clone(), data[i].clone(), false);
+            }
+
+            // Non-peek consume: removes all data.
+            let r1 = rspace.consume(
+                channels.clone(), patterns.clone(), StringsCaptor::new(),
+                false, BTreeSet::default(),
+            );
+            prop_assert!(r1.unwrap().is_some());
+
+            for i in 0..num_channels {
+                let d = rspace.store.get_data(&channels[i]);
+                prop_assert_eq!(d.len(), 0);
+            }
+
+            // Subsequent peek consume: should find nothing.
+            let r2 = rspace.consume(
+                channels.clone(), patterns, StringsCaptor::new(),
+                false, all_peeked,
+            );
+            prop_assert!(r2.unwrap().is_none(),
+                "peek after non-peek should find no data");
+
+            // A waiting continuation should be stored.
+            let c = rspace.store.get_continuations(&channels);
+            prop_assert_eq!(c.len(), 1, "peek consume should store waiting continuation");
+
+            Ok(())
+        })?;
+    }
 }

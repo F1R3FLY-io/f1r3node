@@ -192,6 +192,21 @@ impl Interpreter for InterpreterImpl {
             }
             log_mem_step("after_clear_mergeable_channels");
 
+            // Diagnostic: log the RNG state before injection so we can compare
+            // with the state in eval_new's alloc
+            tracing::info!(
+                target: "f1r3fly.rholang.diag",
+                rand_position = rand.position,
+                rand_path_position = rand.path_position,
+                rand_last_block_prefix = %hex::encode(
+                    &rand.last_block.iter().take(16).map(|&b| b as u8).collect::<Vec<u8>>()
+                ),
+                rand_hash_array_prefix = %hex::encode(
+                    &rand.hash_array.iter().take(16).map(|&b| b as u8).collect::<Vec<u8>>()
+                ),
+                "inj_attempt: RNG state before reducer.inj"
+            );
+
             // Trace: reduce-term (matching Scala's Span[F].traceI("reduce-term"))
             event!(Level::DEBUG, mark = "started-reduce-term", "inj_attempt");
             log_mem_step("before_reduce_term");
@@ -201,6 +216,70 @@ impl Interpreter for InterpreterImpl {
                     event!(Level::DEBUG, mark = "finished-reduce-term", "inj_attempt");
                     log_mem_step("after_reduce_term_ok");
                     let phlos_left = self.c.get();
+                    let phlos_used = initial_phlo.value - phlos_left.value;
+                    tracing::debug!(
+                        target: "f1r3fly.rholang",
+                        initial_phlo = initial_phlo.value,
+                        phlos_left = phlos_left.value,
+                        used = phlos_used,
+                        "inj_attempt: deploy evaluation complete — computing cost"
+                    );
+
+                    // Diagnostic: dump hot store pending state after evaluation.
+                    // Non-zero data/continuation counts indicate work that the
+                    // reducer did NOT complete — potential early termination.
+                    {
+                        let space_locked = reducer.space.try_lock()
+                            .expect("space lock should be available after evaluation");
+                        let (data_channels, data_items, cont_channels, cont_items) =
+                            space_locked.pending_state_counts();
+                        drop(space_locked);
+
+                        tracing::info!(
+                            target: "f1r3fly.rholang",
+                            data_channels,
+                            data_items,
+                            cont_channels,
+                            cont_items,
+                            phlos_used,
+                            "inj_attempt: hot store state after evaluation"
+                        );
+
+                        if cont_items > 0 {
+                            tracing::warn!(
+                                target: "f1r3fly.rholang",
+                                data_channels,
+                                data_items,
+                                cont_channels,
+                                cont_items,
+                                phlos_used,
+                                "inj_attempt: PENDING CONTINUATIONS after evaluation — \
+                                 continuations are waiting for data that never arrived, \
+                                 this may indicate the reducer terminated before all \
+                                 concurrent branches completed"
+                            );
+
+                            // Step 1 (Phase 5d): enumerate the actual channels
+                            // with pending continuations for cross-referencing
+                            let space_locked2 = reducer.space.try_lock()
+                                .expect("space lock should be available for cont detail");
+                            let cont_detail = space_locked2.pending_continuation_channels_debug();
+                            drop(space_locked2);
+                            for (i, (channels_dbg, num_conts, has_peek)) in cont_detail.iter().enumerate() {
+                                tracing::warn!(
+                                    target: "f1r3fly.rholang.diag",
+                                    cont_idx = i,
+                                    num_continuations = num_conts,
+                                    has_peek,
+                                    channels = %channels_dbg,
+                                    "PENDING CONT[{}]: {} continuation(s), peek={}, channels={}",
+                                    i, num_conts, has_peek, channels_dbg
+                                );
+                            }
+                        }
+                    }
+                    log_mem_step("after_hot_store_diagnostic");
+
                     let mergeable_channels = { self.merge_chs.read().unwrap().clone() };
 
                     Ok(EvaluateResult {

@@ -165,6 +165,11 @@ impl ReplayRuntimeOps {
         let checkpoint_start = Instant::now();
         tracing::debug!(target: "f1r3fly.casper.replay-rho-runtime", "create-checkpoint-started");
         let checkpoint = self.runtime_ops.runtime.create_checkpoint();
+        tracing::info!(
+            target: "f1r3fly.rspace",
+            replay_root = %hex::encode(checkpoint.root.bytes()),
+            "replay_deploys: checkpoint completed"
+        );
         tracing::debug!(target: "f1r3fly.casper.replay-rho-runtime", "create-checkpoint-finished");
         metrics::histogram!(BLOCK_REPLAY_PHASE_CREATE_CHECKPOINT_TIME_METRIC, "source" => CASPER_METRICS_SOURCE)
             .record(checkpoint_start.elapsed().as_secs_f64());
@@ -324,6 +329,7 @@ impl ReplayRuntimeOps {
         let deploy_data = SystemProcessDeployData::from_deploy(&processed_deploy.deploy);
         self.runtime_ops.runtime.set_deploy_data(deploy_data).await;
 
+        rholang::rust::interpreter::storage::charging_rspace::reset_cost_trace_seq();
         let mut user_eval_result = self.runtime_ops.evaluate(&processed_deploy.deploy).await?;
         self.discard_event_log("user-deploy", false);
 
@@ -347,6 +353,17 @@ impl ReplayRuntimeOps {
         }
 
         if processed_deploy.cost.cost != user_eval_result.cost.value as u64 {
+            tracing::error!(
+                target: "f1r3fly.rspace.cost_trace",
+                initial_cost = processed_deploy.cost.cost,
+                replay_cost = user_eval_result.cost.value,
+                cost_diff = processed_deploy.cost.cost as i64 - user_eval_result.cost.value,
+                deploy_sig = %hex::encode(&processed_deploy.deploy.sig),
+                "COST_MISMATCH_DETAIL: validator_cost={} observer_cost={} diff={}",
+                processed_deploy.cost.cost,
+                user_eval_result.cost.value,
+                processed_deploy.cost.cost as i64 - user_eval_result.cost.value
+            );
             return Err(CasperError::ReplayFailure(
                 ReplayFailure::replay_cost_mismatch(
                     processed_deploy.cost.cost,

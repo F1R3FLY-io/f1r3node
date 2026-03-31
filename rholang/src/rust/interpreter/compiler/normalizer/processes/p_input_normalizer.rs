@@ -257,12 +257,17 @@ pub fn normalize_p_input<'ast>(
 
         let processed = processed_receipts?;
 
-        // Determine bind characteristics from first receipt
-        let (persistent, peek) = match head_receipt {
-            Bind::Linear { .. } => (false, false),
-            Bind::Repeated { .. } => (true, false),
-            Bind::Peek { .. } => (false, true),
-        };
+        // Determine persistent from the first receipt (all binds share persistence)
+        let persistent = matches!(head_receipt, Bind::Repeated { .. });
+
+        // Determine per-bind peek flags: each bind individually tracks whether it uses <<-
+        let per_bind_peek: Vec<bool> = flat_receipts
+            .iter()
+            .map(|receipt| matches!(receipt, Bind::Peek { .. }))
+            .collect();
+
+        // Receive.peek is true only if ALL binds are peek (backward compat)
+        let peek = per_bind_peek.iter().all(|&p| p) && !per_bind_peek.is_empty();
 
         // Extract patterns and sources
         let (patterns, sources): (Vec<_>, Vec<_>) = processed.into_iter().unzip();
@@ -383,8 +388,8 @@ pub fn normalize_p_input<'ast>(
                 .clone()
                 .into_iter()
                 .zip(sources_par)
-                .into_iter()
-                .map(|((a, b, c, _), e)| (a, b, e, c))
+                .zip(per_bind_peek.iter())
+                .map(|(((a, b, c, _), e), &peek_flag)| (a, b, e, c, peek_flag))
                 .collect(),
         )?;
 
@@ -549,6 +554,7 @@ mod tests {
                 source: Some(Par::default()),
                 remainder: None,
                 free_count: 2,
+                peek: false,
             }],
             body: Some(new_send_par(
                 new_boundvar_par(1, create_bit_vector(&vec![1]), false),
@@ -649,6 +655,7 @@ mod tests {
                 source: Some(Par::default()),
                 remainder: None,
                 free_count: 1,
+                peek: false,
             }],
             body: Some(Par::default()),
             persistent: false,
@@ -751,6 +758,7 @@ mod tests {
                     source: Some(Par::default()),
                     remainder: None,
                     free_count: 2,
+                    peek: false,
                 },
                 ReceiveBind {
                     patterns: vec![
@@ -760,6 +768,7 @@ mod tests {
                     source: Some(new_gint_par(1, Vec::new(), false)),
                     remainder: None,
                     free_count: 2,
+                    peek: false,
                 },
             ],
             body: Some({

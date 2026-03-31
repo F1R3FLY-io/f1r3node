@@ -581,7 +581,7 @@ async fn run_block_creator_phase_split_memory_profile() {
         let (pre_state_hash, _rejected) = if skip_parents_compute {
             match snapshot.parents.first() {
                 Some(parent) => (parent.body.state.post_state_hash.clone(), Vec::new()),
-                None => (RuntimeManager::empty_state_hash_fixed(), Vec::new()),
+                None => (runtime_manager.empty_state_hash(), Vec::new()),
             }
         } else {
             match compute_parents_post_state(
@@ -589,6 +589,7 @@ async fn run_block_creator_phase_split_memory_profile() {
                 snapshot.parents.clone(),
                 &snapshot,
                 &runtime_manager,
+                None,
                 None,
             ) {
                 Ok(result) => result,

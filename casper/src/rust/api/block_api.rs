@@ -361,7 +361,18 @@ impl BlockAPI {
                                     }
                                 }
                                 ProposerResult::Empty => {
-                                    tracing::debug!("Propose already in progress");
+                                    if attempt < max_attempts {
+                                        tracing::debug!(
+                                            "Propose already in progress (attempt {}/{}); retrying in {:?}",
+                                            attempt,
+                                            max_attempts,
+                                            retry_delay
+                                        );
+                                        attempt += 1;
+                                        tokio::time::sleep(retry_delay).await;
+                                        continue;
+                                    }
+                                    tracing::debug!("Propose already in progress; max retries exhausted");
                                 }
                                 ProposerResult::Started(seq_number) => {
                                     tracing::debug!("Propose started (seqNum {})", seq_number);
@@ -1471,6 +1482,7 @@ impl BlockAPI {
                                 &snapshot,
                                 &runtime_guard,
                                 Some(true), // disable_late_block_filtering = true for exploratory deploy
+                                None,
                             )?;
                         merged_state_hash
                     };
@@ -1507,11 +1519,30 @@ impl BlockAPI {
 
                 match target_block {
                     Some(b) => {
+                        tracing::info!(
+                            target: "f1r3fly.rholang.diag",
+                            state_hash = %PrettyPrinter::build_string_bytes(&state_hash),
+                            block_number = b.body.state.block_number,
+                            block_hash = %PrettyPrinter::build_string_bytes(&b.block_hash),
+                            parent_hash = %b.header.parents_hash_list.first()
+                                .map(|h| PrettyPrinter::build_string_bytes(h))
+                                .unwrap_or_default(),
+                            deploy_count = b.body.deploys.len(),
+                            "exploratory_deploy: LFB details for state selection"
+                        );
                         let res = runtime_manager
                             .lock()
                             .await
                             .play_exploratory_deploy(term, &state_hash)
                             .await?;
+                        tracing::info!(
+                            target: "f1r3fly.rholang.diag",
+                            state_hash = %PrettyPrinter::build_string_bytes(&state_hash),
+                            block_number = b.body.state.block_number,
+                            result_count = res.len(),
+                            "exploratory_deploy: play_exploratory_deploy returned {} result pars",
+                            res.len()
+                        );
                         let light_block_info =
                             Self::get_light_block_info(casper.as_ref(), &b).await?;
                         Ok((res, light_block_info))

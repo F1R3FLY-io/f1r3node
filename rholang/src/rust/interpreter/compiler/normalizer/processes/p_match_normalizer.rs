@@ -335,6 +335,7 @@ mod tests {
                     source: Some(Par::default()),
                     remainder: None,
                     free_count: 1,
+                    peek: false,
                 }],
                 body: Some(Par::default().prepend_match(Match {
                     target: Some(new_boundvar_par(0, create_bit_vector(&vec![0]), false)),
@@ -444,6 +445,7 @@ mod tests {
                 source: Some(Par::default()),
                 remainder: None,
                 free_count: 2,
+                peek: false,
             }],
             body: Some(Par::default()),
             persistent: false,

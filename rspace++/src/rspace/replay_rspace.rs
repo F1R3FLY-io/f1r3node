@@ -39,15 +39,17 @@ use super::trace::event::{COMM, Consume, Event, IOEvent, Produce};
 use crate::rspace::checkpoint::Checkpoint;
 use crate::rspace::history::history_repository::HistoryRepository;
 use crate::rspace::hot_store::{HotStore, HotStoreInstances};
+use crate::rspace::hot_store_action::{DeleteAction, HotStoreAction, InsertAction};
 use crate::rspace::internal::*;
 use crate::rspace::space_matcher::SpaceMatcher;
+
 
 #[repr(C)]
 #[derive(Clone)]
 pub struct ReplayRSpace<C, P, A, K> {
     pub history_repository: Arc<Box<dyn HistoryRepository<C, P, A, K> + Send + Sync + 'static>>,
     pub store: Arc<Box<dyn HotStore<C, P, A, K>>>,
-    installs: Arc<Mutex<HashMap<Vec<C>, Install<P, K>>>>,
+    installs: Arc<Mutex<BTreeMap<Vec<C>, Install<P, K>>>>,
     event_log: Log,
     produce_counter: BTreeMap<Produce, i32>,
     matcher: Arc<Box<dyn Match<P, A>>>,
@@ -79,6 +81,119 @@ where
         self.check_replay_data()?;
 
         let changes = self.store.changes();
+        // Diagnostic: count replay state changes by type for checkpoint comparison
+        {
+            let mut insert_data = 0usize;
+            let mut insert_cont = 0usize;
+            let mut insert_join = 0usize;
+            let mut delete_data = 0usize;
+            let mut delete_cont = 0usize;
+            let mut delete_join = 0usize;
+
+            let detail_enabled = tracing::enabled!(
+                target: "f1r3fly.rspace.checkpoint_detail",
+                tracing::Level::DEBUG
+            );
+
+            for action in &changes {
+                match action {
+                    HotStoreAction::Insert(InsertAction::InsertData(id)) => {
+                        insert_data += 1;
+                        if detail_enabled {
+                            tracing::debug!(
+                                target: "f1r3fly.rspace.checkpoint_detail",
+                                channel = ?id.channel,
+                                data_count = id.data.len(),
+                                "replay_checkpoint_detail: InsertData"
+                            );
+                        }
+                    }
+                    HotStoreAction::Insert(InsertAction::InsertContinuations(ic)) => {
+                        insert_cont += 1;
+                        if detail_enabled {
+                            let persistent_count = ic.continuations.iter().filter(|wc| wc.persist).count();
+                            tracing::debug!(
+                                target: "f1r3fly.rspace.checkpoint_detail",
+                                channels = ?ic.channels,
+                                cont_count = ic.continuations.len(),
+                                persistent_count,
+                                "replay_checkpoint_detail: InsertContinuations ({} total, {} persistent)",
+                                ic.continuations.len(), persistent_count
+                            );
+                        }
+                    }
+                    HotStoreAction::Insert(InsertAction::InsertJoins(ij)) => {
+                        insert_join += 1;
+                        if detail_enabled {
+                            tracing::debug!(
+                                target: "f1r3fly.rspace.checkpoint_detail",
+                                channel = ?ij.channel,
+                                join_groups = ij.joins.len(),
+                                "replay_checkpoint_detail: InsertJoins ({} groups)",
+                                ij.joins.len()
+                            );
+                        }
+                    }
+                    HotStoreAction::Delete(DeleteAction::DeleteData(dd)) => {
+                        delete_data += 1;
+                        if detail_enabled {
+                            tracing::debug!(
+                                target: "f1r3fly.rspace.checkpoint_detail",
+                                channel = ?dd.channel,
+                                "replay_checkpoint_detail: DeleteData"
+                            );
+                        }
+                    }
+                    HotStoreAction::Delete(DeleteAction::DeleteContinuations(dc)) => {
+                        delete_cont += 1;
+                        if detail_enabled {
+                            tracing::debug!(
+                                target: "f1r3fly.rspace.checkpoint_detail",
+                                channels = ?dc.channels,
+                                "replay_checkpoint_detail: DeleteContinuations"
+                            );
+                        }
+                    }
+                    HotStoreAction::Delete(DeleteAction::DeleteJoins(dj)) => {
+                        delete_join += 1;
+                        if detail_enabled {
+                            tracing::debug!(
+                                target: "f1r3fly.rspace.checkpoint_detail",
+                                channel = ?dj.channel,
+                                "replay_checkpoint_detail: DeleteJoins"
+                            );
+                        }
+                    }
+                }
+            }
+            tracing::debug!(
+                target: "f1r3fly.rspace",
+                total_changes = changes.len(),
+                insert_data,
+                insert_cont,
+                insert_join,
+                delete_data,
+                delete_cont,
+                delete_join,
+                "replay checkpoint: committing state changes"
+            );
+            // LFS diagnostic: log replay checkpoint summary at INFO level
+            tracing::info!(
+                target: "f1r3fly.rspace.lfs_diag",
+                total_changes = changes.len(),
+                insert_data,
+                insert_cont,
+                insert_join,
+                delete_data,
+                delete_cont,
+                delete_join,
+                "REPLAY CHECKPOINT: committing {} changes (data: +{} -{}, cont: +{} -{}, join: +{} -{})",
+                changes.len(), insert_data, delete_data,
+                insert_cont, delete_cont, insert_join, delete_join
+            );
+        }
+
+
         let next_history = self.history_repository.checkpoint(changes);
         self.history_repository = Arc::new(next_history);
 
@@ -238,49 +353,69 @@ where
 
     fn rig(&self, log: Log) -> Result<(), RSpaceError> {
         // println!("\nlog len in rust rig: {:?}", log.len());
-        let (io_events, comm_events): (Vec<_>, Vec<_>) =
-            log.iter().partition(|event| match event {
-                Event::IoEvent(IOEvent::Produce(_)) => true,
-                Event::IoEvent(IOEvent::Consume(_)) => true,
-                Event::Comm(_) => false,
-            });
-
-        // Create a set of the "new" IOEvents
-        let new_stuff: HashSet<_> = io_events.into_iter().collect();
 
         // Create and prepare the ReplayData table
         self.replay_data.clear();
+        // ---- Phase 2: Index COMMs in replay_data (Scala dual-indexing) ----
+        //
+        // Match Scala IReplaySpace.rig(): index each COMM under ALL its
+        // IOEvents (consume + all produces) that appear in the event log.
+        // This allows COMMs to be found from either side during replay,
+        // which is necessary when evaluation order differs from the validator.
+        let io_events: HashSet<IOEvent> = log.iter().filter_map(|e| {
+            match e {
+                Event::IoEvent(io) => Some(io.clone()),
+                _ => None,
+            }
+        }).collect();
 
-        for event in comm_events {
-            match event {
-                Event::Comm(comm) => {
-                    let comm_cloned = comm.clone();
-                    let (consume, produces) = (comm_cloned.consume, comm_cloned.produces);
-                    let produce_io_events: Vec<IOEvent> = produces
-                        .into_iter()
-                        .map(|produce| IOEvent::Produce(produce))
-                        .collect();
-
-                    let mut io_events = produce_io_events.clone();
-                    io_events.insert(0, IOEvent::Consume(consume));
-
-                    for io_event in io_events {
-                        let io_event_converted: Event = match io_event {
-                            IOEvent::Produce(ref p) => Event::IoEvent(IOEvent::Produce(p.clone())),
-                            IOEvent::Consume(ref c) => Event::IoEvent(IOEvent::Consume(c.clone())),
-                        };
-
-                        if new_stuff.contains(&io_event_converted) {
-                            // println!("\nadd_binding in rig");
-                            self.replay_data.add_binding(io_event, comm.clone());
-                        }
-                    }
-                    Ok(())
+        for event in &log {
+            if let Event::Comm(comm) = event {
+                let consume_key = IOEvent::Consume(comm.consume.clone());
+                if io_events.contains(&consume_key) {
+                    self.replay_data.add_binding(consume_key, comm.clone());
                 }
-                _ => Err(RSpaceError::BugFoundError(
-                    "BUG FOUND: only COMM events are expected here".to_string(),
-                )),
-            }?
+                for produce in &comm.produces {
+                    let produce_key = IOEvent::Produce(produce.clone());
+                    if io_events.contains(&produce_key) {
+                        self.replay_data.add_binding(produce_key, comm.clone());
+                    }
+                }
+            }
+        }
+
+
+        // Diagnostic: dump all produce IOEvent keys in replay_data for cross-referencing
+        // with PRODUCE_MISS/PRODUCE_HIT during replay
+        if tracing::enabled!(target: "f1r3fly.rspace.cost_trace", tracing::Level::INFO) {
+            let mut produce_count = 0u32;
+            let mut consume_count = 0u32;
+            for entry in self.replay_data.map.iter() {
+                match entry.key() {
+                    IOEvent::Produce(p) => {
+                        produce_count += 1;
+                        tracing::info!(
+                            target: "f1r3fly.rspace.cost_trace",
+                            produce_hash = %hex::encode(p.hash.bytes()),
+                            channel_hash = %hex::encode(p.channel_hash.bytes()),
+                            comms_count = entry.value().len(),
+                            "RIG_PRODUCE_KEY: hash={} ch={} comms={}",
+                            hex::encode(&p.hash.bytes()[..8]),
+                            hex::encode(&p.channel_hash.bytes()[..8]),
+                            entry.value().len()
+                        );
+                    }
+                    IOEvent::Consume(_) => { consume_count += 1; }
+                }
+            }
+            tracing::info!(
+                target: "f1r3fly.rspace.cost_trace",
+                produce_count,
+                consume_count,
+                total = produce_count + consume_count,
+                "RIG_SUMMARY: {} produce keys, {} consume keys, {} total",
+                produce_count, consume_count, produce_count + consume_count
+            );
         }
 
         Ok(())
@@ -290,9 +425,16 @@ where
         if self.replay_data.is_empty() {
             Ok(())
         } else {
+            let remaining = self.replay_data.map.len();
+            tracing::warn!(
+                target: "f1r3fly.rspace",
+                remaining_events = remaining,
+                replay_data = ?self.replay_data.map,
+                "REPLAY MISMATCH: unused COMM events remain after replay"
+            );
             Err(RSpaceError::BugFoundError(format!(
                 "Unused COMM event: replayData multimap has {} elements left",
-                self.replay_data.map.len()
+                remaining
             )))
         }
     }
@@ -346,6 +488,14 @@ where
             }
         }
     }
+
+    fn pending_state_counts(&self) -> (usize, usize, usize, usize) {
+        self.store.state_counts()
+    }
+
+    fn pending_continuation_channels_debug(&self) -> Vec<(String, usize, bool)> {
+        self.store.continuation_channels_debug()
+    }
 }
 
 impl<C, P, A, K> ReplayRSpace<C, P, A, K>
@@ -373,7 +523,7 @@ where
             history_repository,
             store,
             matcher,
-            installs: Arc::new(Mutex::new(HashMap::new())),
+            installs: Arc::new(Mutex::new(BTreeMap::new())),
             event_log: Vec::new(),
             produce_counter: BTreeMap::new(),
             replay_data: MultisetMultiMap::empty(),
@@ -398,7 +548,7 @@ where
             history_repository,
             store,
             matcher,
-            installs: Arc::new(Mutex::new(HashMap::new())),
+            installs: Arc::new(Mutex::new(BTreeMap::new())),
             event_log: Vec::new(),
             produce_counter: BTreeMap::new(),
             replay_data: MultisetMultiMap::empty(),
@@ -527,18 +677,35 @@ where
             .replay_data
             .map
             .get(&IOEvent::Consume(consume_ref.clone()))
-            .map(|comms| {
-                comms
-                    .iter()
-                    .map(|tuple| tuple.0.clone())
-                    .collect::<Vec<_>>()
-            });
+            .map(|comms| comms.to_vec());
+
+        // LFS diagnostic: log peek operations and replay_data match
+        if !peeks.is_empty() {
+            let replay_hit = comms_option.is_some();
+            for (i, ch) in channels.iter().enumerate() {
+                let ch_hash = super::hashing::stable_hash_provider::hash(ch);
+                tracing::info!(
+                    target: "f1r3fly.rspace.lfs_diag",
+                    channel_idx = i,
+                    channel_hash = %hex::encode(ch_hash.bytes()),
+                    replay_hit,
+                    replay_data_size = self.replay_data.map.len(),
+                    "REPLAY_PEEK: channel_hash={} replay_hit={} (replay_data has {} entries)",
+                    hex::encode(&ch_hash.bytes()[..8]),
+                    replay_hit,
+                    self.replay_data.map.len()
+                );
+            }
+        }
 
         // println!("\ncomms_options in replay_consume Some?: {:?}",
         // comms_option.is_some());
 
+
         match comms_option {
-            None => Ok(self.store_waiting_continuation(channels, wk)),
+            None => {
+                Ok(self.store_waiting_continuation(channels, wk))
+            }
             Some(comms_list) => {
                 match self.get_comm_and_consume_candidates(
                     channels.clone(),
@@ -546,10 +713,10 @@ where
                     comms_list.clone(),
                 ) {
                     None => {
-                        // println!("\nwas none");
                         Ok(self.store_waiting_continuation(channels, wk))
                     }
                     Some((_, data_candidates)) => {
+
                         let produce_counters_closure =
                             |produces: &[Produce]| self.produce_counters(produces);
 
@@ -568,6 +735,15 @@ where
                             "comm.consume",
                         );
 
+
+                        if !comms_list.contains(&comm_ref) {
+                            tracing::warn!(
+                                target: "f1r3fly.rspace",
+                                comm_ref = ?comm_ref,
+                                comms_list = ?comms_list,
+                                "REPLAY MISMATCH: consume COMM event not found in trace"
+                            );
+                        }
                         assert!(
                             comms_list.contains(&comm_ref),
                             "{}",
@@ -577,11 +753,16 @@ where
                             )
                         );
 
-                        let _ = self.store_persistent_data(data_candidates.clone(), &peeks);
-                        // println!(
-                        //     "consume: data found for <patterns: {:?}> at <channels: {:?}>",
-                        //     patterns, channels
-                        // );
+                        let _ = self.store_persistent_data(&channels, data_candidates.clone(), &peeks);
+
+                        // NOTE: Previously had put_join/remove_join here to simulate
+                        // join lifecycle. REMOVED because remove_join poisons the hot
+                        // store join cache: it loads history joins into the hot store
+                        // (Vacant path at hot_store.rs:792-803), and subsequent
+                        // get_joins returns the cached (possibly empty) list instead
+                        // of falling through to history. This caused Type 2
+                        // COMM_MATCH_FAILs (0 join groups).
+
                         let _ = self.remove_bindings_for(comm_ref);
                         Ok(self.wrap_result(channels, wk, consume_ref, data_candidates))
                     }
@@ -693,10 +874,34 @@ where
         // println!("\ncomms_options in replay_produce Some?: {:?}",
         // comms_option.is_some());
 
+
         match io_event_and_comm {
-            None => Ok(self.store_data(channel, data, persist, produce_ref)),
+            None => {
+                tracing::warn!(
+                    target: "f1r3fly.rspace.cost_trace",
+                    produce_hash = %hex::encode(produce_ref.hash.bytes()),
+                    channel_hash = %hex::encode(produce_ref.channel_hash.bytes()),
+                    persist,
+                    replay_data_size = self.replay_data.map.len(),
+                    replay_data_produce_keys = self.replay_data.map.iter()
+                        .filter(|e| matches!(e.key(), IOEvent::Produce(_)))
+                        .count(),
+                    "PRODUCE_MISS: produce hash NOT in replay_data — \
+                     if this produce fired a COMM on the validator, the hash differs or was already consumed"
+                );
+                Ok(self.store_data(channel, data, persist, produce_ref))
+            }
             Some((_, comms_list)) => {
-                let comms: Vec<_> = comms_list.iter().map(|tuple| tuple.0.clone()).collect();
+                let comms: Vec<_> = comms_list.to_vec();
+                tracing::info!(
+                    target: "f1r3fly.rspace.cost_trace",
+                    produce_hash = %hex::encode(produce_ref.hash.bytes()),
+                    channel_hash = %hex::encode(produce_ref.channel_hash.bytes()),
+                    persist,
+                    comms_count = comms.len(),
+                    "PRODUCE_HIT: produce hash found in replay_data with {} COMMs",
+                    comms.len()
+                );
 
                 match self.get_comm_or_produce_candidate(
                     channel.clone(),
@@ -704,7 +909,7 @@ where
                     persist,
                     comms.clone(),
                     produce_ref.clone(),
-                    grouped_channels,
+                    grouped_channels.clone(),
                 ) {
                     Some((comm, pc)) => Ok(self.handle_match(pc, comms).map(|consume_result| {
                         let p = comm
@@ -753,16 +958,44 @@ where
         produce_ref: Produce,
         grouped_channels: Vec<Vec<C>>,
     ) -> Option<ProduceCandidate<C, P, A, K>> {
+        let comm_consume_hash = hex::encode(comm.consume.hash.bytes());
+        let groups_count = grouped_channels.len();
         self.run_matcher_for_channels(
             grouped_channels,
             |channels| {
                 let continuations = self.store.get_continuations(&channels);
-                continuations
+                let total = continuations.len();
+                let filtered: Vec<_> = continuations
                     .into_iter()
                     .enumerate()
                     .filter(|(_, wc)| comm.consume == wc.source)
                     .map(|(i, wc)| (wc, i as i32))
-                    .collect::<Vec<_>>()
+                    .collect();
+                if filtered.is_empty() && total > 0 {
+                    let avail: Vec<String> = self.store.get_continuations(&channels).iter()
+                        .map(|wc| hex::encode(&wc.source.hash.bytes()[..8]))
+                        .collect();
+                    tracing::warn!(
+                        target: "f1r3fly.rspace.cost_trace",
+                        total_conts = total,
+                        matching_conts = 0,
+                        comm_consume = %&comm_consume_hash[..16],
+                        available = %avail.join(","),
+                        groups = groups_count,
+                        "RUN_MATCHER_PRODUCE: {} conts available but NONE match comm.consume={}. Available: [{}]",
+                        total, &comm_consume_hash[..16], avail.join(",")
+                    );
+                } else if filtered.is_empty() {
+                    tracing::warn!(
+                        target: "f1r3fly.rspace.cost_trace",
+                        total_conts = 0,
+                        groups = groups_count,
+                        comm_consume = %&comm_consume_hash[..16],
+                        "RUN_MATCHER_PRODUCE: NO continuations at all for this channel group (groups={})",
+                        groups_count
+                    );
+                }
+                filtered
             },
             |c| {
                 let store_data = self.store.get_data(&c);
@@ -800,15 +1033,26 @@ where
 
     fn matches(&self, comm: COMM, datum_with_index: (Datum<A>, i32)) -> bool {
         let datum = datum_with_index.0;
-        let x = comm.produces.contains(&datum.source);
+        // Compare by hash only, not full PartialEq. The Rust Produce struct has
+        // extra fields (is_deterministic, output_value, failed) that are NOT in the
+        // hash and NOT in the Scala Produce. These fields can differ between the
+        // datum's Produce (always default) and the COMM's Produce (may have been
+        // modified by mark_as_non_deterministic/with_error). Using full PartialEq
+        // causes false negatives where the hash matches but equality fails.
+        let x = comm.produces.iter().any(|p| p.hash == datum.source.hash);
         let res = x && self.was_repeated_enough_times(comm, datum);
         res
     }
 
     fn was_repeated_enough_times(&self, comm: COMM, datum: Datum<A>) -> bool {
         if !datum.persist {
-            let x = *comm.times_repeated.get(&datum.source).unwrap_or(&0) ==
-                self.get_produce_count(&datum.source);
+            // Look up times_repeated by hash only (same reason as matches():
+            // Rust Produce has extra fields not in the hash that break HashMap lookup).
+            let expected_count = comm.times_repeated.iter()
+                .find(|(k, _)| k.hash == datum.source.hash)
+                .map(|(_, v)| *v)
+                .unwrap_or(0);
+            let x = expected_count == self.get_produce_count(&datum.source);
             // println!("\nwas_repeated_enough_times result: {:?}", x);
             x
         } else {
@@ -854,6 +1098,15 @@ where
             "comm.produce",
         );
 
+
+        if !comms.contains(&comm_ref) {
+            tracing::warn!(
+                target: "f1r3fly.rspace",
+                comm_ref = ?comm_ref,
+                comms = ?comms,
+                "REPLAY MISMATCH: produce COMM event not found in trace"
+            );
+        }
         assert!(
             comms.contains(&comm_ref),
             "COMM Event {:?} was not contained in the trace {:?}",
@@ -869,9 +1122,10 @@ where
             self.mark_replay_waiting_continuation_match();
         }
 
-        let _ = self.remove_matched_datum_and_join(channels.clone(), data_candidates.clone());
-        // println!("produce: matching continuation found at <channels: {:?}>",
-        // channels);
+
+        let _ = self.remove_matched_datum_and_join(channels.clone(), data_candidates.clone(), peeks);
+
+
         let _ = self.remove_bindings_for(comm_ref);
         self.wrap_result(channels, continuation.clone(), consume_ref.clone(), data_candidates)
     }
@@ -995,6 +1249,14 @@ where
         let hot_store = HotStoreInstances::create_from_hr(history_reader.base());
         let mut rspace =
             Self::apply(Arc::new(next_history), Arc::new(hot_store), self.matcher.clone());
+
+        // Copy parent's system contract installs so restore_installs() can re-install them.
+        {
+            let parent_installs = self.installs.lock().expect("parent installs lock poisoned");
+            let mut child_installs = rspace.installs.lock().expect("child installs lock poisoned");
+            *child_installs = parent_installs.clone();
+        }
+
         rspace.restore_installs();
 
         // Mark the completion of spawn operation
@@ -1019,8 +1281,8 @@ where
         }
         for channel in channels.iter() {
             self.store.put_join(channel, &channels);
-            // println!("consume: no data found, storing <(patterns, continuation): ({:?}, {:?})> at <channels: {:?}>", wc.patterns, wc.continuation, channels)
         }
+
         None
     }
 
@@ -1048,8 +1310,9 @@ where
 
     fn store_persistent_data(
         &self,
+        channels: &[C],
         mut data_candidates: Vec<ConsumeCandidate<C, A>>,
-        _peeks: &BTreeSet<i32>,
+        peeks: &BTreeSet<i32>,
     ) -> Option<Vec<()>> {
         data_candidates.sort_by(|a, b| b.datum_index.cmp(&a.datum_index));
         let results: Vec<_> = data_candidates
@@ -1063,7 +1326,13 @@ where
                     datum_index,
                 } = consume_candidate;
 
-                if !persist {
+                let channel_idx = channels
+                    .iter()
+                    .position(|c| *c == channel)
+                    .expect("ConsumeCandidate channel must exist in channels list") as i32;
+                let is_peeked = peeks.contains(&channel_idx);
+
+                if !persist && !is_peeked {
                     self.store.remove_datum(&channel, datum_index).ok()
                 } else {
                     Some(())
@@ -1080,15 +1349,12 @@ where
 
     fn restore_installs(&mut self) -> () {
         // Move out the install map to avoid cloning the whole structure on each
-        // restore.
+        // restore.  BTreeMap iteration order is deterministic (sorted by key),
+        // ensuring install_join calls happen in the same order on every node.
         let installs = {
             let mut installs_lock = self.installs.lock().unwrap();
             std::mem::take(&mut *installs_lock)
         };
-        {
-            let mut installs_lock = self.installs.lock().unwrap();
-            installs_lock.reserve(installs.len());
-        }
 
         for (channels, install) in installs {
             self.locked_install_internal(channels, install.patterns, install.continuation, true)
@@ -1200,6 +1466,7 @@ where
         &self,
         channels: Vec<C>,
         mut data_candidates: Vec<ConsumeCandidate<C, A>>,
+        peeks: &BTreeSet<i32>,
     ) -> Option<Vec<()>> {
         data_candidates.sort_by(|a, b| b.datum_index.cmp(&a.datum_index));
         let results: Vec<_> = data_candidates
@@ -1208,16 +1475,30 @@ where
             .map(|consume_candidate| {
                 let ConsumeCandidate {
                     channel,
-                    datum: Datum { persist, .. },
+                    datum,
                     removed_datum: _,
                     datum_index,
                 } = consume_candidate;
+                let persist = datum.persist;
+
+                // Determine if this channel was peeked in the continuation.
+                // Peeked channels should not have their data removed.
+                let channel_idx = channels
+                    .iter()
+                    .position(|c| *c == channel)
+                    .expect("ConsumeCandidate channel must exist in channels list") as i32;
+                let is_peeked = peeks.contains(&channel_idx);
 
                 let channels_clone = channels.clone();
-                if datum_index >= 0 && !persist {
+                if datum_index >= 0 && !persist && !is_peeked {
                     if self.store.remove_datum(&channel, datum_index).is_err() {
                         return None;
                     }
+                } else if datum_index < 0 && is_peeked {
+                    // On-the-fly produced data matched a waiting peek continuation.
+                    // The data was never stored, but peek semantics require it to
+                    // persist. Store it now so future consumers can find it.
+                    self.store.put_datum(&channel, datum);
                 }
                 self.store.remove_join(&channel, &channels_clone);
 

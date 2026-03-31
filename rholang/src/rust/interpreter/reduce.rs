@@ -131,6 +131,7 @@ impl<F: Future> Future for StackGrowingFuture<F> {
 /**
  * Reduce is the interface for evaluating Rholang expressions.
  */
+
 #[derive(Clone)]
 pub struct DebruijnInterpreter {
     pub space: RhoISpace,
@@ -226,6 +227,14 @@ impl DebruijnInterpreter {
         log_mem_step("start", None, None);
 
         // println!("\neval");
+        // Receives evaluate before sends so that consumes store continuations
+        // and register joins BEFORE produces try to match them. This prevents
+        // COMM_MATCH_FAIL cascades where produces find COMMs in replay_data but
+        // no matching continuation exists yet.
+        //
+        // Rholang Par semantics are concurrent — no ordering is mandated.
+        // Scala uses parTraverse (concurrent), Rust uses sequential for-loop.
+        // Both validator and observer use this same ordering, so event logs match.
         let terms: Vec<GeneratedMessage> = vec![
             par.receives
                 .into_iter()
@@ -234,7 +243,7 @@ impl DebruijnInterpreter {
             par.sends
                 .into_iter()
                 .map(GeneratedMessage::Send)
-                .collect(),
+                .collect::<Vec<_>>(),
             par.news.into_iter().map(GeneratedMessage::New).collect(),
             par.matches
                 .into_iter()
@@ -265,6 +274,38 @@ impl DebruijnInterpreter {
         .collect();
         log_mem_step("after_collect_terms", Some(terms.len()), None);
 
+        // Diagnostic: log term type breakdown for concurrent branch tracing
+        if tracing::enabled!(target: "f1r3fly.rholang", tracing::Level::DEBUG) {
+            let mut sends = 0usize;
+            let mut receives = 0usize;
+            let mut news = 0usize;
+            let mut matches = 0usize;
+            let mut bundles = 0usize;
+            let mut exprs = 0usize;
+            for t in &terms {
+                match t {
+                    GeneratedMessage::Send(_) => sends += 1,
+                    GeneratedMessage::Receive(_) => receives += 1,
+                    GeneratedMessage::New(_) => news += 1,
+                    GeneratedMessage::Match(_) => matches += 1,
+                    GeneratedMessage::Bundle(_) => bundles += 1,
+                    GeneratedMessage::Expr(_) => exprs += 1,
+                }
+            }
+            tracing::debug!(
+                target: "f1r3fly.rholang",
+                total = terms.len(),
+                sends,
+                receives,
+                news,
+                matches,
+                bundles,
+                exprs,
+                env_level,
+                "eval_inner: dispatching concurrent branches"
+            );
+        }
+
         fn split(
             id: i32,
             terms: &Vec<GeneratedMessage>,
@@ -277,6 +318,25 @@ impl DebruijnInterpreter {
             } else {
                 rand.split_byte(id.try_into().unwrap())
             }
+        }
+
+        // Diagnostic: log RNG split behavior for top-level evals
+        if env_level == 0 {
+            let split_mode = if terms.len() == 1 {
+                "passthrough"
+            } else if terms.len() > 256 {
+                "split_short"
+            } else {
+                "split_byte"
+            };
+            tracing::info!(
+                target: "f1r3fly.rholang.diag",
+                num_terms = terms.len(),
+                split_mode,
+                rand_position = rand.position,
+                rand_path_position = rand.path_position,
+                "eval_inner: RNG split at env_level=0"
+            );
         }
 
         let term_split_limit = i16::MAX;
@@ -321,8 +381,15 @@ impl DebruijnInterpreter {
             log_mem_step("after_build_futures", Some(futures.len()), None);
             log_mem_step("before_join_all", Some(terms.len()), None);
 
-            let results: Vec<Result<(), InterpreterError>> =
-                futures::future::join_all(futures).await;
+            // Deterministic sequential evaluation: receives first, then sends.
+            // COMM continuation bodies are evaluated inline (depth-first) via
+            // dispatch → reducer.eval(). This ensures continuation bodies create
+            // state (new consumes/joins) before subsequent sibling terms evaluate.
+            let mut results: Vec<Result<(), InterpreterError>> = Vec::with_capacity(futures.len());
+            for future in futures {
+                results.push(future.await);
+            }
+
             log_mem_step("after_join_all", Some(terms.len()), None);
             let (ok_count, err_count) =
                 results.iter().fold((0usize, 0usize), |(ok, err), result| {
@@ -332,6 +399,15 @@ impl DebruijnInterpreter {
                         (ok, err + 1)
                     }
                 });
+            // Diagnostic: log concurrent branch completion summary
+            tracing::debug!(
+                target: "f1r3fly.rholang",
+                total = results.len(),
+                ok_count,
+                err_count,
+                env_level,
+                "eval_inner: all concurrent branches completed"
+            );
             if mem_profile_enabled && env_level == 0 {
                 eprintln!(
                     "reduce_eval_inner.meta step=after_join_all results_len={} results_cap={} ok_count={} err_count={}",
@@ -412,6 +488,30 @@ impl DebruijnInterpreter {
         data: ListParWithRandom,
         persistent: bool,
     ) -> Result<DispatchType, InterpreterError> {
+        // Normalize locally_free for consistent history store hashing.
+        // Par's Eq/Hash (used by the hot store) exclude locally_free, but
+        // bincode::serialize (used by the history store for Blake2b256 channel
+        // keys) includes it. Stale locally_free values left by set_bits_until
+        // after substitution can cause the history store hash of a produce
+        // channel to differ from the hash of the corresponding consume channel,
+        // even though they represent the same logical channel. Clearing
+        // locally_free here ensures channel identity is consistent across both
+        // stores, matching the AlwaysEqual semantics from the Scala codebase.
+        let mut chan = chan;
+        // Diagnostic: log non-empty locally_free before clearing, to confirm
+        // the normalization fix is active and catch any unexpected values.
+        if !chan.locally_free.is_empty() {
+            tracing::debug!(
+                target: "f1r3fly.rholang.diag",
+                locally_free_hex = %hex::encode(&chan.locally_free),
+                locally_free_len = chan.locally_free.len(),
+                persistent,
+                channel = ?chan,
+                "produce_inner: clearing non-empty locally_free before rspace produce"
+            );
+        }
+        chan.locally_free = vec![];
+
         let op_mem_profile_enabled = *REDUCE_OP_PROFILE_ENABLED;
         let data_len = data.pars.len();
         let mut op_rss_prev = if op_mem_profile_enabled {
@@ -456,6 +556,23 @@ impl DebruijnInterpreter {
 
         match produce_result {
             Some((c, s, produce_event)) => {
+                tracing::debug!(
+                    target: "f1r3fly.rholang",
+                    persistent,
+                    "produce_inner: COMM fired — dispatching matched continuation"
+                );
+                // Diagnostic: log byte_name(14) COMM dispatch for registry channel
+                let is_registry_ch = chan.unforgeables.first()
+                    .and_then(|u| u.unf_instance.as_ref())
+                    .map(|inst| matches!(inst, UnfInstance::GPrivateBody(gp) if gp.id == vec![14]))
+                    .unwrap_or(false);
+                if is_registry_ch {
+                    tracing::info!(
+                        target: "f1r3fly.rholang.diag",
+                        persistent,
+                        "produce_inner: byte_name(14) COMM fired — dispatching continuation"
+                    );
+                }
                 let dispatch_type = self
                     .continue_produce_process(
                         unpack_option_with_peek(Some((c, s))),
@@ -468,6 +585,22 @@ impl DebruijnInterpreter {
                     )
                     .await?;
                 log_op_step("after_continue_produce_process");
+                // Diagnostic: log byte_name(14) COMM dispatch outcome
+                if is_registry_ch {
+                    let dispatch_name = match &dispatch_type {
+                        DispatchType::NonDeterministicCall(_) => "NonDeterministicCall",
+                        DispatchType::FailedNonDeterministicCall(_) => "FailedNonDeterministicCall",
+                        DispatchType::DeterministicCall => "DeterministicCall",
+                        DispatchType::Skip => "Skip",
+                    };
+                    tracing::info!(
+                        target: "f1r3fly.rholang.diag",
+                        persistent,
+                        dispatch_result = dispatch_name,
+                        "produce_inner: byte_name(14) COMM dispatch completed — result={}",
+                        dispatch_name
+                    );
+                }
 
                 match dispatch_type {
                     DispatchType::NonDeterministicCall(ref output) => {
@@ -503,7 +636,35 @@ impl DebruijnInterpreter {
                     _ => Ok(dispatch_type),
                 }
             }
-            None => Ok(DispatchType::Skip),
+            None => {
+                tracing::debug!(
+                    target: "f1r3fly.rholang",
+                    persistent,
+                    "produce_inner: no matching continuation — data stored in hot store"
+                );
+                // Diagnostic: log when a produce on an unforgeable channel finds no
+                // continuation. This identifies when the explore-deploy's send to
+                // @agentsTeams fails to match the persistent contract handler.
+                if !chan.unforgeables.is_empty() {
+                    let gprivate_ids: Vec<String> = chan.unforgeables.iter()
+                        .filter_map(|u| u.unf_instance.as_ref())
+                        .filter_map(|inst| match inst {
+                            UnfInstance::GPrivateBody(gp) => Some(format!("{:?}", gp.id)),
+                            _ => None,
+                        })
+                        .collect();
+                    tracing::warn!(
+                        target: "f1r3fly.rholang.diag",
+                        persistent,
+                        channel = ?chan,
+                        gprivate_ids = ?gprivate_ids,
+                        data_pars = data.pars.len(),
+                        "produce_inner: NO continuation found for unforgeable channel — \
+                         contract handler may be lost in trie"
+                    );
+                }
+                Ok(DispatchType::Skip)
+            }
         }
     }
 
@@ -512,7 +673,7 @@ impl DebruijnInterpreter {
         binds: Vec<(BindPattern, Par)>,
         body: ParWithRandom,
         persistent: bool,
-        peek: bool,
+        peeks: BTreeSet<i32>,
     ) -> Pin<
         Box<
             dyn std::future::Future<Output = Result<DispatchType, InterpreterError>>
@@ -521,7 +682,7 @@ impl DebruijnInterpreter {
         >,
     > {
         Box::pin(StackGrowingFuture {
-            inner: self.consume_inner(binds, body, persistent, peek),
+            inner: self.consume_inner(binds, body, persistent, peeks),
         })
     }
 
@@ -530,10 +691,11 @@ impl DebruijnInterpreter {
         binds: Vec<(BindPattern, Par)>,
         body: ParWithRandom,
         persistent: bool,
-        peek: bool,
+        peeks: BTreeSet<i32>,
     ) -> Result<DispatchType, InterpreterError> {
         let op_mem_profile_enabled = *REDUCE_OP_PROFILE_ENABLED;
         let binds_len = binds.len();
+        let peeks_dbg = format!("{:?}", peeks);
         let mut op_rss_prev = if op_mem_profile_enabled {
             read_vm_rss_kb()
         } else {
@@ -548,10 +710,10 @@ impl DebruijnInterpreter {
                 let delta = curr as i64 - prev as i64;
                 if delta != 0 {
                     eprintln!(
-                        "reduce_op.mem fn=consume_inner step={} persistent={} peek={} binds_len={} sources_len={} rss_kb={} delta_prev_kb={}",
+                        "reduce_op.mem fn=consume_inner step={} persistent={} peeks={} binds_len={} sources_len={} rss_kb={} delta_prev_kb={}",
                         step,
                         persistent,
-                        peek,
+                        peeks_dbg,
                         binds_len,
                         sources_len,
                         curr,
@@ -565,6 +727,32 @@ impl DebruijnInterpreter {
         // println!("binds in reduce consume: {:?}", binds);
         // println!("body in reduce consume: {:?}", body);
         let (patterns, sources): (Vec<BindPattern>, Vec<Par>) = binds.clone().into_iter().unzip();
+
+        // Normalize locally_free on consume channels for the same reason as in
+        // produce_inner: Par's Eq/Hash exclude locally_free but
+        // bincode::serialize (used for history store Blake2b256 keys) includes
+        // it. Channels reaching here are fully substituted (no free variables),
+        // so vec![] is the correct value. This ensures that the channel hash
+        // stored with a continuation/join in the trie matches the hash computed
+        // during a later produce lookup.
+        let sources: Vec<Par> = sources
+            .into_iter()
+            .map(|mut s| {
+                // Diagnostic: log non-empty locally_free before clearing.
+                if !s.locally_free.is_empty() {
+                    tracing::debug!(
+                        target: "f1r3fly.rholang.diag",
+                        locally_free_hex = %hex::encode(&s.locally_free),
+                        locally_free_len = s.locally_free.len(),
+                        channel = ?s,
+                        "consume_inner: clearing non-empty locally_free before rspace consume"
+                    );
+                }
+                s.locally_free = vec![];
+                s
+            })
+            .collect();
+
         log_op_step("after_split_binds", sources.len());
 
         // Update mergeable channels
@@ -584,11 +772,7 @@ impl DebruijnInterpreter {
                 tagged_cont: Some(TaggedCont::ParBody(body.clone())),
             },
             persistent,
-            if peek {
-                BTreeSet::from_iter((0..sources.len() as i32).collect::<Vec<i32>>())
-            } else {
-                BTreeSet::new()
-            },
+            peeks.clone(),
         )?;
         let is_replay = space_locked.is_replay();
         drop(space_locked);
@@ -597,12 +781,53 @@ impl DebruijnInterpreter {
         // println!("space map in reduce consume: {:?}", self.space.lock().unwrap().to_map());
         // println!("\nconsume_result in reduce consume: {:?}", consume_result);
 
+        if consume_result.is_some() {
+            tracing::debug!(
+                target: "f1r3fly.rholang",
+                persistent,
+                peeks = ?peeks,
+                channels = sources.len(),
+                "consume_inner: COMM fired — dispatching matched data"
+            );
+        } else {
+            tracing::debug!(
+                target: "f1r3fly.rholang",
+                persistent,
+                peeks = ?peeks,
+                channels = sources.len(),
+                "consume_inner: no matching data — continuation stored in hot store"
+            );
+            // Diagnostic: log when a consume on unforgeable channels finds no data.
+            // This helps identify when the explore-deploy's for-comprehension
+            // (e.g., for(@(_, agentsTeams) <- agentsTeamsCh)) blocks.
+            let has_unforgeable = sources.iter().any(|s| !s.unforgeables.is_empty());
+            if has_unforgeable {
+                let gprivate_ids: Vec<String> = sources.iter()
+                    .flat_map(|s| s.unforgeables.iter())
+                    .filter_map(|u| u.unf_instance.as_ref())
+                    .filter_map(|inst| match inst {
+                        UnfInstance::GPrivateBody(gp) => Some(format!("{:?}", gp.id)),
+                        _ => None,
+                    })
+                    .collect();
+                tracing::warn!(
+                    target: "f1r3fly.rholang.diag",
+                    persistent,
+                    peeks = ?peeks,
+                    channels = ?sources,
+                    gprivate_ids = ?gprivate_ids,
+                    "consume_inner: NO data found for unforgeable channel(s) — \
+                     data may be lost in trie"
+                );
+            }
+        }
+
         self.continue_consume_process(
             unpack_option_with_peek(consume_result),
             binds,
             body,
             persistent,
-            peek,
+            peeks,
             is_replay,
             Vec::new(),
         )
@@ -638,7 +863,17 @@ impl DebruijnInterpreter {
             .collect::<Result<Vec<_>, _>>()?;
 
         match res {
-            Some((continuation, data_list, peek)) => {
+            Some((continuation, data_list, _peek)) => {
+                tracing::info!(
+                    target: "f1r3fly.rspace.cost_trace",
+                    persistent,
+                    is_replay,
+                    comm_fired = true,
+                    data_list_len = data_list.len(),
+                    "CONTINUE_PRODUCE: persistent={} is_replay={} data_count={}",
+                    persistent, is_replay, data_list.len()
+                );
+                let cost_before = self.cost.get().value;
                 if persistent {
                     // dispatchAndRun
                     let self_clone1 = self.clone();
@@ -683,53 +918,44 @@ impl DebruijnInterpreter {
                             >,
                         >);
 
-                    // parTraverseSafe
-                    let results: Vec<Result<DispatchType, InterpreterError>> =
-                        futures::future::join_all(futures).await;
+                    // Deterministic sequential evaluation (dispatch first, then re-produce)
+                    let mut results: Vec<Result<DispatchType, InterpreterError>> = Vec::with_capacity(futures.len());
+                    for future in futures {
+                        results.push(future.await);
+                    }
                     let flattened_results: Vec<InterpreterError> = results
                         .into_iter()
                         .filter_map(|result| result.err())
                         .collect();
 
-                    self.aggregate_evaluator_errors(flattened_results)
-                } else if peek {
-                    // dispatchAndRun
-                    let self_clone = self.clone();
-                    let continuation_clone = continuation.clone();
-                    let data_list_clone = data_list.clone();
-                    let previous_output_clone = previous_output_as_par.clone();
-
-                    let mut futures: Vec<
-                        Pin<
-                            Box<
-                                dyn futures::Future<Output = Result<DispatchType, InterpreterError>>
-                                    + std::marker::Send,
-                            >,
-                        >,
-                    > = vec![Box::pin(async move {
-                        self_clone
-                            .dispatch(
-                                continuation_clone,
-                                data_list_clone,
-                                is_replay,
-                                previous_output_clone,
-                            )
-                            .await
-                    })];
-                    futures.extend(self.produce_peeks(data_list).await);
-
-                    // parTraverseSafe
-                    let results: Vec<Result<DispatchType, InterpreterError>> =
-                        futures::future::join_all(futures).await;
-                    let flattened_results: Vec<InterpreterError> = results
-                        .into_iter()
-                        .filter_map(|result| result.err())
-                        .collect();
-
-                    self.aggregate_evaluator_errors(flattened_results)
+                    let result = self.aggregate_evaluator_errors(flattened_results);
+                    let cost_after = self.cost.get().value;
+                    tracing::debug!(
+                        target: "f1r3fly.rholang",
+                        cost_before,
+                        cost_after,
+                        cost_delta = cost_before - cost_after,
+                        persistent = persistent,
+                        "continue_produce_process: dispatch cost delta"
+                    );
+                    result
                 } else {
-                    self.dispatch(continuation, data_list, is_replay, previous_output_as_par)
-                        .await
+                    // Peek data is now correctly preserved by RSpace in both
+                    // the consume path (store_persistent_data) and the produce
+                    // path (remove_matched_datum_and_join), so produce_peeks
+                    // compensation is no longer needed. Just dispatch.
+                    let result = self.dispatch(continuation, data_list, is_replay, previous_output_as_par)
+                        .await;
+                    let cost_after = self.cost.get().value;
+                    tracing::debug!(
+                        target: "f1r3fly.rholang",
+                        cost_before,
+                        cost_after,
+                        cost_delta = cost_before - cost_after,
+                        persistent = persistent,
+                        "continue_produce_process: dispatch cost delta"
+                    );
+                    result
                 }
             }
             None => Ok(DispatchType::Skip),
@@ -742,7 +968,7 @@ impl DebruijnInterpreter {
         binds: Vec<(BindPattern, Par)>,
         body: ParWithRandom,
         persistent: bool,
-        peek: bool,
+        peeks: BTreeSet<i32>,
         is_replay: bool,
         previous_output: Vec<Vec<u8>>,
     ) -> Result<DispatchType, InterpreterError> {
@@ -757,6 +983,15 @@ impl DebruijnInterpreter {
 
         match res {
             Some((continuation, data_list, _peek)) => {
+                tracing::info!(
+                    target: "f1r3fly.rspace.cost_trace",
+                    persistent,
+                    is_replay,
+                    comm_fired = true,
+                    data_list_len = data_list.len(),
+                    "CONTINUE_CONSUME: persistent={} is_replay={} data_count={}",
+                    persistent, is_replay, data_list.len()
+                );
                 if persistent {
                     // dispatchAndRun
                     let self_clone1 = self.clone();
@@ -767,7 +1002,7 @@ impl DebruijnInterpreter {
                     let binds_clone = binds.clone();
                     let body_clone = body.clone();
                     let persistent_flag = persistent;
-                    let peek_flag = peek;
+                    let peeks_clone = peeks.clone();
                     let is_replay_flag = is_replay;
 
                     let mut futures: Vec<
@@ -794,7 +1029,7 @@ impl DebruijnInterpreter {
                         >);
 
                     let consume_fut =
-                        self_clone2.consume(binds_clone, body_clone, persistent_flag, peek_flag);
+                        self_clone2.consume(binds_clone, body_clone, persistent_flag, peeks_clone);
                     futures.push(Box::pin(consume_fut)
                         as Pin<
                             Box<
@@ -803,44 +1038,11 @@ impl DebruijnInterpreter {
                             >,
                         >);
 
-                    // parTraverseSafe
-                    let results: Vec<Result<DispatchType, InterpreterError>> =
-                        futures::future::join_all(futures).await;
-                    let flattened_results: Vec<InterpreterError> = results
-                        .into_iter()
-                        .filter_map(|result| result.err())
-                        .collect();
-
-                    self.aggregate_evaluator_errors(flattened_results)
-                } else if _peek {
-                    // dispatchAndRun
-                    let self_clone = self.clone();
-                    let continuation_clone = continuation.clone();
-                    let data_list_clone = data_list.clone();
-                    let previous_output_clone = previous_output_as_par.clone();
-
-                    let mut futures: Vec<
-                        Pin<
-                            Box<
-                                dyn futures::Future<Output = Result<DispatchType, InterpreterError>>
-                                    + std::marker::Send,
-                            >,
-                        >,
-                    > = vec![Box::pin(async move {
-                        self_clone
-                            .dispatch(
-                                continuation_clone,
-                                data_list_clone,
-                                is_replay,
-                                previous_output_clone,
-                            )
-                            .await
-                    })];
-                    futures.extend(self.produce_peeks(data_list).await);
-
-                    // parTraverseSafe
-                    let results: Vec<Result<DispatchType, InterpreterError>> =
-                        futures::future::join_all(futures).await;
+                    // Deterministic sequential evaluation (dispatch first, then re-consume)
+                    let mut results: Vec<Result<DispatchType, InterpreterError>> = Vec::with_capacity(futures.len());
+                    for future in futures {
+                        results.push(future.await);
+                    }
                     let flattened_results: Vec<InterpreterError> = results
                         .into_iter()
                         .filter_map(|result| result.err())
@@ -848,6 +1050,10 @@ impl DebruijnInterpreter {
 
                     self.aggregate_evaluator_errors(flattened_results)
                 } else {
+                    // Peek data is now correctly preserved by RSpace in both
+                    // the consume path (store_persistent_data) and the produce
+                    // path (remove_matched_datum_and_join), so produce_peeks
+                    // compensation is no longer needed. Just dispatch.
                     self.dispatch(continuation, data_list, is_replay, previous_output_as_par)
                         .await
                 }
@@ -912,46 +1118,37 @@ impl DebruijnInterpreter {
         };
         log_op_step("start");
         // println!("\nreduce dispatch");
-        let result = self
-            .dispatcher
-            .dispatch(
+        // Wrap the dispatcher call in StackGrowingFuture to ensure a stacker
+        // check between dispatch()'s outer StackGrowingFuture and eval()'s
+        // StackGrowingFuture. Without this, the async state machines of
+        // dispatch_inner + dispatcher.dispatch accumulate ~50KB per recursion
+        // level between stacker checks, exceeding the 1MB red zone during deep
+        // COMM cascades (e.g. genesis with receives-first evaluation).
+        let result = StackGrowingFuture {
+            inner: self.dispatcher.dispatch(
                 continuation,
                 data_list.into_iter().map(|tuple| tuple.1).collect(),
                 is_replay,
                 previous_output,
-            )
-            .await;
+            ),
+        }
+        .await;
         log_op_step("after_dispatch");
         result
     }
 
-    async fn produce_peeks(
-        &self,
-        data_list: Vec<(Par, ListParWithRandom, ListParWithRandom, bool)>,
-    ) -> Vec<
-        Pin<
-            Box<
-                dyn futures::Future<Output = Result<DispatchType, InterpreterError>>
-                    + std::marker::Send,
-            >,
-        >,
-    > {
-        // println!("\nreduce produce_peeks");
-        data_list
-            .into_iter()
-            .filter(|(_, _, _, persist)| !persist)
-            .map(|(chan, _, removed_data, _)| {
-                let self_clone = self.clone();
-                Box::pin(async move { self_clone.produce(chan, removed_data, false).await })
-                    as Pin<
-                        Box<
-                            dyn futures::Future<Output = Result<DispatchType, InterpreterError>>
-                                + std::marker::Send,
-                        >,
-                    >
-            })
-            .collect()
-    }
+    // produce_peeks was a workaround for a bug in RSpace where peek (`<<-`)
+    // incorrectly consumed data. The reducer would re-produce the consumed data
+    // after dispatching the continuation. Now that RSpace correctly preserves
+    // peeked data in both the consume path (store_persistent_data) and the
+    // produce path (remove_matched_datum_and_join), this compensation is no
+    // longer needed and would cause data to be doubled on the channel.
+    //
+    // async fn produce_peeks(
+    //     &self,
+    //     data_list: Vec<(Par, ListParWithRandom, ListParWithRandom, bool)>,
+    // ) -> Vec<Pin<Box<dyn Future<Output = Result<DispatchType, InterpreterError>> + Send>>>
+    // { ... }
 
     /* Collect mergeable channels */
 
@@ -1124,7 +1321,15 @@ impl DebruijnInterpreter {
                         "Trying to send on non-writeable channel.".to_string(),
                     ));
                 } else {
-                    unwrap_option_safe(value.body)?
+                    let body = unwrap_option_safe(value.body)?;
+                    tracing::debug!(
+                        target: "f1r3fly.rholang",
+                        bundle_write = value.write_flag,
+                        bundle_read = value.read_flag,
+                        unbundled_channel = ?body,
+                        "eval_send: unwrapped bundle to produce channel"
+                    );
+                    body
                 }
             }
             None => sub_chan,
@@ -1146,15 +1351,89 @@ impl DebruijnInterpreter {
         // println!("\nrand in eval_send");
         // rand.debug_str();
 
+        if tracing::enabled!(target: "f1r3fly.rholang.matcher", tracing::Level::DEBUG) {
+            let data_summaries: Vec<String> = subst_data
+                .iter()
+                .map(|par| {
+                    if par.exprs.len() == 1
+                        && par.sends.is_empty()
+                        && par.receives.is_empty()
+                        && par.news.is_empty()
+                        && par.unforgeables.is_empty()
+                    {
+                        format!("{:?}", par.exprs[0].expr_instance)
+                    } else if par.unforgeables.len() == 1 && par.exprs.is_empty() {
+                        "<unforgeable>".to_string()
+                    } else {
+                        format!(
+                            "<par:sends={},recvs={},exprs={},unforg={}>",
+                            par.sends.len(),
+                            par.receives.len(),
+                            par.exprs.len(),
+                            par.unforgeables.len()
+                        )
+                    }
+                })
+                .collect();
+            tracing::debug!(
+                target: "f1r3fly.rholang.matcher",
+                produce_channel = ?unbundled,
+                data_count = subst_data.len(),
+                ast_data_count = send.data.len(),
+                persistent = send.persistent,
+                data_summaries = ?data_summaries,
+                "eval_send: about to produce ({} data elements, AST had {})",
+                subst_data.len(),
+                send.data.len()
+            );
+        }
+
+        tracing::debug!(
+            target: "f1r3fly.rholang",
+            produce_channel = ?unbundled,
+            data_count = subst_data.len(),
+            persistent = send.persistent,
+            "eval_send: about to produce"
+        );
+
+        let rand_bytes = rand.to_bytes();
+        let rand_full_hash = {
+            use rspace_plus_plus::rspace::hashing::blake2b256_hash::Blake2b256Hash;
+            hex::encode(Blake2b256Hash::new(&rand_bytes).bytes())
+        };
+        tracing::info!(
+            target: "f1r3fly.rspace.cost_trace",
+            rand_prefix = %hex::encode(&rand_bytes[..std::cmp::min(16, rand_bytes.len())]),
+            rand_hash = %rand_full_hash,
+            rand_pos = rand.position,
+            rand_path_pos = rand.path_position,
+            rand_len = rand_bytes.len(),
+            "RAND_AT_PRODUCE: hash={} pos={} path_pos={} prefix={} len={}",
+            &rand_full_hash[..16], rand.position, rand.path_position,
+            hex::encode(&rand_bytes[..std::cmp::min(16, rand_bytes.len())]),
+            rand_bytes.len()
+        );
+        let cost_before_produce = self.cost.get().value;
         self.produce(
-            unbundled,
+            unbundled.clone(),
             ListParWithRandom {
                 pars: subst_data,
-                random_state: rand.to_bytes(),
+                random_state: rand_bytes,
             },
             send.persistent,
         )
         .await?;
+        let cost_after_produce = self.cost.get().value;
+        tracing::info!(
+            target: "f1r3fly.rspace.cost_trace",
+            op = "produce",
+            cost_before = cost_before_produce,
+            cost_after = cost_after_produce,
+            cost_delta = cost_before_produce - cost_after_produce,
+            persistent = send.persistent,
+            "COST_TRACE: produce cost_delta={}",
+            cost_before_produce - cost_after_produce
+        );
         log_op_step("after_produce");
         Ok(())
     }
@@ -1257,6 +1536,71 @@ impl DebruijnInterpreter {
         // println!("\nrand in eval_receive");
         // rand.debug_str();
 
+        if receive.persistent {
+            if tracing::enabled!(target: "f1r3fly.rholang.matcher", tracing::Level::DEBUG) {
+                for (i, (bp, ch)) in binds.iter().enumerate() {
+                    let pattern_summaries: Vec<String> = bp.patterns.iter().map(|par| {
+                        if par.exprs.len() == 1
+                            && par.sends.is_empty()
+                            && par.receives.is_empty()
+                            && par.news.is_empty()
+                            && par.unforgeables.is_empty()
+                        {
+                            match &par.exprs[0].expr_instance {
+                                Some(models::rhoapi::expr::ExprInstance::GString(s)) => format!("@\"{}\"", s),
+                                Some(models::rhoapi::expr::ExprInstance::GInt(n)) => format!("@{}", n),
+                                Some(models::rhoapi::expr::ExprInstance::EVarBody(models::rhoapi::EVar {
+                                    v: Some(models::rhoapi::Var { var_instance: Some(VarInstance::FreeVar(level)) }),
+                                })) => format!("<free:{}>", level),
+                                Some(models::rhoapi::expr::ExprInstance::EVarBody(models::rhoapi::EVar {
+                                    v: Some(models::rhoapi::Var { var_instance: Some(VarInstance::Wildcard(_)) }),
+                                })) => "<wildcard>".to_string(),
+                                _ => format!("<expr:{:?}>", par.exprs[0].expr_instance),
+                            }
+                        } else if !par.unforgeables.is_empty() {
+                            "<unforgeable>".to_string()
+                        } else {
+                            format!(
+                                "<par:sends={},recvs={},exprs={},unforg={},conn_used={}>",
+                                par.sends.len(), par.receives.len(), par.exprs.len(),
+                                par.unforgeables.len(), par.connective_used
+                            )
+                        }
+                    }).collect();
+                    tracing::debug!(
+                        target: "f1r3fly.rholang.matcher",
+                        bind_idx = i,
+                        channel = ?ch,
+                        num_patterns = bp.patterns.len(),
+                        free_count = bp.free_count,
+                        has_remainder = bp.remainder.is_some(),
+                        pattern_summaries = ?pattern_summaries,
+                        "eval_receive: registering persistent contract bind #{} with {} patterns: {:?}",
+                        i, bp.patterns.len(), pattern_summaries
+                    );
+                }
+            }
+
+            let channels_summary: Vec<String> = binds.iter()
+                .map(|(_, ch)| format!("{:?}", ch))
+                .collect();
+            tracing::debug!(
+                target: "f1r3fly.rholang",
+                channels = ?channels_summary,
+                bind_count = receive.bind_count,
+                persistent = true,
+                "eval_receive: installing persistent continuation (contract)"
+            );
+        }
+
+        // Build per-channel peeks set from per-bind peek flags on ReceiveBind
+        let peeks: BTreeSet<i32> = receive.binds.iter().enumerate()
+            .filter(|(_, rb)| rb.peek)
+            .map(|(i, _)| i as i32)
+            .collect();
+
+        let cost_before_consume = self.cost.get().value;
+        let has_peeks = !peeks.is_empty();
         self.consume(
             binds,
             ParWithRandom {
@@ -1264,9 +1608,21 @@ impl DebruijnInterpreter {
                 random_state: rand.to_bytes(),
             },
             receive.persistent,
-            receive.peek,
+            peeks,
         )
         .await?;
+        let cost_after_consume = self.cost.get().value;
+        tracing::info!(
+            target: "f1r3fly.rspace.cost_trace",
+            op = "consume",
+            cost_before = cost_before_consume,
+            cost_after = cost_after_consume,
+            cost_delta = cost_before_consume - cost_after_consume,
+            persistent = receive.persistent,
+            has_peeks,
+            "COST_TRACE: consume cost_delta={}",
+            cost_before_consume - cost_after_consume
+        );
         log_op_step("after_consume");
         Ok(())
     }
@@ -1425,18 +1781,49 @@ impl DebruijnInterpreter {
         // println!("\nrand in eval_new");
         // rand.debug_str();
         // println!("\nrand next: {:?}", rand.next());
+        // Diagnostic: log RNG state BEFORE alloc to fingerprint the seed
+        tracing::info!(
+            target: "f1r3fly.rholang.diag",
+            env_level = env.level,
+            bind_count = new.bind_count,
+            uri_len = new.uri.len(),
+            rand_position = rand.position,
+            rand_path_position = rand.path_position,
+            rand_last_block_prefix = %hex::encode(
+                &rand.last_block.iter().take(16).map(|&b| b as u8).collect::<Vec<u8>>()
+            ),
+            rand_hash_array_prefix = %hex::encode(
+                &rand.hash_array.iter().take(16).map(|&b| b as u8).collect::<Vec<u8>>()
+            ),
+            "eval_new: RNG state BEFORE alloc"
+        );
+
         let mut alloc = |count: usize, urns: Vec<String>| {
             let simple_news =
                 (0..(count - urns.len()))
                     .into_iter()
-                    .fold(env.clone(), |mut _env: Env<Par>, _| {
+                    .enumerate()
+                    .fold(env.clone(), |mut _env: Env<Par>, (idx, _)| {
+                        let next_bytes = rand.next();
+                        let id_bytes: Vec<u8> = next_bytes.iter().map(|&x| x as u8).collect();
+
+                        // Diagnostic: log each channel created by rand.next()
+                        tracing::info!(
+                            target: "f1r3fly.rholang.diag",
+                            iteration = idx,
+                            bind_count = count,
+                            uri_len = urns.len(),
+                            gprivate_hex = %hex::encode(&id_bytes),
+                            rand_position = rand.position,
+                            rand_path_position = rand.path_position,
+                            "eval_new: alloc rand.next() channel"
+                        );
+
                         let addr: Par = Par::default().with_unforgeables(vec![GUnforgeable {
                             unf_instance: Some(UnfInstance::GPrivateBody(GPrivate {
-                                id: rand.next().iter().map(|&x| x as u8).collect::<Vec<u8>>(),
+                                id: id_bytes,
                             })),
                         }]);
-                        // println!("\nrand in simple_news");
-                        // rand.debug_str();
                         _env.put(addr)
                     });
 
@@ -1508,6 +1895,14 @@ impl DebruijnInterpreter {
         match alloc(new.bind_count as usize, new.uri.clone()) {
             Ok(env) => {
                 log_op_step("after_alloc");
+                tracing::info!(
+                    target: "f1r3fly.rspace.cost_trace",
+                    bind_count = new.bind_count,
+                    rand_pos = rand.position,
+                    rand_path_pos = rand.path_position,
+                    "EVAL_NEW: bind_count={} rand_pos={} rand_path_pos={}",
+                    new.bind_count, rand.position, rand.path_position
+                );
                 // println!("\nenv in eval_new: {:?}", env);
                 let result = self
                     .eval(unwrap_option_safe(new.p.clone())?, &env, rand)

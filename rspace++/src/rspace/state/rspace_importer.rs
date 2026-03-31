@@ -29,6 +29,16 @@ impl RSpaceImporterInstance {
         get_from_history: Arc<dyn RSpaceImporter>,
     ) -> () {
         let received_history_size = history_items.len() as i32;
+
+        tracing::info!(
+            target: "f1r3fly.rspace.lfs_diag",
+            history_items_count = history_items.len(),
+            data_items_count = data_items.len(),
+            chunk_size,
+            skip,
+            is_last_chunk = (received_history_size < chunk_size),
+            "LFS IMPORT: validating state items chunk"
+        );
         let is_end = || received_history_size < chunk_size;
 
         // Validate history items size

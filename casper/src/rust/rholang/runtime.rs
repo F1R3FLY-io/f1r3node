@@ -5,11 +5,13 @@ use std::{
     future::Future,
     mem,
     sync::OnceLock,
-    time::Instant,
+    time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
 use crypto::rust::{
-    hash::blake2b512_random::Blake2b512Random, public_key::PublicKey, signatures::signed::Signed,
+    hash::blake2b512_random::Blake2b512Random,
+    public_key::PublicKey,
+    signatures::{secp256k1::Secp256k1, signatures_alg::SignaturesAlg, signed::Signed},
 };
 use models::{
     rhoapi::{
@@ -340,6 +342,12 @@ impl RuntimeOps {
         log_mem_step("before_final_checkpoint");
         log_mem_step("before_final_checkpoint_create_checkpoint");
         let final_checkpoint = self.runtime.create_checkpoint();
+        tracing::info!(
+            target: "f1r3fly.rspace",
+            checkpoint_root = %hex::encode(final_checkpoint.root.bytes()),
+            deploys_count = res.len(),
+            "play_deploys_for_state: checkpoint completed"
+        );
         log_mem_step("after_final_checkpoint_create_checkpoint");
         log_mem_step("before_final_checkpoint_root_to_bytes");
         let final_root = final_checkpoint.root.to_bytes_prost();
@@ -554,7 +562,17 @@ impl RuntimeOps {
         let fallback = self.runtime.create_soft_checkpoint();
 
         // Evaluate deploy
+        rholang::rust::interpreter::storage::charging_rspace::reset_cost_trace_seq();
         let eval_result = self.evaluate(&deploy).await?;
+
+        tracing::debug!(
+            target: "f1r3fly.casper",
+            deploy_cost = eval_result.cost.value,
+            phlo_limit = deploy.data.phlo_limit,
+            errors_count = eval_result.errors.len(),
+            event_count = eval_result.mergeable.len(),
+            "process_deploy: user deploy evaluation complete"
+        );
 
         let deploy_log = self.runtime.take_event_log();
 
@@ -671,6 +689,11 @@ impl RuntimeOps {
 
         let final_state_hash = {
             let checkpoint = self.runtime.create_checkpoint();
+            tracing::info!(
+                target: "f1r3fly.rspace",
+                checkpoint_root = %hex::encode(checkpoint.root.bytes()),
+                "play_system_deploy: checkpoint completed"
+            );
             checkpoint.root.to_bytes_prost()
         };
 
@@ -863,39 +886,53 @@ impl RuntimeOps {
         term: String,
         hash: &StateHash,
     ) -> Result<Vec<Par>, CasperError> {
-        let deploy_result = (|| async {
-            let deploy = construct_deploy::source_deploy(
-                term,
-                0,
-                // Hardcoded phlogiston limit / 1 REV if phloPrice=1
-                Some(100 * 1000 * 1000),
-                None,
-                Some(construct_deploy::DEFAULT_SEC.clone()),
-                None,
-                None,
-            )?;
+        // Use a fresh random key pair and wall-clock timestamp for each explore-deploy.
+        // This ensures the deploy's RNG seed is unique per call, so the externally-
+        // computed return_name always matches the `ret` channel created inside eval_new.
+        // (Matches the Scala implementation's behavior.)
+        let secp = Secp256k1;
+        let (priv_key, _pub_key) = secp.new_key_pair();
 
-            // Create return channel as first private name created in deploy term
-            let mut rand = Tools::unforgeable_name_rng(&deploy.pk, deploy.data.time_stamp);
-            let return_name = Par::default().with_unforgeables(vec![GUnforgeable {
-                unf_instance: Some(UnfInstance::GPrivateBody(GPrivate {
-                    id: rand.next().into_iter().map(|b| b as u8).collect(),
-                })),
-            }]);
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
 
-            // Execute deploy on top of specified block hash
-            self.capture_results_with_name(hash, &deploy, &return_name)
-                .await
-        })();
+        let deploy = construct_deploy::source_deploy(
+            term,
+            timestamp,
+            // Hardcoded phlogiston limit / 1 REV if phloPrice=1
+            Some(100 * 1000 * 1000),
+            None,
+            Some(priv_key),
+            None,
+            None,
+        )?;
 
-        match deploy_result.await {
-            Ok(result) => Ok(result),
-            Err(err) => {
-                println!("Error in play_exploratory_deploy: {:?}", err);
-                tracing::error!("Error in play_exploratory_deploy: {:?}", err);
-                Ok(Vec::new())
-            }
-        }
+        // Create return channel as first private name created in deploy term
+        let mut rand = Tools::unforgeable_name_rng(&deploy.pk, deploy.data.time_stamp);
+        let return_bytes: Vec<u8> = rand.next().into_iter().map(|b| b as u8).collect();
+
+        // Diagnostic: log the RNG seed inputs and the resulting return channel id
+        tracing::info!(
+            target: "f1r3fly.rholang.diag",
+            pk_hex = %hex::encode(&deploy.pk.bytes),
+            timestamp = deploy.data.time_stamp,
+            return_name_hex = %hex::encode(&return_bytes),
+            rand_position = rand.position,
+            rand_path_position = rand.path_position,
+            "play_exploratory_deploy: computed return_name from deploy seed"
+        );
+
+        let return_name = Par::default().with_unforgeables(vec![GUnforgeable {
+            unf_instance: Some(UnfInstance::GPrivateBody(GPrivate {
+                id: return_bytes,
+            })),
+        }]);
+
+        // Execute deploy on top of specified block hash
+        self.capture_results_with_name(hash, &deploy, &return_name)
+            .await
     }
 
     async fn play_exploratory_par(
@@ -1040,15 +1077,218 @@ impl RuntimeOps {
         deploy: &Signed<DeployData>,
         name: &Par,
     ) -> Result<Vec<Par>, CasperError> {
+        // Step 2a: Entry beacon — confirms function was entered
+        tracing::info!(
+            target: "f1r3fly.rholang.diag",
+            state_hash = %hex::encode(start),
+            "capture_results_with_errors: ENTERED"
+        );
+
+        tracing::debug!(
+            state_hash = %hex::encode(start),
+            "capture_results: resetting to state hash"
+        );
         self.runtime
             .reset(&Blake2b256Hash::from_bytes_prost(start))?;
+        tracing::debug!("capture_results: reset succeeded");
+
+        // Step 2b: Beacon before POST-RESET probe
+        tracing::info!(
+            target: "f1r3fly.rholang.diag",
+            "capture_results_with_errors: about to run POST-RESET probe"
+        );
+
+        // Diagnostic: probe registry state for byte_name(14) after reset, before evaluate.
+        // This tells us whether the registry's persistent continuation is accessible
+        // from the history trie at this state hash.
+        // Step 2c: Guard with try_lock instead of unwrap to avoid panics.
+        {
+            let reg_channel = Par {
+                unforgeables: vec![GUnforgeable {
+                    unf_instance: Some(UnfInstance::GPrivateBody(GPrivate { id: vec![14] })),
+                }],
+                ..Par::default()
+            };
+
+            match self.runtime.reducer.space.try_lock() {
+                Ok(space_guard) => {
+                    let reg_data = space_guard.get_data(&reg_channel);
+                    let reg_conts = space_guard.get_waiting_continuations(vec![reg_channel.clone()]);
+                    let reg_joins = space_guard.get_joins(reg_channel.clone());
+                    drop(space_guard);
+
+                    let persistent_conts = reg_conts.iter().filter(|wc| wc.persist).count();
+
+                    tracing::info!(
+                        target: "f1r3fly.rholang.diag",
+                        state_hash = %hex::encode(start),
+                        data_count = reg_data.len(),
+                        cont_count = reg_conts.len(),
+                        persistent_conts = persistent_conts,
+                        join_count = reg_joins.len(),
+                        "POST-RESET REGISTRY PROBE byte_name(14): data={}, conts={} (persistent={}), joins={}",
+                        reg_data.len(),
+                        reg_conts.len(),
+                        persistent_conts,
+                        reg_joins.len()
+                    );
+
+                    // If joins exist, log the join channel groups
+                    for (i, join_group) in reg_joins.iter().enumerate() {
+                        let join_ch_ids: Vec<String> = join_group
+                            .iter()
+                            .flat_map(|par| &par.unforgeables)
+                            .filter_map(|u| u.unf_instance.as_ref())
+                            .map(|inst| match inst {
+                                UnfInstance::GPrivateBody(gp) => format!("GPrivate({})", hex::encode(&gp.id)),
+                                other => format!("{:?}", other),
+                            })
+                            .collect();
+                        tracing::info!(
+                            target: "f1r3fly.rholang.diag",
+                            join_idx = i,
+                            join_channels = ?join_ch_ids,
+                            "POST-RESET REGISTRY PROBE byte_name(14): join group #{}: {:?}",
+                            i, join_ch_ids
+                        );
+                    }
+
+                    // If continuations exist, log their pattern info
+                    for (i, wc) in reg_conts.iter().enumerate() {
+                        tracing::info!(
+                            target: "f1r3fly.rholang.diag",
+                            cont_idx = i,
+                            persist = wc.persist,
+                            pattern_count = wc.patterns.len(),
+                            "POST-RESET REGISTRY PROBE byte_name(14): continuation #{}: persist={}, patterns={}",
+                            i, wc.persist, wc.patterns.len()
+                        );
+                    }
+
+                    if reg_conts.is_empty() && reg_joins.is_empty() {
+                        tracing::warn!(
+                            target: "f1r3fly.rholang.diag",
+                            state_hash = %hex::encode(start),
+                            "POST-RESET REGISTRY PROBE byte_name(14): NO continuations AND NO joins — \
+                             registry state is NOT accessible at this state hash! \
+                             This confirms the registry COMM cannot fire."
+                        );
+                    }
+                }
+                Err(_) => {
+                    tracing::warn!(
+                        target: "f1r3fly.rholang.diag",
+                        state_hash = %hex::encode(start),
+                        "POST-RESET REGISTRY PROBE byte_name(14): SKIPPED — space lock not available \
+                         (another thread holds the lock)"
+                    );
+                }
+            }
+        }
 
         let eval_res = self.evaluate(deploy).await?;
         if !eval_res.errors.is_empty() {
+            tracing::warn!(
+                errors = ?eval_res.errors,
+                "capture_results: evaluation produced errors"
+            );
             return Err(CasperError::InterpreterError(eval_res.errors[0].clone()));
         }
 
-        Ok(self.get_data_par(name))
+        let result = self.get_data_par(name);
+        if result.is_empty() {
+            // Log the return channel bytes for diagnosing channel mismatch issues
+            let return_ch_id: String = name
+                .unforgeables
+                .first()
+                .and_then(|u| u.unf_instance.as_ref())
+                .map(|inst| format!("{:?}", inst))
+                .unwrap_or_else(|| "<unknown>".to_string());
+            tracing::warn!(
+                target: "f1r3fly.rspace",
+                state_hash = %hex::encode(start),
+                deploy_term_len = deploy.data.term.len(),
+                return_channel = %return_ch_id,
+                deploy_timestamp = deploy.data.time_stamp,
+                "capture_results: get_data_par returned EMPTY — explore-deploy produced no results"
+            );
+
+            // Diagnostic: enumerate ALL data channels in hot store to show where data actually went
+            let hot_changes = self.runtime.get_hot_changes();
+            let non_empty_data: Vec<_> = hot_changes
+                .iter()
+                .filter(|(_, row)| !row.data.is_empty())
+                .collect();
+            tracing::warn!(
+                target: "f1r3fly.rholang.diag",
+                total_channels = hot_changes.len(),
+                channels_with_data = non_empty_data.len(),
+                "capture_results: hot store data channel enumeration after EMPTY result"
+            );
+            for (ch_keys, row) in &non_empty_data {
+                // Extract GPrivate ids from the channel keys for comparison
+                let ch_hex: Vec<String> = ch_keys
+                    .iter()
+                    .flat_map(|par| &par.unforgeables)
+                    .filter_map(|u| u.unf_instance.as_ref())
+                    .map(|inst| match inst {
+                        UnfInstance::GPrivateBody(gp) => {
+                            format!("GPrivate({})", hex::encode(&gp.id))
+                        }
+                        other => format!("{:?}", other),
+                    })
+                    .collect();
+                tracing::warn!(
+                    target: "f1r3fly.rholang.diag",
+                    channel = ?ch_hex,
+                    datum_count = row.data.len(),
+                    "capture_results: hot store data channel with data"
+                );
+            }
+
+            // Step 1: Enumerate ALL pending continuations in hot store to identify blocked channels
+            let non_empty_conts: Vec<_> = hot_changes
+                .iter()
+                .filter(|(_, row)| !row.wks.is_empty())
+                .collect();
+            let total_pending: usize = non_empty_conts.iter().map(|(_, row)| row.wks.len()).sum();
+            tracing::warn!(
+                target: "f1r3fly.rholang.diag",
+                channels_with_continuations = non_empty_conts.len(),
+                total_pending_continuations = total_pending,
+                "capture_results: hot store continuation enumeration after EMPTY result"
+            );
+            for (ch_keys, row) in &non_empty_conts {
+                let ch_hex: Vec<String> = ch_keys
+                    .iter()
+                    .flat_map(|par| &par.unforgeables)
+                    .filter_map(|u| u.unf_instance.as_ref())
+                    .map(|inst| match inst {
+                        UnfInstance::GPrivateBody(gp) => {
+                            format!("GPrivate({})", hex::encode(&gp.id))
+                        }
+                        other => format!("{:?}", other),
+                    })
+                    .collect();
+                let persistent_count = row.wks.iter().filter(|wc| wc.persist).count();
+                let pattern_counts: Vec<usize> = row.wks.iter().map(|wc| wc.patterns.len()).collect();
+                tracing::warn!(
+                    target: "f1r3fly.rholang.diag",
+                    channel = ?ch_hex,
+                    continuation_count = row.wks.len(),
+                    persistent_count = persistent_count,
+                    pattern_counts = ?pattern_counts,
+                    "capture_results: hot store channel with pending continuation(s)"
+                );
+            }
+        } else {
+            tracing::debug!(
+                result_count = result.len(),
+                "capture_results: get_data_par returned {} pars",
+                result.len()
+            );
+        }
+        Ok(result)
     }
 
     /* Evaluates Rholang source code */
@@ -1140,8 +1380,31 @@ impl RuntimeOps {
     }
 
     pub fn get_data_par(&self, channel: &Par) -> Vec<Par> {
-        self.runtime
-            .get_data(channel)
+        // Diagnostic: log the channel's GPrivate id bytes before reading
+        let ch_id_hex: String = channel
+            .unforgeables
+            .first()
+            .and_then(|u| u.unf_instance.as_ref())
+            .map(|inst| match inst {
+                UnfInstance::GPrivateBody(gp) => hex::encode(&gp.id),
+                other => format!("{:?}", other),
+            })
+            .unwrap_or_else(|| "<no-unforgeable>".to_string());
+        tracing::info!(
+            target: "f1r3fly.rholang.diag",
+            channel_gprivate_hex = %ch_id_hex,
+            "get_data_par: reading from channel"
+        );
+
+        let datums = self.runtime.get_data(channel);
+        tracing::debug!(
+            target: "f1r3fly.rspace",
+            channel = ?channel,
+            datum_count = datums.len(),
+            "get_data_par: retrieved {} datums from channel",
+            datums.len()
+        );
+        datums
             .into_iter()
             .flat_map(|datum| datum.a.pars)
             .collect()

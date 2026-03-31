@@ -504,7 +504,7 @@ fn transition_to_initializing_invokes_init_immediately() {
     use prost::Message;
 
     std::thread::Builder::new()
-        .stack_size(16 * 1024 * 1024)
+        .stack_size(32 * 1024 * 1024)
         .spawn(|| {
             tokio::runtime::Runtime::new().unwrap().block_on(async {
                 let fixture = TestFixture::new().await;

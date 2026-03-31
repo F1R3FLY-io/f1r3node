@@ -9,7 +9,7 @@ use std::collections::HashMap;
 fn tree_hash_map_spec() {
     // Note: it's not 1:1 port, we should use larger stack size (16MB) to prevent stack overflow
     std::thread::Builder::new()
-        .stack_size(16 * 1024 * 1024)
+        .stack_size(32 * 1024 * 1024)
         .spawn(|| {
             tokio::runtime::Runtime::new().unwrap().block_on(async {
                 let test_object = CompiledRholangSource::load_source("TreeHashMapTest.rho")

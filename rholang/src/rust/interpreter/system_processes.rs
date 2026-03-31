@@ -480,6 +480,26 @@ impl SystemProcesses {
         };
 
         let verified = algorithm.verify(&data_bytes, &signature_bytes, &pub_key_bytes);
+        tracing::debug!(
+            target: "f1r3fly.rspace",
+            algorithm = name,
+            verified,
+            data_len = data_bytes.len(),
+            sig_len = signature_bytes.len(),
+            pubkey_len = pub_key_bytes.len(),
+            pubkey_prefix = ?&pub_key_bytes[..pub_key_bytes.len().min(8)],
+            "{name} signature verification result"
+        );
+        if !verified {
+            tracing::warn!(
+                target: "f1r3fly.rspace",
+                algorithm = name,
+                data_hex = hex::encode(&data_bytes[..data_bytes.len().min(64)]),
+                sig_hex = hex::encode(&signature_bytes[..signature_bytes.len().min(64)]),
+                pubkey_hex = hex::encode(&pub_key_bytes),
+                "{name} signature verification FAILED"
+            );
+        }
         let output = vec![Par::default().with_exprs(vec![RhoBoolean::create_expr(verified)])];
         let ret = output.clone();
         produce(&output, ack).await?;
@@ -611,6 +631,13 @@ impl SystemProcesses {
             return Err(illegal_argument_error("vault_address"));
         };
 
+        tracing::debug!(
+            target: "f1r3fly.rspace",
+            command = %command,
+            ack_channel = ?ack,
+            "vault_address: handling request"
+        );
+
         let response = match command.as_str() {
             "validate" => {
                 match RhoString::unapply(second_par).map(|address| VaultAddress::parse(&address)) {
@@ -649,7 +676,14 @@ impl SystemProcesses {
             _ => return Err(illegal_argument_error("vault_address")),
         };
 
-        produce(&[response], ack).await
+        let produce_result = produce(&[response], ack).await;
+        tracing::debug!(
+            target: "f1r3fly.rspace",
+            command = %command,
+            success = produce_result.is_ok(),
+            "vault_address: produce on ack channel completed"
+        );
+        produce_result
     }
 
     pub async fn deployer_id_ops(
@@ -672,7 +706,13 @@ impl SystemProcesses {
             .map(RhoByteArray::create_par)
             .unwrap_or_default();
 
-        produce(&[response], ack).await
+        let produce_result = produce(&[response], ack).await;
+        tracing::debug!(
+            target: "f1r3fly.rspace",
+            success = produce_result.is_ok(),
+            "deployer_id_ops: produce on ack channel completed"
+        );
+        produce_result
     }
 
     pub async fn registry_ops(
@@ -693,12 +733,26 @@ impl SystemProcesses {
 
         let response = RhoByteArray::unapply(argument)
             .map(|ba| {
-                let hash_key_bytes = Blake2b256::hash(ba);
-                RhoUri::create_par(Registry::build_uri(&hash_key_bytes))
+                let hash_key_bytes = Blake2b256::hash(ba.clone());
+                let uri = Registry::build_uri(&hash_key_bytes);
+                tracing::debug!(
+                    target: "f1r3fly.rspace",
+                    input_bytes = ?&ba[..ba.len().min(32)],
+                    hash_key = ?&hash_key_bytes[..hash_key_bytes.len().min(16)],
+                    built_uri = %uri,
+                    "registry_ops buildUri"
+                );
+                RhoUri::create_par(uri)
             })
             .unwrap_or_default();
 
-        produce(&[response], ack).await
+        let produce_result = produce(&[response], ack).await;
+        tracing::debug!(
+            target: "f1r3fly.rspace",
+            success = produce_result.is_ok(),
+            "registry_ops: produce on ack channel completed"
+        );
+        produce_result
     }
 
     pub async fn sys_auth_token_ops(
@@ -775,13 +829,26 @@ impl SystemProcesses {
         };
 
         let data = block_data.read().await;
+        tracing::debug!(
+            target: "f1r3fly.rspace",
+            block_number = data.block_number,
+            timestamp = data.time_stamp,
+            ack_channel = ?ack,
+            "get_block_data: producing response"
+        );
+
         let output = vec![
             Par::default().with_exprs(vec![RhoNumber::create_expr(data.block_number)]),
             Par::default().with_exprs(vec![RhoNumber::create_expr(data.time_stamp)]),
             RhoByteArray::create_par(data.sender.bytes.as_ref().to_vec()),
         ];
 
-        produce(&output, ack).await?;
+        let produce_result = produce(&output, ack).await?;
+        tracing::debug!(
+            target: "f1r3fly.rspace",
+            produce_result_count = produce_result.len(),
+            "get_block_data: produce completed"
+        );
         Ok(output)
     }
 
@@ -803,13 +870,27 @@ impl SystemProcesses {
         };
 
         let data = deploy_data.read().await;
+        tracing::debug!(
+            target: "f1r3fly.rspace",
+            timestamp = data.timestamp,
+            deployer_id_len = data.deployer_id.bytes.as_ref().len(),
+            deploy_id_len = data.deploy_id.len(),
+            ack_channel = ?ack,
+            "get_deploy_data: producing response"
+        );
+
         let output = vec![
             Par::default().with_exprs(vec![RhoNumber::create_expr(data.timestamp)]),
             RhoDeployerId::create_par(data.deployer_id.bytes.as_ref().to_vec()),
             RhoDeployId::create_par(data.deploy_id.clone()),
         ];
 
-        produce(&output, ack).await?;
+        let produce_result = produce(&output, ack).await?;
+        tracing::debug!(
+            target: "f1r3fly.rspace",
+            produce_result_count = produce_result.len(),
+            "get_deploy_data: produce completed"
+        );
         Ok(output)
     }
 

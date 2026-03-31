@@ -107,6 +107,7 @@ fn to_receives(
                     source: Some(channel.clone()),
                     remainder: pattern.remainder.clone(),
                     free_count: pattern.free_count,
+                    peek: peeks.contains(&(i as i32)),
                 });
             }
         }

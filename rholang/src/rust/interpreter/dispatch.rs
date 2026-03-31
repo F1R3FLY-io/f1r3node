@@ -65,6 +65,35 @@ impl RholangAndScalaDispatcher {
                         })?;
                     let body = unwrap_option_safe(par_with_rand.body)?;
                     let merged_rand = Blake2b512Random::merge(randoms);
+                    let cont_rs_bytes: Vec<u8> = par_with_rand.random_state.iter().map(|&b| b as u8).collect();
+                    let cont_rand_hash = {
+                        use rspace_plus_plus::rspace::hashing::blake2b256_hash::Blake2b256Hash;
+                        hex::encode(Blake2b256Hash::new(&cont_rs_bytes).bytes())
+                    };
+                    let data_rand_hashes: Vec<String> = data_list.iter()
+                        .map(|d| {
+                            use rspace_plus_plus::rspace::hashing::blake2b256_hash::Blake2b256Hash;
+                            hex::encode(Blake2b256Hash::new(&d.random_state).bytes())
+                        })
+                        .collect();
+                    let merged_rand_bytes = merged_rand.to_bytes();
+                    let merged_rand_hash = {
+                        use rspace_plus_plus::rspace::hashing::blake2b256_hash::Blake2b256Hash;
+                        hex::encode(Blake2b256Hash::new(&merged_rand_bytes).bytes())
+                    };
+                    tracing::info!(
+                        target: "f1r3fly.rspace.cost_trace",
+                        cont_rand_hash = %&cont_rand_hash[..16],
+                        merged_rand_hash = %&merged_rand_hash[..16],
+                        merged_rand_pos = merged_rand.position,
+                        merged_rand_path_pos = merged_rand.path_position,
+                        data_count = data_list.len(),
+                        data_rand_hashes = %data_rand_hashes.join(","),
+                        "DISPATCH_RAND: cont_hash={} merged_hash={} merged_pos={} merged_path_pos={} data_count={} data_hashes=[{}]",
+                        &cont_rand_hash[..16], &merged_rand_hash[..16],
+                        merged_rand.position, merged_rand.path_position,
+                        data_list.len(), data_rand_hashes.iter().map(|h| &h[..16]).collect::<Vec<_>>().join(",")
+                    );
                     reducer.eval(body, &env, merged_rand).await?;
 
                     Ok(DispatchType::DeterministicCall)

@@ -20,7 +20,7 @@ use rspace_plus_plus::rspace::rspace::RSpace;
 use rspace_plus_plus::rspace::rspace_interface::{ContResult, ISpace, RSpaceResult};
 use rspace_plus_plus::rspace::shared::in_mem_store_manager::InMemoryStoreManager;
 use rspace_plus_plus::rspace::shared::key_value_store_manager::KeyValueStoreManager;
-use rspace_plus_plus::rspace::trace::event::{Consume, IOEvent, Produce};
+use rspace_plus_plus::rspace::trace::event::Produce;
 use serde::{Deserialize, Serialize};
 
 static METRICS_RECORDER: OnceLock<(DebuggingRecorder, Snapshotter)> = OnceLock::new();
@@ -377,8 +377,10 @@ async fn creating_comm_events_on_many_channels_with_peek_should_replay_correctly
     assert!(result_produce2.unwrap().is_some());
     assert!(result_consume2.unwrap().is_none());
     assert!(result_produce3.unwrap().is_some());
-    assert!(result_consume3.unwrap().is_none());
-    assert!(result_produce4.unwrap().is_some());
+    // With correct peek semantics, data preserved by peek operations is
+    // available for consume3 (which has no peeks), so it finds a match.
+    assert!(result_consume3.unwrap().is_some());
+    assert!(result_produce4.unwrap().is_none());
 
     let _ = replay_space.rig_and_reset(empty_point.root, rig_point.log);
 
@@ -422,8 +424,10 @@ async fn creating_comm_events_on_many_channels_with_peek_should_replay_correctly
     assert!(replay_result_consume2.unwrap().is_none());
     assert!(replay_result_produce3.unwrap().is_some());
     assert!(replay_result_produce3a.unwrap().is_none());
-    assert!(replay_result_consume3.unwrap().is_none());
-    assert!(replay_result_produce4.unwrap().is_some());
+    // With correct peek semantics, data preserved by peek operations is
+    // available for consume3 (which has no peeks), so it finds a match.
+    assert!(replay_result_consume3.unwrap().is_some());
+    assert!(replay_result_produce4.unwrap().is_none());
 
     let final_point = replay_space.create_checkpoint().unwrap();
 
@@ -1271,9 +1275,6 @@ async fn replay_rspace_should_correctly_remove_things_from_replay_data() {
 
     let empty_point = space.create_checkpoint().unwrap();
 
-    let cr_1 = Consume::create(&channels, &patterns, &continuation_1, false);
-    let cr_2 = Consume::create(&channels, &patterns, &continuation_2, false);
-
     let _ = space.consume(
         channels.clone(),
         patterns.clone(),
@@ -1297,22 +1298,15 @@ async fn replay_rspace_should_correctly_remove_things_from_replay_data() {
 
     let _ = replay_space.rig_and_reset(empty_point.root, rig_point.log);
 
-    assert_eq!(
-        replay_space
-            .replay_data
-            .map
-            .get(&IOEvent::Consume(cr_1.clone()))
-            .map(|counter| counter.iter().map(|(_, c)| *c).sum::<usize>())
-            .unwrap_or(0) +
-            replay_space
-                .replay_data
-                .map
-                .get(&IOEvent::Consume(cr_2.clone()))
-                .map(|counter| counter.iter().map(|(_, c)| *c).sum::<usize>())
-                .unwrap_or(0),
-        2
-    );
+    // After rig(), replay_data should contain 4 COMM entries (2 COMMs × 2 keys each).
+    // With dual-indexing (matching Scala), each COMM is indexed under both its
+    // Consume key and Produce key. removeBindingsFor removes from all keys when fired.
+    let total_comms: usize = replay_space.replay_data.map.iter()
+        .map(|entry| entry.value().len())
+        .sum();
+    assert_eq!(total_comms, 4);
 
+    // Replay in the same order as the validator: consume, consume, produce, produce
     let _ = replay_space.consume(
         channels.clone(),
         patterns.clone(),
@@ -1328,41 +1322,16 @@ async fn replay_rspace_should_correctly_remove_things_from_replay_data() {
         BTreeSet::new(),
     );
 
+    // First produce fires one COMM. removeBindingsFor removes it from both keys → 2 remaining.
     let _ = replay_space.produce(channels[0].clone(), datum.clone(), false);
+    let remaining_comms: usize = replay_space.replay_data.map.iter()
+        .map(|entry| entry.value().len())
+        .sum();
+    assert_eq!(remaining_comms, 2);
 
-    assert_eq!(
-        replay_space
-            .replay_data
-            .map
-            .get(&IOEvent::Consume(cr_1.clone()))
-            .map(|counter| counter.iter().map(|(_, c)| *c).sum::<usize>())
-            .unwrap_or(0) +
-            replay_space
-                .replay_data
-                .map
-                .get(&IOEvent::Consume(cr_2.clone()))
-                .map(|counter| counter.iter().map(|(_, c)| *c).sum::<usize>())
-                .unwrap_or(0),
-        1
-    );
-
+    // Second produce fires the other COMM, leaving 0 remaining
     let _ = replay_space.produce(channels[0].clone(), datum.clone(), false);
-
-    assert_eq!(
-        replay_space
-            .replay_data
-            .map
-            .get(&IOEvent::Consume(cr_1))
-            .map(|counter| counter.iter().map(|(_, c)| *c).sum::<usize>())
-            .unwrap_or(0) +
-            replay_space
-                .replay_data
-                .map
-                .get(&IOEvent::Consume(cr_2))
-                .map(|counter| counter.iter().map(|(_, c)| *c).sum::<usize>())
-                .unwrap_or(0),
-        0
-    );
+    assert!(replay_space.replay_data.is_empty());
 }
 
 #[tokio::test]
@@ -1584,6 +1553,10 @@ async fn replay_should_not_allow_for_ambiguous_executions() {
     //rig
     let _ = replay_space.rig_and_reset(empty_point.root, after_play.log);
 
+    // Replay in the SAME order as the validator.
+    // With single-indexing, each COMM is only indexed under its triggering
+    // IOEvent. Both COMMs here were triggered by consumes, so the replay
+    // must follow the validator's operation order for correct matching.
     assert!(
         replay_space
             .produce(channel1.clone(), data3.clone(), false)
@@ -1602,28 +1575,32 @@ async fn replay_should_not_allow_for_ambiguous_executions() {
             .unwrap()
             .is_none()
     );
-    assert!(
-        replay_space
-            .consume(key1.clone(), patterns.clone(), continuation2, false, BTreeSet::default())
-            .unwrap()
-            .is_none()
-    );
 
+    // consume cont1 fires COMM1 (same order as validator step 4)
     assert!(
         replay_space
-            .consume(key1, patterns, continuation1, false, BTreeSet::default())
+            .consume(key1.clone(), patterns.clone(), continuation1, false, BTreeSet::default())
             .unwrap()
             .is_some()
     );
 
-    //continuation1 produces data1 on ch2
+    //continuation1 produces data1 on ch2 (same as validator step 5)
     assert!(
         replay_space
             .produce(channel2.clone(), data1, false)
             .unwrap()
+            .is_none()
+    );
+
+    // consume cont2 fires COMM2 (same order as validator step 6)
+    assert!(
+        replay_space
+            .consume(key1, patterns, continuation2, false, BTreeSet::default())
+            .unwrap()
             .is_some()
     );
-    //continuation2 produces data2 on ch2
+
+    //continuation2 produces data2 on ch2 (same as validator step 7)
     assert!(
         replay_space
             .produce(channel2, data2, false)

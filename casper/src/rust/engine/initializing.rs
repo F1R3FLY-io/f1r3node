@@ -790,8 +790,9 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
         let system_deploys = proto_util::system_deploys(block);
         let block_data = rholang::rust::interpreter::system_processes::BlockData::from_block(block);
 
-        // Genesis starts from empty state
-        let pre_state_hash = RuntimeManager::empty_state_hash_fixed();
+        // Use the genesis block's own pre-state hash rather than a hardcoded
+        // constant — see block_approver_protocol.rs for rationale.
+        let pre_state_hash = block.body.state.pre_state_hash.clone();
 
         // Replay genesis - this will save mergeable channels to the store
         let mut runtime_manager = self.runtime_manager.lock().await;

@@ -68,7 +68,7 @@ impl ContractCall {
                     let mut space_lock = space.try_lock().unwrap();
                     // println!("\nhit produce in contract_call, values: {:?}", values_vec);
                     let produce_result = space_lock.produce(
-                        ch_cloned,
+                        ch_cloned.clone(),
                         ListParWithRandom {
                             pars: values_vec,
                             random_state: rand,
@@ -76,10 +76,15 @@ impl ContractCall {
                         false,
                     )?;
 
+                    tracing::debug!(
+                        target: "f1r3fly.rspace",
+                        channel = ?ch_cloned,
+                        comm_fired = produce_result.is_some(),
+                        "system contract response produce"
+                    );
+
                     let is_replay = space_lock.is_replay();
                     drop(space_lock);
-
-                    // println!("\nproduce_result in contract_call: {:?}", produce_result);
 
                     let dispatch_result = match produce_result {
                         Some((cont, channels, produce)) => {

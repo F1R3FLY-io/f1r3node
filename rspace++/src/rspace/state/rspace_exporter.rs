@@ -144,6 +144,18 @@ impl RSpaceExporterInstance {
                 leaf_values: leaf_keys,
             } = data;
 
+            let leaf_count = leaf_keys.len();
+            let node_count = node_keys.len();
+            tracing::info!(
+                target: "f1r3fly.rspace.lfs_diag",
+                leaf_count,
+                node_count,
+                total = leaf_count + node_count,
+                has_more = new_last_prefix_opt.is_some(),
+                root_hash = %hex::encode(&root_hash.bytes()[..8]),
+                "LFS EXPORT: trie page exported"
+            );
+
             let nodes = construct_nodes(leaf_keys, node_keys.clone());
             let mut nodes_without_last = if nodes.len() > 0 {
                 nodes[..nodes.len() - 1].to_vec()

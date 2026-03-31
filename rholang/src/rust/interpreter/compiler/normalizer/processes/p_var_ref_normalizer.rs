@@ -222,6 +222,7 @@ mod tests {
                     source: Some(Par::default()),
                     remainder: None,
                     free_count: 0,
+                    peek: false,
                 }],
                 body: Some(Par::default()),
                 persistent: false,
