@@ -15,6 +15,10 @@ on:
       - rust/main
       - "feature/**"
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   # Enable AES/SSE2 CPU features for gxhash dependency (required by PathMap crate)
   # GitHub Actions runners support these features on x86_64
