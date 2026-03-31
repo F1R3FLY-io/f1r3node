@@ -4,6 +4,17 @@ All notable changes to the Scala implementation of F1r3node will be documented i
 This changelog is automatically generated from conventional commits.
 
 
+## [v0.4.6] - 2026-03-31
+
+### Bug Fixes
+
+- update fault-tolerance-threshold defaults and add consensus config guide link
+
+### CI
+
+- skip test_replay_determinism in integration tests
+
+
 ## [v0.4.5] - 2026-03-29
 
 ### Bug Fixes
