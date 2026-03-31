@@ -4786,3 +4786,276 @@ async fn term_split_size_max_should_limited_to_max_value() {
         ))
     )
 }
+
+// === Tests covering commit d9124e0b gaps ===
+
+#[tokio::test]
+async fn eval_of_parallel_send_and_receive_should_comm_with_receives_first_ordering() {
+    // Covers: reduce.rs receives-first evaluation ordering (lines 226-340).
+    // With receives-first, the continuation is registered before the send
+    // looks for matches, so COMM fires in a single Par evaluation.
+    let (space, reducer) =
+        create_test_space::<RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>()
+            .await;
+
+    let channel = new_gstring_par("ch".to_string(), Vec::new(), false);
+    let result_channel = new_gstring_par("result".to_string(), Vec::new(), false);
+
+    // @"ch"!(42) | for(x <- @"ch") { @"result"!(x) }
+    let combined = Par {
+        sends: vec![Send {
+            chan: Some(channel.clone()),
+            data: vec![new_gint_par(42, Vec::new(), false)],
+            persistent: false,
+            locally_free: Vec::new(),
+            connective_used: false,
+        }],
+        receives: vec![Receive {
+            binds: vec![ReceiveBind {
+                patterns: vec![new_freevar_par(0, Vec::new())],
+                source: Some(channel.clone()),
+                remainder: None,
+                free_count: 1,
+                peek: false,
+            }],
+            body: Some(Par::default().with_sends(vec![Send {
+                chan: Some(result_channel.clone()),
+                data: vec![new_boundvar_par(0, Vec::new(), false)],
+                persistent: false,
+                locally_free: vec![0b00000001],
+                connective_used: false,
+            }])),
+            persistent: false,
+            peek: false,
+            bind_count: 1,
+            locally_free: Vec::new(),
+            connective_used: false,
+        }],
+        ..Default::default()
+    };
+
+    let env: Env<Par> = Env::new();
+    let res = reducer.eval(combined, &env, rand().split_byte(0)).await;
+    assert!(res.is_ok(), "evaluation should succeed: {:?}", res.err());
+
+    let result = space.to_map();
+
+    // COMM should have fired: @"ch" should be empty
+    let ch_key = vec![channel.clone()];
+    let ch_empty = result
+        .get(&ch_key)
+        .map(|row| row.data.is_empty() && row.wks.is_empty())
+        .unwrap_or(true);
+    assert!(
+        ch_empty,
+        "channel @\"ch\" should be empty after COMM fires"
+    );
+
+    // The body should have deposited 42 on @"result"
+    let result_key = vec![result_channel.clone()];
+    let result_row = result
+        .get(&result_key)
+        .expect("@\"result\" should have data");
+    assert_eq!(
+        result_row.data.len(),
+        1,
+        "should have exactly one datum on result channel"
+    );
+    assert_eq!(
+        result_row.data[0].a.pars,
+        vec![new_gint_par(42, Vec::new(), false)],
+        "result channel should contain the value 42"
+    );
+}
+
+#[tokio::test]
+async fn eval_of_mixed_peek_multi_bind_should_preserve_peeked_and_consume_non_peeked() {
+    // Covers: p_input_normalizer.rs per-bind peek tracking (lines 260-276)
+    // and reduce.rs BTreeSet<i32> peeks passed to consume (line 1586).
+    // Peeked bind channels should preserve data; non-peeked should consume.
+    let (space, reducer) =
+        create_test_space::<RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>()
+            .await;
+
+    let ch1 = new_gstring_par("ch1".to_string(), Vec::new(), false);
+    let ch2 = new_gstring_par("ch2".to_string(), Vec::new(), false);
+    let result_channel = new_gstring_par("result".to_string(), Vec::new(), false);
+
+    // Produce data on ch1
+    let send1 = Par::default().with_sends(vec![Send {
+        chan: Some(ch1.clone()),
+        data: vec![new_gint_par(100, Vec::new(), false)],
+        persistent: false,
+        locally_free: Vec::new(),
+        connective_used: false,
+    }]);
+
+    // Produce data on ch2
+    let send2 = Par::default().with_sends(vec![Send {
+        chan: Some(ch2.clone()),
+        data: vec![new_gint_par(200, Vec::new(), false)],
+        persistent: false,
+        locally_free: Vec::new(),
+        connective_used: false,
+    }]);
+
+    // Multi-bind receive: peek on ch1 (bind 0), consume on ch2 (bind 1)
+    // for(x <<- @"ch1" & y <- @"ch2") { @"result"!("ok") }
+    let receive = Par::default().with_receives(vec![Receive {
+        binds: vec![
+            ReceiveBind {
+                patterns: vec![new_freevar_par(0, Vec::new())],
+                source: Some(ch1.clone()),
+                remainder: None,
+                free_count: 1,
+                peek: true, // bind 0 is peek
+            },
+            ReceiveBind {
+                patterns: vec![new_freevar_par(1, Vec::new())],
+                source: Some(ch2.clone()),
+                remainder: None,
+                free_count: 1,
+                peek: false, // bind 1 is not peek
+            },
+        ],
+        body: Some(Par::default().with_sends(vec![Send {
+            chan: Some(result_channel.clone()),
+            data: vec![new_gstring_par("ok".to_string(), Vec::new(), false)],
+            persistent: false,
+            locally_free: Vec::new(),
+            connective_used: false,
+        }])),
+        persistent: false,
+        peek: false, // Receive.peek is true only if ALL binds peek
+        bind_count: 2,
+        locally_free: Vec::new(),
+        connective_used: false,
+    }]);
+
+    let env: Env<Par> = Env::new();
+
+    // Produce on both channels first
+    assert!(reducer.eval(send1, &env, rand().split_byte(0)).await.is_ok());
+    assert!(reducer.eval(send2, &env, rand().split_byte(1)).await.is_ok());
+
+    // Evaluate the mixed-peek receive — COMM should fire
+    assert!(reducer.eval(receive, &env, rand().split_byte(2)).await.is_ok());
+
+    let result = space.to_map();
+
+    // ch1 was peeked: data should be preserved
+    let ch1_key = vec![ch1.clone()];
+    let ch1_row = result
+        .get(&ch1_key)
+        .expect("ch1 should still have data (peeked)");
+    assert_eq!(
+        ch1_row.data.len(),
+        1,
+        "peeked channel ch1 should retain its datum"
+    );
+
+    // ch2 was not peeked: data should be consumed
+    let ch2_key = vec![ch2.clone()];
+    let ch2_empty = result
+        .get(&ch2_key)
+        .map(|row| row.data.is_empty())
+        .unwrap_or(true);
+    assert!(
+        ch2_empty,
+        "non-peeked channel ch2 should have data consumed"
+    );
+
+    // Result channel should have the body's output
+    let result_key = vec![result_channel.clone()];
+    let result_row = result
+        .get(&result_key)
+        .expect("result channel should have data");
+    assert_eq!(result_row.data.len(), 1);
+    assert_eq!(
+        result_row.data[0].a.pars,
+        vec![new_gstring_par("ok".to_string(), Vec::new(), false)],
+        "result should contain 'ok'"
+    );
+}
+
+#[tokio::test]
+async fn eval_should_clear_locally_free_on_channels_for_consistent_hashing() {
+    // Covers: reduce.rs locally_free clearing (lines 487-509, 720-743).
+    // After substitution inside a `new` block, channels may have stale
+    // locally_free bits. The fix clears them before produce/consume so
+    // hot store (Par::Eq/Hash) and history store (bincode::serialize)
+    // compute identical channel hashes, enabling COMM to fire.
+    let (space, reducer) =
+        create_test_space::<RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>()
+            .await;
+
+    let result_channel = new_gstring_par("result".to_string(), Vec::new(), false);
+
+    // new x in { x!(42) | for(y <- x) { @"result"!(y) } }
+    // After eval_new substitutes x with a GPrivate, the body's sends and
+    // receives may have stale locally_free. The clearing fix ensures COMM.
+    let new_term = Par::default().with_news(vec![New {
+        bind_count: 1,
+        p: Some(Par {
+            sends: vec![Send {
+                chan: Some(new_boundvar_par(0, Vec::new(), false)),
+                data: vec![new_gint_par(42, Vec::new(), false)],
+                persistent: false,
+                locally_free: vec![0b00000001],
+                connective_used: false,
+            }],
+            receives: vec![Receive {
+                binds: vec![ReceiveBind {
+                    patterns: vec![new_freevar_par(0, Vec::new())],
+                    source: Some(new_boundvar_par(0, Vec::new(), false)),
+                    remainder: None,
+                    free_count: 1,
+                    peek: false,
+                }],
+                body: Some(Par::default().with_sends(vec![Send {
+                    chan: Some(result_channel.clone()),
+                    data: vec![new_boundvar_par(0, Vec::new(), false)],
+                    persistent: false,
+                    locally_free: vec![0b00000001],
+                    connective_used: false,
+                }])),
+                persistent: false,
+                peek: false,
+                bind_count: 1,
+                locally_free: vec![0b00000001],
+                connective_used: false,
+            }],
+            locally_free: vec![0b00000001],
+            ..Default::default()
+        }),
+        uri: Vec::new(),
+        injections: BTreeMap::new(),
+        locally_free: Vec::new(),
+    }]);
+
+    let env: Env<Par> = Env::new();
+    let res = reducer.eval(new_term, &env, rand().split_byte(0)).await;
+    assert!(
+        res.is_ok(),
+        "evaluation should succeed despite locally_free on channels: {:?}",
+        res.err()
+    );
+
+    let result = space.to_map();
+
+    // COMM should have fired: @"result" should have 42
+    let result_key = vec![result_channel.clone()];
+    let result_row = result.get(&result_key).expect(
+        "@\"result\" should have data — COMM should have fired despite locally_free on channel",
+    );
+    assert_eq!(
+        result_row.data.len(),
+        1,
+        "should have exactly one datum on result channel"
+    );
+    assert_eq!(
+        result_row.data[0].a.pars,
+        vec![new_gint_par(42, Vec::new(), false)],
+        "result channel should contain 42 after locally_free clearing enables COMM"
+    );
+}

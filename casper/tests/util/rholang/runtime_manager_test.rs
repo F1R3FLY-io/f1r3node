@@ -1373,3 +1373,130 @@ async fn joins_should_be_replayed_correctly() {
     .await
     .unwrap();
 }
+
+// === Tests covering commit d9124e0b gaps ===
+
+#[tokio::test]
+async fn genesis_replay_should_succeed_using_block_pre_state_hash() {
+    // Covers: block_approver_protocol.rs line 248 and initializing.rs line 795.
+    // Genesis validation now uses the block's own pre_state_hash (dynamically
+    // computed during compute_genesis) instead of a hardcoded constant. This
+    // test verifies that replaying genesis deploys from the block's pre_state_hash
+    // produces the expected post_state_hash.
+    with_runtime_manager(
+        |mut runtime_manager, genesis_context, genesis_block| async move {
+            let pre_state = genesis_block.body.state.pre_state_hash.clone();
+            let expected_post_state = genesis_block.body.state.post_state_hash.clone();
+
+            // The pre_state_hash should be non-empty (dynamically computed, not default)
+            assert!(
+                !pre_state.is_empty(),
+                "genesis pre_state_hash should be non-empty (dynamically computed)"
+            );
+
+            // It should also differ from the post_state_hash (deploys change state)
+            assert_ne!(
+                pre_state, expected_post_state,
+                "genesis pre and post state hashes should differ"
+            );
+
+            let block_data = BlockData {
+                time_stamp: genesis_block.header.timestamp,
+                block_number: 0,
+                sender: genesis_context.validator_pks()[0].clone(),
+                seq_num: 0,
+            };
+
+            // Replay genesis using the block's own pre_state_hash
+            let replay_result = runtime_manager
+                .replay_compute_state(
+                    &pre_state,
+                    genesis_block.body.deploys.clone(),
+                    Vec::new(),
+                    &block_data,
+                    None,
+                    true, // is_genesis
+                )
+                .await;
+
+            assert!(
+                replay_result.is_ok(),
+                "genesis replay should succeed: {:?}",
+                replay_result.err()
+            );
+            let replay_post_state = replay_result.expect("replay should succeed");
+            assert_eq!(
+                replay_post_state, expected_post_state,
+                "replayed post-state hash should match the genesis block's post_state_hash"
+            );
+        },
+    )
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn spawn_runtime_at_should_read_data_written_by_deploy() {
+    // Covers: runtime_manager.rs spawn_runtime_at() (lines 280-318).
+    // The new method creates an RSpace child directly at a target state hash,
+    // avoiding the stale history reader bug from spawn()+reset(). This test
+    // verifies that data written by a deploy is visible via get_data() (which
+    // internally calls spawn_runtime_at) at the new state, and NOT visible at
+    // the old state.
+    with_runtime_manager(
+        |mut runtime_manager, genesis_context, genesis_block| async move {
+            let gen_post_state = genesis_block.body.state.post_state_hash.clone();
+
+            // Deploy a term that writes a value to channel @42
+            let deploy = construct_deploy::source_deploy_now_full(
+                r#"@42!("hello_from_deploy")"#.to_string(),
+                Some(100000),
+                None,
+                None,
+                None,
+                None,
+            )
+            .expect("Failed to create deploy");
+
+            let (new_state_hash, _processed_deploy) = compute_state(
+                &mut runtime_manager,
+                &genesis_context,
+                deploy,
+                &gen_post_state,
+            )
+            .await;
+
+            // New state should differ from genesis
+            assert_ne!(new_state_hash, gen_post_state);
+
+            // Read data at the new state via get_data (uses spawn_runtime_at internally)
+            let channel_par = models::rhoapi::Par {
+                exprs: vec![models::rhoapi::Expr {
+                    expr_instance: Some(models::rhoapi::expr::ExprInstance::GInt(42)),
+                }],
+                ..Default::default()
+            };
+
+            let data_at_new = runtime_manager
+                .get_data(new_state_hash.clone(), &channel_par)
+                .await
+                .expect("get_data at new state should succeed");
+            assert!(
+                !data_at_new.is_empty(),
+                "spawn_runtime_at should be able to read data written by deploy"
+            );
+
+            // Data should NOT be visible at the old (genesis) state
+            let data_at_genesis = runtime_manager
+                .get_data(gen_post_state.clone(), &channel_par)
+                .await
+                .expect("get_data at genesis state should succeed");
+            assert!(
+                data_at_genesis.is_empty(),
+                "genesis state should not have deploy data"
+            );
+        },
+    )
+    .await
+    .unwrap();
+}

@@ -36,6 +36,184 @@ use crate::util::genesis_builder::GenesisContext;
 
 static CACHED_GENESIS: OnceLock<Arc<Mutex<Option<GenesisContext>>>> = OnceLock::new();
 
+// =============================================================================
+// macOS LMDB Semaphore Cleanup
+// =============================================================================
+//
+// On macOS, LMDB uses POSIX named semaphores (/MDBr<hash>, /MDBw<hash>) for
+// inter-process locking. These are kernel objects with a system-wide limit
+// (kern.posix.sem.max, default 10000).
+//
+// Problem: lazy_static values are never dropped in Rust, so mdb_env_close() is
+// never called, and sem_unlink() never runs. Every test binary run leaks 2
+// semaphores per LMDB environment. After ~5000 runs, the limit is exhausted and
+// LMDB fails with the misleading error: "No space left on device" (ENOSPC).
+//
+// Solution:
+// 1. On startup: scan for orphaned LMDB temp dirs and unlink their semaphores
+// 2. On exit: register an atexit handler to unlink the current run's semaphores
+// =============================================================================
+
+#[cfg(target_os = "macos")]
+mod lmdb_sem_cleanup {
+    use std::ffi::CString;
+    use std::os::unix::fs::MetadataExt;
+    use std::path::{Path, PathBuf};
+    use std::sync::Mutex;
+
+    /// Shared LMDB paths to scan for lock files on process exit.
+    static EXIT_CLEANUP: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+
+    /// FNV-1a hash matching LMDB's mdb_hash_val (64-bit).
+    fn lmdb_fnv_hash(data: &[u8]) -> u64 {
+        let mut h: u64 = 0xcbf29ce484222325;
+        for &b in data {
+            h ^= b as u64;
+            h = h.wrapping_mul(0x100000001b3);
+        }
+        h
+    }
+
+    /// Base85 encoding matching LMDB's mdb_pack85.
+    fn lmdb_pack85(mut val: u32) -> [u8; 5] {
+        let mut out = [0u8; 5];
+        for byte in &mut out {
+            *byte = (val % 85) as u8 + b'#';
+            val /= 85;
+        }
+        out
+    }
+
+    /// Compute LMDB semaphore names from a lock file's (dev, ino).
+    ///
+    /// Replicates the exact struct layout and hash LMDB uses in
+    /// mdb_env_setup_locks() (mdb.c). On macOS ARM64:
+    ///   struct { dev_t dev; /* 4 bytes + 4 padding */ ino_t ino; /* 8 bytes */ }
+    fn sem_names_for_lock_file(path: &Path) -> Option<(CString, CString)> {
+        let meta = std::fs::metadata(path).ok()?;
+
+        #[repr(C)]
+        struct IDBuf {
+            dev: i32,  // dev_t = int32_t on macOS
+            ino: u64,  // ino_t = uint64_t on macOS (8-byte aligned, so 4 bytes padding after dev)
+        }
+
+        let idbuf = IDBuf {
+            dev: meta.dev() as i32,
+            ino: meta.ino(),
+        };
+        let bytes: &[u8] = unsafe {
+            std::slice::from_raw_parts(
+                &idbuf as *const IDBuf as *const u8,
+                std::mem::size_of::<IDBuf>(),
+            )
+        };
+
+        let h = lmdb_fnv_hash(bytes);
+        let lo = lmdb_pack85(h as u32);
+        let hi = lmdb_pack85((h >> 32) as u32);
+        let encoded: String = lo.iter().chain(hi.iter()).map(|&b| b as char).collect();
+
+        let rm = CString::new(format!("/MDBr{}", encoded)).ok()?;
+        let wm = CString::new(format!("/MDBw{}", encoded)).ok()?;
+        Some((rm, wm))
+    }
+
+    /// Unlink a named semaphore, ignoring ENOENT (already cleaned).
+    fn sem_unlink(name: &CString) {
+        unsafe {
+            let rc = libc::sem_unlink(name.as_ptr());
+            if rc != 0 {
+                let err = *libc::__error();
+                if err != libc::ENOENT {
+                    eprintln!(
+                        "sem_unlink({:?}) failed: {}",
+                        name,
+                        std::io::Error::from_raw_os_error(err)
+                    );
+                }
+            }
+        }
+    }
+
+    /// atexit handler: scans registered paths for lock files and unlinks
+    /// their semaphores.
+    extern "C" fn atexit_cleanup() {
+        if let Ok(paths) = EXIT_CLEANUP.lock() {
+            for path in paths.iter() {
+                cleanup_lock_files_in(path);
+            }
+        }
+    }
+
+    /// Scan for orphaned LMDB temp directories and unlink their semaphores.
+    fn cleanup_orphaned(prefix: &str) {
+        let tmpdir = std::env::temp_dir();
+        let entries = match std::fs::read_dir(&tmpdir) {
+            Ok(e) => e,
+            Err(_) => return,
+        };
+
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            if !name_str.starts_with(prefix) {
+                continue;
+            }
+            let dir = entry.path();
+            // Recursively find all lock.mdb files
+            cleanup_lock_files_in(&dir);
+        }
+    }
+
+    fn cleanup_lock_files_in(dir: &Path) {
+        let entries = match std::fs::read_dir(dir) {
+            Ok(e) => e,
+            Err(_) => return,
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                cleanup_lock_files_in(&path);
+            } else if path.file_name().map(|n| n == "lock.mdb").unwrap_or(false) {
+                if let Some((rm, wm)) = sem_names_for_lock_file(&path) {
+                    sem_unlink(&rm);
+                    sem_unlink(&wm);
+                }
+            }
+        }
+    }
+
+    /// Register semaphore cleanup for the current LMDB environment and clean up
+    /// orphaned semaphores from previous runs.
+    ///
+    /// Call this once during SHARED_LMDB_ENV initialization.
+    pub fn register(shared_lmdb_path: &Path) {
+        // Phase 1: Clean up orphaned semaphores from crashed previous runs
+        cleanup_orphaned("casper-shared-lmdb-");
+
+        // Phase 2: Register atexit handler to clean up current run's semaphores.
+        // LMDB environments are opened lazily, so lock files don't exist yet.
+        // The atexit handler scans the shared path at exit time when all
+        // environments have been created.
+        if let Ok(mut paths) = EXIT_CLEANUP.lock() {
+            paths.push(shared_lmdb_path.to_path_buf());
+        }
+        static ATEXIT_REGISTERED: std::sync::Once = std::sync::Once::new();
+        ATEXIT_REGISTERED.call_once(|| unsafe {
+            libc::atexit(atexit_cleanup);
+        });
+    }
+}
+
+// No-op on non-macOS platforms (LMDB uses POSIX mutexes, not semaphores)
+#[cfg(not(target_os = "macos"))]
+mod lmdb_sem_cleanup {
+    use std::path::Path;
+    pub fn register(_shared_lmdb_path: &Path) {}
+    pub fn register_lock_file(_lock_path: &Path) {}
+}
+
 // Shared LMDB environment for all tests.
 //
 // This single environment is shared across all tests to avoid exhausting OS resources.
@@ -47,6 +225,7 @@ static CACHED_GENESIS: OnceLock<Arc<Mutex<Option<GenesisContext>>>> = OnceLock::
 // - Single LMDB environment instead of 300+ separate environments
 // - Automatic cleanup when TempDir is dropped (at program exit)
 // - Global lock ensures test isolation when using shared LMDB
+// - macOS: atexit handler ensures LMDB semaphores are unlinked (see lmdb_sem_cleanup)
 lazy_static! {
     static ref SHARED_LMDB_ENV: (PathBuf, TempDir) = {
         let temp_dir = Builder::new()
@@ -54,6 +233,10 @@ lazy_static! {
             .tempdir()
             .expect("Failed to create shared LMDB temp dir");
         let path = temp_dir.path().to_path_buf();
+
+        // Clean up orphaned semaphores and register atexit handler
+        lmdb_sem_cleanup::register(&path);
+
         (path, temp_dir)
     };
 

@@ -25,7 +25,11 @@ use models::{
 use rholang::rust::interpreter::{
     compiler::compiler::Compiler, errors::InterpreterError, system_processes::BlockData,
 };
-use rspace_plus_plus::rspace::{hashing::blake2b256_hash::Blake2b256Hash, history::Either};
+use rspace_plus_plus::rspace::{
+    errors::{HistoryError, RSpaceError, RootError},
+    hashing::blake2b256_hash::Blake2b256Hash,
+    history::Either,
+};
 
 use crate::rust::{
     block_status::BlockStatus,
@@ -238,6 +242,15 @@ pub async fn validate_block_checkpoint(
     }
 }
 
+fn extract_unknown_root_error(err: &CasperError) -> Option<&str> {
+    match err {
+        CasperError::InterpreterError(InterpreterError::RSpaceError(
+            RSpaceError::HistoryError(HistoryError::RootError(RootError::UnknownRootError(msg))),
+        )) => Some(msg.as_str()),
+        _ => None,
+    }
+}
+
 async fn replay_block(
     initial_state_hash: StateHash,
     block: &BlockMessage,
@@ -383,6 +396,20 @@ async fn replay_block(
                 }
             }
             Err(replay_error) => {
+                // UnknownRootError means the block claims a pre-state hash that
+                // doesn't exist in the roots store. This is deterministic - retrying
+                // won't help. Treat as an invalid block, not an internal error.
+                if let Some(root_msg) = extract_unknown_root_error(&replay_error) {
+                    tracing::warn!(
+                        "Replay block {} references unknown root state hash ({}), marking as invalid",
+                        PrettyPrinter::build_string_no_limit(&block.block_hash),
+                        root_msg,
+                    );
+                    return Ok(Either::Left(ReplayFailure::invalid_pre_state_hash(
+                        root_msg.to_string(),
+                    )));
+                }
+
                 if attempts >= MAX_RETRIES {
                     // Give up after max retries
                     tracing::error!(
@@ -470,6 +497,11 @@ fn handle_errors(
                         "Found system deploy error mismatch: initial deploy error message = {}, replay deploy error message = {}",
                         play_error, replay_error
                     );
+                Ok(Either::Right(None))
+            }
+
+            ReplayFailure::InvalidPreStateHash { msg } => {
+                tracing::warn!("Block references invalid pre-state hash: {}", msg);
                 Ok(Either::Right(None))
             }
         },
