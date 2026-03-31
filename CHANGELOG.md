@@ -4,6 +4,13 @@ All notable changes to the Rust implementation of F1r3node will be documented in
 This changelog is automatically generated from conventional commits.
 
 
+## [v0.4.8] - 2026-03-31
+
+### Refactoring
+
+- separate produce error handling from NonDeterministicProcessFailure (Rust) (#456)
+
+
 ## [v0.4.7] - 2026-03-30
 
 ### Bug Fixes

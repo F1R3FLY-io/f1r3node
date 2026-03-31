@@ -99,6 +99,12 @@ pub enum InterpreterError {
         cause: Box<InterpreterError>,
         output_not_produced: Vec<Vec<u8>>,
     },
+    /// Raised when a deterministic produce fails after a successful non-deterministic API call.
+    /// Contains the underlying cause and the output that was produced by the API but not stored.
+    ProduceFailureWithOutput {
+        cause: Box<InterpreterError>,
+        output_not_produced: Vec<Vec<u8>>,
+    },
     /// Raised during replay when we encounter a failed non-deterministic produce that we cannot replay.
     CanNotReplayFailedNonDeterministicProcess,
 }
@@ -316,6 +322,10 @@ impl fmt::Display for InterpreterError {
 
             InterpreterError::NonDeterministicProcessFailure { cause, .. } => {
                 write!(f, "Non-deterministic process failure: {}", cause)
+            }
+
+            InterpreterError::ProduceFailureWithOutput { cause, .. } => {
+                write!(f, "Produce failure with output: {}", cause)
             }
 
             InterpreterError::CanNotReplayFailedNonDeterministicProcess => {

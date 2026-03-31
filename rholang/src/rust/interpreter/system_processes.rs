@@ -909,7 +909,7 @@ impl SystemProcesses {
 
         let output = vec![RhoString::create_par(response)];
         if let Err(e) = produce(&output, ack).await {
-            return Err(InterpreterError::NonDeterministicProcessFailure {
+            return Err(InterpreterError::ProduceFailureWithOutput {
                 cause: Box::new(e),
                 output_not_produced: output.iter().map(|p| p.encode_to_vec()).collect(),
             });
@@ -956,7 +956,7 @@ impl SystemProcesses {
 
         let output = vec![RhoString::create_par(response)];
         if let Err(e) = produce(&output, ack).await {
-            return Err(InterpreterError::NonDeterministicProcessFailure {
+            return Err(InterpreterError::ProduceFailureWithOutput {
                 cause: Box::new(e),
                 output_not_produced: output.iter().map(|p| p.encode_to_vec()).collect(),
             });
@@ -1007,7 +1007,7 @@ impl SystemProcesses {
 
         let output = vec![RhoByteArray::create_par(audio_bytes)];
         if let Err(e) = produce(&output, ack).await {
-            return Err(InterpreterError::NonDeterministicProcessFailure {
+            return Err(InterpreterError::ProduceFailureWithOutput {
                 cause: Box::new(e),
                 output_not_produced: output.iter().map(|p| p.encode_to_vec()).collect(),
             });
@@ -1068,7 +1068,7 @@ impl SystemProcesses {
 
         let output = vec![RhoString::create_par(response)];
         if let Err(e) = produce(&output, ack).await {
-            return Err(InterpreterError::NonDeterministicProcessFailure {
+            return Err(InterpreterError::ProduceFailureWithOutput {
                 cause: Box::new(e),
                 output_not_produced: output.iter().map(|p| p.encode_to_vec()).collect(),
             });
@@ -1124,7 +1124,7 @@ impl SystemProcesses {
 
         let output = vec![RhoString::create_par(response)];
         if let Err(e) = produce(&output, ack).await {
-            return Err(InterpreterError::NonDeterministicProcessFailure {
+            return Err(InterpreterError::ProduceFailureWithOutput {
                 cause: Box::new(e),
                 output_not_produced: output.iter().map(|p| p.encode_to_vec()).collect(),
             });
@@ -1178,7 +1178,7 @@ impl SystemProcesses {
         let output = vec![Par::default().with_exprs(vec![list_expr])];
 
         if let Err(e) = produce(&output, ack).await {
-            return Err(InterpreterError::NonDeterministicProcessFailure {
+            return Err(InterpreterError::ProduceFailureWithOutput {
                 cause: Box::new(e),
                 output_not_produced: output.iter().map(|p| p.encode_to_vec()).collect(),
             });
