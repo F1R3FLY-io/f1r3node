@@ -49,7 +49,10 @@ fn main() -> Result<()> {
         .is_some_and(|subcommand| matches!(subcommand, OptionsSubCommand::Run(_)))
     {
         // Start the node
-        let rt = Builder::new_multi_thread().enable_all().build()?;
+        let rt = Builder::new_multi_thread()
+            .thread_stack_size(32 * 1024 * 1024)
+            .enable_all()
+            .build()?;
         rt.block_on(async {
             // Execute CLI command
             start_node(options).await?;
@@ -57,7 +60,10 @@ fn main() -> Result<()> {
         })?;
     } else {
         // we should not bother about blocking calls in this case since we are expecting consecutive execution
-        let rt = Builder::new_current_thread().enable_all().build()?;
+        let rt = Builder::new_current_thread()
+            .thread_stack_size(32 * 1024 * 1024)
+            .enable_all()
+            .build()?;
         run_cli(options, &rt)?;
     }
 
