@@ -77,6 +77,8 @@ jobs:
 
       - name: Generate CHANGELOG
         uses: orhun/git-cliff-action@v4
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           config: cliff.toml
           args: --tag ${{ steps.version.outputs.TAG_NAME }} -o CHANGELOG.md

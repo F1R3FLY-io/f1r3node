@@ -490,6 +490,11 @@ jobs:
             echo "prerelease=true" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Extract release notes for this version
+        run: |
+          # Extract only the latest version section from CHANGELOG.md
+          awk '/^## \[/{if(found) exit; found=1} found' CHANGELOG.md > RELEASE_NOTES.md
+
       - name: Update release and release artifacts
         uses: ncipollo/release-action@v1
         with:
@@ -498,5 +503,5 @@ jobs:
           draft: false
           allowUpdates: true
           omitBodyDuringUpdate: true
-          bodyFile: CHANGELOG.md
+          bodyFile: RELEASE_NOTES.md
           token: ${{ secrets.GITHUB_TOKEN }}
