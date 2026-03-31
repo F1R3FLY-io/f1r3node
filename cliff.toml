@@ -18,6 +18,7 @@ body = """
 {% for commit in commits %}
 - {{ commit.message | split(pat="\n") | first | trim }}\
   {% if commit.breaking %} [**breaking**]{% endif %}\
+  {%- if commit.github.pr_number %} ([#{{ commit.github.pr_number }}](https://github.com/F1R3FLY-io/f1r3node/pull/{{ commit.github.pr_number }})){% endif %}\
 {% endfor %}
 {% endfor %}\n
 """
@@ -36,11 +37,18 @@ commit_parsers = [
     { message = "^refactor", group = "Refactoring" },
     { message = "^ci", group = "CI" },
     { message = "^test", group = "Testing" },
+    { message = "^style", group = "Style" },
     { message = "^chore\\(release\\)", skip = true },
     { message = "^chore", group = "Miscellaneous" },
     { message = "^Merge", skip = true },
+    # Skip non-standard multi-scope commits (e.g. "casper/node: ...")
+    { message = "^[a-z]+/", skip = true },
 ]
 protect_breaking_commits = false
 filter_commits = false
 tag_pattern = "scala-v[0-9].*"
 sort_commits = "newest"
+
+[remote.github]
+owner = "F1R3FLY-io"
+repo = "f1r3node"
