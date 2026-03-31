@@ -4,6 +4,17 @@ All notable changes to the Scala implementation of F1r3node will be documented i
 This changelog is automatically generated from conventional commits.
 
 
+## [v0.4.7] - 2026-03-31
+
+### Bug Fixes
+
+- PR links in changelog, extract release notes, skip noisy commits
+
+### CI
+
+- explicitly list integration test files instead of running all
+
+
 ## [v0.4.6] - 2026-03-31
 
 ### Bug Fixes
@@ -56,7 +67,7 @@ This changelog is automatically generated from conventional commits.
 - preserve META-INF/services in assembly JAR to restore SLF4J logging
 - use amount parameter instead of hardcoded 1000 in BondingUtil
 - prevent node crash from malformed secp256k1Verify/hash contract inputs
-- detect and report integer overflow in Rholang arithmetic (#415)
+- detect and report integer overflow in Rholang arithmetic (#415) ([#415](https://github.com/F1R3FLY-io/f1r3node/pull/415))
 - always restart Docker daemon on CI to clear TIME_WAIT sockets from joiner ports
 - harden CI Docker networking for integration tests
 - move effectiveEndBlockNumber before forward reference in getBlocksByHeights
@@ -79,10 +90,10 @@ This changelog is automatically generated from conventional commits.
 - Deterministic parent ordering for consistent finalization
 - Fix WSL2 networking and HTTP deploy signature
 - Add missing onBlockFinalized parameter to InitializingSpec
-- Fixes for integration tests folder to start them locally (#291) (#300)
+- Fixes for integration tests folder to start them locally (#291) (#300) ([#300](https://github.com/F1R3FLY-io/f1r3node/pull/300))
 - resolve test compilation errors after Ollama system integration
-- cleanup ai.rho Rholang example (#167)
-- replace hardcoded bootstrap address with configurable default (#164)
+- cleanup ai.rho Rholang example (#167) ([#167](https://github.com/F1R3FLY-io/f1r3node/pull/167))
+- replace hardcoded bootstrap address with configurable default (#164) ([#164](https://github.com/F1R3FLY-io/f1r3node/pull/164))
 
 ### CI
 
@@ -147,15 +158,15 @@ This changelog is automatically generated from conventional commits.
 - replace config overlays with CLI flags, align defaults.conf
 - Remove non-functional StateSnapshotCache from PR #244
 - Improve SystemContractInitializationSpec tests
-- Migrate integration tests to the new F1R3FLY Python client library (#309)
-
-### Comm
-
-- add RecentHashFilter to suppress redundant gossip hash broadcasts (#243)
+- Migrate integration tests to the new F1R3FLY Python client library (#309) ([#309](https://github.com/F1R3FLY-io/f1r3node/pull/309))
 
 ### Style
 
 - apply scalafmt to BlockAPI depth clamping changes
+
+### Comm
+
+- add RecentHashFilter to suppress redundant gossip hash broadcasts (#243) ([#243](https://github.com/F1R3FLY-io/f1r3node/pull/243))
 
 
 ## [v0.1.1] - 2025-08-15
