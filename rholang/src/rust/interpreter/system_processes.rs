@@ -219,6 +219,10 @@ impl FixedChannels {
     pub fn chroma_delete_documents() -> Par {
         byte_name(36)
     }
+
+    pub fn chroma_delete_collection() -> Par {
+        byte_name(37)
+    }
 }
 
 pub struct BodyRefs;
@@ -254,6 +258,7 @@ impl BodyRefs {
     pub const CHROMA_UPSERT_ENTRIES: i64 = 34;
     pub const CHROMA_QUERY: i64 = 35;
     pub const CHROMA_DELETE_DOCUMENTS: i64 = 36;
+    pub const CHROMA_DELETE_COLLECTION: i64 = 37;
 }
 
 pub fn non_deterministic_ops() -> HashSet<i64> {
@@ -1817,6 +1822,39 @@ impl SystemProcesses {
 
         self.chromadb_service
             .delete_documents(&collection_name, doc_ids)
+            .await?;
+
+        let result_par = RhoString::create_par(collection_name);
+        let output = vec![result_par];
+        produce(&output, ack).await?;
+        Ok(output)
+    }
+
+    #[cfg(feature = "chromadb")]
+    pub async fn chroma_delete_collection(
+        &self,
+        contract_args: (Vec<ListParWithRandom>, bool, Vec<Par>),
+    ) -> Result<Vec<Par>, InterpreterError> {
+        let Some((produce, is_replay, previous_output, args)) =
+            self.is_contract_call().unapply(contract_args)
+        else {
+            return Err(illegal_argument_error("chroma_delete_collection"));
+        };
+
+        let [collection_name_par, ack] = args.as_slice() else {
+            return Err(illegal_argument_error("chroma_delete_collection"));
+        };
+        let collection_name = RhoString::unapply(collection_name_par)
+            .ok_or(illegal_argument_error("chroma_delete_collection"))?;
+
+        // Common piece of code.
+        if is_replay {
+            produce(&previous_output, ack).await?;
+            return Ok(previous_output);
+        }
+
+        self.chromadb_service
+            .delete_collection(&collection_name)
             .await?;
 
         let result_par = RhoString::create_par(collection_name);
