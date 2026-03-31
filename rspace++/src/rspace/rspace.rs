@@ -11,8 +11,6 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
 
 use dashmap::DashMap;
-use rand::seq::SliceRandom;
-use rand::thread_rng;
 use serde::{Deserialize, Serialize};
 use shared::rust::store::key_value_store::KeyValueStore;
 use tracing::{Level, event};

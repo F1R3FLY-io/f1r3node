@@ -12,8 +12,6 @@ use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use dashmap::DashMap;
-use rand::seq::SliceRandom;
-use rand::thread_rng;
 use serde::Serialize;
 use tracing::{Level, event};
 
