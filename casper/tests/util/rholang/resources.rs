@@ -211,7 +211,6 @@ mod lmdb_sem_cleanup {
 mod lmdb_sem_cleanup {
     use std::path::Path;
     pub fn register(_shared_lmdb_path: &Path) {}
-    pub fn register_lock_file(_lock_path: &Path) {}
 }
 
 // Shared LMDB environment for all tests.
