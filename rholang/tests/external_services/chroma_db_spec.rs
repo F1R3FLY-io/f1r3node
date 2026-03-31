@@ -31,13 +31,11 @@ async fn collection_should_yield_correct_meta_after_creation() {
     let meta_contract = r#"
             new createCollection(`rho:chroma:collection:new`),
                 getCollectionMeta(`rho:chroma:collection:meta`),
-                deleteCollection(`rho:chroma:collection:delete`),
                 stdout(`rho:io:stdout`), createRet, metaRet in {
                     createCollection!("test-collection", true, {"meta1" : 1, "two" : "42", "three" : 42, "meta2": "bar"}, *createRet) |
                     for(@res <- createRet) {
                         getCollectionMeta!("test-collection", *metaRet) |
                         for(@res <- metaRet) {
-                            deleteCollection!("test-collection") |
                             @0!(res)
                         }
                     }
@@ -67,13 +65,11 @@ async fn collection_should_yield_correct_meta_after_creation_empty() {
     let meta_contract = r#"
             new createCollection(`rho:chroma:collection:new`),
                 getCollectionMeta(`rho:chroma:collection:meta`),
-                deleteCollection(`rho:chroma:collection:delete`),
                 createRet, metaRet in {
                     createCollection!("test-collection-nil-meta", true, Nil, *createRet) |
                     for(@res <- createRet) {
                         getCollectionMeta!("test-collection-nil-meta", *metaRet) |
                         for(@res <- metaRet) {
-                            deleteCollection!("test-collection-nil-meta") |
                             @0!(res)
                         }
                     }
@@ -89,7 +85,6 @@ async fn entry_should_be_queried() {
         new createCollection(`rho:chroma:collection:new`),
             upsertEntries(`rho:chroma:collection:entries:new`),
             queryEntries(`rho:chroma:collection:entries:query`),
-            deleteCollection(`rho:chroma:collection:delete`),
             createRet, upsertRet, queryRet in {
                 createCollection!("test-collection-entries", true, Nil, *createRet) |
                 for(@x <- createRet) {
@@ -109,7 +104,6 @@ async fn entry_should_be_queried() {
                     queryEntries!("test-collection-entries", [ "Hello world" ], *queryRet)
                 } |
                 for(@res <- queryRet) {
-                    deleteCollection!("test-collection-entries") |
                     @0!(res)
                 }
         }

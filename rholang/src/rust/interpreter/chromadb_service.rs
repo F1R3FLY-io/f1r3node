@@ -529,29 +529,6 @@ impl ChromaDBService {
         }
     }
 
-    /// Delete the collection with given name. See [`ChromaHttpClient::delete_collection`]
-    ///
-    /// # Arguments
-    ///
-    /// * `collection_name` - The name of the collection to create
-    pub async fn delete_collection(
-        &self,
-        collection_name: &str
-    ) -> Result<(), InterpreterError> {
-        match self {
-            Self::NoOp => Ok(()),
-            Self::Real(client) => {
-                match client.client.delete_collection(collection_name).await {
-                    Ok(_) => Ok(()),
-                    Err(error) => {
-                        let msg = format!("Couldn't delete collection {}: {}", collection_name, error);
-                        Err(InterpreterError::ChromaDBError(msg))
-                    }
-                }
-            }
-        }
-    }
-
     /* TODO (chase): Other potential collection related methods:
        - rename collection (not that necessary?)
        - list collections (bad idea probably)
