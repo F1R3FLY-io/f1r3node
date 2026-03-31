@@ -486,11 +486,18 @@ impl DebruijnInterpreter {
                         space_locked.update_produce(failed_produce);
                         drop(space_locked);
                         log_op_step("after_update_produce_failed_nondeterministic");
-                        // Wrap the original error in NonDeterministicProcessFailure
-                        Err(InterpreterError::NonDeterministicProcessFailure {
-                            cause: Box::new(error),
-                            output_not_produced: vec![],
-                        })
+                        // Re-raise known error types as-is to preserve output_not_produced;
+                        // wrap unknown errors in NonDeterministicProcessFailure.
+                        match error {
+                            InterpreterError::ProduceFailureWithOutput { .. }
+                            | InterpreterError::NonDeterministicProcessFailure { .. } => {
+                                Err(error)
+                            }
+                            _ => Err(InterpreterError::NonDeterministicProcessFailure {
+                                cause: Box::new(error),
+                                output_not_produced: vec![],
+                            }),
+                        }
                     }
 
                     _ => Ok(dispatch_type),
