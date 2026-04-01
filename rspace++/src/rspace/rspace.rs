@@ -11,6 +11,8 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
 
 use dashmap::DashMap;
+use rand::seq::SliceRandom;
+use rand::thread_rng;
 use serde::{Deserialize, Serialize};
 use shared::rust::store::key_value_store::KeyValueStore;
 use tracing::{Level, event};
@@ -1096,16 +1098,13 @@ where
     }
 
     fn shuffle_with_index<D>(&self, t: Vec<D>) -> Vec<(D, i32)> {
-        // Deterministic ordering — no shuffle. Ensures replay picks the same
-        // datum as play when duplicate datums exist (same produce hash but
-        // different random_state from different Blake2b512Random splits).
-        // With shuffle, a different datum can be matched during play vs replay,
-        // causing the continuation to generate different unforgeable names and
-        // producing a ReplayCostMismatch (176 phlogiston delta).
-        // See docs/replay-cost-mismatch-investigation.md
-        t.into_iter()
+        let mut rng = thread_rng();
+        let mut indexed_vec = t
+            .into_iter()
             .enumerate()
             .map(|(i, d)| (d, i as i32))
-            .collect()
+            .collect::<Vec<_>>();
+        indexed_vec.shuffle(&mut rng);
+        indexed_vec
     }
 }

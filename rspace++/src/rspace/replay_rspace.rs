@@ -12,6 +12,8 @@ use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use dashmap::DashMap;
+use rand::seq::SliceRandom;
+use rand::thread_rng;
 use serde::Serialize;
 use tracing::{Level, event};
 
@@ -1275,10 +1277,13 @@ where
     }
 
     fn shuffle_with_index<D>(&self, t: Vec<D>) -> Vec<(D, i32)> {
-        // Deterministic ordering — matches play RSpace. See rspace.rs.
-        t.into_iter()
+        let mut rng = thread_rng();
+        let mut indexed_vec = t
+            .into_iter()
             .enumerate()
             .map(|(i, d)| (d, i as i32))
-            .collect()
+            .collect::<Vec<_>>();
+        indexed_vec.shuffle(&mut rng);
+        indexed_vec
     }
 }

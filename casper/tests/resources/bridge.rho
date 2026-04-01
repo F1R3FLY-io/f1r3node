@@ -1,0 +1,439 @@
+new
+// Public entry points
+lock,
+ unlock,
+ addOracle,
+ removeOracle,
+ setRequiredSignatures,
+ setVerifier,
+ setRelayer,
+ // State channels
+ totalLockedCh,
+ lockedByAddressCh,
+ oraclesCh,
+ oracleCountCh,
+ requiredSigsCh,
+ processedCh,
+ nonceCh,
+ adminCh,
+ verifierCh,
+ relayerCh,
+ lockHistoryCh,
+ appVaultSeed,
+ appVaultAddrCh,
+ vaultLookupCh,
+ bridgeUriCh,
+ bridgePurseCh,
+ SystemVaultCh,
+ bridgeVaultSeed,
+ bridgeVaultAddrCh,
+ // Query + dispatch
+ queryCh, // query contract
+ lockCh,
+ unlockCh,
+ adminApiCh,
+ // Internal helpers
+ length, // length function
+ countValidSigsCh,
+ // System
+ deployerId(`rho:system:deployerId`),
+ rl(`rho:registry:lookup`),
+ insertArbitrary(`rho:registry:insertArbitrary`),
+ VaultAddress(`rho:vault:address`),
+ stdout(`rho:io:stdout`),
+ deployId(`rho:system:deployId`)
+ in {
+  rl!(`rho:vault:system`, *SystemVaultCh) |
+
+   for (@(_, SystemVault) <- SystemVaultCh) {
+    VaultAddress!("fromUnforgeable", *bridgeVaultSeed, *bridgeVaultAddrCh) |
+     // init state vars
+     totalLockedCh!(0) |
+     nonceCh!(0) |
+     requiredSigsCh!(2) |
+     oracleCountCh!(3) |
+     lockHistoryCh!({}) |
+     requiredSigsCh!(2) |
+     processedCh!({}) |
+     lockedByAddressCh!({}) |
+     oracleCountCh!(3) |
+     oraclesCh!({
+       "oracle-1": true,
+       "oracle-2": true,
+       "oracle-3": true
+       }) |
+    verifierCh!("default_verifier") |
+
+     for (@bridgeVaultAddr <- bridgeVaultAddrCh) {
+      new bridgeVaultCh, bridgeAuthKeyCh in {
+       @SystemVault!("findOrCreate", bridgeVaultAddr, *bridgeVaultCh) |
+        @SystemVault!("unforgeableAuthKey", *bridgeVaultSeed, *bridgeAuthKeyCh) |
+
+        stdout!(["bridge vault address",bridgeVaultAddr])|
+
+        for (@(true, bridgeVault) <- bridgeVaultCh & bridgeAuthKey <- bridgeAuthKeyCh) {
+         // query contract: queryCh!(method, param, *ret) — use Nil for param when not needed
+         contract queryCh(@method, @param, ret) = {
+          match method {
+           "bridgeVaultAddress" => {
+            stdout!(["bridge vault address:", bridgeVaultAddr]) |
+             ret!(bridgeVaultAddr)
+           }
+
+           "getNonce" => {
+            for (@v <- nonceCh) {
+             nonceCh!(v) |
+              stdout!(["bridge nonce:", v]) |
+              ret!(v)
+            }
+           }
+
+           "getBalance" => {
+            new balanceCh in {
+             @bridgeVault!("balance", *balanceCh) |
+              for (@bal <- balanceCh) {
+               stdout!(["bridge balance:", bal]) |
+                ret!(bal)
+              }
+            }
+           }
+
+           "getTotalLocked" => {
+            for (@v <- totalLockedCh) {
+             totalLockedCh!(v) |
+              stdout!(["bridge totalLocked:", v]) |
+              ret!(v)
+            }
+           }
+
+           "getLockAmount" => {
+            for (@history <- lockHistoryCh) {
+             lockHistoryCh!(history) |
+              match history.get(param) {
+               Nil => ret!(-1)
+                entry => ret!(entry.get("amount"))
+              }
+            }
+           }
+
+           "getLockRecipient" => {
+            for (@history <- lockHistoryCh) {
+             lockHistoryCh!(history) |
+              match history.get(param) {
+               Nil => ret!("")
+                entry => ret!(entry.get("ethRecipient"))
+              }
+            }
+           }
+
+           _ => ret!("UnknownMethod")
+          }
+         } |
+
+         contract lock(@amount, @ethRecipient, @fromAddr, fromAuthKey, ret) = {
+          stdout!("start lock")|
+           if (amount <= 0) {
+            ret!({"status": "error", "error": "ZeroAmount"})
+           } else if (ethRecipient == "") {
+            ret!({"status": "error", "error": "ZeroAddress"}) 
+           }
+           else {
+            new userVaultCh in {
+             @SystemVault!("findOrCreate", fromAddr, *userVaultCh) |
+              for (@(true, userVault) <- userVaultCh) {
+               new transferResultCh in {
+
+                // check user balance before transfer
+                new balanceCh in {
+                 @userVault!("balance", *balanceCh) |
+                  for (@bal <- balanceCh) {
+                   if (bal < amount) {
+                    ret!({"status": "error", "error": "InsufficientVaultBalance", "balance": bal})
+                   } }
+                } |
+
+
+                // transfer tokens from user to bridge vault
+                @userVault!("transfer", bridgeVaultAddr, amount, *fromAuthKey, *transferResultCh) |
+
+                 for (@transferResult <- transferResultCh) {
+                  match transferResult {
+                   (true, Nil) => {
+                    // update state vars
+                    stdout!("lock true")|
+                     for (
+                       @totalLocked <- totalLockedCh;
+                       @currentNonce <- nonceCh;
+                       @lockedByAddress <- lockedByAddressCh;
+                       @history <- lockHistoryCh
+                       ) {
+                      totalLockedCh!(totalLocked + amount) |
+                       nonceCh!(currentNonce + 1) |
+                       lockedByAddressCh!(
+                         lockedByAddress.set(
+                          fromAddr,
+                          match lockedByAddress.get(fromAddr) {
+                          Nil => amount
+                          v => v + amount
+                          }
+                          )
+                         ) |
+                       lockHistoryCh!(history.set(currentNonce, {"from": fromAddr, "amount": amount, "ethRecipient": ethRecipient})) |
+                       stdout!(["bridge lock OK", {"from": fromAddr, "amount": amount, "ethRecipient": ethRecipient, "nonce": currentNonce}]) |
+                       ret!(["bridge lock OK", {"status":"ok", "nonce": currentNonce}])
+                     } 
+                   }
+
+                   _ => {
+                    stdout!(("bridge lock ERR", transferResult)) |
+                     ret!(["bridge lock ERR", transferResult])
+                   }
+                  }
+                 }
+               }
+              }
+            }
+           }
+         } |
+
+         // -- Internal: count valid oracle signatures --
+         contract countValidSigsCh(@sigs, @oracles, @idx, @count, ret) = {
+          if (idx >= sigs.length()) {
+           ret!(count)
+          } else {
+           match oracles.get(sigs.nth(idx)) {
+            true => {
+             countValidSigsCh!(sigs, oracles, idx + 1, count + 1, *ret)
+            }
+            _ => {
+             countValidSigsCh!(sigs, oracles, idx + 1, count, *ret)
+            }
+           }
+          }
+         } |
+
+
+         contract unlock(@recipientAddr, @amount, @ethTxHash, @ethNonce, @signatures, ret) = {
+          // TODO: do we need to check caller id?
+          //          new callerAddrCh in {
+          //           VaultAddress!("fromDeployerId", *deployerId, *callerAddrCh) |
+          //            for (@callerAddr <- callerAddrCh) {
+          //             for (@relayer <- relayerCh) {
+          //              relayerCh!(relayer) |
+          //               if (callerAddr != relayer) {
+          //                ret!({"status": "error", "error": "NotRelayer"})
+          //               } 
+          //             }
+          //            }
+          //          } |
+          // check if recipient address is set
+          if (recipientAddr == "") {
+           ret!({"status": "error", "error": "ZeroAddress"})
+          } else 
+           // check amount
+           if (amount == 0) {
+            ret!({"status": "error", "error": "Zeroamount"})
+           } 
+           else {
+            // TODO: check signatures length vs required signatures
+            length!(signatures, *ret) |
+             for (@len <- ret) {
+              for (@requiredSignatures <- requiredSigsCh) {
+               requiredSigsCh!(requiredSignatures) |
+                if(len < requiredSignatures) {ret!("bridge ERR: sigs")}
+              }
+             }
+            // TODO: check proof hash for replay protection
+            // TODO: make proof hash, check against already relayed proofs, see eth contract
+            | 
+             for (
+               @totalLocked <- totalLockedCh
+               ) {
+              // exit if amount is greater than totalLocked
+              if(totalLocked < amount) { ret!("bridge unlock err: amount")} 
+              // transfer
+              else {
+               totalLockedCh!(totalLocked - amount) |
+                stdout!([
+                  "Unlocked",
+                  {
+                  "recipientAddr": recipientAddr,
+                  "amount": amount,
+                  "proofHash": [recipientAddr, amount]
+                  }
+                ]) 
+                |
+                new transferResultCh in {
+                 @bridgeVault!("transfer", recipientAddr, amount, *bridgeAuthKey, *transferResultCh) |
+                  for (@transferResult <- transferResultCh) {
+                   match transferResult {
+                    (true, Nil) => {
+                     stdout!("bridge unlock OK") |
+                      ret!("bridge unlock OK")
+                    }
+                    _ => {
+                     stdout!(("bridge unlock ERR", transferResult)) |
+                      ret!(("bridge unlock ERR", transferResult))
+                    }
+                   }
+                  }                       
+                } |
+               ret!({"status": "ok", "amount": amount, "recipientAddr": recipientAddr})
+              }
+             }
+           }
+         }
+        } |
+
+       // -- Admin --
+       contract addOracle(@caller, @oracle, ret) = {
+        for (@admin <- adminCh) {
+         adminCh!(admin) |
+          if (caller != admin) {
+           ret!({"status": "error", "error": "NotAdmin"})
+          } else if (oracle == "") {
+           ret!({"status": "error", "error": "ZeroAddress"})
+          } else {
+           for (@oracles <- oraclesCh; @count <- oracleCountCh) {
+            match oracles.get(oracle) {
+             true => {
+              oraclesCh!(oracles) |
+               oracleCountCh!(count) |
+               ret!({"status": "ok", "message": "already registered"})
+             }
+             _ => {
+              oraclesCh!(oracles.set(oracle, true)) |
+               oracleCountCh!(count + 1) |
+               stdout!(["OracleAdded", {"oracle": oracle}]) |
+               ret!({"status": "ok"})
+             }
+            }
+           }
+          }
+        }
+       } |
+
+       contract removeOracle(@caller, @oracle, ret) = {
+        for (@admin <- adminCh) {
+         adminCh!(admin) |
+          if (caller != admin) {
+           ret!({"status": "error", "error": "NotAdmin"})
+          } else {
+           for (@oracles <- oraclesCh; @count <- oracleCountCh; @reqSigs <- requiredSigsCh) {
+            requiredSigsCh!(reqSigs) |
+             match oracles.get(oracle) {
+              true => {
+               if (count - 1 < reqSigs) {
+                oraclesCh!(oracles) |
+                 oracleCountCh!(count) |
+                 ret!({"status": "error", "error": "NotEnoughOracles"})
+               } else {
+                oraclesCh!(oracles.delete(oracle)) |
+                 oracleCountCh!(count - 1) |
+                 stdout!(["OracleRemoved", {"oracle": oracle}]) |
+                 ret!({"status": "ok"})
+               }
+              }
+              _ => {
+               oraclesCh!(oracles) |
+                oracleCountCh!(count) |
+                ret!({"status": "ok", "message": "not registered"})
+              }
+             }
+           }
+          }
+        }
+       } |
+
+       contract setRequiredSignatures(@caller, @newRequired, ret) = {
+        for (@admin <- adminCh) {
+         adminCh!(admin) |
+          if (caller != admin) {
+           ret!({"status": "error", "error": "NotAdmin"})
+          } else {
+           for (@count <- oracleCountCh; @oldReq <- requiredSigsCh) {
+            oracleCountCh!(count) |
+             if (newRequired <= 0 or newRequired > count) {
+              requiredSigsCh!(oldReq) |
+               ret!({"status": "error", "error": "InvalidSignatureCount"})
+             } else {
+              requiredSigsCh!(newRequired) |
+               stdout!(["RequiredSignaturesChanged", {"newRequired": newRequired}]) |
+               ret!({"status": "ok"})
+             }
+           }
+          }
+        }
+       } |
+
+       contract setVerifier(@caller, @newVerifier, ret) = {
+        for (@admin <- adminCh) {
+         adminCh!(admin) |
+          if (caller != admin) {
+           ret!({"status": "error", "error": "NotAdmin"})
+          } else if (newVerifier == "") {
+           ret!({"status": "error", "error": "ZeroAddress"})
+          } else {
+           for (@oldVerifier <- verifierCh) {
+            verifierCh!(newVerifier) |
+             stdout!(["VerifierChanged", {"old": oldVerifier, "new": newVerifier}]) |
+             ret!({"status": "ok"})
+           }
+          }
+        }
+       } |
+
+       contract setRelayer(@caller, @newRelayer, ret) = {
+        for (@admin <- adminCh) {
+         adminCh!(admin) |
+          if (caller != admin) {
+           ret!({"status": "error", "error": "NotAdmin"})
+          } else if (newRelayer == "") {
+           ret!({"status": "error", "error": "ZeroAddress"})
+          } else {
+           for (@oldRelayer <- relayerCh) {
+            relayerCh!(newRelayer) |
+             stdout!(["RelayerChanged", {"old": oldRelayer, "new": newRelayer}]) |
+             ret!({"status": "ok"})
+           }
+          }
+        }
+       } |
+
+
+      // length helper 
+        contract length(@list, ret) = {
+         match list {
+          [] => {
+           ret!(0)
+          }
+          [head ...tail] => {
+           new sub in {
+            length!(tail, *sub) |
+             for (@n <- sub) {
+              ret!(n + 1)
+             }
+           }
+          }
+         }
+        }
+        |
+
+       // Register query/lock/unlock/admin APIs in the registry.
+       new queryUriCh, lockUriCh, unlockUriCh in {
+         insertArbitrary!(bundle+{*queryCh}, *queryUriCh) |
+         insertArbitrary!(bundle+{*lock}, *lockUriCh) |
+         insertArbitrary!(bundle+{*unlock}, *unlockUriCh) |
+         for (@queryUri <- queryUriCh; @lockUri <- lockUriCh; @unlockUri <- unlockUriCh) {
+          stdout!(["ASIChainBridge registered", {
+            "queryUri": queryUri,
+            "lockUri": lockUri,
+            "unlockUri": unlockUri,
+            }]) |
+          deployId!([queryUri, lockUri, unlockUri])
+         }
+       }
+      }
+     }
+   } 
+ } 
