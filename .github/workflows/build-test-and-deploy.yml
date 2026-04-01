@@ -226,17 +226,16 @@ jobs:
           path: /tmp/rust-node-docker.tar.gz
 
   # Integration tests on GitHub-hosted runners, parallelized by test module.
-  # Each test module gets its own ephemeral runner (2 arches × 16 modules = 32 jobs).
-  required_rust_integration_tests:
-    name: Integration Tests (${{ matrix.arch.name }}/${{ matrix.test }})
+  # amd64 and arm64 are split into separate jobs with different max-parallel
+  # values to match each runner fleet's capacity and avoid SIGTERM preemption.
+  required_rust_integration_tests_amd64:
+    name: Integration Tests (amd64/${{ matrix.test }})
     needs: build_rust_docker_image
-    runs-on: ${{ matrix.arch.runner }}
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
+      max-parallel: 8
       matrix:
-        arch:
-          - { runner: ubuntu-latest, name: amd64 }
-          - { runner: ubuntu-24.04-arm, name: arm64 }
         test:
           - test_web_api
           - test_wallets
@@ -280,14 +279,14 @@ jobs:
       - name: Load Docker Image
         uses: actions/download-artifact@v4
         with:
-          name: artifacts-docker-${{ matrix.arch.name }}
+          name: artifacts-docker-amd64
           path: /tmp
 
       - name: Import Docker Image
         shell: bash -ex {0}
         run: |
           zcat /tmp/rust-node-docker.tar.gz | docker image load
-          docker tag f1r3flyindustries/f1r3fly-rust-node:${{ matrix.arch.name }} f1r3flyindustries/f1r3fly-rust-node
+          docker tag f1r3flyindustries/f1r3fly-rust-node:amd64 f1r3flyindustries/f1r3fly-rust-node
 
       - name: Install system-integration dependencies
         shell: bash -ex {0}
@@ -309,23 +308,18 @@ jobs:
           DEFAULT_IMAGE: f1r3flyindustries/f1r3fly-rust-node
         run: |
           cd system-integration
-          SCALE_FLAG=""
-          if [ "${{ matrix.arch.name }}" = "arm64" ]; then
-            SCALE_FLAG="--timeout-scale=1.5"
-          fi
           DESELECT_FLAG=""
           if [ "${{ matrix.test }}" = "test_replay_determinism" ]; then
-            # Skip test_network_recovers_from_slow_deploy — see f1r3node#463
             DESELECT_FLAG="--deselect integration-tests/test/test_replay_determinism.py::test_network_recovers_from_slow_deploy"
           fi
           poetry run pytest integration-tests/test/${{ matrix.test }}.py -v --tb=short --log-cli-level=WARNING \
-            --startup-timeout=600 --command-timeout=300 --timeout=600 $SCALE_FLAG $DESELECT_FLAG
+            --startup-timeout=600 --command-timeout=300 --timeout=600 $DESELECT_FLAG
 
       - name: Upload Integration Test Logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: integration-logs-${{ matrix.arch.name }}-${{ matrix.test }}
+          name: integration-logs-amd64-${{ matrix.test }}
           path: system-integration/integration-tests/
           retention-days: 7
 
@@ -333,7 +327,111 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: docker-logs-${{ matrix.arch.name }}-${{ matrix.test }}
+          name: docker-logs-amd64-${{ matrix.test }}
+          path: /tmp/*.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+  required_rust_integration_tests_arm64:
+    name: Integration Tests (arm64/${{ matrix.test }})
+    needs: build_rust_docker_image
+    runs-on: ubuntu-24.04-arm
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        test:
+          - test_web_api
+          - test_wallets
+          - test_heartbeat
+          - test_deployment
+          - test_storage
+          - test_genesis_ceremony
+          - test_dag_correctness
+          - test_finalization
+          - test_propose
+          - test_replay_determinism
+          - test_consensus_health
+          - test_synchrony_constraint
+          - test_asymmetric_bonds
+          - test_bonding_validators
+          - test_trim_state
+    steps:
+      - name: Clone Repository
+        uses: actions/checkout@v4
+
+      - name: Clone system-integration
+        uses: actions/checkout@v4
+        with:
+          repository: F1R3FLY-io/system-integration
+          ref: main
+          path: system-integration
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: 'pip'
+
+      - name: Install Poetry
+        uses: snok/install-poetry@v1
+        with:
+          version: 1.8.5
+          virtualenvs-create: true
+          virtualenvs-in-project: true
+
+      - name: Load Docker Image
+        uses: actions/download-artifact@v4
+        with:
+          name: artifacts-docker-arm64
+          path: /tmp
+
+      - name: Import Docker Image
+        shell: bash -ex {0}
+        run: |
+          zcat /tmp/rust-node-docker.tar.gz | docker image load
+          docker tag f1r3flyindustries/f1r3fly-rust-node:arm64 f1r3flyindustries/f1r3fly-rust-node
+
+      - name: Install system-integration dependencies
+        shell: bash -ex {0}
+        run: |
+          cd system-integration
+          poetry lock --no-update
+          poetry install --with integration
+
+      - name: Ensure test ports are free
+        shell: bash {0}
+        run: |
+          for port in $(seq 40400 40545); do
+            fuser -k $port/tcp 2>/dev/null || true
+          done
+
+      - name: Run Integration Tests
+        shell: bash -ex {0}
+        env:
+          DEFAULT_IMAGE: f1r3flyindustries/f1r3fly-rust-node
+        run: |
+          cd system-integration
+          DESELECT_FLAG=""
+          if [ "${{ matrix.test }}" = "test_replay_determinism" ]; then
+            DESELECT_FLAG="--deselect integration-tests/test/test_replay_determinism.py::test_network_recovers_from_slow_deploy"
+          fi
+          poetry run pytest integration-tests/test/${{ matrix.test }}.py -v --tb=short --log-cli-level=WARNING \
+            --startup-timeout=600 --command-timeout=300 --timeout=600 --timeout-scale=1.5 $DESELECT_FLAG
+
+      - name: Upload Integration Test Logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-logs-arm64-${{ matrix.test }}
+          path: system-integration/integration-tests/
+          retention-days: 7
+
+      - name: Upload Docker Logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-logs-arm64-${{ matrix.test }}
           path: /tmp/*.log
           if-no-files-found: ignore
           retention-days: 7
@@ -351,7 +449,8 @@ jobs:
     name: Release Rust Docker Image
     needs:
       - required_rust_unit_tests
-      - required_rust_integration_tests
+      - required_rust_integration_tests_amd64
+      - required_rust_integration_tests_arm64
       - build_rust_docker_image
       - build_base
     if: >-
@@ -459,7 +558,8 @@ jobs:
       contents: write # Required for creating/updating releases
     needs:
       - required_rust_unit_tests
-      - required_rust_integration_tests
+      - required_rust_integration_tests_amd64
+      - required_rust_integration_tests_arm64
       - build_rust_docker_image
     runs-on: ubuntu-latest
     steps:
