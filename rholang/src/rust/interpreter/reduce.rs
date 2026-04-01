@@ -546,12 +546,8 @@ impl DebruijnInterpreter {
         self.update_mergeable_channels(&chan).await;
         log_op_step("after_update_mergeable_channels");
 
-        // println!("Attempting to lock space for produce");
-        let mut space_locked = self.space.try_lock().unwrap();
-        // println!("Locked space for produce");
-        let produce_result = space_locked.produce(chan.clone(), data.clone(), persistent)?;
-        let is_replay = space_locked.is_replay();
-        drop(space_locked);
+        let produce_result = self.space.produce(chan.clone(), data.clone(), persistent)?;
+        let is_replay = self.space.is_replay();
         log_op_step("after_space_produce");
 
         match produce_result {
@@ -605,9 +601,7 @@ impl DebruijnInterpreter {
                 match dispatch_type {
                     DispatchType::NonDeterministicCall(ref output) => {
                         let produce1 = produce_event.mark_as_non_deterministic(output.clone());
-                        let mut space_locked = self.space.try_lock().unwrap();
-                        space_locked.update_produce(produce1);
-                        drop(space_locked);
+                        self.space.update_produce(produce1);
                         log_op_step("after_update_produce_nondeterministic");
                         Ok(dispatch_type)
                     }
@@ -615,9 +609,7 @@ impl DebruijnInterpreter {
                     DispatchType::FailedNonDeterministicCall(error) => {
                         // Mark the produce as failed for replay safety
                         let failed_produce = produce_event.with_error();
-                        let mut space_locked = self.space.try_lock().unwrap();
-                        space_locked.update_produce(failed_produce);
-                        drop(space_locked);
+                        self.space.update_produce(failed_produce);
                         log_op_step("after_update_produce_failed_nondeterministic");
                         // Re-raise known error types as-is to preserve output_not_produced;
                         // wrap unknown errors in NonDeterministicProcessFailure.
@@ -763,9 +755,7 @@ impl DebruijnInterpreter {
 
         // println!("\nsources in reduce consume: {:?}", sources);
 
-        // println!("Attempting to lock space for produce");
-        let mut space_locked = self.space.try_lock().unwrap();
-        let consume_result = space_locked.consume(
+        let consume_result = self.space.consume(
             sources.clone(),
             patterns.clone(),
             TaggedContinuation {
@@ -774,8 +764,7 @@ impl DebruijnInterpreter {
             persistent,
             peeks.clone(),
         )?;
-        let is_replay = space_locked.is_replay();
-        drop(space_locked);
+        let is_replay = self.space.is_replay();
         log_op_step("after_space_consume", sources.len());
 
         // println!("space map in reduce consume: {:?}", self.space.lock().unwrap().to_map());

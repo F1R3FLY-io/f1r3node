@@ -1665,7 +1665,7 @@ async fn eval_of_new_should_use_deterministic_names_and_provide_urn_based_resour
     let mut kvm = InMemoryStoreManager::new();
     let store = kvm.r_space_stores().await.unwrap();
     let space = RSpace::create(store, Arc::new(Box::new(Matcher))).unwrap();
-    let rspace: RhoISpace = Arc::new(tokio::sync::Mutex::new(Box::new(space.clone())));
+    let rspace: RhoISpace = Arc::new(Box::new(space.clone()));
     let reducer = DebruijnInterpreter::new(
         rspace,
         Arc::new(urn_map),

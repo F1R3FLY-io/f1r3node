@@ -340,8 +340,6 @@ impl RhoRuntime for RhoRuntimeImpl {
         let checkpoint = self
             .reducer
             .space
-            .try_lock()
-            .unwrap()
             .create_soft_checkpoint();
         metrics::histogram!(CREATE_SOFT_CHECKPOINT_TIME_METRIC, "source" => RUNTIME_METRICS_SOURCE)
             .record(start.elapsed().as_secs_f64());
@@ -351,7 +349,7 @@ impl RhoRuntime for RhoRuntimeImpl {
     }
 
     fn take_event_log(&mut self) -> Log {
-        let log = self.reducer.space.try_lock().unwrap().take_event_log();
+        let log = self.reducer.space.take_event_log();
         let log_len = log.len() as u64;
         metrics::counter!(RUNTIME_TAKE_EVENT_LOG_TOTAL_METRIC, "source" => RUNTIME_METRICS_SOURCE)
             .increment(1);
@@ -369,7 +367,7 @@ impl RhoRuntime for RhoRuntimeImpl {
     }
 
     fn get_root(&self) -> Blake2b256Hash {
-        self.reducer.space.try_lock().unwrap().get_root()
+        self.reducer.space.get_root()
     }
 
     fn revert_to_soft_checkpoint(
@@ -383,10 +381,8 @@ impl RhoRuntime for RhoRuntimeImpl {
         .increment(1);
         self.reducer
             .space
-            .try_lock()
-            .unwrap()
             .revert_to_soft_checkpoint(soft_checkpoint)
-            .unwrap()
+            .expect("revert_to_soft_checkpoint should succeed")
     }
 
     fn create_checkpoint(&mut self) -> Checkpoint {
@@ -396,10 +392,8 @@ impl RhoRuntime for RhoRuntimeImpl {
         let checkpoint = self
             .reducer
             .space
-            .try_lock()
-            .unwrap()
             .create_checkpoint()
-            .unwrap();
+            .expect("create_checkpoint should succeed");
         metrics::histogram!(CREATE_CHECKPOINT_TIME_METRIC, "source" => RUNTIME_METRICS_SOURCE)
             .record(start.elapsed().as_secs_f64());
         metrics::counter!(RUNTIME_CHECKPOINT_TOTAL_METRIC, "source" => RUNTIME_METRICS_SOURCE)
@@ -408,10 +402,7 @@ impl RhoRuntime for RhoRuntimeImpl {
     }
 
     fn reset(&mut self, root: &Blake2b256Hash) -> Result<(), InterpreterError> {
-        let mut space_lock = self.reducer.space.try_lock().map_err(|_| {
-            InterpreterError::ReduceError("RhoRuntime reset: failed to lock reducer.space".into())
-        })?;
-        space_lock.reset(root)?;
+        self.reducer.space.reset(root)?;
         Ok(())
     }
 
@@ -423,17 +414,15 @@ impl RhoRuntime for RhoRuntimeImpl {
         Ok(self
             .reducer
             .space
-            .try_lock()
-            .unwrap()
             .consume_result(channel, pattern)?)
     }
 
     fn get_data(&self, channel: &Par) -> Vec<Datum<ListParWithRandom>> {
-        self.reducer.space.try_lock().unwrap().get_data(channel)
+        self.reducer.space.get_data(channel)
     }
 
     fn get_joins(&self, channel: Par) -> Vec<Vec<Par>> {
-        self.reducer.space.try_lock().unwrap().get_joins(channel)
+        self.reducer.space.get_joins(channel)
     }
 
     fn get_continuations(
@@ -442,8 +431,6 @@ impl RhoRuntime for RhoRuntimeImpl {
     ) -> Vec<WaitingContinuation<BindPattern, TaggedContinuation>> {
         self.reducer
             .space
-            .try_lock()
-            .unwrap()
             .get_waiting_continuations(channels)
     }
 
@@ -484,16 +471,16 @@ impl RhoRuntime for RhoRuntimeImpl {
     fn get_hot_changes(
         &self,
     ) -> HashMap<Vec<Par>, Row<BindPattern, ListParWithRandom, TaggedContinuation>> {
-        self.reducer.space.try_lock().unwrap().to_map()
+        self.reducer.space.to_map()
     }
 
     fn rig(&self, log: Log) -> Result<(), InterpreterError> {
-        self.reducer.space.try_lock().unwrap().rig(log)?;
+        self.reducer.space.rig(log)?;
         Ok(())
     }
 
     fn check_replay_data(&self) -> Result<(), InterpreterError> {
-        self.reducer.space.try_lock().unwrap().check_replay_data()?;
+        self.reducer.space.check_replay_data()?;
         Ok(())
     }
 }
@@ -505,24 +492,18 @@ impl HasCost for RhoRuntimeImpl {
 }
 
 pub type RhoTuplespace = Arc<
-    tokio::sync::Mutex<
-        Box<dyn Tuplespace<Par, BindPattern, ListParWithRandom, TaggedContinuation> + Send + Sync>,
-    >,
+    Box<dyn Tuplespace<Par, BindPattern, ListParWithRandom, TaggedContinuation> + Send + Sync>,
 >;
 
 pub type RhoISpace = Arc<
-    tokio::sync::Mutex<
-        Box<dyn ISpace<Par, BindPattern, ListParWithRandom, TaggedContinuation> + Send + Sync>,
-    >,
+    Box<dyn ISpace<Par, BindPattern, ListParWithRandom, TaggedContinuation> + Send + Sync>,
 >;
 
 pub type RhoReplayISpace = Arc<
-    tokio::sync::Mutex<
-        Box<
-            dyn IReplayRSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>
-                + Send
-                + Sync,
-        >,
+    Box<
+        dyn IReplayRSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>
+            + Send
+            + Sync,
     >,
 >;
 
@@ -1132,9 +1113,9 @@ where
     let res = introduce_system_process(vec![&mut rspace], proc_defs);
     assert!(res.iter().all(|s| s.is_none()));
 
-    let charging_rspace: RhoISpace = Arc::new(tokio::sync::Mutex::new(Box::new(
+    let charging_rspace: RhoISpace = Arc::new(Box::new(
         ChargingRSpace::charging_rspace(rspace, cost.clone()),
-    )));
+    ));
 
     // Use services from ExternalServices
     let openai_service = external_services.openai.clone();

@@ -910,15 +910,7 @@ extern "C" fn reset(
     // Access underlying space directly to capture Result and map to error code
     let runtime = unsafe { &mut (*runtime_ptr).runtime };
 
-    let mut space_lock = match runtime.reducer.space.try_lock() {
-        Ok(lock) => lock,
-        Err(e) => {
-            eprintln!("ERROR: failed to lock reducer.space in reset: {:?}", e);
-            return 2; // lock error
-        }
-    };
-
-    match space_lock.reset(&root) {
+    match runtime.reducer.space.reset(&root) {
         Ok(_) => 0,
         Err(e) => {
             eprintln!("ERROR: reset failed: {:?}", e);

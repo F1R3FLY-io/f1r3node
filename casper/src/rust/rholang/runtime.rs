@@ -1101,7 +1101,6 @@ impl RuntimeOps {
         // Diagnostic: probe registry state for byte_name(14) after reset, before evaluate.
         // This tells us whether the registry's persistent continuation is accessible
         // from the history trie at this state hash.
-        // Step 2c: Guard with try_lock instead of unwrap to avoid panics.
         {
             let reg_channel = Par {
                 unforgeables: vec![GUnforgeable {
@@ -1110,79 +1109,67 @@ impl RuntimeOps {
                 ..Par::default()
             };
 
-            match self.runtime.reducer.space.try_lock() {
-                Ok(space_guard) => {
-                    let reg_data = space_guard.get_data(&reg_channel);
-                    let reg_conts = space_guard.get_waiting_continuations(vec![reg_channel.clone()]);
-                    let reg_joins = space_guard.get_joins(reg_channel.clone());
-                    drop(space_guard);
+            let space = &self.runtime.reducer.space;
+            let reg_data = space.get_data(&reg_channel);
+            let reg_conts = space.get_waiting_continuations(vec![reg_channel.clone()]);
+            let reg_joins = space.get_joins(reg_channel.clone());
 
-                    let persistent_conts = reg_conts.iter().filter(|wc| wc.persist).count();
+            let persistent_conts = reg_conts.iter().filter(|wc| wc.persist).count();
 
-                    tracing::info!(
-                        target: "f1r3fly.rholang.diag",
-                        state_hash = %hex::encode(start),
-                        data_count = reg_data.len(),
-                        cont_count = reg_conts.len(),
-                        persistent_conts = persistent_conts,
-                        join_count = reg_joins.len(),
-                        "POST-RESET REGISTRY PROBE byte_name(14): data={}, conts={} (persistent={}), joins={}",
-                        reg_data.len(),
-                        reg_conts.len(),
-                        persistent_conts,
-                        reg_joins.len()
-                    );
+            tracing::info!(
+                target: "f1r3fly.rholang.diag",
+                state_hash = %hex::encode(start),
+                data_count = reg_data.len(),
+                cont_count = reg_conts.len(),
+                persistent_conts = persistent_conts,
+                join_count = reg_joins.len(),
+                "POST-RESET REGISTRY PROBE byte_name(14): data={}, conts={} (persistent={}), joins={}",
+                reg_data.len(),
+                reg_conts.len(),
+                persistent_conts,
+                reg_joins.len()
+            );
 
-                    // If joins exist, log the join channel groups
-                    for (i, join_group) in reg_joins.iter().enumerate() {
-                        let join_ch_ids: Vec<String> = join_group
-                            .iter()
-                            .flat_map(|par| &par.unforgeables)
-                            .filter_map(|u| u.unf_instance.as_ref())
-                            .map(|inst| match inst {
-                                UnfInstance::GPrivateBody(gp) => format!("GPrivate({})", hex::encode(&gp.id)),
-                                other => format!("{:?}", other),
-                            })
-                            .collect();
-                        tracing::info!(
-                            target: "f1r3fly.rholang.diag",
-                            join_idx = i,
-                            join_channels = ?join_ch_ids,
-                            "POST-RESET REGISTRY PROBE byte_name(14): join group #{}: {:?}",
-                            i, join_ch_ids
-                        );
-                    }
+            // If joins exist, log the join channel groups
+            for (i, join_group) in reg_joins.iter().enumerate() {
+                let join_ch_ids: Vec<String> = join_group
+                    .iter()
+                    .flat_map(|par| &par.unforgeables)
+                    .filter_map(|u| u.unf_instance.as_ref())
+                    .map(|inst| match inst {
+                        UnfInstance::GPrivateBody(gp) => format!("GPrivate({})", hex::encode(&gp.id)),
+                        other => format!("{:?}", other),
+                    })
+                    .collect();
+                tracing::info!(
+                    target: "f1r3fly.rholang.diag",
+                    join_idx = i,
+                    join_channels = ?join_ch_ids,
+                    "POST-RESET REGISTRY PROBE byte_name(14): join group #{}: {:?}",
+                    i, join_ch_ids
+                );
+            }
 
-                    // If continuations exist, log their pattern info
-                    for (i, wc) in reg_conts.iter().enumerate() {
-                        tracing::info!(
-                            target: "f1r3fly.rholang.diag",
-                            cont_idx = i,
-                            persist = wc.persist,
-                            pattern_count = wc.patterns.len(),
-                            "POST-RESET REGISTRY PROBE byte_name(14): continuation #{}: persist={}, patterns={}",
-                            i, wc.persist, wc.patterns.len()
-                        );
-                    }
+            // If continuations exist, log their pattern info
+            for (i, wc) in reg_conts.iter().enumerate() {
+                tracing::info!(
+                    target: "f1r3fly.rholang.diag",
+                    cont_idx = i,
+                    persist = wc.persist,
+                    pattern_count = wc.patterns.len(),
+                    "POST-RESET REGISTRY PROBE byte_name(14): continuation #{}: persist={}, patterns={}",
+                    i, wc.persist, wc.patterns.len()
+                );
+            }
 
-                    if reg_conts.is_empty() && reg_joins.is_empty() {
-                        tracing::warn!(
-                            target: "f1r3fly.rholang.diag",
-                            state_hash = %hex::encode(start),
-                            "POST-RESET REGISTRY PROBE byte_name(14): NO continuations AND NO joins — \
-                             registry state is NOT accessible at this state hash! \
-                             This confirms the registry COMM cannot fire."
-                        );
-                    }
-                }
-                Err(_) => {
-                    tracing::warn!(
-                        target: "f1r3fly.rholang.diag",
-                        state_hash = %hex::encode(start),
-                        "POST-RESET REGISTRY PROBE byte_name(14): SKIPPED — space lock not available \
-                         (another thread holds the lock)"
-                    );
-                }
+            if reg_conts.is_empty() && reg_joins.is_empty() {
+                tracing::warn!(
+                    target: "f1r3fly.rholang.diag",
+                    state_hash = %hex::encode(start),
+                    "POST-RESET REGISTRY PROBE byte_name(14): NO continuations AND NO joins — \
+                     registry state is NOT accessible at this state hash! \
+                     This confirms the registry COMM cannot fire."
+                );
             }
         }
 

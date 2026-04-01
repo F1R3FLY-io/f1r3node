@@ -229,11 +229,8 @@ impl Interpreter for InterpreterImpl {
                     // Non-zero data/continuation counts indicate work that the
                     // reducer did NOT complete — potential early termination.
                     {
-                        let space_locked = reducer.space.try_lock()
-                            .expect("space lock should be available after evaluation");
                         let (data_channels, data_items, cont_channels, cont_items) =
-                            space_locked.pending_state_counts();
-                        drop(space_locked);
+                            reducer.space.pending_state_counts();
 
                         tracing::info!(
                             target: "f1r3fly.rholang",
@@ -259,12 +256,9 @@ impl Interpreter for InterpreterImpl {
                                  concurrent branches completed"
                             );
 
-                            // Step 1 (Phase 5d): enumerate the actual channels
-                            // with pending continuations for cross-referencing
-                            let space_locked2 = reducer.space.try_lock()
-                                .expect("space lock should be available for cont detail");
-                            let cont_detail = space_locked2.pending_continuation_channels_debug();
-                            drop(space_locked2);
+                            // Enumerate the actual channels with pending
+                            // continuations for cross-referencing
+                            let cont_detail = reducer.space.pending_continuation_channels_debug();
                             for (i, (channels_dbg, num_conts, has_peek)) in cont_detail.iter().enumerate() {
                                 tracing::warn!(
                                     target: "f1r3fly.rholang.diag",
