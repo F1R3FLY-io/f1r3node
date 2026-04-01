@@ -5,9 +5,10 @@
 // This matches Scala's Span[F].traceI() and withMarks() semantics.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::hash_map::DefaultHasher;
 use std::fmt::Debug;
-use std::hash::Hash;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::hash::{Hash, Hasher};
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::time::Instant;
 
 use dashmap::DashMap;
@@ -50,15 +51,47 @@ pub struct RSpaceStore {
     pub cold: Arc<dyn KeyValueStore>,
 }
 
+/// Guard that holds a per-channel-group lock.
+///
+/// Owns the `Arc<Mutex<()>>` to keep the mutex alive for the duration
+/// of the guard, and the `MutexGuard` that actually holds the lock.
+/// Using a raw pointer to work around the self-referential lifetime issue:
+/// the `MutexGuard` borrows from the `Mutex` inside the `Arc`, but Rust
+/// cannot express this directly. The `Arc` ensures the `Mutex` lives as
+/// long as this struct, and Drop releases in the correct order.
+pub struct ChannelGroupGuard {
+    _guard: std::sync::MutexGuard<'static, ()>,
+    _lock: Arc<std::sync::Mutex<()>>,
+}
+
+impl ChannelGroupGuard {
+    pub fn new(lock: Arc<std::sync::Mutex<()>>) -> Self {
+        // SAFETY: The Arc keeps the Mutex alive. We transmute the lifetime
+        // to 'static because we store the Arc alongside the guard, guaranteeing
+        // the Mutex outlives the guard. The guard is dropped before the Arc
+        // because struct fields are dropped in declaration order.
+        let guard = unsafe {
+            let mutex_ref: &std::sync::Mutex<()> = &*lock;
+            let static_ref: &'static std::sync::Mutex<()> = std::mem::transmute(mutex_ref);
+            static_ref.lock().expect("channel group lock poisoned")
+        };
+        ChannelGroupGuard {
+            _guard: guard,
+            _lock: lock,
+        }
+    }
+}
+
 #[repr(C)]
 #[derive(Clone)]
 pub struct RSpace<C, P, A, K> {
-    pub history_repository: Arc<Mutex<Arc<Box<dyn HistoryRepository<C, P, A, K> + Send + Sync + 'static>>>>,
-    pub store: Arc<Mutex<Arc<Box<dyn HotStore<C, P, A, K>>>>>,
+    pub history_repository: Arc<RwLock<Arc<Box<dyn HistoryRepository<C, P, A, K> + Send + Sync + 'static>>>>,
+    pub store: Arc<RwLock<Arc<Box<dyn HotStore<C, P, A, K>>>>>,
     installs: Arc<Mutex<BTreeMap<Vec<C>, Install<P, K>>>>,
     event_log: Arc<Mutex<Log>>,
     produce_counter: Arc<Mutex<BTreeMap<Produce, i32>>>,
     matcher: Arc<Box<dyn Match<P, A>>>,
+    channel_locks: Arc<DashMap<u64, Arc<std::sync::Mutex<()>>>>,
 }
 
 fn block_creator_phase_substep_profile_enabled() -> bool {
@@ -251,12 +284,12 @@ where
         let next_history = {
             let _history_span =
                 tracing::info_span!(target: "f1r3fly.rspace", HISTORY_CHECKPOINT_SPAN).entered();
-            let hr = self.history_repository.lock().expect("history_repository lock in create_checkpoint");
+            let hr = self.history_repository.read().expect("history_repository read lock in create_checkpoint");
             hr.checkpoint(changes)
         };
         log_mem_step("after_history_checkpoint");
         {
-            let mut hr = self.history_repository.lock().expect("history_repository lock in create_checkpoint (set)");
+            let mut hr = self.history_repository.write().expect("history_repository write lock in create_checkpoint (set)");
             *hr = Arc::new(next_history);
         }
         log_mem_step("after_set_history_repository");
@@ -267,7 +300,7 @@ where
         log_mem_step("after_take_produce_counter");
 
         let history_reader = {
-            let hr = self.history_repository.lock().expect("history_repository lock in create_checkpoint (reader)");
+            let hr = self.history_repository.read().expect("history_repository read lock in create_checkpoint (reader)");
             hr.get_history_reader(&hr.root())?
         };
         log_mem_step("after_get_history_reader");
@@ -282,7 +315,7 @@ where
         log_mem_step("finish");
 
         Ok(Checkpoint {
-            root: self.history_repository.lock().expect("history_repository lock in create_checkpoint (root)").root(),
+            root: self.history_repository.read().expect("history_repository read lock in create_checkpoint (root)").root(),
             log,
         })
     }
@@ -296,11 +329,11 @@ where
         );
 
         let next_history = {
-            let hr = self.history_repository.lock().expect("history_repository lock in reset");
+            let hr = self.history_repository.read().expect("history_repository read lock in reset");
             hr.reset(root)?
         };
         {
-            let mut hr = self.history_repository.lock().expect("history_repository lock in reset (set)");
+            let mut hr = self.history_repository.write().expect("history_repository write lock in reset (set)");
             *hr = Arc::new(next_history);
         }
 
@@ -308,7 +341,7 @@ where
         *self.produce_counter.lock().expect("produce_counter lock in reset") = BTreeMap::new();
 
         let history_reader = {
-            let hr = self.history_repository.lock().expect("history_repository lock in reset (reader)");
+            let hr = self.history_repository.read().expect("history_repository read lock in reset (reader)");
             hr.get_history_reader(root)?
         };
         self.create_new_hot_store(history_reader);
@@ -337,7 +370,7 @@ where
         self.reset(&RadixHistory::empty_root_node_hash())
     }
 
-    fn get_root(&self) -> Blake2b256Hash { self.history_repository.lock().expect("history_repository lock in get_root").root() }
+    fn get_root(&self) -> Blake2b256Hash { self.history_repository.read().expect("history_repository read lock in get_root").root() }
 
     fn to_map(&self) -> HashMap<Vec<C>, Row<P, A, K>> { self.get_store().to_map() }
 
@@ -369,7 +402,7 @@ where
         let _span =
             tracing::info_span!(target: "f1r3fly.rspace", REVERT_SOFT_CHECKPOINT_SPAN).entered();
         let history_reader = {
-            let history = self.history_repository.lock().expect("history_repository lock in revert_to_soft_checkpoint");
+            let history = self.history_repository.read().expect("history_repository read lock in revert_to_soft_checkpoint");
             history.get_history_reader(&history.root())?
         };
         let hot_store = HotStoreInstances::create_from_mhs_and_hr(
@@ -377,7 +410,7 @@ where
             history_reader.base(),
         );
 
-        *self.store.lock().expect("store lock in revert_to_soft_checkpoint") = Arc::new(hot_store);
+        self.create_new_hot_store_from(hot_store);
         *self.event_log.lock().expect("event_log lock in revert_to_soft_checkpoint") = checkpoint.log;
         *self.produce_counter.lock().expect("produce_counter lock in revert_to_soft_checkpoint") = checkpoint.produce_counter;
 
@@ -551,25 +584,54 @@ where
         K: Clone + Debug,
     {
         RSpace {
-            history_repository: Arc::new(Mutex::new(history_repository)),
-            store: Arc::new(Mutex::new(Arc::new(store))),
+            history_repository: Arc::new(RwLock::new(history_repository)),
+            store: Arc::new(RwLock::new(Arc::new(store))),
             matcher,
             installs: Arc::new(Mutex::new(BTreeMap::new())),
             event_log: Arc::new(Mutex::new(Vec::new())),
             produce_counter: Arc::new(Mutex::new(BTreeMap::new())),
+            channel_locks: Arc::new(DashMap::new()),
         }
     }
 
     /// Returns a clone of the store Arc for lock-free read access.
-    /// The HotStore trait methods already use `&self` (interior mutability),
-    /// so callers can use the returned Arc without holding any lock.
+    /// Uses RwLock::read() so multiple produce/consume operations can access
+    /// the store concurrently. The HotStore trait methods use interior mutability
+    /// (DashMap), so callers can use the returned Arc without holding any lock.
     pub fn get_store(&self) -> Arc<Box<dyn HotStore<C, P, A, K>>> {
-        self.store.lock().expect("store lock in get_store").clone()
+        self.store.read().expect("store read lock in get_store").clone()
     }
 
     /// Returns a clone of the history_repository Arc for lock-free read access.
     pub fn get_history_repository(&self) -> Arc<Box<dyn HistoryRepository<C, P, A, K> + Send + Sync + 'static>> {
-        self.history_repository.lock().expect("history_repository lock in get_history_repository").clone()
+        self.history_repository.read().expect("history_repository read lock in get_history_repository").clone()
+    }
+
+    /// Acquires a per-channel-group lock for the given set of channels.
+    ///
+    /// Channels are hashed individually, sorted for deterministic ordering
+    /// (preventing deadlocks from different channel orderings), then combined
+    /// into a single key that identifies the channel group. The lock is
+    /// created on first access and cached in the `channel_locks` DashMap.
+    fn lock_channel_group(&self, channels: &[C]) -> ChannelGroupGuard {
+        let mut hashes: Vec<u64> = channels.iter().map(|c| {
+            let mut h = DefaultHasher::new();
+            c.hash(&mut h);
+            h.finish()
+        }).collect();
+        hashes.sort();
+
+        let mut hasher = DefaultHasher::new();
+        for h in &hashes {
+            h.hash(&mut hasher);
+        }
+        let key = hasher.finish();
+
+        let lock = self.channel_locks
+            .entry(key)
+            .or_insert_with(|| Arc::new(std::sync::Mutex::new(())))
+            .clone();
+        ChannelGroupGuard::new(lock)
     }
 
     pub fn create(
@@ -693,6 +755,9 @@ where
         // Span[F].traceI("locked-consume") from Scala
         let _span = tracing::info_span!(target: "f1r3fly.rspace", LOCKED_CONSUME_SPAN).entered();
         event!(Level::DEBUG, mark = "started-locked-consume", "locked_consume");
+
+        // Acquire per-channel-group lock for this consume's channel set
+        let _channel_guard = self.lock_channel_group(channels);
 
         // println!("\nHit locked_consume");
         // println!(
@@ -1052,11 +1117,28 @@ where
 
         self.log_produce(produce_ref, &channel, &data, persist);
 
-        let extracted = self.extract_produce_candidate(grouped_channels, channel.clone(), Datum {
+        // Try each channel group under its own per-channel-group lock.
+        // This allows independent channel groups to proceed concurrently
+        // while serializing operations on the same channel group.
+        let datum = Datum {
             a: data.clone(),
             persist,
             source: produce_ref.clone(),
-        });
+        };
+
+        let mut extracted: MaybeProduceCandidate<C, P, A, K> = None;
+        for channels in &grouped_channels {
+            let _channel_guard = self.lock_channel_group(channels);
+            let candidate = self.extract_produce_candidate_for_group(
+                channels.clone(),
+                channel.clone(),
+                datum.clone(),
+            );
+            if candidate.is_some() {
+                extracted = candidate;
+                break;
+            }
+        }
 
         match extracted {
             Some(produce_candidate) => {
@@ -1126,12 +1208,54 @@ where
     }
 
     /*
-     * Find produce candidate
+     * Find produce candidate for a single channel group.
+     *
+     * This is called under the per-channel-group lock, allowing independent
+     * channel groups to proceed concurrently.
+     */
+    fn extract_produce_candidate_for_group(
+        &self,
+        channels: Vec<C>,
+        bat_channel: C,
+        data: Datum<A>,
+    ) -> MaybeProduceCandidate<C, P, A, K> {
+        let match_candidates: Vec<(WaitingContinuation<P, K>, i32)> = {
+            let continuations = self.get_store().get_continuations(&channels);
+            self.shuffle_with_index(continuations)
+        };
+
+        let channel_to_indexed_data: DashMap<C, Vec<(Datum<A>, i32)>> = channels
+            .iter()
+            .map(|c| {
+                let data_vec = self.get_store().get_data(c);
+                let mut shuffled_data = self.shuffle_with_index(data_vec);
+                if *c == bat_channel {
+                    shuffled_data.insert(0, (data.clone(), -1));
+                }
+                (c.clone(), shuffled_data)
+            })
+            .collect();
+
+        self.extract_first_match(
+            &self.matcher,
+            channels,
+            match_candidates,
+            channel_to_indexed_data,
+        )
+    }
+
+    /*
+     * Find produce candidate (iterates through ALL channel groups).
+     *
+     * NOTE: This method is retained for reference but is no longer called
+     * from locked_produce, which now uses extract_produce_candidate_for_group
+     * with per-channel-group locking.
      *
      * NOTE: On Rust side, we are NOT passing functions through. Instead just the
      * data. And then in 'run_matcher_for_channels' we call the functions
      * defined below
      */
+    #[allow(dead_code)]
     fn extract_produce_candidate(
         &self,
         grouped_channels: Vec<Vec<C>>,
@@ -1534,7 +1658,14 @@ where
         history_reader: Box<dyn HistoryReader<Blake2b256Hash, C, P, A, K>>,
     ) -> () {
         let next_hot_store = HotStoreInstances::create_from_hr(history_reader.base());
-        *self.store.lock().expect("store lock in create_new_hot_store") = Arc::new(next_hot_store);
+        *self.store.write().expect("store write lock in create_new_hot_store") = Arc::new(next_hot_store);
+    }
+
+    fn create_new_hot_store_from(
+        &self,
+        hot_store: Box<dyn HotStore<C, P, A, K>>,
+    ) -> () {
+        *self.store.write().expect("store write lock in create_new_hot_store_from") = Arc::new(hot_store);
     }
 
     fn wrap_result(
@@ -1648,6 +1779,9 @@ where
         }
     }
 
+    // Retained for reference; no longer called from locked_produce which now
+    // uses extract_produce_candidate_for_group with per-channel-group locking.
+    #[allow(dead_code)]
     fn run_matcher_for_channels(
         &self,
         grouped_channels: Vec<Vec<C>>,

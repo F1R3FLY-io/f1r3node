@@ -6,10 +6,11 @@
 // This matches Scala's Span[F].traceI() semantics for async operations.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::hash_map::DefaultHasher;
 use std::fmt::Debug;
-use std::hash::Hash;
+use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicI64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
 use dashmap::DashMap;
 use rand::seq::SliceRandom;
@@ -41,14 +42,15 @@ use crate::rspace::history::history_repository::HistoryRepository;
 use crate::rspace::hot_store::{HotStore, HotStoreInstances};
 use crate::rspace::hot_store_action::{DeleteAction, HotStoreAction, InsertAction};
 use crate::rspace::internal::*;
+use crate::rspace::rspace::ChannelGroupGuard;
 use crate::rspace::space_matcher::SpaceMatcher;
 
 
 #[repr(C)]
 #[derive(Clone)]
 pub struct ReplayRSpace<C, P, A, K> {
-    pub history_repository: Arc<Mutex<Arc<Box<dyn HistoryRepository<C, P, A, K> + Send + Sync + 'static>>>>,
-    pub store: Arc<Mutex<Arc<Box<dyn HotStore<C, P, A, K>>>>>,
+    pub history_repository: Arc<RwLock<Arc<Box<dyn HistoryRepository<C, P, A, K> + Send + Sync + 'static>>>>,
+    pub store: Arc<RwLock<Arc<Box<dyn HotStore<C, P, A, K>>>>>,
     installs: Arc<Mutex<BTreeMap<Vec<C>, Install<P, K>>>>,
     event_log: Arc<Mutex<Log>>,
     produce_counter: Arc<Mutex<BTreeMap<Produce, i32>>>,
@@ -57,6 +59,7 @@ pub struct ReplayRSpace<C, P, A, K> {
     pub replay_data: MultisetMultiMap<IOEvent, COMM>,
     logger: Arc<Mutex<Box<dyn RSpaceLogger<C, P, A, K>>>>,
     replay_waiting_continuations_estimate: Arc<AtomicI64>,
+    channel_locks: Arc<DashMap<u64, Arc<std::sync::Mutex<()>>>>,
 }
 
 impl<C, P, A, K> SpaceMatcher<C, P, A, K> for ReplayRSpace<C, P, A, K>
@@ -195,16 +198,16 @@ where
 
 
         let next_history = {
-            let hr = self.history_repository.lock().expect("history_repository lock in create_checkpoint");
+            let hr = self.history_repository.read().expect("history_repository read lock in create_checkpoint");
             hr.checkpoint(changes)
         };
         {
-            let mut hr = self.history_repository.lock().expect("history_repository lock in create_checkpoint (set)");
+            let mut hr = self.history_repository.write().expect("history_repository write lock in create_checkpoint (set)");
             *hr = Arc::new(next_history);
         }
 
         let history_reader = {
-            let hr = self.history_repository.lock().expect("history_repository lock in create_checkpoint (reader)");
+            let hr = self.history_repository.read().expect("history_repository read lock in create_checkpoint (reader)");
             hr.get_history_reader(&hr.root())?
         };
 
@@ -212,7 +215,7 @@ where
         self.restore_installs();
 
         Ok(Checkpoint {
-            root: self.history_repository.lock().expect("history_repository lock in create_checkpoint (root)").root(),
+            root: self.history_repository.read().expect("history_repository read lock in create_checkpoint (root)").root(),
             log: Vec::new(),
         })
     }
@@ -220,11 +223,11 @@ where
     fn reset(&self, root: &Blake2b256Hash) -> Result<(), RSpaceError> {
         // println!("\nhit rspace++ reset");
         let next_history = {
-            let hr = self.history_repository.lock().expect("history_repository lock in reset");
+            let hr = self.history_repository.read().expect("history_repository read lock in reset");
             hr.reset(root)?
         };
         {
-            let mut hr = self.history_repository.lock().expect("history_repository lock in reset (set)");
+            let mut hr = self.history_repository.write().expect("history_repository write lock in reset (set)");
             *hr = Arc::new(next_history);
         }
 
@@ -232,7 +235,7 @@ where
         *self.produce_counter.lock().expect("produce_counter lock in reset") = BTreeMap::new();
 
         let history_reader = {
-            let hr = self.history_repository.lock().expect("history_repository lock in reset (reader)");
+            let hr = self.history_repository.read().expect("history_repository read lock in reset (reader)");
             hr.get_history_reader(root)?
         };
         self.create_new_hot_store(history_reader);
@@ -269,7 +272,7 @@ where
         self.reset(&RadixHistory::empty_root_node_hash())
     }
 
-    fn get_root(&self) -> Blake2b256Hash { self.get_history_repository().root() }
+    fn get_root(&self) -> Blake2b256Hash { self.history_repository.read().expect("history_repository read lock in get_root").root() }
 
     fn to_map(&self) -> HashMap<Vec<C>, Row<P, A, K>> { self.get_store().to_map() }
 
@@ -299,7 +302,7 @@ where
         checkpoint: SoftCheckpoint<C, P, A, K>,
     ) -> Result<(), RSpaceError> {
         let history_reader = {
-            let history = self.history_repository.lock().expect("history_repository lock in revert_to_soft_checkpoint");
+            let history = self.history_repository.read().expect("history_repository read lock in revert_to_soft_checkpoint");
             history.get_history_reader(&history.root())?
         };
         let hot_store = HotStoreInstances::create_from_mhs_and_hr(
@@ -307,7 +310,7 @@ where
             history_reader.base(),
         );
 
-        *self.store.lock().expect("store lock in revert_to_soft_checkpoint") = Arc::new(hot_store);
+        *self.store.write().expect("store write lock in revert_to_soft_checkpoint") = Arc::new(hot_store);
         *self.event_log.lock().expect("event_log lock in revert_to_soft_checkpoint") = checkpoint.log;
         *self.produce_counter.lock().expect("produce_counter lock in revert_to_soft_checkpoint") = checkpoint.produce_counter;
 
@@ -539,8 +542,8 @@ where
         K: Clone + Debug,
     {
         ReplayRSpace {
-            history_repository: Arc::new(Mutex::new(history_repository)),
-            store: Arc::new(Mutex::new(store)),
+            history_repository: Arc::new(RwLock::new(history_repository)),
+            store: Arc::new(RwLock::new(store)),
             matcher,
             installs: Arc::new(Mutex::new(BTreeMap::new())),
             event_log: Arc::new(Mutex::new(Vec::new())),
@@ -548,6 +551,7 @@ where
             replay_data: MultisetMultiMap::empty(),
             logger: Arc::new(Mutex::new(Box::new(BasicLogger::new()))),
             replay_waiting_continuations_estimate: Arc::new(AtomicI64::new(0)),
+            channel_locks: Arc::new(DashMap::new()),
         }
     }
 
@@ -564,8 +568,8 @@ where
         K: Clone + Debug,
     {
         ReplayRSpace {
-            history_repository: Arc::new(Mutex::new(history_repository)),
-            store: Arc::new(Mutex::new(store)),
+            history_repository: Arc::new(RwLock::new(history_repository)),
+            store: Arc::new(RwLock::new(store)),
             matcher,
             installs: Arc::new(Mutex::new(BTreeMap::new())),
             event_log: Arc::new(Mutex::new(Vec::new())),
@@ -573,17 +577,47 @@ where
             replay_data: MultisetMultiMap::empty(),
             logger: Arc::new(Mutex::new(logger)),
             replay_waiting_continuations_estimate: Arc::new(AtomicI64::new(0)),
+            channel_locks: Arc::new(DashMap::new()),
         }
     }
 
     /// Returns a clone of the store Arc for lock-free read access.
+    /// Uses RwLock::read() so multiple replay operations can access
+    /// the store concurrently. The HotStore uses interior mutability (DashMap).
     pub fn get_store(&self) -> Arc<Box<dyn HotStore<C, P, A, K>>> {
-        self.store.lock().expect("store lock in get_store").clone()
+        self.store.read().expect("store read lock in get_store").clone()
     }
 
     /// Returns a clone of the history_repository Arc for lock-free read access.
     fn get_history_repository(&self) -> Arc<Box<dyn HistoryRepository<C, P, A, K> + Send + Sync + 'static>> {
-        self.history_repository.lock().expect("history_repository lock in get_history_repository").clone()
+        self.history_repository.read().expect("history_repository read lock in get_history_repository").clone()
+    }
+
+    /// Acquires a per-channel-group lock for the given set of channels.
+    ///
+    /// Channels are hashed individually, sorted for deterministic ordering
+    /// (preventing deadlocks from different channel orderings), then combined
+    /// into a single key that identifies the channel group. The lock is
+    /// created on first access and cached in the `channel_locks` DashMap.
+    fn lock_channel_group(&self, channels: &[C]) -> ChannelGroupGuard {
+        let mut hashes: Vec<u64> = channels.iter().map(|c| {
+            let mut h = DefaultHasher::new();
+            c.hash(&mut h);
+            h.finish()
+        }).collect();
+        hashes.sort();
+
+        let mut hasher = DefaultHasher::new();
+        for h in &hashes {
+            h.hash(&mut hasher);
+        }
+        let key = hasher.finish();
+
+        let lock = self.channel_locks
+            .entry(key)
+            .or_insert_with(|| Arc::new(std::sync::Mutex::new(())))
+            .clone();
+        ChannelGroupGuard::new(lock)
     }
 
     fn inc_replay_waiting_continuations(&self, channels: &[C]) {
@@ -684,6 +718,9 @@ where
         // Span[F].traceI("locked-consume") from Scala - works because this is NOT async
         let _span = tracing::info_span!(target: "f1r3fly.rspace", "locked-consume").entered();
         event!(Level::DEBUG, mark = "started-locked-consume", "locked_consume");
+
+        // Acquire per-channel-group lock for this consume's channel set
+        let _channel_guard = self.lock_channel_group(&channels);
 
         // println!(
         //     "consume: searching for data matching <patterns: {:?}> at <channels:
@@ -933,14 +970,26 @@ where
                     comms.len()
                 );
 
-                match self.get_comm_or_produce_candidate(
-                    channel.clone(),
-                    data.clone(),
-                    persist,
-                    comms.clone(),
-                    produce_ref.clone(),
-                    grouped_channels.clone(),
-                ) {
+                // Try each channel group under its own per-channel-group lock,
+                // matching the fine-grained locking in the validator RSpace.
+                let mut match_result: Option<(COMM, ProduceCandidate<C, P, A, K>)> = None;
+                for channels in &grouped_channels {
+                    let _channel_guard = self.lock_channel_group(channels);
+                    let candidate = self.get_comm_or_produce_candidate(
+                        channel.clone(),
+                        data.clone(),
+                        persist,
+                        comms.clone(),
+                        produce_ref.clone(),
+                        vec![channels.clone()],
+                    );
+                    if let Some(result) = candidate {
+                        match_result = Some(result);
+                        break;
+                    }
+                }
+
+                match match_result {
                     Some((comm, pc)) => Ok(self.handle_match(pc, comms).map(|consume_result| {
                         let p = comm
                             .produces
@@ -1451,7 +1500,7 @@ where
         history_reader: Box<dyn HistoryReader<Blake2b256Hash, C, P, A, K>>,
     ) -> () {
         let next_hot_store = HotStoreInstances::create_from_hr(history_reader.base());
-        *self.store.lock().expect("store lock in create_new_hot_store") = Arc::new(next_hot_store);
+        *self.store.write().expect("store write lock in create_new_hot_store") = Arc::new(next_hot_store);
     }
 
     fn wrap_result(
