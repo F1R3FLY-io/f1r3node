@@ -232,6 +232,7 @@ jobs:
     name: Integration Tests (amd64/${{ matrix.test }})
     needs: build_rust_docker_image
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       max-parallel: 8
@@ -336,7 +337,7 @@ jobs:
     name: Integration Tests (arm64/${{ matrix.test }})
     needs: build_rust_docker_image
     runs-on: ubuntu-24.04-arm
-    continue-on-error: true
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       max-parallel: 4
@@ -407,6 +408,8 @@ jobs:
           done
 
       - name: Run Integration Tests
+        continue-on-error: true
+        id: arm64_tests
         shell: bash -ex {0}
         env:
           DEFAULT_IMAGE: f1r3flyindustries/f1r3fly-rust-node
