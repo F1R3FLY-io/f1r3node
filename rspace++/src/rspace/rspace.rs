@@ -357,7 +357,7 @@ where
         let history = &self.history_repository;
         let history_reader = history.get_history_reader(&history.root())?;
         let hot_store = HotStoreInstances::create_from_mhs_and_hr(
-            Arc::new(Mutex::new(checkpoint.cache_snapshot)),
+            Arc::new(checkpoint.cache_snapshot),
             history_reader.base(),
         );
 

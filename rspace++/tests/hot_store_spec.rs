@@ -3,6 +3,41 @@ use std::fmt::Debug;
 use std::hash::Hash;
 use std::sync::{Arc, Mutex};
 
+/// Replace all contents of `target` with contents from `source`.
+/// Used by tests that need to set up specific hot store state before exercising
+/// the hot store API. DashMaps provide interior mutability so this works
+/// through a shared `&` reference.
+fn replace_hot_store_state<C, P, A, K>(
+    target: &HotStoreState<C, P, A, K>,
+    source: HotStoreState<C, P, A, K>,
+) where
+    C: Eq + Hash + Clone,
+    P: Clone,
+    A: Clone,
+    K: Clone,
+{
+    target.continuations.clear();
+    for entry in source.continuations.iter() {
+        target.continuations.insert(entry.key().clone(), entry.value().clone());
+    }
+    target.installed_continuations.clear();
+    for entry in source.installed_continuations.iter() {
+        target.installed_continuations.insert(entry.key().clone(), entry.value().clone());
+    }
+    target.data.clear();
+    for entry in source.data.iter() {
+        target.data.insert(entry.key().clone(), entry.value().clone());
+    }
+    target.joins.clear();
+    for entry in source.joins.iter() {
+        target.joins.insert(entry.key().clone(), entry.value().clone());
+    }
+    target.installed_joins.clear();
+    for entry in source.installed_joins.iter() {
+        target.installed_joins.insert(entry.key().clone(), entry.value().clone());
+    }
+}
+
 use dashmap::DashMap;
 use proptest::collection::vec;
 use proptest::prelude::*;
@@ -47,15 +82,12 @@ proptest! {
 
       history.put_continuations(channels.clone(), history_continuations.clone());
 
-      let cache = state.lock().unwrap();
-      assert!(cache.continuations.is_empty());
-      drop(cache);
+      assert!(state.continuations.is_empty());
 
       let read_continuations = hot_store.get_continuations(&channels.clone());
-      let cache = state.lock().unwrap();
       // Read-only get should NOT cache into hot store state to avoid
       // changes() re-emitting unchanged data with wrong channel serialization.
-      assert!(cache.continuations.get(&channels).is_none());
+      assert!(state.continuations.get(&channels).is_none());
       assert_eq!(read_continuations, history_continuations);
   }
 
@@ -65,13 +97,10 @@ proptest! {
       let (state, history, hot_store) = fixture();
 
       history.put_continuations(channels.clone(), history_continuations.clone());
-      let mut state_lock = state.lock().unwrap();
-      *state_lock = HotStoreState { continuations: DashMap::from_iter(vec![(channels.clone(), cached_continuations.clone())]), installed_continuations: DashMap::new(), data: DashMap::new(), joins: DashMap::new(), installed_joins: DashMap::new() };
-      drop(state_lock);
+      replace_hot_store_state(&state, HotStoreState { continuations: DashMap::from_iter(vec![(channels.clone(), cached_continuations.clone())]), installed_continuations: DashMap::new(), data: DashMap::new(), joins: DashMap::new(), installed_joins: DashMap::new() });
 
       let read_continuations = hot_store.get_continuations(&channels.clone());
-      let cache = state.lock().unwrap();
-      assert_eq!(cache.continuations.get(&channels).unwrap().clone(), cached_continuations);
+      assert_eq!(state.continuations.get(&channels).unwrap().clone(), cached_continuations);
       assert_eq!(read_continuations, cached_continuations);
   }
 
@@ -80,9 +109,7 @@ proptest! {
     in vec(any::<Continuation>(), 0..=SIZE_RANGE), installed_continuation in any::<Continuation>()) {
       let (state, _, hot_store) = fixture();
 
-      let mut state_lock = state.lock().unwrap();
-      *state_lock = HotStoreState { continuations: DashMap::from_iter(vec![(channels.clone(), cached_continuations.clone())]), installed_continuations: DashMap::new(), data: DashMap::new(), joins: DashMap::new(), installed_joins: DashMap::new() };
-      drop(state_lock);
+      replace_hot_store_state(&state, HotStoreState { continuations: DashMap::from_iter(vec![(channels.clone(), cached_continuations.clone())]), installed_continuations: DashMap::new(), data: DashMap::new(), joins: DashMap::new(), installed_joins: DashMap::new() });
 
       hot_store.install_continuation(&channels.clone(), installed_continuation.clone());
       let res = hot_store.get_continuations(&channels);
@@ -98,9 +125,8 @@ proptest! {
       history.put_continuations(channels.clone(), history_continuations.clone());
       hot_store.put_continuation(&channels.clone(), inserted_continuation.clone());
 
-      let cache = state.lock().unwrap();
       history_continuations.insert(0, inserted_continuation);
-      assert_eq!(cache.continuations.get(&channels).unwrap().clone(), history_continuations);
+      assert_eq!(state.continuations.get(&channels).unwrap().clone(), history_continuations);
   }
 
   #[test]
@@ -109,15 +135,12 @@ proptest! {
       let (state, history, hot_store) = fixture();
 
       history.put_continuations(channels.clone(), history_continuations.clone());
-      let mut state_lock = state.lock().unwrap();
-      *state_lock = HotStoreState { continuations: DashMap::from_iter(vec![(channels.clone(), cached_continuations.clone())]), installed_continuations: DashMap::new(), data: DashMap::new(), joins: DashMap::new(), installed_joins: DashMap::new() };
-      drop(state_lock);
+      replace_hot_store_state(&state, HotStoreState { continuations: DashMap::from_iter(vec![(channels.clone(), cached_continuations.clone())]), installed_continuations: DashMap::new(), data: DashMap::new(), joins: DashMap::new(), installed_joins: DashMap::new() });
 
       hot_store.put_continuation(&channels.clone(),inserted_continuation.clone());
 
-      let cache = state.lock().unwrap();
       cached_continuations.insert(0, inserted_continuation);
-      assert_eq!(cache.continuations.get(&channels).unwrap().clone(), cached_continuations);
+      assert_eq!(state.continuations.get(&channels).unwrap().clone(), cached_continuations);
   }
 
   #[test]
@@ -126,17 +149,14 @@ proptest! {
       prop_assume!(inserted_continuation != installed_continuation);
       let (state, _, hot_store) = fixture();
 
-      let mut state_lock = state.lock().unwrap();
-      *state_lock = HotStoreState { continuations: DashMap::from_iter(vec![(channels.clone(), cached_continuations.clone())]), installed_continuations: DashMap::new(), data: DashMap::new(), joins: DashMap::new(), installed_joins: DashMap::new() };
-      drop(state_lock);
+      replace_hot_store_state(&state, HotStoreState { continuations: DashMap::from_iter(vec![(channels.clone(), cached_continuations.clone())]), installed_continuations: DashMap::new(), data: DashMap::new(), joins: DashMap::new(), installed_joins: DashMap::new() });
 
       hot_store.install_continuation(&channels.clone(), installed_continuation.clone());
       hot_store.put_continuation(&channels.clone(), inserted_continuation.clone());
 
-      let cache = state.lock().unwrap();
       cached_continuations.insert(0, inserted_continuation);
-      assert_eq!(cache.installed_continuations.get(&channels).unwrap().clone(), installed_continuation);
-      assert_eq!(cache.continuations.get(&channels).unwrap().clone(), cached_continuations);
+      assert_eq!(state.installed_continuations.get(&channels).unwrap().clone(), installed_continuation);
+      assert_eq!(state.continuations.get(&channels).unwrap().clone(), cached_continuations);
   }
 
   #[test]
@@ -147,8 +167,7 @@ proptest! {
       history.put_continuations(channels.clone(), history_continuations.clone());
       let res = hot_store.remove_continuation(&channels.clone(), index);
 
-      let state_lock = state.lock().unwrap();
-      assert!(check_removal_works_or_fails_on_error(res, state_lock.continuations.get(&channels).map_or(Vec::new(), |x| x.clone()), history_continuations, index).is_ok());
+      assert!(check_removal_works_or_fails_on_error(res, state.continuations.get(&channels).map_or(Vec::new(), |x| x.clone()), history_continuations, index).is_ok());
   }
 
   #[test]
@@ -157,13 +176,10 @@ proptest! {
       let (state, history, hot_store) = fixture();
 
       history.put_continuations(channels.clone(), history_continuations.clone());
-      let mut state_lock = state.lock().unwrap();
-      *state_lock = HotStoreState { continuations: DashMap::from_iter(vec![(channels.clone(), cached_continuations.clone())]), installed_continuations: DashMap::new(), data: DashMap::new(), joins: DashMap::new(), installed_joins: DashMap::new() };
-      drop(state_lock);
+      replace_hot_store_state(&state, HotStoreState { continuations: DashMap::from_iter(vec![(channels.clone(), cached_continuations.clone())]), installed_continuations: DashMap::new(), data: DashMap::new(), joins: DashMap::new(), installed_joins: DashMap::new() });
 
       let res = hot_store.remove_continuation(&channels.clone(), index);
-      let state_lock = state.lock().unwrap();
-      assert!(check_removal_works_or_fails_on_error(res, state_lock.continuations.get(&channels).map_or(Vec::new(), |x| x.clone()), cached_continuations, index).is_ok());
+      assert!(check_removal_works_or_fails_on_error(res, state.continuations.get(&channels).map_or(Vec::new(), |x| x.clone()), cached_continuations, index).is_ok());
   }
 
   #[test]
@@ -171,10 +187,8 @@ proptest! {
     mut cached_continuations in vec(any::<Continuation>(), 0..=SIZE_RANGE), installed_continuation in any::<Continuation>(), index in any::<i32>()) {
       let (state, _, hot_store) = fixture();
 
-      let mut state_lock = state.lock().unwrap();
-      *state_lock = HotStoreState { continuations: DashMap::from_iter(vec![(channels.clone(), cached_continuations.clone())]), installed_continuations:  DashMap::from_iter(vec![(channels.clone(), installed_continuation.clone())]),
-        data: DashMap::new(), joins: DashMap::new(), installed_joins: DashMap::new() };
-      drop(state_lock);
+      replace_hot_store_state(&state, HotStoreState { continuations: DashMap::from_iter(vec![(channels.clone(), cached_continuations.clone())]), installed_continuations:  DashMap::from_iter(vec![(channels.clone(), installed_continuation.clone())]),
+        data: DashMap::new(), joins: DashMap::new(), installed_joins: DashMap::new() });
 
       let res = hot_store.remove_continuation(&channels.clone(), index);
       if index == 0 {
@@ -192,15 +206,12 @@ proptest! {
       let (state, history, hot_store) = fixture();
 
       history.put_data(channel.clone(), history_data.clone());
-      let cache = state.lock().unwrap();
-      assert!(cache.data.is_empty());
-      drop(cache);
+      assert!(state.data.is_empty());
 
       let read_data = hot_store.get_data(&channel);
-      let cache = state.lock().unwrap();
       // Read-only get should NOT cache into hot store state to avoid
       // changes() re-emitting unchanged data with wrong channel serialization.
-      assert!(cache.data.get(&channel).is_none());
+      assert!(state.data.get(&channel).is_none());
       assert_eq!(read_data, history_data);
   }
 
@@ -210,13 +221,10 @@ proptest! {
       let (state, history, hot_store) = fixture();
 
       history.put_data(channel.clone(), history_data.clone());
-      let mut cache = state.lock().unwrap();
-      *cache = HotStoreState { continuations: DashMap::new(), installed_continuations: DashMap::new(), data: DashMap::from_iter(vec![(channel.clone(), cached_data.clone())]), joins: DashMap::new(), installed_joins: DashMap::new() };
-      drop(cache);
+      replace_hot_store_state(&state, HotStoreState { continuations: DashMap::new(), installed_continuations: DashMap::new(), data: DashMap::from_iter(vec![(channel.clone(), cached_data.clone())]), joins: DashMap::new(), installed_joins: DashMap::new() });
 
       let read_data = hot_store.get_data(&channel);
-      let cache = state.lock().unwrap();
-      assert_eq!(cache.data.get(&channel).unwrap().clone(), cached_data);
+      assert_eq!(state.data.get(&channel).unwrap().clone(), cached_data);
       assert_eq!(read_data, cached_data);
   }
 
@@ -228,9 +236,8 @@ proptest! {
       history.put_data(channel.clone(), history_data.clone());
       hot_store.put_datum(&channel.clone(), inserted_data.clone());
 
-      let cache = state.lock().unwrap();
       history_data.insert(0, inserted_data);
-      assert_eq!(cache.data.get(&channel).unwrap().clone(), history_data);
+      assert_eq!(state.data.get(&channel).unwrap().clone(), history_data);
   }
 
   #[test]
@@ -239,14 +246,11 @@ proptest! {
       let (state, history, hot_store) = fixture();
 
       history.put_data(channel.clone(), history_data.clone());
-      let mut cache = state.lock().unwrap();
-      *cache = HotStoreState { continuations: DashMap::new(), installed_continuations: DashMap::new(), data: DashMap::from_iter(vec![(channel.clone(), cached_data.clone())]), joins: DashMap::new(), installed_joins: DashMap::new() };
-      drop(cache);
+      replace_hot_store_state(&state, HotStoreState { continuations: DashMap::new(), installed_continuations: DashMap::new(), data: DashMap::from_iter(vec![(channel.clone(), cached_data.clone())]), joins: DashMap::new(), installed_joins: DashMap::new() });
 
       hot_store.put_datum(&channel.clone(), inserted_data.clone());
-      let cache = state.lock().unwrap();
       cached_data.insert(0, inserted_data);
-      assert_eq!(cache.data.get(&channel).unwrap().clone(), cached_data);
+      assert_eq!(state.data.get(&channel).unwrap().clone(), cached_data);
   }
 
   #[test]
@@ -257,8 +261,7 @@ proptest! {
       history.put_data(channel.clone(), history_data.clone());
       let res = hot_store.remove_datum(&channel.clone(), index);
 
-      let cache = state.lock().unwrap();
-      assert!(check_datum_removal_works_or_fails_on_error(res, cache.data.get(&channel).map_or(Vec::new(), |x| x.clone()), history_data, index).is_ok());
+      assert!(check_datum_removal_works_or_fails_on_error(res, state.data.get(&channel).map_or(Vec::new(), |x| x.clone()), history_data, index).is_ok());
   }
 
   #[test]
@@ -267,13 +270,10 @@ proptest! {
       let (state, history, hot_store) = fixture();
 
       history.put_data(channel.clone(), history_data.clone());
-      let mut cache = state.lock().unwrap();
-      *cache = HotStoreState { continuations: DashMap::new(), installed_continuations: DashMap::new(), data: DashMap::from_iter(vec![(channel.clone(), cached_data.clone())]), joins: DashMap::new(), installed_joins: DashMap::new() };
-      drop(cache);
+      replace_hot_store_state(&state, HotStoreState { continuations: DashMap::new(), installed_continuations: DashMap::new(), data: DashMap::from_iter(vec![(channel.clone(), cached_data.clone())]), joins: DashMap::new(), installed_joins: DashMap::new() });
 
       let res = hot_store.remove_datum(&channel.clone(), index);
-      let cache = state.lock().unwrap();
-      assert!(check_datum_removal_works_or_fails_on_error(res, cache.data.get(&channel).unwrap().clone(), cached_data, index).is_ok());
+      assert!(check_datum_removal_works_or_fails_on_error(res, state.data.get(&channel).unwrap().clone(), cached_data, index).is_ok());
   }
 
   #[test]
@@ -281,15 +281,12 @@ proptest! {
       let (state, history, hot_store) = fixture();
 
       history.put_joins(channel.clone(), history_joins.clone());
-      let cache = state.lock().unwrap();
-      assert!(cache.joins.is_empty());
-      drop(cache);
+      assert!(state.joins.is_empty());
 
       let read_joins = hot_store.get_joins(&channel.clone());
-      let cache = state.lock().unwrap();
       // Read-only get should NOT cache into hot store state to avoid
       // changes() re-emitting unchanged joins with wrong channel serialization.
-      assert!(cache.joins.get(&channel).is_none());
+      assert!(state.joins.get(&channel).is_none());
       assert_eq!(read_joins, history_joins);
   }
 
@@ -299,13 +296,10 @@ proptest! {
       let (state, history, hot_store) = fixture();
 
       history.put_joins(channel.clone(), history_joins.clone());
-      let mut cache = state.lock().unwrap();
-      *cache = HotStoreState { continuations: DashMap::new(), installed_continuations: DashMap::new(), data: DashMap::new(), joins: DashMap::from_iter(vec![(channel.clone(), cached_joins.clone())]), installed_joins: DashMap::new() };
-      drop(cache);
+      replace_hot_store_state(&state, HotStoreState { continuations: DashMap::new(), installed_continuations: DashMap::new(), data: DashMap::new(), joins: DashMap::from_iter(vec![(channel.clone(), cached_joins.clone())]), installed_joins: DashMap::new() });
 
       let read_joins = hot_store.get_joins(&channel.clone());
-      let cache = state.lock().unwrap();
-      assert_eq!(cache.joins.get(&channel).unwrap().clone(), cached_joins);
+      assert_eq!(state.joins.get(&channel).unwrap().clone(), cached_joins);
       assert_eq!(read_joins, cached_joins);
   }
 
@@ -317,9 +311,8 @@ proptest! {
       history.put_joins(channel.clone(), history_joins.clone());
       hot_store.put_join(&channel.clone(), &inserted_join.clone());
 
-      let cache = state.lock().unwrap();
       history_joins.insert(0, inserted_join);
-      assert_eq!(cache.joins.get(&channel).unwrap().clone(), history_joins);
+      assert_eq!(state.joins.get(&channel).unwrap().clone(), history_joins);
   }
 
   #[test]
@@ -329,32 +322,26 @@ proptest! {
       let (state, history, hot_store) = fixture();
 
       history.put_joins(channel.clone(), history_joins.clone());
-      let mut cache = state.lock().unwrap();
-      *cache = HotStoreState { continuations: DashMap::new(), installed_continuations: DashMap::new(), data: DashMap::new(), joins: DashMap::from_iter(vec![(channel.clone(), cached_joins.clone())]), installed_joins: DashMap::new() };
-      drop(cache);
+      replace_hot_store_state(&state, HotStoreState { continuations: DashMap::new(), installed_continuations: DashMap::new(), data: DashMap::new(), joins: DashMap::from_iter(vec![(channel.clone(), cached_joins.clone())]), installed_joins: DashMap::new() });
 
       hot_store.put_join(&channel.clone(), &inserted_join.clone());
-      let cache = state.lock().unwrap();
       cached_joins.insert(0, inserted_join);
-      assert_eq!(cache.joins.get(&channel).unwrap().clone(), cached_joins);
+      assert_eq!(state.joins.get(&channel).unwrap().clone(), cached_joins);
   }
 
   #[test]
   fn put_join_should_not_allow_inserting_duplicate_joins(channel in  any::<Channel>(), mut cached_joins in any::<Joins>(), inserted_join in any::<Join>()) {
       let (state, _, hot_store) = fixture();
 
-      let mut cache = state.lock().unwrap();
-      *cache = HotStoreState { continuations: DashMap::new(), installed_continuations: DashMap::new(), data: DashMap::new(), joins: DashMap::from_iter(vec![(channel.clone(), cached_joins.clone())]), installed_joins: DashMap::new() };
-      drop(cache);
+      replace_hot_store_state(&state, HotStoreState { continuations: DashMap::new(), installed_continuations: DashMap::new(), data: DashMap::new(), joins: DashMap::from_iter(vec![(channel.clone(), cached_joins.clone())]), installed_joins: DashMap::new() });
 
       hot_store.put_join(&channel.clone(), &inserted_join.clone());
-      let cache = state.lock().unwrap();
 
       if !cached_joins.contains(&inserted_join) {
         cached_joins.insert(0, inserted_join);
-        assert_eq!(cache.joins.get(&channel).unwrap().clone(), cached_joins);
+        assert_eq!(state.joins.get(&channel).unwrap().clone(), cached_joins);
       } else {
-        assert_eq!(cache.joins.get(&channel).unwrap().clone(), cached_joins);
+        assert_eq!(state.joins.get(&channel).unwrap().clone(), cached_joins);
       }
   }
 
@@ -364,32 +351,26 @@ proptest! {
       prop_assume!(inserted_join != installed_join && !cached_joins.contains(&inserted_join));
       let (state, _, hot_store) = fixture();
 
-      let mut cache = state.lock().unwrap();
-      *cache = HotStoreState { continuations: DashMap::new(), installed_continuations: DashMap::new(), data: DashMap::new(), joins: DashMap::from_iter(vec![(channel.clone(), cached_joins.clone())]), installed_joins: DashMap::new() };
-      drop(cache);
+      replace_hot_store_state(&state, HotStoreState { continuations: DashMap::new(), installed_continuations: DashMap::new(), data: DashMap::new(), joins: DashMap::from_iter(vec![(channel.clone(), cached_joins.clone())]), installed_joins: DashMap::new() });
 
       hot_store.put_join(&channel.clone(), &inserted_join.clone());
       hot_store.install_join(&channel.clone(), &installed_join.clone());
 
-      let cache = state.lock().unwrap();
-      assert_eq!(cache.installed_joins.get(&channel).unwrap().clone(), vec![installed_join]);
+      assert_eq!(state.installed_joins.get(&channel).unwrap().clone(), vec![installed_join]);
       cached_joins.insert(0, inserted_join);
-      assert_eq!(cache.joins.get(&channel).unwrap().clone(), cached_joins);
+      assert_eq!(state.joins.get(&channel).unwrap().clone(), cached_joins);
   }
 
   #[test]
   fn install_join_should_not_allow_installing_duplicate_joins_per_channel(channel in  any::<Channel>(), cached_joins in any::<Joins>(), installed_join in any::<Join>()) {
       let (state, _, hot_store) = fixture();
 
-      let mut cache = state.lock().unwrap();
-      *cache = HotStoreState { continuations: DashMap::new(), installed_continuations: DashMap::new(), data: DashMap::new(), joins: DashMap::from_iter(vec![(channel.clone(), cached_joins.clone())]), installed_joins: DashMap::new() };
-      drop(cache);
+      replace_hot_store_state(&state, HotStoreState { continuations: DashMap::new(), installed_continuations: DashMap::new(), data: DashMap::new(), joins: DashMap::from_iter(vec![(channel.clone(), cached_joins.clone())]), installed_joins: DashMap::new() });
 
       hot_store.install_join(&channel.clone(), &installed_join.clone());
       hot_store.install_join(&channel.clone(), &installed_join.clone());
 
-      let cache = state.lock().unwrap();
-      assert_eq!(cache.installed_joins.get(&channel).unwrap().clone(), vec![installed_join]);
+      assert_eq!(state.installed_joins.get(&channel).unwrap().clone(), vec![installed_join]);
   }
 
   #[test]
@@ -401,8 +382,7 @@ proptest! {
       let to_remove = history_joins.get(index as usize).unwrap_or(&join).clone();
       let res = hot_store.remove_join(&channel.clone(), &to_remove);
 
-      let cache = state.lock().unwrap();
-      assert!(check_removal_works_or_ignores_errors(res, cache.joins.get(&channel).unwrap().clone(), history_joins, index).is_ok());
+      assert!(check_removal_works_or_ignores_errors(res, state.joins.get(&channel).unwrap().clone(), history_joins, index).is_ok());
   }
 
   #[test]
@@ -413,13 +393,10 @@ proptest! {
 
       history.put_joins(channel.clone(), history_joins.clone());
       let to_remove = cached_joins.get(index as usize).unwrap_or(&join).clone();
-      let mut cache = state.lock().unwrap();
-      *cache = HotStoreState { continuations: DashMap::new(), installed_continuations: DashMap::new(), data: DashMap::new(), joins: DashMap::from_iter(vec![(channel.clone(), cached_joins.clone())]), installed_joins: DashMap::new() };
-      drop(cache);
+      replace_hot_store_state(&state, HotStoreState { continuations: DashMap::new(), installed_continuations: DashMap::new(), data: DashMap::new(), joins: DashMap::from_iter(vec![(channel.clone(), cached_joins.clone())]), installed_joins: DashMap::new() });
 
       let res = hot_store.remove_join(&channel.clone(), &to_remove);
-      let cache = state.lock().unwrap();
-      assert!(check_removal_works_or_ignores_errors(res, cache.joins.get(&channel).unwrap().clone(), cached_joins, index).is_ok());
+      assert!(check_removal_works_or_ignores_errors(res, state.joins.get(&channel).unwrap().clone(), cached_joins, index).is_ok());
   }
 
   #[test]
@@ -427,10 +404,8 @@ proptest! {
       prop_assume!(cached_joins != installed_joins && !installed_joins.is_empty());
       let (state, _, hot_store) = fixture();
 
-      let mut cache = state.lock().unwrap();
-      *cache = HotStoreState { continuations: DashMap::new(), installed_continuations: DashMap::new(), data: DashMap::new(), joins: DashMap::from_iter(vec![(channel.clone(), cached_joins.clone())]),
-        installed_joins: DashMap::from_iter(vec![(channel.clone(), installed_joins.clone())]) };
-      drop(cache);
+      replace_hot_store_state(&state, HotStoreState { continuations: DashMap::new(), installed_continuations: DashMap::new(), data: DashMap::new(), joins: DashMap::from_iter(vec![(channel.clone(), cached_joins.clone())]),
+        installed_joins: DashMap::from_iter(vec![(channel.clone(), installed_joins.clone())]) });
 
       let mut rng = thread_rng();
       let mut shuffled_joins = installed_joins.clone();
@@ -438,16 +413,15 @@ proptest! {
       let to_remove = shuffled_joins.first().unwrap().clone();
 
       let res = hot_store.remove_join(&channel.clone(), &to_remove.clone());
-      let cache = state.lock().unwrap();
 
       if !cached_joins.contains(&to_remove) {
         assert!(res.is_some());
-        assert_eq!(cache.joins.get(&channel).unwrap().clone(), cached_joins);
+        assert_eq!(state.joins.get(&channel).unwrap().clone(), cached_joins);
       } else {
-        let to_remove_count_in_cache = cache.joins.get(&channel).unwrap().clone().into_iter().filter(|x| x.clone() == to_remove).count();
+        let to_remove_count_in_cache = state.joins.get(&channel).unwrap().clone().into_iter().filter(|x| x.clone() == to_remove).count();
         let to_remove_count_in_cached_joins = cached_joins.into_iter().filter(|x| x.clone() == to_remove).count();
         assert_eq!(to_remove_count_in_cache, to_remove_count_in_cached_joins - 1);
-        assert_eq!(cache.installed_joins.get(&channel).unwrap().clone(), installed_joins);
+        assert_eq!(state.installed_joins.get(&channel).unwrap().clone(), installed_joins);
       }
   }
 
@@ -456,10 +430,8 @@ proptest! {
       prop_assume!(!cached_joins.is_empty());
       let (state, _, hot_store) = fixture();
 
-      let mut cache = state.lock().unwrap();
-      *cache = HotStoreState { continuations: DashMap::new(), installed_continuations: DashMap::new(), data: DashMap::new(), joins: DashMap::from_iter(vec![(channel.clone(), cached_joins.clone())]),
-        installed_joins: DashMap::new() };
-      drop(cache);
+      replace_hot_store_state(&state, HotStoreState { continuations: DashMap::new(), installed_continuations: DashMap::new(), data: DashMap::new(), joins: DashMap::from_iter(vec![(channel.clone(), cached_joins.clone())]),
+        installed_joins: DashMap::new() });
 
       let mut rng = thread_rng();
       let mut shuffled_joins = cached_joins.clone();
@@ -468,10 +440,9 @@ proptest! {
 
       hot_store.put_continuation(&to_remove.clone(), continuation);
       let res = hot_store.remove_join(&channel.clone(), &to_remove.clone());
-      let cache = state.lock().unwrap();
 
       assert!(res.is_some());
-      assert_eq!(cache.joins.get(&channel).unwrap().clone(), cached_joins);
+      assert_eq!(state.joins.get(&channel).unwrap().clone(), cached_joins);
   }
 
     #[test]
@@ -479,15 +450,12 @@ proptest! {
         installed_continuation in any::<Continuation>(), data in vec(any::<Data>(), 0..=SIZE_RANGE), joins in any::<Joins>()) {
       let (state, _, hot_store) = fixture();
 
-      let mut cache = state.lock().unwrap();
-      *cache = HotStoreState { continuations: DashMap::from_iter(vec![(channels.clone(), continuations.clone())]), installed_continuations: DashMap::from_iter(vec![(channels.clone(), installed_continuation.clone())]),
+      replace_hot_store_state(&state, HotStoreState { continuations: DashMap::from_iter(vec![(channels.clone(), continuations.clone())]), installed_continuations: DashMap::from_iter(vec![(channels.clone(), installed_continuation.clone())]),
                 data: DashMap::from_iter(vec![(channel.clone(), data.clone())]), joins: DashMap::from_iter(vec![(channel.clone(), joins.clone())]),
-        installed_joins: DashMap::new() };
-      drop(cache);
+        installed_joins: DashMap::new() });
 
             let res = hot_store.changes();
-            let cache = state.lock().unwrap();
-            assert_eq!(res.len(), cache.continuations.len() + cache.data.len() + cache.joins.len());
+            assert_eq!(res.len(), state.continuations.len() + state.data.len() + state.joins.len());
 
             if continuations.is_empty() {
         assert!(res.contains(&HotStoreAction::Delete(DeleteAction::DeleteContinuations(DeleteContinuations { channels }))));
@@ -979,7 +947,7 @@ impl<C: Eq + Hash, P: Clone, A: Clone, K: Clone> TestHistory<C, P, A, K> {
 }
 
 type StateSetup = (
-    Arc<Mutex<HotStoreState<String, Pattern, String, StringsCaptor>>>,
+    Arc<HotStoreState<String, Pattern, String, StringsCaptor>>,
     TestHistory<String, Pattern, String, StringsCaptor>,
     Box<dyn HotStore<String, Pattern, String, StringsCaptor>>,
 );
@@ -994,7 +962,7 @@ pub fn fixture() -> StateSetup {
     };
 
     let cache =
-        Arc::new(Mutex::new(HotStoreState::<String, Pattern, String, StringsCaptor>::default()));
+        Arc::new(HotStoreState::<String, Pattern, String, StringsCaptor>::default());
 
     let hot_store =
         HotStoreInstances::create_from_mhs_and_hr(cache.clone(), Box::new(history.clone()));
@@ -1011,7 +979,7 @@ pub fn fixture_with_cache(
         state: history_state.clone(),
     };
 
-    let cache = Arc::new(Mutex::new(cache));
+    let cache = Arc::new(cache);
 
     let hot_store =
         HotStoreInstances::create_from_mhs_and_hr(cache.clone(), Box::new(history.clone()));
