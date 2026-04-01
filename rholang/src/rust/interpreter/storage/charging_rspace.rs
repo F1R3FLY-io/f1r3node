@@ -86,7 +86,7 @@ impl ChargingRSpace {
             ISpace<Par, BindPattern, ListParWithRandom, TaggedContinuation> for ChargingRSpace<T>
         {
             fn consume(
-                &mut self,
+                &self,
                 channels: Vec<Par>,
                 patterns: Vec<BindPattern>,
                 continuation: TaggedContinuation,
@@ -171,7 +171,7 @@ impl ChargingRSpace {
             }
 
             fn produce(
-                &mut self,
+                &self,
                 channel: Par,
                 data: ListParWithRandom,
                 persist: bool,
@@ -231,7 +231,7 @@ impl ChargingRSpace {
             }
 
             fn install(
-                &mut self,
+                &self,
                 channels: Vec<Par>,
                 patterns: Vec<BindPattern>,
                 continuation: TaggedContinuation,
@@ -240,7 +240,7 @@ impl ChargingRSpace {
                 self.space.install(channels, patterns, continuation)
             }
 
-            fn create_checkpoint(&mut self) -> Result<Checkpoint, RSpaceError> {
+            fn create_checkpoint(&self) -> Result<Checkpoint, RSpaceError> {
                 self.space.create_checkpoint()
             }
 
@@ -259,7 +259,7 @@ impl ChargingRSpace {
                 self.space.get_joins(channel)
             }
 
-            fn clear(&mut self) -> Result<(), RSpaceError> {
+            fn clear(&self) -> Result<(), RSpaceError> {
                 self.space.clear()
             }
 
@@ -267,12 +267,12 @@ impl ChargingRSpace {
                 self.space.get_root()
             }
 
-            fn reset(&mut self, root: &Blake2b256Hash) -> Result<(), RSpaceError> {
+            fn reset(&self, root: &Blake2b256Hash) -> Result<(), RSpaceError> {
                 self.space.reset(root)
             }
 
             fn consume_result(
-                &mut self,
+                &self,
                 channel: Vec<Par>,
                 pattern: Vec<BindPattern>,
             ) -> Result<Option<(TaggedContinuation, Vec<ListParWithRandom>)>, RSpaceError>
@@ -295,25 +295,25 @@ impl ChargingRSpace {
             }
 
             fn create_soft_checkpoint(
-                &mut self,
+                &self,
             ) -> SoftCheckpoint<Par, BindPattern, ListParWithRandom, TaggedContinuation>
             {
                 self.space.create_soft_checkpoint()
             }
 
-            fn take_event_log(&mut self) -> Log {
+            fn take_event_log(&self) -> Log {
                 self.space.take_event_log()
             }
 
             fn revert_to_soft_checkpoint(
-                &mut self,
+                &self,
                 checkpoint: SoftCheckpoint<Par, BindPattern, ListParWithRandom, TaggedContinuation>,
             ) -> Result<(), RSpaceError> {
                 self.space.revert_to_soft_checkpoint(checkpoint)
             }
 
             fn rig_and_reset(
-                &mut self,
+                &self,
                 start_root: Blake2b256Hash,
                 log: Log,
             ) -> Result<(), RSpaceError> {
@@ -332,7 +332,7 @@ impl ChargingRSpace {
                 self.space.is_replay()
             }
 
-            fn update_produce(&mut self, produce: Produce) -> () {
+            fn update_produce(&self, produce: Produce) -> () {
                 self.space.update_produce(produce)
             }
 

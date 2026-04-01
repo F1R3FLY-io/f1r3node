@@ -146,16 +146,16 @@ async fn reset_to_a_checkpoint_from_a_different_branch_should_work() {
     let (mut space, mut replay_space) = fixture().await;
 
     let root0 = replay_space.create_checkpoint().unwrap().root;
-    assert!(replay_space.store.is_empty());
+    assert!(replay_space.get_store().is_empty());
 
     let _ = space.produce("ch1".to_string(), "datum".to_string(), false);
     let root1 = space.create_checkpoint().unwrap().root;
 
     let _ = replay_space.reset(&root1);
-    assert!(replay_space.store.is_empty());
+    assert!(replay_space.get_store().is_empty());
 
     let _ = space.reset(&root0);
-    assert!(space.store.is_empty());
+    assert!(space.get_store().is_empty());
 }
 
 #[tokio::test]
@@ -811,7 +811,7 @@ async fn a_matched_continuation_defined_for_multiple_channels_some_peeked_should
 
     for i in 0..amount_of_channels {
         let ch = format!("channel{}", i);
-        let data = space.store.get_data(&ch);
+        let data = space.get_store().get_data(&ch);
         if !peeks.contains(&i) {
             assert_eq!(data.len(), 0);
         }
@@ -1409,10 +1409,10 @@ async fn reset_should_empty_the_replay_store_and_reset_the_replay_trie_updates_l
     );
     assert!(consume2.unwrap().is_none());
 
-    assert!(!replay_space.store.is_empty());
+    assert!(!replay_space.get_store().is_empty());
     assert_eq!(
         replay_space
-            .store
+            .get_store()
             .changes()
             .into_iter()
             .filter_map(|ht_action| {
@@ -1427,7 +1427,7 @@ async fn reset_should_empty_the_replay_store_and_reset_the_replay_trie_updates_l
     );
 
     let _ = replay_space.reset(&empty_point.root);
-    assert!(replay_space.store.is_empty());
+    assert!(replay_space.get_store().is_empty());
     assert!(replay_space.replay_data.is_empty());
 
     let checkpoint1 = replay_space.create_checkpoint().unwrap();
@@ -1463,10 +1463,10 @@ async fn clear_should_empty_the_replay_store_reset_the_replay_event_log_reset_th
         BTreeSet::new(),
     );
     assert!(consume2.unwrap().is_none());
-    assert!(!replay_space.store.is_empty());
+    assert!(!replay_space.get_store().is_empty());
     assert_eq!(
         replay_space
-            .store
+            .get_store()
             .changes()
             .into_iter()
             .filter_map(|action| {
@@ -1489,7 +1489,7 @@ async fn clear_should_empty_the_replay_store_reset_the_replay_event_log_reset_th
     assert!(checkpoint0.log.is_empty()); // we don't record trace logs in ReplayRspace
 
     let _ = replay_space.clear();
-    assert!(replay_space.store.is_empty());
+    assert!(replay_space.get_store().is_empty());
     assert!(replay_space.replay_data.is_empty());
 
     let checkpoint1 = replay_space.create_checkpoint().unwrap();

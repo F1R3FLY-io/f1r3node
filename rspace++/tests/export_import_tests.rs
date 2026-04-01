@@ -92,7 +92,7 @@ async fn export_and_import_of_one_page_should_works_correctly() {
     let _ = importer2.set_root(&init_point.root);
     let _ = space2.reset(&init_point.root);
 
-    // space2.store.print();
+    // space2.get_store().print();
 
     // Testing data in space2 (match all installed channels)
     for i in 0..data_size {

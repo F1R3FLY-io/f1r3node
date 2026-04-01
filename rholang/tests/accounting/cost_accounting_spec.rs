@@ -83,7 +83,7 @@ async fn create_runtimes_with_cost_log(
 
     let (space, replay) = hrstores;
 
-    let history_repository = space.history_repository.clone();
+    let history_repository = space.get_history_repository();
 
     let rho_runtime = create_rho_runtime(
         space.clone(),
