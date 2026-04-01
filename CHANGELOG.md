@@ -4,11 +4,25 @@ All notable changes to the Rust implementation of F1r3node will be documented in
 This changelog is automatically generated from conventional commits.
 
 
+## [v0.4.9] - 2026-04-01
+
+### Bug Fixes
+
+- deterministic datum selection in extract_data_candidates
+- PR links in changelog, extract release notes, skip noisy commits
+- remove unused rand imports
+- remove non-deterministic shuffle from RSpace datum matching
+
+### CI
+
+- add concurrency block to cancel outdated workflow runs
+
+
 ## [v0.4.8] - 2026-03-31
 
 ### Refactoring
 
-- separate produce error handling from NonDeterministicProcessFailure (Rust) (#456)
+- separate produce error handling from NonDeterministicProcessFailure (Rust) (#456) ([#456](https://github.com/F1R3FLY-io/f1r3node/pull/456))
 
 
 ## [v0.4.7] - 2026-03-30
@@ -94,7 +108,7 @@ This changelog is automatically generated from conventional commits.
 - address PR #325 review feedback
 - address PR #325 review findings against Scala source
 - prevent node crash from malformed secp256k1Verify/hash contract inputs
-- detect and report integer overflow in Rholang arithmetic (#415)
+- detect and report integer overflow in Rholang arithmetic (#415) ([#415](https://github.com/F1R3FLY-io/f1r3node/pull/415))
 - always restart Docker daemon on CI to clear TIME_WAIT sockets from joiner ports
 - harden CI Docker networking for integration tests
 - move effectiveEndBlockNumber before forward reference in getBlocksByHeights
@@ -117,14 +131,14 @@ This changelog is automatically generated from conventional commits.
 - Deterministic parent ordering for consistent finalization
 - Fix WSL2 networking and HTTP deploy signature
 - Add missing onBlockFinalized parameter to InitializingSpec
-- Fixes for integration tests folder to start them locally (#291) (#300)
+- Fixes for integration tests folder to start them locally (#291) (#300) ([#300](https://github.com/F1R3FLY-io/f1r3node/pull/300))
 - resolve test compilation errors after Ollama system integration
-- cleanup ai.rho Rholang example (#167)
-- replace hardcoded bootstrap address with configurable default (#164)
+- cleanup ai.rho Rholang example (#167) ([#167](https://github.com/F1R3FLY-io/f1r3node/pull/167))
+- replace hardcoded bootstrap address with configurable default (#164) ([#164](https://github.com/F1R3FLY-io/f1r3node/pull/164))
 - update produce reference handling in ReplayRSpace to ensure correct retrieval from produces
 - update expected hash in RuntimeSpec test case
 - enable mergeable tag in RhoRuntime creation
-- backport integer overflow detection to Rust interpreter (#420)
+- backport integer overflow detection to Rust interpreter (#420) ([#420](https://github.com/F1R3FLY-io/f1r3node/pull/420))
 - always restart Docker daemon on CI to clear TIME_WAIT sockets from joiner ports
 - move sigar reporter off async runtime and fix flaky test
 - set RUSTFLAGS per-arch to suppress +sse2 warning on aarch64
@@ -186,7 +200,7 @@ This changelog is automatically generated from conventional commits.
 - remove static OpenSSL linking on all platforms
 - disable static OpenSSL linking on macOS
 - Address PR review comments
-- serialize metrics tests to prevent flaky failures (#322)
+- serialize metrics tests to prevent flaky failures (#322) ([#322](https://github.com/F1R3FLY-io/f1r3node/pull/322))
 - Make heartbeat integration test timing-agnostic
 - Additional adjustments and uncommenting the docker push/tag lines
 - fixed docker push triggering on pull request update
@@ -200,9 +214,9 @@ This changelog is automatically generated from conventional commits.
 - Removed the docker prebuild caching and cleanup before build
 - Combine cargo clean and build into single RUN command
 - Add cargo clean to fix Docker build cache issue
-- Fixed all integration tests for the Rust node which are also passing for the Scala one (#304)
-- Provide fixes for the rust node in order to successfully pass the genesis ceremony integration test (#301)
-- Fixes for integration tests folder to start them locally (#291)
+- Fixed all integration tests for the Rust node which are also passing for the Scala one (#304) ([#304](https://github.com/F1R3FLY-io/f1r3node/pull/304))
+- Provide fixes for the rust node in order to successfully pass the genesis ceremony integration test (#301) ([#301](https://github.com/F1R3FLY-io/f1r3node/pull/301))
+- Fixes for integration tests folder to start them locally (#291) ([#291](https://github.com/F1R3FLY-io/f1r3node/pull/291))
 - Fixed review comments
 - Fixed review comments and applied some fixes after testing
 - Fixed usage of the grpc port logic
@@ -226,11 +240,6 @@ This changelog is automatically generated from conventional commits.
 - add --timeout-scale=3 and --timeout=1200 for integration tests
 - increase timeouts and use system-integration cleanup branch
 - increase command-timeout to 300s for amd64 integration tests
-- run integration tests sequentially (remove -n 3 --dist=loadgroup)
-- install docker-compose for system-integration tests
-- run poetry lock before install to sync lock file with pyproject
-- clone system-integration from integration-tests-and-parallel-execution
-- migrate integration tests to system-integration suite
 - Add all node unit tests to CI workflows
 - classify NoNewDeploys as transient in latency benchmark
 - add rust/main to push/PR triggers and promote to release branch
@@ -248,11 +257,6 @@ This changelog is automatically generated from conventional commits.
 - add --timeout-scale=3 and --timeout=1200 for integration tests
 - increase timeouts and use system-integration cleanup branch
 - increase command-timeout to 300s for amd64 integration tests
-- run integration tests sequentially (remove -n 3 --dist=loadgroup)
-- install docker-compose for system-integration tests
-- run poetry lock before install to sync lock file with pyproject
-- clone system-integration from integration-tests-and-parallel-execution
-- migrate integration tests to system-integration suite
 - Add all node unit tests to CI workflows
 - stabilize latency/soak tooling
 - report peer requery suppression metric in latency profile
@@ -311,14 +315,14 @@ This changelog is automatically generated from conventional commits.
 - Add allow_empty_blocks support to Proposer for heartbeat
 - Added docker cross-compilation and removed qemu
 - Updated the github workflows to support only Rust related build
-- Running rust nodes cluster (#276)
+- Running rust nodes cluster (#276) ([#276](https://github.com/F1R3FLY-io/f1r3node/pull/276))
 - add max_dbs configuration support for LMDB environments
-- Updated all workspace modules to use tracing crate and unify other third party crates versions (#263)
-- Ported NodeEnvironment (#245)
-- Ported instances package from Scala to Rust (#236)
-- Ported the web package from Scala to Rust (#229)
-- Ported admin_web_api, lsp_grpc_service and propose_grpc_service and deploy_grpc_service_v1 (#203)
-- Ported repl grpc service (#201)
+- Updated all workspace modules to use tracing crate and unify other third party crates versions (#263) ([#263](https://github.com/F1R3FLY-io/f1r3node/pull/263))
+- Ported NodeEnvironment (#245) ([#245](https://github.com/F1R3FLY-io/f1r3node/pull/245))
+- Ported instances package from Scala to Rust (#236) ([#236](https://github.com/F1R3FLY-io/f1r3node/pull/236))
+- Ported the web package from Scala to Rust (#229) ([#229](https://github.com/F1R3FLY-io/f1r3node/pull/229))
+- Ported admin_web_api, lsp_grpc_service and propose_grpc_service and deploy_grpc_service_v1 (#203) ([#203](https://github.com/F1R3FLY-io/f1r3node/pull/203))
+- Ported repl grpc service (#201) ([#201](https://github.com/F1R3FLY-io/f1r3node/pull/201))
 - Ported the WebApi from node from scala to rust and its related dependecies. Refactored BlockApi ApiResult type.
 - Ported config checks for node startup
 - Ported the runCLI method and all unimplemented dependencies required for this method to run
@@ -377,7 +381,7 @@ This changelog is automatically generated from conventional commits.
 - replace config overlays with CLI flags, align defaults.conf
 - Remove non-functional StateSnapshotCache from PR #244
 - Improve SystemContractInitializationSpec tests
-- Migrate integration tests to the new F1R3FLY Python client library (#309)
+- Migrate integration tests to the new F1R3FLY Python client library (#309) ([#309](https://github.com/F1R3FLY-io/f1r3node/pull/309))
 - simplify produce reference handling in ReplayRSpace and update related tests
 - add ProduceResult
 - Remove non-functional StateSnapshotCache from PR #244
@@ -385,6 +389,12 @@ This changelog is automatically generated from conventional commits.
 - Migrate integration tests to the new F1R3FLY Python client library (#309)
 - simplify produce reference handling in ReplayRSpace and update related tests
 - add ProduceResult
+
+### Style
+
+- apply scalafmt to BlockAPI depth clamping changes
+- normalize indentation in reduce overflow branch
+- apply scalafmt to BlockAPI depth clamping changes
 
 ### Testing
 
@@ -394,137 +404,7 @@ This changelog is automatically generated from conventional commits.
 - remove leftover folder creation from API tests
 - use shared LMDB in lmdb_key_value_store_spec
 
-### WIP
-
-- Implement block message handling and logging in Initializing struct
-- porting Initializing class to Rust
-
-### Api
-
-- accept secp256k1-eth in to_signed_deploy
-- remove hidden 8s wait from deploy lookup polling
-
-### Casper
-
-- harden self-validation and timestamp selection
-- speed up LUCA + parent post-state paths and trim merge overhead
-- implement adaptive per-block deploy cap with 1s latency target
-- stabilize API behavior
-- stabilize block retrieval
-- avoid retaining orphan received block requests
-- make peer requery cooldown configurable
-- throttle peer requery retries and record results
-- gate block retriever queried-peer dedup behind env flag
-- deduplicate and bound block ingress queue in running engine
-
-### Casper/block-storage/ci
-
-- stabilize latency/soak tooling and benchmark documentation
-
-### Casper/block-storage/docker
-
-- stabilize proposer flow and rholang runtime
-
-### Casper/block-storage/docs
-
-- stabilize proposer flow and finalization and LFB progression
-- stabilize proposer flow and finalization and LFB progression
-
-### Casper/block-storage/rspace
-
-- stabilize replay/state consistency and latency/soak tooling
-
-### Casper/ci/docs
-
-- stabilize rholang runtime and latency/soak tooling
-
-### Casper/docs
-
-- stabilize block retrieval and proposer flow
-- stabilize finalization and LFB progression and benchmark documentation
-
-### Casper/node
-
-- stabilize proposer flow
-
-### Casper/node/block-storage
-
-- stabilize block retrieval and proposer flow
-- stabilize block retrieval and proposer flow
-- stabilize block retrieval and proposer flow
-- stabilize block retrieval and proposer flow
-
-### Casper/node/comm
-
-- stabilize block retrieval and proposer flow
-
-### Casper/node/docker
-
-- stabilize block retrieval and proposer flow
-- stabilize block retrieval and proposer flow
-- stabilize proposer flow and replay/state consistency
-- stabilize proposer flow and finalization and LFB progression
-
-### Casper/node/docs
-
-- stabilize block retrieval and latency/soak tooling
-
-### Cleanup
-
-- remove println and temporary comments
-- remove println and temporary comments
-
-### Comm
-
-- add RecentHashFilter to suppress redundant gossip hash broadcasts (#243)
-- tolerate missing UPnP external IP and continue startup
-- add RecentHashFilter to suppress redundant gossip hash broadcasts (#243)
-
-### Comm/rspace/docs
-
-- stabilize replay/state consistency and latency/soak tooling
-
-### Crypto
-
-- add experimental schnorr and frost-secp256k1 signing family
-
-### Docker
-
-- stabilize proposer flow and local shard behavior
-- stabilize proposer flow and local shard behavior
-- stabilize proposer flow and local shard behavior
-
-### Docker/ci
-
-- stabilize proposer flow and local shard behavior
-
-### Node/casper/models
-
-- gate schnorr-frost algorithms and add deploy roundtrip tests
-
-### Pr422
-
-- add legacy-alias telemetry and clear warning debt
-
-### Rspace/docs
-
-- stabilize replay/state consistency and latency/soak tooling
-
-### Style
-
-- apply scalafmt to BlockAPI depth clamping changes
-- normalize indentation in reduce overflow branch
-- apply scalafmt to BlockAPI depth clamping changes
-
 
 ## [v0.1.0] - 2025-08-15
-
-### BUGFIX
-
-- CI workflow fails when dev branch does not exist or has no associated git-tags
-
-### WIP
-
-- update readmes with Rust information. Comment debug printouts
 
 
