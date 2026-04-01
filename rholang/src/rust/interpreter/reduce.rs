@@ -225,15 +225,14 @@ impl DebruijnInterpreter {
         };
         log_mem_step("start", None, None);
 
-        // println!("\neval");
         let terms: Vec<GeneratedMessage> = vec![
-            par.receives
-                .into_iter()
-                .map(GeneratedMessage::Receive)
-                .collect::<Vec<_>>(),
             par.sends
                 .into_iter()
                 .map(GeneratedMessage::Send)
+                .collect::<Vec<_>>(),
+            par.receives
+                .into_iter()
+                .map(GeneratedMessage::Receive)
                 .collect(),
             par.news.into_iter().map(GeneratedMessage::New).collect(),
             par.matches

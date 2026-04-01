@@ -1165,11 +1165,6 @@ async fn eval_of_send_of_receive_pipe_receive_should_meet_in_the_tuple_space_and
         },
     ));
 
-    // When both send and receive are in a Par, receives-first evaluation
-    // assigns split_byte(0) to receive and split_byte(1) to send.
-    let par_merge_rand =
-        Blake2b512Random::merge(vec![split_rand0.clone(), split_rand1.clone()]);
-
     let (space, reducer) =
         create_test_space::<RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>()
             .await;
@@ -1207,7 +1202,7 @@ async fn eval_of_send_of_receive_pipe_receive_should_meet_in_the_tuple_space_and
         }],
         ParWithRandom {
             body: Some(Par::default()),
-            random_state: par_merge_rand.to_bytes(),
+            random_state: merge_rand.to_bytes(),
         },
     ));
 }
@@ -2224,8 +2219,8 @@ async fn variable_references_should_be_substituted_before_being_used() {
     let split_rand_src = rand().split_byte(3);
     split_rand_result.next();
     let merge_rand = Blake2b512Random::merge(vec![
-        split_rand_result.split_byte(0),
         split_rand_result.split_byte(1),
+        split_rand_result.split_byte(0),
     ]);
 
     let proc = Par::default().with_news(vec![New {
@@ -2349,7 +2344,7 @@ async fn variable_references_should_reference_a_variable_that_comes_from_a_match
     let base_rand = rand().split_byte(7);
     let split_rand0 = base_rand.split_byte(0);
     let split_rand1 = base_rand.split_byte(1);
-    let merge_rand = Blake2b512Random::merge(vec![split_rand0, split_rand1]);
+    let merge_rand = Blake2b512Random::merge(vec![split_rand1, split_rand0]);
 
     let proc = Par::default()
         .with_sends(vec![Send {
