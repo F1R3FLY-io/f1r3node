@@ -603,8 +603,14 @@ where
         let map = DashMap::with_capacity(channels.len());
         for c in channels {
             let data = self.store.get_data(c);
-            let shuffled_data = self.shuffle_with_index(data);
-            map.insert(c.clone(), shuffled_data);
+            // No shuffle during replay — use sequential enumeration to ensure
+            // deterministic datum selection during block validation.
+            let indexed_data: Vec<(Datum<A>, i32)> = data
+                .into_iter()
+                .enumerate()
+                .map(|(i, d)| (d, i as i32))
+                .collect();
+            map.insert(c.clone(), indexed_data);
         }
         map
     }
