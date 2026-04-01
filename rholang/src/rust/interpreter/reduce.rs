@@ -227,14 +227,13 @@ impl DebruijnInterpreter {
         log_mem_step("start", None, None);
 
         // println!("\neval");
-        // Receives evaluate before sends so that consumes store continuations
-        // and register joins BEFORE produces try to match them. This prevents
-        // COMM_MATCH_FAIL cascades where produces find COMMs in replay_data but
-        // no matching continuation exists yet.
-        //
         // Rholang Par semantics are concurrent — no ordering is mandated.
-        // Scala uses parTraverse (concurrent), Rust uses sequential for-loop.
-        // Both validator and observer use this same ordering, so event logs match.
+        // Receives are listed first so continuations are stored before produces
+        // search for matches. Currently evaluated sequentially; will switch to
+        // FuturesUnordered once per-channel RSpace locking is implemented.
+        // Cost accounting is normalized to produce-triggered semantics (see
+        // charging_rspace.rs) so gas costs are deterministic regardless of
+        // which side fires a COMM.
         let terms: Vec<GeneratedMessage> = vec![
             par.receives
                 .into_iter()
@@ -381,10 +380,11 @@ impl DebruijnInterpreter {
             log_mem_step("after_build_futures", Some(futures.len()), None);
             log_mem_step("before_join_all", Some(terms.len()), None);
 
-            // Deterministic sequential evaluation: receives first, then sends.
-            // COMM continuation bodies are evaluated inline (depth-first) via
-            // dispatch → reducer.eval(). This ensures continuation bodies create
-            // state (new consumes/joins) before subsequent sibling terms evaluate.
+            // Sequential evaluation with receives-first ordering. Receives are
+            // listed first in the terms vector so continuations are stored before
+            // produces search for matches. This will be replaced with
+            // FuturesUnordered once the RSpace lock removal (Phases 2-5) enables
+            // true per-channel concurrent access.
             let mut results: Vec<Result<(), InterpreterError>> = Vec::with_capacity(futures.len());
             for future in futures {
                 results.push(future.await);

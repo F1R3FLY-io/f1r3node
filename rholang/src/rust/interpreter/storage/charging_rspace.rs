@@ -114,14 +114,31 @@ impl ChargingRSpace {
                 )?;
 
                 let comm_fired = consume_res.is_some();
-                let id = consume_id(continuation)?;
-                handle_result(
-                    consume_res.clone(),
+                // Normalize: when a COMM fires from the consume side, report it
+                // as produce-triggered so cost accounting is deterministic
+                // regardless of evaluation order. This allows concurrent
+                // evaluation (join_all) without COST_MISMATCH between validator
+                // and observer. When no COMM fires, use consume-triggered
+                // semantics (the consume just stored its continuation).
+                let triggered_by = if comm_fired {
+                    let (_, data_list) = consume_res.as_ref().expect("comm_fired is true");
+                    let first_data = data_list.first().expect("COMM must have at least one produce");
+                    TriggeredBy::Produce {
+                        id: Blake2b512Random::create_from_bytes(&first_data.removed_datum.random_state),
+                        persistent: first_data.persistent,
+                        channels_count: 1,
+                    }
+                } else {
+                    let id = consume_id(continuation)?;
                     TriggeredBy::Consume {
                         id,
                         persistent: persist,
                         channels_count: channels.len() as i64,
-                    },
+                    }
+                };
+                handle_result(
+                    consume_res.clone(),
+                    triggered_by,
                     self.cost.clone(),
                 )?;
                 let cost_after = self.cost.get().value;

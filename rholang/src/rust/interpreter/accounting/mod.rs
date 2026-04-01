@@ -1,12 +1,12 @@
 use std::{
     collections::VecDeque,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicI64, Ordering},
+        Arc, Mutex,
+    },
 };
 
 use costs::Cost;
-use shared::rust::{
-    metrics_constants::COST_ACCOUNTING_METRICS_SOURCE, metrics_semaphore::MetricsSemaphore,
-};
 
 use super::errors::InterpreterError;
 
@@ -20,8 +20,7 @@ pub type _cost = CostManager;
 
 #[derive(Clone)]
 pub struct CostManager {
-    state: Arc<Mutex<Cost>>,
-    semaphore: Arc<MetricsSemaphore>,
+    value: Arc<AtomicI64>,
     log: Arc<Mutex<VecDeque<Cost>>>,
     max_log_entries: usize,
 }
@@ -38,7 +37,7 @@ impl CostManager {
             .unwrap_or(0)
     }
 
-    pub fn new(initial_value: Cost, semaphore_count: usize) -> Self {
+    pub fn new(initial_value: Cost, _semaphore_count: usize) -> Self {
         let max_log_entries = Self::resolve_max_log_entries();
         let initial_capacity = if max_log_entries == 0 {
             0
@@ -49,79 +48,59 @@ impl CostManager {
         };
 
         Self {
-            state: Arc::new(Mutex::new(initial_value)),
-            semaphore: Arc::new(MetricsSemaphore::new(
-                semaphore_count,
-                COST_ACCOUNTING_METRICS_SOURCE,
-            )),
+            value: Arc::new(AtomicI64::new(initial_value.value)),
             log: Arc::new(Mutex::new(VecDeque::with_capacity(initial_capacity))),
             max_log_entries,
         }
     }
 
     pub fn charge(&self, amount: Cost) -> Result<(), InterpreterError> {
-        let permit = self.semaphore.try_acquire();
-        // Scala: if (permit == None) throw SetupError
-        if permit.is_none() {
-            return Err(InterpreterError::SetupError(
-                "Failed to acquire semaphore".to_string(),
-            ));
-        }
-        let permit = permit.unwrap();
-
-        let mut current_cost = self
-            .state
-            .try_lock()
-            .map_err(|_| InterpreterError::SetupError("Failed to lock cost state".to_string()))?;
-
-        // Scala: if (c.value < 0) error.raiseError[Unit](OutOfPhlogistonsError)
-        if current_cost.value < 0 {
-            return Err(InterpreterError::OutOfPhlogistonsError);
-        }
-
-        // Scala: cost.set(c - amount)
-        current_cost.value -= amount.value;
-        if self.max_log_entries > 0 {
-            let mut log = self.log.lock().unwrap();
-            if log.len() >= self.max_log_entries {
-                let _ = log.pop_front();
+        loop {
+            let current = self.value.load(Ordering::Acquire);
+            if current < 0 {
+                return Err(InterpreterError::OutOfPhlogistonsError);
             }
-            log.push_back(amount);
+            let new_value = current - amount.value;
+            match self.value.compare_exchange_weak(
+                current,
+                new_value,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => {
+                    if self.max_log_entries > 0 {
+                        let mut log = self.log.lock().expect("cost log lock poisoned");
+                        if log.len() >= self.max_log_entries {
+                            let _ = log.pop_front();
+                        }
+                        log.push_back(amount);
+                    }
+                    if new_value < 0 {
+                        return Err(InterpreterError::OutOfPhlogistonsError);
+                    }
+                    return Ok(());
+                }
+                Err(_) => continue,
+            }
         }
-        drop(permit);
-        drop(current_cost);
-
-        // Scala has TWO checks:
-        // 1. Before: if (c.value < 0) error.raiseError
-        // 2. After:  error.ensure(cost.get)(...)(_.value >= 0)
-        // The second check catches cases where: current_value - amount < 0
-        // Example: current=1, amount=3 → after=(-2) → OutOfPhlogistonsError
-        let final_cost = self
-            .state
-            .try_lock()
-            .map_err(|_| InterpreterError::SetupError("Failed to lock cost state".to_string()))?;
-        if final_cost.value < 0 {
-            return Err(InterpreterError::OutOfPhlogistonsError);
-        }
-
-        Ok(())
     }
 
     pub fn get(&self) -> Cost {
-        let current_cost = self.state.try_lock().unwrap();
-        current_cost.clone()
+        Cost {
+            value: self.value.load(Ordering::Acquire),
+            operation: "current".into(),
+        }
     }
 
     pub fn set(&self, new_value: Cost) {
-        let mut current_cost = self.state.try_lock().unwrap();
-        *current_cost = new_value;
+        self.value.store(new_value.value, Ordering::Release);
     }
 
     pub fn get_log(&self) -> Vec<Cost> {
-        self.log.lock().unwrap().iter().cloned().collect()
+        self.log.lock().expect("cost log lock poisoned").iter().cloned().collect()
     }
 
     pub fn clear_log(&self) {
-        self.log.lock().unwrap().clear();
+        self.log.lock().expect("cost log lock poisoned").clear();
     }
 }
