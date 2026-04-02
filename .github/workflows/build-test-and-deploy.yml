@@ -439,6 +439,54 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  # Auto-retry infrastructure failures (SIGTERM/exit 143 from runner preemption).
+  # Only retries if ALL failed jobs ran < 120s (infra kills during setup, not real
+  # test failures which take 3-30 min). Capped at 3 attempts to prevent loops.
+  retry_infra_failures:
+    name: Retry Infrastructure Failures
+    needs:
+      - required_rust_integration_tests_amd64
+      - required_rust_integration_tests_arm64
+    if: failure() && github.run_attempt < 3
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: { jobs } } = await github.rest.actions.listJobsForWorkflowRun({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: context.runId,
+              filter: 'latest'
+            });
+
+            const failed = jobs.filter(j => j.conclusion === 'failure');
+            if (failed.length === 0) {
+              console.log('No failed jobs found, skipping retry');
+              return;
+            }
+
+            const allShortLived = failed.every(j => {
+              const started = new Date(j.started_at);
+              const completed = new Date(j.completed_at);
+              const durationSec = (completed - started) / 1000;
+              console.log(`${j.name}: ${durationSec}s (${j.conclusion})`);
+              return durationSec < 120;
+            });
+
+            if (allShortLived) {
+              console.log(`All ${failed.length} failed job(s) ran < 120s — infrastructure failure detected, rerunning...`);
+              await github.rest.actions.reRunWorkflowFailedJobs({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                run_id: context.runId,
+              });
+            } else {
+              console.log('Some failed jobs ran > 120s — likely real test failures, skipping retry');
+            }
+
   # release_* jobs make built artifacts available to public and run only on new
   # tags or pushes to "staging" or "trying" branches used by Bors (bors r+ and bors try).
   # These jobs require secrets! See "env" variables and "Secrets" page in GitHub repository
