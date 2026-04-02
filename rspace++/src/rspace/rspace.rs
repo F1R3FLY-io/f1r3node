@@ -12,8 +12,6 @@ use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::time::Instant;
 
 use dashmap::DashMap;
-use rand::seq::SliceRandom;
-use rand::thread_rng;
 use serde::{Deserialize, Serialize};
 use shared::rust::store::key_value_store::KeyValueStore;
 use tracing::{Level, event};
@@ -1024,7 +1022,7 @@ where
         let map = DashMap::with_capacity(channels.len());
         for c in channels {
             let data = self.get_store().get_data(c);
-            let shuffled_data = self.shuffle_with_index(data);
+            let shuffled_data = self.order_by_hash_with_index(data, |d| &d.source.hash);
             map.insert(c.clone(), shuffled_data);
         }
         map
@@ -1221,14 +1219,14 @@ where
     ) -> MaybeProduceCandidate<C, P, A, K> {
         let match_candidates: Vec<(WaitingContinuation<P, K>, i32)> = {
             let continuations = self.get_store().get_continuations(&channels);
-            self.shuffle_with_index(continuations)
+            self.order_by_hash_with_index(continuations, |wc| &wc.source.hash)
         };
 
         let channel_to_indexed_data: DashMap<C, Vec<(Datum<A>, i32)>> = channels
             .iter()
             .map(|c| {
                 let data_vec = self.get_store().get_data(c);
-                let mut shuffled_data = self.shuffle_with_index(data_vec);
+                let mut shuffled_data = self.order_by_hash_with_index(data_vec, |d| &d.source.hash);
                 if *c == bat_channel {
                     shuffled_data.insert(0, (data.clone(), -1));
                 }
@@ -1267,7 +1265,7 @@ where
         let fetch_matching_continuations =
             |channels: Vec<C>| -> Vec<(WaitingContinuation<P, K>, i32)> {
                 let continuations = self.get_store().get_continuations(&channels);
-                self.shuffle_with_index(continuations)
+                self.order_by_hash_with_index(continuations, |wc| &wc.source.hash)
             };
 
         /*
@@ -1283,7 +1281,7 @@ where
          */
         let fetch_matching_data = |channel| -> (C, Vec<(Datum<A>, i32)>) {
             let data_vec = self.get_store().get_data(&channel);
-            let mut shuffled_data = self.shuffle_with_index(data_vec);
+            let mut shuffled_data = self.order_by_hash_with_index(data_vec, |d| &d.source.hash);
             if channel == bat_channel {
                 shuffled_data.insert(0, (data.clone(), -1));
             }
@@ -1826,14 +1824,25 @@ where
         }
     }
 
-    fn shuffle_with_index<D>(&self, t: Vec<D>) -> Vec<(D, i32)> {
-        let mut rng = thread_rng();
+    /// Order candidates deterministically by content hash for fair matching.
+    ///
+    /// Replaces the previous `thread_rng()` shuffle with content-hash ordering.
+    /// This preserves fairness (Blake2b256 hashes are uniformly distributed,
+    /// so different data values hash to different positions with no systematic
+    /// bias) while being deterministic (same data → same hash → same order).
+    /// Determinism is required for consensus: all validators evaluating the
+    /// same block must produce the same COMM events and state hash.
+    fn order_by_hash_with_index<D>(
+        &self,
+        t: Vec<D>,
+        hash_fn: impl Fn(&D) -> &Blake2b256Hash,
+    ) -> Vec<(D, i32)> {
         let mut indexed_vec = t
             .into_iter()
             .enumerate()
             .map(|(i, d)| (d, i as i32))
             .collect::<Vec<_>>();
-        indexed_vec.shuffle(&mut rng);
+        indexed_vec.sort_by(|(a, _), (b, _)| hash_fn(a).cmp(&hash_fn(b)));
         indexed_vec
     }
 }

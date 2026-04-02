@@ -30,7 +30,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::{Arc, LazyLock, RwLock};
+use std::sync::{Arc, LazyLock, Mutex, RwLock};
 use std::task::{Context, Poll};
 
 use crate::rust::interpreter::accounting::costs::{
@@ -141,6 +141,10 @@ pub struct DebruijnInterpreter {
     pub mergeable_tag_name: Par,
     pub cost: _cost,
     pub substitute: Substitute,
+    /// When inner value is Some, COMM body dispatches are deferred (Phase 1).
+    /// When None, dispatches happen immediately (Phase 2 / non-eval context).
+    /// Uses Arc<Mutex<Option<...>>> for interior mutability (eval_inner takes &self).
+    pub deferred_comms: Arc<Mutex<Option<DeferredCommQueue>>>,
 }
 
 type Application = Option<(
@@ -148,6 +152,43 @@ type Application = Option<(
     Vec<(Par, ListParWithRandom, ListParWithRandom, bool)>,
     bool,
 )>;
+
+/// Deferred COMM body dispatch for two-phase evaluation.
+/// Phase 1: produce/consume run concurrently, pushing deferred work here.
+/// Phase 2: bodies dispatch sequentially after all Phase 1 futures complete.
+pub type DeferredCommQueue = Arc<Mutex<Vec<DeferredComm>>>;
+
+pub enum DeferredComm {
+    ProduceTriggered {
+        index: usize,
+        res: Application,
+        chan: Par,
+        data: ListParWithRandom,
+        persistent: bool,
+        is_replay: bool,
+        previous_output: Vec<Vec<u8>>,
+        trace_failed: bool,
+        produce_event: rspace_plus_plus::rspace::trace::event::Produce,
+    },
+    ConsumeTriggered {
+        index: usize,
+        res: Application,
+        binds: Vec<(BindPattern, Par)>,
+        body: ParWithRandom,
+        persistent: bool,
+        peeks: BTreeSet<i32>,
+        is_replay: bool,
+    },
+}
+
+impl DeferredComm {
+    fn index(&self) -> usize {
+        match self {
+            DeferredComm::ProduceTriggered { index, .. } => *index,
+            DeferredComm::ConsumeTriggered { index, .. } => *index,
+        }
+    }
+}
 
 trait Method {
     fn apply(&self, p: Par, args: Vec<Par>, env: &Env<Par>) -> Result<Par, InterpreterError>;
@@ -228,10 +269,10 @@ impl DebruijnInterpreter {
 
         // println!("\neval");
         // Rholang Par semantics are concurrent — no ordering is mandated.
-        // Receives are listed first so continuations are stored before produces
-        // search for matches. Currently evaluated sequentially; will switch to
-        // FuturesUnordered once per-channel RSpace locking is implemented.
-        // Cost accounting is normalized to produce-triggered semantics (see
+        // Receives are listed first to bias cooperative scheduling toward early
+        // continuation registration. Evaluated concurrently via FuturesUnordered.
+        // Per-channel-group locks ensure join atomicity. Cost accounting uses
+        // atomic CAS and is normalized to produce-triggered semantics (see
         // charging_rspace.rs) so gas costs are deterministic regardless of
         // which side fires a COMM.
         let terms: Vec<GeneratedMessage> = vec![
@@ -380,14 +421,92 @@ impl DebruijnInterpreter {
             log_mem_step("after_build_futures", Some(futures.len()), None);
             log_mem_step("before_join_all", Some(terms.len()), None);
 
-            // Sequential evaluation with receives-first ordering. Receives are
-            // listed first in the terms vector so continuations are stored before
-            // produces search for matches. This will be replaced with
-            // FuturesUnordered once the RSpace lock removal (Phases 2-5) enables
-            // true per-channel concurrent access.
-            let mut results: Vec<Result<(), InterpreterError>> = Vec::with_capacity(futures.len());
-            for future in futures {
-                results.push(future.await);
+            // Two-phase concurrent evaluation:
+            //
+            // Phase 1: All produce/consume operations run concurrently via
+            // FuturesUnordered. When a COMM fires, the body dispatch is DEFERRED
+            // to a shared queue instead of executing inline.
+            //
+            // Phase 2: After all Phase 1 futures complete, deferred COMM bodies
+            // are dispatched sequentially. This prevents body evaluation
+            // interleaving, which causes different yield patterns between RSpace
+            // (play) and ReplayRSpace (replay), leading to COST_MISMATCH.
+            //
+            // Receives are listed first in the terms vector to bias early
+            // continuation registration under cooperative scheduling.
+
+            // Enable deferred mode for this eval scope
+            let deferred_queue: DeferredCommQueue = Arc::new(Mutex::new(Vec::new()));
+            *self.deferred_comms.lock().expect("deferred_comms outer lock") = Some(deferred_queue.clone());
+
+            use futures::stream::{FuturesUnordered, StreamExt};
+            let mut futs: FuturesUnordered<_> = futures.into_iter().collect();
+            let mut results: Vec<Result<(), InterpreterError>> = Vec::with_capacity(futs.len());
+            while let Some(result) = futs.next().await {
+                results.push(result);
+            }
+
+            // Disable deferred mode before Phase 2 so nested eval calls
+            // (from body dispatch) create their own Phase 1/Phase 2 cycle.
+            *self.deferred_comms.lock().expect("deferred_comms outer lock") = None;
+
+            // Phase 2: dispatch deferred COMM bodies sequentially.
+            // Drain into a local Vec to release the Mutex before async dispatch
+            // (MutexGuard is not Send and cannot be held across .await).
+            let mut deferred_bodies = {
+                let mut q = deferred_queue.lock().expect("deferred_comms lock poisoned");
+                let mut v = q.drain(..).collect::<Vec<_>>();
+                v.sort_by_key(|d| d.index());
+                v
+            };
+            for comm in deferred_bodies.drain(..) {
+                match comm {
+                    DeferredComm::ProduceTriggered {
+                        res, chan, data, persistent, is_replay,
+                        previous_output, trace_failed, produce_event,
+                        ..
+                    } => {
+                        let dispatch_type = self
+                            .continue_produce_process(
+                                res, chan.clone(), data, persistent, is_replay,
+                                previous_output, trace_failed,
+                            )
+                            .await?;
+                        // Handle non-deterministic produce updates
+                        match dispatch_type {
+                            DispatchType::NonDeterministicCall(ref output) => {
+                                let p = produce_event.mark_as_non_deterministic(output.clone());
+                                self.space.update_produce(p);
+                            }
+                            DispatchType::FailedNonDeterministicCall(error) => {
+                                let p = produce_event.with_error();
+                                self.space.update_produce(p);
+                                match error {
+                                    InterpreterError::ProduceFailureWithOutput { .. }
+                                    | InterpreterError::NonDeterministicProcessFailure { .. } => {
+                                        return Err(error);
+                                    }
+                                    _ => {
+                                        return Err(InterpreterError::NonDeterministicProcessFailure {
+                                            cause: Box::new(error),
+                                            output_not_produced: vec![],
+                                        });
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    DeferredComm::ConsumeTriggered {
+                        res, binds, body, persistent, peeks, is_replay,
+                        ..
+                    } => {
+                        self.continue_consume_process(
+                            res, binds, body, persistent, peeks, is_replay, Vec::new(),
+                        )
+                        .await?;
+                    }
+                }
             }
 
             log_mem_step("after_join_all", Some(terms.len()), None);
@@ -555,23 +674,34 @@ impl DebruijnInterpreter {
                 tracing::debug!(
                     target: "f1r3fly.rholang",
                     persistent,
-                    "produce_inner: COMM fired — dispatching matched continuation"
+                    "produce_inner: COMM fired"
                 );
-                // Diagnostic: log byte_name(14) COMM dispatch for registry channel
-                let is_registry_ch = chan.unforgeables.first()
-                    .and_then(|u| u.unf_instance.as_ref())
-                    .map(|inst| matches!(inst, UnfInstance::GPrivateBody(gp) if gp.id == vec![14]))
-                    .unwrap_or(false);
-                if is_registry_ch {
-                    tracing::info!(
-                        target: "f1r3fly.rholang.diag",
+                let res = unpack_option_with_peek(Some((c, s)));
+
+                // Two-phase: defer body dispatch if in Phase 1
+                let maybe_queue = self.deferred_comms.lock().expect("deferred_comms lock").clone();
+                if let Some(ref queue) = maybe_queue {
+                    let mut q = queue.lock().expect("deferred_comms lock poisoned");
+                    let index = q.len();
+                    q.push(DeferredComm::ProduceTriggered {
+                        index,
+                        res,
+                        chan,
+                        data,
                         persistent,
-                        "produce_inner: byte_name(14) COMM fired — dispatching continuation"
-                    );
+                        is_replay,
+                        previous_output: produce_event.output_value.clone(),
+                        trace_failed: produce_event.failed,
+                        produce_event,
+                    });
+                    log_op_step("after_deferred_produce");
+                    return Ok(DispatchType::DeterministicCall);
                 }
+
+                // Immediate dispatch (Phase 2 or non-eval context)
                 let dispatch_type = self
                     .continue_produce_process(
-                        unpack_option_with_peek(Some((c, s))),
+                        res,
                         chan,
                         data,
                         persistent,
@@ -581,22 +711,6 @@ impl DebruijnInterpreter {
                     )
                     .await?;
                 log_op_step("after_continue_produce_process");
-                // Diagnostic: log byte_name(14) COMM dispatch outcome
-                if is_registry_ch {
-                    let dispatch_name = match &dispatch_type {
-                        DispatchType::NonDeterministicCall(_) => "NonDeterministicCall",
-                        DispatchType::FailedNonDeterministicCall(_) => "FailedNonDeterministicCall",
-                        DispatchType::DeterministicCall => "DeterministicCall",
-                        DispatchType::Skip => "Skip",
-                    };
-                    tracing::info!(
-                        target: "f1r3fly.rholang.diag",
-                        persistent,
-                        dispatch_result = dispatch_name,
-                        "produce_inner: byte_name(14) COMM dispatch completed — result={}",
-                        dispatch_name
-                    );
-                }
 
                 match dispatch_type {
                     DispatchType::NonDeterministicCall(ref output) => {
@@ -607,12 +721,9 @@ impl DebruijnInterpreter {
                     }
 
                     DispatchType::FailedNonDeterministicCall(error) => {
-                        // Mark the produce as failed for replay safety
                         let failed_produce = produce_event.with_error();
                         self.space.update_produce(failed_produce);
                         log_op_step("after_update_produce_failed_nondeterministic");
-                        // Re-raise known error types as-is to preserve output_not_produced;
-                        // wrap unknown errors in NonDeterministicProcessFailure.
                         match error {
                             InterpreterError::ProduceFailureWithOutput { .. }
                             | InterpreterError::NonDeterministicProcessFailure { .. } => {
@@ -811,8 +922,31 @@ impl DebruijnInterpreter {
             }
         }
 
+        let res = unpack_option_with_peek(consume_result);
+
+        // Two-phase: defer body dispatch if COMM fired and in Phase 1
+        if res.is_some() {
+            let maybe_queue = self.deferred_comms.lock().expect("deferred_comms lock").clone();
+            if let Some(ref queue) = maybe_queue {
+                let mut q = queue.lock().expect("deferred_comms lock poisoned");
+                let index = q.len();
+                q.push(DeferredComm::ConsumeTriggered {
+                    index,
+                    res,
+                    binds,
+                    body,
+                    persistent,
+                    peeks,
+                    is_replay,
+                });
+                log_op_step("after_deferred_consume", sources.len());
+                return Ok(DispatchType::DeterministicCall);
+            }
+        }
+
+        // Immediate dispatch (no COMM, or Phase 2, or non-eval context)
         self.continue_consume_process(
-            unpack_option_with_peek(consume_result),
+            res,
             binds,
             body,
             persistent,
@@ -7624,6 +7758,7 @@ impl DebruijnInterpreter {
             mergeable_tag_name,
             cost: cost.clone(),
             substitute: Substitute { cost: cost.clone() },
+            deferred_comms: Arc::new(Mutex::new(None)),
         });
 
         reducer_cell.set(Arc::downgrade(&reducer)).ok().unwrap();

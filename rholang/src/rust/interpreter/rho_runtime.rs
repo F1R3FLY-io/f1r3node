@@ -1034,6 +1034,7 @@ async fn setup_reducer(
         mergeable_tag_name,
         cost: cost.clone(),
         substitute: Substitute { cost: cost.clone() },
+        deferred_comms: std::sync::Arc::new(std::sync::Mutex::new(None)),
     });
 
     reducer_cell.set(Arc::downgrade(&reducer)).ok().unwrap();

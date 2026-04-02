@@ -300,6 +300,30 @@ where
     Ok(f(runtime_manager, genesis_context, genesis_block).await)
 }
 
+/// Like `with_runtime_manager` but builds a FRESH genesis context with a
+/// unique `rspace_scope_id` for complete test isolation. Use this for tests
+/// sensitive to residual RSpace state from other tests (e.g., genesis replay).
+pub async fn with_isolated_runtime_manager<F, Fut, R>(f: F) -> Result<R, CasperError>
+where
+    F: FnOnce(RuntimeManager, GenesisContext, BlockMessage) -> Fut,
+    Fut: Future<Output = R>,
+{
+    init_logger();
+
+    // Build a fresh genesis (unique rspace_scope_id, no shared state)
+    let mut genesis_builder = crate::util::genesis_builder::GenesisBuilder::new();
+    let genesis_context = genesis_builder
+        .build_genesis_with_parameters(None)
+        .await
+        .map_err(|e| CasperError::RuntimeError(format!("Failed to build isolated genesis: {:?}", e)))?;
+    let genesis_block = genesis_context.genesis_block.clone();
+
+    let mut kvm = mk_test_rnode_store_manager_from_genesis(&genesis_context);
+    let (runtime_manager, _history_repo) = mk_runtime_manager_with_history_at(&mut *kvm).await;
+
+    Ok(f(runtime_manager, genesis_context, genesis_block).await)
+}
+
 pub fn mk_test_rnode_store_manager_with_scope(
     dir_path: PathBuf,
     scope_id: Option<String>,

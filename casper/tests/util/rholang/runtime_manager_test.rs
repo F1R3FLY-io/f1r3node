@@ -42,7 +42,7 @@ use rholang::rust::interpreter::{
 };
 use rspace_plus_plus::rspace::{hashing::blake2b256_hash::Blake2b256Hash, history::Either};
 
-use crate::util::{genesis_builder::GenesisContext, rholang::resources::with_runtime_manager};
+use crate::util::{genesis_builder::GenesisContext, rholang::resources::{with_runtime_manager, with_isolated_runtime_manager}};
 
 enum SystemDeployReplayResult<A> {
     ReplaySucceeded {
@@ -1383,7 +1383,10 @@ async fn genesis_replay_should_succeed_using_block_pre_state_hash() {
     // computed during compute_genesis) instead of a hardcoded constant. This
     // test verifies that replaying genesis deploys from the block's pre_state_hash
     // produces the expected post_state_hash.
-    with_runtime_manager(
+    //
+    // Uses with_isolated_runtime_manager to avoid LMDB state contamination from
+    // other tests that share the same rspace_scope_id.
+    with_isolated_runtime_manager(
         |mut runtime_manager, genesis_context, genesis_block| async move {
             let pre_state = genesis_block.body.state.pre_state_hash.clone();
             let expected_post_state = genesis_block.body.state.post_state_hash.clone();

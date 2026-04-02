@@ -13,8 +13,6 @@ use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
 use dashmap::DashMap;
-use rand::seq::SliceRandom;
-use rand::thread_rng;
 use serde::Serialize;
 use tracing::{Level, event};
 
@@ -851,7 +849,7 @@ where
         let map = DashMap::with_capacity(channels.len());
         for c in channels {
             let data = self.get_store().get_data(c);
-            let shuffled_data = self.shuffle_with_index(data);
+            let shuffled_data = self.order_by_hash_with_index(data, |d| &d.source.hash);
             map.insert(c.clone(), shuffled_data);
         }
         map
@@ -927,15 +925,15 @@ where
         // );
         self.log_produce(produce_ref.clone(), &channel, &data, persist);
 
+        // Use deterministic .get() lookup instead of non-deterministic
+        // DashMap .clone().into_iter().find(). DashMap iteration order
+        // depends on internal hash table layout and is not stable across runs.
+        let io_event_key = IOEvent::Produce(produce_ref.clone());
         let io_event_and_comm = self
             .replay_data
             .map
-            .clone()
-            .into_iter()
-            .find(|(io_event, _)| match io_event {
-                IOEvent::Produce(p) => p.hash == produce_ref.hash,
-                _ => false,
-            });
+            .get(&io_event_key)
+            .map(|comms| (io_event_key.clone(), comms.clone()));
 
         // println!("\nreplay_data in replay_produce: {:?}", self.replay_data);
         // println!("\ncomms_options in replay_produce Some?: {:?}",
@@ -1628,14 +1626,18 @@ where
         }
     }
 
-    fn shuffle_with_index<D>(&self, t: Vec<D>) -> Vec<(D, i32)> {
-        let mut rng = thread_rng();
+    /// Content-hash deterministic ordering. See rspace.rs::order_by_hash_with_index.
+    fn order_by_hash_with_index<D>(
+        &self,
+        t: Vec<D>,
+        hash_fn: impl Fn(&D) -> &Blake2b256Hash,
+    ) -> Vec<(D, i32)> {
         let mut indexed_vec = t
             .into_iter()
             .enumerate()
             .map(|(i, d)| (d, i as i32))
             .collect::<Vec<_>>();
-        indexed_vec.shuffle(&mut rng);
+        indexed_vec.sort_by(|(a, _), (b, _)| hash_fn(a).cmp(&hash_fn(b)));
         indexed_vec
     }
 }
