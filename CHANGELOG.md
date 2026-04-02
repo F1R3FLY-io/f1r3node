@@ -4,6 +4,14 @@ All notable changes to the Scala implementation of F1r3node will be documented i
 This changelog is automatically generated from conventional commits.
 
 
+## [v0.4.8] - 2026-04-02
+
+### CI
+
+- use full SHA for system-integration pin (actions/checkout requires it)
+- pin system-integration to f4c2a00 for Scala test compatibility
+
+
 ## [v0.4.7] - 2026-03-31
 
 ### Bug Fixes
