@@ -1,0 +1,14 @@
+model = "gpt-5-codex"
+approval_policy = "on-request"
+sandbox_mode = "workspace-write"
+response_verbosity = "concise"
+
+[project]
+name = "f1r3node-logict-runtime"
+default_task = "runtime-slice"
+
+[project.runtime]
+enforce_git_checkpoints = true
+prefer_small_diffs = true
+require_test_commands = true
+require_risk_summary = true

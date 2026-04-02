@@ -48,8 +48,9 @@ use super::dispatch::RholangAndScalaDispatcher;
 use super::env::Env;
 use super::errors::InterpreterError;
 use super::interpreter::{EvaluateResult, Interpreter, InterpreterImpl};
-use super::reduce::DebruijnInterpreter;
+use super::reduce::{DebruijnInterpreter, SplitPostMatchConfig};
 use super::registry::registry_bootstrap::ast;
+use super::storage::continuation_store::InMemoryContinuationStore;
 use super::storage::charging_rspace::ChargingRSpace;
 use super::substitute::Substitute;
 use super::system_processes::{
@@ -1053,6 +1054,9 @@ async fn setup_reducer(
         mergeable_tag_name,
         cost: cost.clone(),
         substitute: Substitute { cost: cost.clone() },
+        split_post_match_config: Arc::new(std::sync::RwLock::new(SplitPostMatchConfig::default())),
+        continuation_store: Arc::new(std::sync::RwLock::new(InMemoryContinuationStore::default())),
+        continuation_nonce: Arc::new(std::sync::atomic::AtomicU64::new(0)),
     });
 
     reducer_cell.set(Arc::downgrade(&reducer)).ok().unwrap();

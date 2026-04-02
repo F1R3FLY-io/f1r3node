@@ -1,5 +1,6 @@
 // See See rholang/src/main/scala/coop/rchain/rholang/interpreter/Reduce.scala
 
+use crypto::rust::hash::blake2b256::Blake2b256;
 use crypto::rust::hash::blake2b512_random::Blake2b512Random;
 use models::rhoapi::expr::ExprInstance;
 use models::rhoapi::g_unforgeable::UnfInstance;
@@ -30,8 +31,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, RwLock};
 use std::task::{Context, Poll};
+use tracing::debug;
 
 use crate::rust::interpreter::accounting::costs::{
     add_cost, bytes_to_hex_cost, diff_cost, hex_to_bytes_cost, interpolate_cost, keys_method_cost,
@@ -43,9 +46,9 @@ use crate::rust::interpreter::rho_type::RhoTuple2;
 
 use super::accounting::_cost;
 use super::accounting::costs::{
-    bigint_comparison_cost, bigint_division_cost, bigint_modulo_cost,
-    bigint_multiplication_cost, bigint_negation_cost, bigint_subtraction_cost, bigint_sum_cost,
-    bigrat_comparison_cost, bigrat_division_cost, bigrat_multiplication_cost, bigrat_negation_cost,
+    bigint_comparison_cost, bigint_division_cost, bigint_modulo_cost, bigint_multiplication_cost,
+    bigint_negation_cost, bigint_subtraction_cost, bigint_sum_cost, bigrat_comparison_cost,
+    bigrat_division_cost, bigrat_multiplication_cost, bigrat_negation_cost,
     bigrat_subtraction_cost, bigrat_sum_cost, boolean_and_cost, boolean_or_cost,
     byte_array_append_cost, comparison_cost, division_cost, equality_check_cost, list_append_cost,
     method_call_cost, modulo_cost, multiplication_cost, new_bindings_cost, op_call_cost,
@@ -58,6 +61,11 @@ use super::errors::InterpreterError;
 use super::matcher::has_locally_free::HasLocallyFree;
 use super::rho_runtime::RhoISpace;
 use super::rho_type::{RhoExpression, RhoUnforgeable};
+use super::storage::continuation_store::{
+    BridgeContinuationMetadata, BridgeFinalityPhase, ContinuationHandle, ContinuationStatus,
+    ContinuationStoreError, ContinuationSubtype, ContinuationVisibility, CreateContinuation,
+    FundingPolicy, InMemoryContinuationStore, PersistedContinuation,
+};
 use super::substitute::Substitute;
 use super::unwrap_option_safe;
 use super::util::GeneratedMessage;
@@ -140,13 +148,636 @@ pub struct DebruijnInterpreter {
     pub mergeable_tag_name: Par,
     pub cost: _cost,
     pub substitute: Substitute,
+    pub(crate) split_post_match_config: Arc<RwLock<SplitPostMatchConfig>>,
+    pub(crate) continuation_store: Arc<RwLock<InMemoryContinuationStore>>,
+    pub(crate) continuation_nonce: Arc<AtomicU64>,
 }
 
-type Application = Option<(
-    TaggedContinuation,
-    Vec<(Par, ListParWithRandom, ListParWithRandom, bool)>,
-    bool,
-)>;
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SplitPostMatchConfig {
+    pub enabled: bool,
+    pub initial_step_gas_limit: i64,
+    pub continuation_funding_policy: FundingPolicy,
+    pub continuation_visibility: ContinuationVisibility,
+    pub continuation_bounty: Option<u64>,
+    pub continuation_ttl_epochs: Option<u64>,
+    pub continuation_subtype: ContinuationSubtype,
+}
+
+impl Default for SplitPostMatchConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            initial_step_gas_limit: i64::MAX,
+            continuation_funding_policy: FundingPolicy::ProducerOnly,
+            continuation_visibility: ContinuationVisibility::Private,
+            continuation_bounty: None,
+            continuation_ttl_epochs: None,
+            continuation_subtype: ContinuationSubtype::Standard,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ContinuationExecutionStatus {
+    Suspended,
+    Completed,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContinuationExecutionResult {
+    pub handle: ContinuationHandle,
+    pub status: ContinuationExecutionStatus,
+    pub version: u64,
+    pub state_root: Vec<u8>,
+    pub consumed_gas: i64,
+    pub emitted_effects: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PublicContinuationInfo {
+    pub handle: ContinuationHandle,
+    pub version: u64,
+    pub gas_limit_per_step: i64,
+    pub bounty: Option<u64>,
+    pub expires_at_epoch: Option<u64>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BridgeContinuationInfo {
+    pub handle: ContinuationHandle,
+    pub version: u64,
+    pub gas_limit_per_step: i64,
+    pub bounty: Option<u64>,
+    pub bridge_metadata: BridgeContinuationMetadata,
+}
+
+type MatchedData = (Par, ListParWithRandom, ListParWithRandom, bool);
+type Application = Option<(TaggedContinuation, Vec<MatchedData>, bool)>;
+#[cfg(test)]
+type DispatchResultFuture<'a> = Pin<
+    Box<
+        dyn futures::Future<Output = Result<DispatchType, InterpreterError>>
+            + std::marker::Send
+            + 'a,
+    >,
+>;
+
+#[derive(Clone)]
+struct DispatchExecState {
+    continuation: TaggedContinuation,
+    data_list: Vec<MatchedData>,
+    is_replay: bool,
+    previous_output: Vec<Par>,
+    // Phase 1 metadata capture for later step-based gas accounting.
+    _remaining_phlo: i64,
+}
+
+#[derive(Clone)]
+struct ReceiveRegistrationState {
+    binds: Vec<(BindPattern, Par)>,
+    body: ParWithRandom,
+    persistent: bool,
+    peek: bool,
+}
+
+#[derive(Clone)]
+struct ProduceRegistrationState {
+    chan: Par,
+    data: ListParWithRandom,
+    persistent: bool,
+}
+
+#[derive(Clone)]
+enum PostMatchControlState {
+    DispatchOnly,
+    DispatchAndReconsume(ReceiveRegistrationState),
+    DispatchAndReproduce(ProduceRegistrationState),
+    DispatchAndRestorePeeks,
+    Reconsume(ReceiveRegistrationState),
+    Reproduce(ProduceRegistrationState),
+    RestorePeeks,
+}
+
+#[derive(Clone)]
+struct PostMatchExecState {
+    dispatch: DispatchExecState,
+    control: PostMatchControlState,
+}
+
+#[derive(Clone, Copy)]
+enum StepTerminalStatus {
+    Completed,
+    Suspended,
+}
+
+struct StepResult {
+    dispatch_result: DispatchType,
+    emitted_effects: bool,
+    next_state: Option<PostMatchExecState>,
+    consumed_gas: i64,
+    terminal_status: StepTerminalStatus,
+}
+
+fn should_suspend_for_step(gas_limit: i64) -> bool {
+    gas_limit <= 0
+}
+
+fn compute_consumed_gas(starting_phlo: i64, remaining_phlo: i64) -> i64 {
+    if remaining_phlo >= starting_phlo {
+        0
+    } else {
+        starting_phlo - remaining_phlo
+    }
+}
+
+fn dispatch_emits_effects(dispatch_result: &DispatchType) -> bool {
+    !matches!(dispatch_result, DispatchType::Skip)
+}
+
+#[cfg(test)]
+fn next_control_after_dispatch(control: PostMatchControlState) -> Option<PostMatchControlState> {
+    match control {
+        PostMatchControlState::DispatchOnly => None,
+        PostMatchControlState::DispatchAndReconsume(state) => {
+            Some(PostMatchControlState::Reconsume(state))
+        }
+        PostMatchControlState::DispatchAndReproduce(state) => {
+            Some(PostMatchControlState::Reproduce(state))
+        }
+        PostMatchControlState::DispatchAndRestorePeeks => Some(PostMatchControlState::RestorePeeks),
+        PostMatchControlState::Reconsume(_)
+        | PostMatchControlState::Reproduce(_)
+        | PostMatchControlState::RestorePeeks => None,
+    }
+}
+
+#[cfg(test)]
+mod step_helpers_tests {
+    use super::*;
+    use crate::rust::interpreter::test_utils::persistent_store_tester::create_test_space;
+    use rspace_plus_plus::rspace::rspace::RSpace;
+    use rspace_plus_plus::rspace::rspace_interface::ISpace;
+
+    #[test]
+    fn step_should_suspend_when_gas_limit_is_non_positive() {
+        assert!(should_suspend_for_step(0));
+        assert!(should_suspend_for_step(-1));
+        assert!(!should_suspend_for_step(1));
+    }
+
+    #[test]
+    fn step_consumed_gas_is_monotonic_and_clamped() {
+        assert_eq!(compute_consumed_gas(100, 70), 30);
+        assert_eq!(compute_consumed_gas(100, 100), 0);
+        assert_eq!(compute_consumed_gas(70, 100), 0);
+    }
+
+    #[test]
+    fn step_effect_marker_matches_dispatch_type() {
+        assert!(!dispatch_emits_effects(&DispatchType::Skip));
+        assert!(dispatch_emits_effects(&DispatchType::DeterministicCall));
+        assert!(dispatch_emits_effects(&DispatchType::NonDeterministicCall(
+            vec![]
+        )));
+    }
+
+    #[test]
+    fn next_control_after_dispatch_maps_expected_variants() {
+        assert!(next_control_after_dispatch(PostMatchControlState::DispatchOnly).is_none());
+
+        let receive_state = ReceiveRegistrationState {
+            binds: Vec::new(),
+            body: ParWithRandom::default(),
+            persistent: true,
+            peek: false,
+        };
+        assert!(matches!(
+            next_control_after_dispatch(PostMatchControlState::DispatchAndReconsume(receive_state)),
+            Some(PostMatchControlState::Reconsume(_))
+        ));
+
+        let produce_state = ProduceRegistrationState {
+            chan: Par::default(),
+            data: ListParWithRandom::default(),
+            persistent: true,
+        };
+        assert!(matches!(
+            next_control_after_dispatch(PostMatchControlState::DispatchAndReproduce(produce_state)),
+            Some(PostMatchControlState::Reproduce(_))
+        ));
+
+        assert!(matches!(
+            next_control_after_dispatch(PostMatchControlState::DispatchAndRestorePeeks),
+            Some(PostMatchControlState::RestorePeeks)
+        ));
+    }
+
+    #[tokio::test]
+    async fn reduce_step_suspends_after_dispatch_for_reconsume_path() {
+        let (_, reducer) =
+            create_test_space::<RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>()
+                .await;
+
+        let state = PostMatchExecState {
+            dispatch: DispatchExecState {
+                continuation: TaggedContinuation::default(),
+                data_list: Vec::new(),
+                is_replay: false,
+                previous_output: Vec::new(),
+                _remaining_phlo: reducer.cost.get().value,
+            },
+            control: PostMatchControlState::DispatchAndReconsume(ReceiveRegistrationState {
+                binds: Vec::new(),
+                body: ParWithRandom::default(),
+                persistent: true,
+                peek: false,
+            }),
+        };
+
+        let step_result = reducer.reduce_step(state, i64::MAX).await.unwrap();
+        assert!(matches!(
+            step_result.terminal_status,
+            StepTerminalStatus::Suspended
+        ));
+        assert!(matches!(
+            step_result.next_state.unwrap().control,
+            PostMatchControlState::Reconsume(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn reduce_step_suspends_after_dispatch_for_restore_peeks_path() {
+        let (_, reducer) =
+            create_test_space::<RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>()
+                .await;
+
+        let state = PostMatchExecState {
+            dispatch: DispatchExecState {
+                continuation: TaggedContinuation::default(),
+                data_list: Vec::new(),
+                is_replay: false,
+                previous_output: Vec::new(),
+                _remaining_phlo: reducer.cost.get().value,
+            },
+            control: PostMatchControlState::DispatchAndRestorePeeks,
+        };
+
+        let step_result = reducer.reduce_step(state, i64::MAX).await.unwrap();
+        assert!(matches!(
+            step_result.terminal_status,
+            StepTerminalStatus::Suspended
+        ));
+        assert!(matches!(
+            step_result.next_state.unwrap().control,
+            PostMatchControlState::RestorePeeks
+        ));
+    }
+
+    #[tokio::test]
+    async fn reduce_step_completes_reconsume_follow_up_path() {
+        let (_, reducer) =
+            create_test_space::<RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>()
+                .await;
+
+        let state = PostMatchExecState {
+            dispatch: DispatchExecState {
+                continuation: TaggedContinuation::default(),
+                data_list: Vec::new(),
+                is_replay: false,
+                previous_output: Vec::new(),
+                _remaining_phlo: reducer.cost.get().value,
+            },
+            control: PostMatchControlState::Reconsume(ReceiveRegistrationState {
+                binds: vec![(
+                    BindPattern {
+                        patterns: vec![Par::default()],
+                        remainder: None,
+                        free_count: 0,
+                    },
+                    Par::default(),
+                )],
+                body: ParWithRandom::default(),
+                persistent: true,
+                peek: false,
+            }),
+        };
+
+        let step_result = reducer.reduce_step(state, i64::MAX).await.unwrap();
+        assert!(matches!(
+            step_result.terminal_status,
+            StepTerminalStatus::Completed
+        ));
+        assert!(step_result.next_state.is_none());
+    }
+
+    #[tokio::test]
+    async fn reduce_step_completes_restore_peeks_follow_up_path() {
+        let (_, reducer) =
+            create_test_space::<RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>()
+                .await;
+
+        let state = PostMatchExecState {
+            dispatch: DispatchExecState {
+                continuation: TaggedContinuation::default(),
+                data_list: Vec::new(),
+                is_replay: false,
+                previous_output: Vec::new(),
+                _remaining_phlo: reducer.cost.get().value,
+            },
+            control: PostMatchControlState::RestorePeeks,
+        };
+
+        let step_result = reducer.reduce_step(state, i64::MAX).await.unwrap();
+        assert!(matches!(
+            step_result.terminal_status,
+            StepTerminalStatus::Completed
+        ));
+        assert!(step_result.next_state.is_none());
+    }
+
+    #[tokio::test]
+    async fn execute_post_match_to_completion_advances_suspended_state() {
+        let (_, reducer) =
+            create_test_space::<RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>()
+                .await;
+
+        let state = PostMatchExecState {
+            dispatch: DispatchExecState {
+                continuation: TaggedContinuation::default(),
+                data_list: Vec::new(),
+                is_replay: false,
+                previous_output: Vec::new(),
+                _remaining_phlo: reducer.cost.get().value,
+            },
+            control: PostMatchControlState::DispatchAndRestorePeeks,
+        };
+
+        let result = reducer
+            .execute_post_match_to_completion(state, i64::MAX)
+            .await
+            .unwrap();
+        assert!(matches!(result, DispatchType::Skip));
+    }
+
+    fn sample_dispatch_and_restore_state(remaining_phlo: i64) -> PostMatchExecState {
+        let result_channel = new_gstring_par("step-result".to_string(), Vec::new(), false);
+        let restored_channel = new_gstring_par("step-peek".to_string(), Vec::new(), false);
+        let restored_payload = ListParWithRandom {
+            pars: vec![new_gint_par(7, Vec::new(), false)],
+            random_state: Vec::new(),
+        };
+        let continuation_body = Par::default().with_sends(vec![Send {
+            chan: Some(result_channel),
+            data: vec![new_gstring_par("ok".to_string(), Vec::new(), false)],
+            persistent: false,
+            locally_free: Vec::new(),
+            connective_used: false,
+        }]);
+
+        PostMatchExecState {
+            dispatch: DispatchExecState {
+                continuation: TaggedContinuation {
+                    tagged_cont: Some(TaggedCont::ParBody(ParWithRandom {
+                        body: Some(continuation_body),
+                        random_state: Vec::new(),
+                    })),
+                },
+                data_list: vec![(
+                    restored_channel,
+                    restored_payload.clone(),
+                    restored_payload,
+                    false,
+                )],
+                is_replay: false,
+                previous_output: Vec::new(),
+                _remaining_phlo: remaining_phlo,
+            },
+            control: PostMatchControlState::DispatchAndRestorePeeks,
+        }
+    }
+
+    #[tokio::test]
+    async fn full_execution_and_step_execution_are_equivalent_for_dispatch_restore_peeks() {
+        let (full_space, full_reducer) =
+            create_test_space::<RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>()
+                .await;
+        let full_state = sample_dispatch_and_restore_state(full_reducer.cost.get().value);
+        full_reducer
+            .execute_post_match_exec_state_full(full_state)
+            .await
+            .unwrap();
+        let full_map = full_space.to_map();
+
+        let (step_space, step_reducer) =
+            create_test_space::<RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>()
+                .await;
+        let step_state = sample_dispatch_and_restore_state(step_reducer.cost.get().value);
+        let step_result_1 = step_reducer
+            .reduce_step(step_state, i64::MAX)
+            .await
+            .unwrap();
+        assert!(matches!(
+            step_result_1.terminal_status,
+            StepTerminalStatus::Suspended
+        ));
+        let step_result_2 = step_reducer
+            .reduce_step(step_result_1.next_state.unwrap(), i64::MAX)
+            .await
+            .unwrap();
+        assert!(matches!(
+            step_result_2.terminal_status,
+            StepTerminalStatus::Completed
+        ));
+        let step_map = step_space.to_map();
+
+        assert_eq!(full_map, step_map);
+    }
+
+    #[test]
+    fn serialize_post_match_state_supports_dispatch_and_follow_up_controls() {
+        let dispatch = DispatchExecState {
+            continuation: TaggedContinuation::default(),
+            data_list: Vec::new(),
+            is_replay: false,
+            previous_output: Vec::new(),
+            _remaining_phlo: 42,
+        };
+
+        let receive_state = ReceiveRegistrationState {
+            binds: vec![(
+                BindPattern::default(),
+                new_gstring_par("channel".to_string(), Vec::new(), false),
+            )],
+            body: ParWithRandom::default(),
+            persistent: true,
+            peek: false,
+        };
+
+        let produce_state = ProduceRegistrationState {
+            chan: new_gstring_par("channel".to_string(), Vec::new(), false),
+            data: ListParWithRandom {
+                pars: vec![new_gint_par(7, Vec::new(), false)],
+                random_state: Vec::new(),
+            },
+            persistent: true,
+        };
+
+        let states = vec![
+            PostMatchExecState {
+                dispatch: dispatch.clone(),
+                control: PostMatchControlState::DispatchOnly,
+            },
+            PostMatchExecState {
+                dispatch: dispatch.clone(),
+                control: PostMatchControlState::DispatchAndReconsume(receive_state.clone()),
+            },
+            PostMatchExecState {
+                dispatch: dispatch.clone(),
+                control: PostMatchControlState::DispatchAndReproduce(produce_state.clone()),
+            },
+            PostMatchExecState {
+                dispatch: dispatch.clone(),
+                control: PostMatchControlState::DispatchAndRestorePeeks,
+            },
+            PostMatchExecState {
+                dispatch: dispatch.clone(),
+                control: PostMatchControlState::Reconsume(receive_state),
+            },
+            PostMatchExecState {
+                dispatch: dispatch.clone(),
+                control: PostMatchControlState::Reproduce(produce_state),
+            },
+            PostMatchExecState {
+                dispatch,
+                control: PostMatchControlState::RestorePeeks,
+            },
+        ];
+
+        for state in states.iter() {
+            let encoded = serialize_post_match_state(state).unwrap();
+            assert!(!encoded.is_empty());
+            let decoded = deserialize_post_match_state(&encoded).unwrap();
+            let reencoded = serialize_post_match_state(&decoded).unwrap();
+            assert_eq!(encoded, reencoded);
+        }
+    }
+
+    #[tokio::test]
+    async fn persist_suspended_state_should_reject_fanout_above_cap() {
+        let (_, reducer) =
+            create_test_space::<RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>()
+                .await;
+
+        let state = PostMatchExecState {
+            dispatch: DispatchExecState {
+                continuation: TaggedContinuation::default(),
+                data_list: vec![
+                    (
+                        Par::default(),
+                        ListParWithRandom::default(),
+                        ListParWithRandom::default(),
+                        false
+                    );
+                    MAX_CONTINUATION_BRANCH_FANOUT + 1
+                ],
+                is_replay: false,
+                previous_output: Vec::new(),
+                _remaining_phlo: reducer.cost.get().value,
+            },
+            control: PostMatchControlState::RestorePeeks,
+        };
+
+        let result =
+            reducer.persist_suspended_post_match_state(state, SplitPostMatchConfig::default());
+        assert!(matches!(
+            result,
+            Err(InterpreterError::IllegalArgumentError(msg)) if msg.contains("fan-out")
+        ));
+    }
+
+    #[tokio::test]
+    async fn persist_suspended_state_should_reject_state_size_above_cap() {
+        let (_, reducer) =
+            create_test_space::<RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>()
+                .await;
+
+        let oversized_output = new_gstring_par(
+            "x".repeat(MAX_CONTINUATION_STATE_BYTES + 1024),
+            Vec::new(),
+            false,
+        );
+        let state = PostMatchExecState {
+            dispatch: DispatchExecState {
+                continuation: TaggedContinuation::default(),
+                data_list: Vec::new(),
+                is_replay: false,
+                previous_output: vec![oversized_output],
+                _remaining_phlo: reducer.cost.get().value,
+            },
+            control: PostMatchControlState::RestorePeeks,
+        };
+
+        let result =
+            reducer.persist_suspended_post_match_state(state, SplitPostMatchConfig::default());
+        assert!(matches!(
+            result,
+            Err(InterpreterError::IllegalArgumentError(msg)) if msg.contains("state size")
+        ));
+    }
+
+    #[test]
+    fn post_match_state_round_trip_should_be_stable_across_multiple_cycles() {
+        let mut encoded =
+            serialize_post_match_state(&sample_dispatch_and_restore_state(123)).unwrap();
+
+        for _ in 0..8 {
+            let decoded = deserialize_post_match_state(&encoded).unwrap();
+            let reencoded = serialize_post_match_state(&decoded).unwrap();
+            assert_eq!(encoded, reencoded);
+            encoded = reencoded;
+        }
+    }
+
+    #[tokio::test]
+    async fn continuation_store_restore_should_preserve_nonce_progress_for_same_origin() {
+        let (_, reducer) =
+            create_test_space::<RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>()
+                .await;
+        let split_config = SplitPostMatchConfig::default();
+        let first_state = sample_dispatch_and_restore_state(reducer.cost.get().value);
+
+        let first_handle = reducer
+            .persist_suspended_post_match_state(first_state.clone(), split_config.clone())
+            .expect("first continuation persistence should succeed");
+
+        let snapshot = reducer.continuation_store.read().unwrap().snapshot();
+        let restored = InMemoryContinuationStore::restore(snapshot)
+            .expect("continuation store restore should succeed");
+        let next_nonce = restored
+            .handles()
+            .into_iter()
+            .map(|handle| handle.nonce)
+            .max()
+            .map(|nonce| nonce.saturating_add(1))
+            .unwrap_or(0);
+
+        {
+            let mut store = reducer.continuation_store.write().unwrap();
+            *store = restored;
+        }
+        reducer
+            .continuation_nonce
+            .store(next_nonce, Ordering::SeqCst);
+
+        let second_handle = reducer
+            .persist_suspended_post_match_state(first_state, split_config)
+            .expect("second continuation persistence should succeed");
+
+        assert_eq!(first_handle.origin, second_handle.origin);
+        assert_eq!(second_handle.nonce, first_handle.nonce + 1);
+    }
+}
 
 trait Method {
     fn apply(&self, p: Par, args: Vec<Par>, env: &Env<Par>) -> Result<Par, InterpreterError>;
@@ -630,110 +1261,536 @@ impl DebruijnInterpreter {
             return Err(InterpreterError::CanNotReplayFailedNonDeterministicProcess);
         }
 
-        let previous_output_as_par = previous_output
+        let previous_output_as_par = self.decode_previous_output(previous_output)?;
+        let Some(state) = self.build_post_match_produce_exec_state(
+            res,
+            chan,
+            data,
+            persistent,
+            is_replay,
+            previous_output_as_par,
+        ) else {
+            return Ok(DispatchType::Skip);
+        };
+
+        self.execute_post_match_with_runtime_policy(state).await
+    }
+
+    fn decode_previous_output(
+        &self,
+        previous_output: Vec<Vec<u8>>,
+    ) -> Result<Vec<Par>, InterpreterError> {
+        previous_output
             .into_iter()
             .map(|bytes| {
                 Par::decode(&bytes[..]).map_err(|e| InterpreterError::DecodeError(e.to_string()))
             })
-            .collect::<Result<Vec<_>, _>>()?;
+            .collect::<Result<Vec<_>, _>>()
+    }
 
-        match res {
-            Some((continuation, data_list, peek)) => {
-                if persistent {
-                    // dispatchAndRun
-                    let self_clone1 = self.clone();
-                    let self_clone2 = self.clone();
-                    let continuation_clone = continuation.clone();
-                    let data_list_clone = data_list.clone();
-                    let previous_output_clone = previous_output_as_par.clone();
-                    let chan_clone = chan.clone();
-                    let data_clone = data.clone();
-                    let persistent_flag = persistent;
-                    let is_replay_flag = is_replay;
+    fn build_post_match_exec_state(
+        &self,
+        res: Application,
+        binds: Vec<(BindPattern, Par)>,
+        body: ParWithRandom,
+        persistent: bool,
+        peek: bool,
+        is_replay: bool,
+        previous_output: Vec<Par>,
+    ) -> Option<PostMatchExecState> {
+        res.map(|(continuation, data_list, matched_peek)| {
+            let control = if persistent {
+                PostMatchControlState::DispatchAndReconsume(ReceiveRegistrationState {
+                    binds,
+                    body,
+                    persistent,
+                    peek,
+                })
+            } else if matched_peek {
+                PostMatchControlState::DispatchAndRestorePeeks
+            } else {
+                PostMatchControlState::DispatchOnly
+            };
 
-                    let mut futures: Vec<
-                        Pin<
-                            Box<
-                                dyn futures::Future<Output = Result<DispatchType, InterpreterError>>
-                                    + std::marker::Send,
-                            >,
-                        >,
-                    > = vec![];
+            PostMatchExecState {
+                dispatch: DispatchExecState {
+                    continuation,
+                    data_list,
+                    is_replay,
+                    previous_output,
+                    _remaining_phlo: self.cost.get().value,
+                },
+                control,
+            }
+        })
+    }
 
-                    let dispatch_fut = self_clone1.dispatch(
-                        continuation_clone,
-                        data_list_clone,
-                        is_replay_flag,
-                        previous_output_clone,
-                    );
-                    futures.push(Box::pin(dispatch_fut)
-                        as Pin<
-                            Box<
-                                dyn futures::Future<Output = Result<DispatchType, InterpreterError>>
-                                    + std::marker::Send,
-                            >,
-                        >);
+    fn build_post_match_produce_exec_state(
+        &self,
+        res: Application,
+        chan: Par,
+        data: ListParWithRandom,
+        persistent: bool,
+        is_replay: bool,
+        previous_output: Vec<Par>,
+    ) -> Option<PostMatchExecState> {
+        res.map(|(continuation, data_list, matched_peek)| {
+            let control = if persistent {
+                PostMatchControlState::DispatchAndReproduce(ProduceRegistrationState {
+                    chan,
+                    data,
+                    persistent,
+                })
+            } else if matched_peek {
+                PostMatchControlState::DispatchAndRestorePeeks
+            } else {
+                PostMatchControlState::DispatchOnly
+            };
 
-                    let produce_fut = self_clone2.produce(chan_clone, data_clone, persistent_flag);
-                    futures.push(Box::pin(produce_fut)
-                        as Pin<
-                            Box<
-                                dyn futures::Future<Output = Result<DispatchType, InterpreterError>>
-                                    + std::marker::Send,
-                            >,
-                        >);
+            PostMatchExecState {
+                dispatch: DispatchExecState {
+                    continuation,
+                    data_list,
+                    is_replay,
+                    previous_output,
+                    _remaining_phlo: self.cost.get().value,
+                },
+                control,
+            }
+        })
+    }
 
-                    // parTraverseSafe
-                    let results: Vec<Result<DispatchType, InterpreterError>> =
-                        futures::future::join_all(futures).await;
-                    let flattened_results: Vec<InterpreterError> = results
-                        .into_iter()
-                        .filter_map(|result| result.err())
-                        .collect();
+    async fn reduce_step(
+        &self,
+        exec_state: PostMatchExecState,
+        gas_limit: i64,
+    ) -> Result<StepResult, InterpreterError> {
+        if should_suspend_for_step(gas_limit) {
+            return Ok(StepResult {
+                dispatch_result: DispatchType::Skip,
+                emitted_effects: false,
+                next_state: Some(exec_state),
+                consumed_gas: 0,
+                terminal_status: StepTerminalStatus::Suspended,
+            });
+        }
 
-                    self.aggregate_evaluator_errors(flattened_results)
-                } else if peek {
-                    // dispatchAndRun
-                    let self_clone = self.clone();
-                    let continuation_clone = continuation.clone();
-                    let data_list_clone = data_list.clone();
-                    let previous_output_clone = previous_output_as_par.clone();
+        let PostMatchExecState { dispatch, control } = exec_state;
+        let remaining_before = dispatch._remaining_phlo;
 
-                    let mut futures: Vec<
-                        Pin<
-                            Box<
-                                dyn futures::Future<Output = Result<DispatchType, InterpreterError>>
-                                    + std::marker::Send,
-                            >,
-                        >,
-                    > = vec![Box::pin(async move {
-                        self_clone
-                            .dispatch(
-                                continuation_clone,
-                                data_list_clone,
-                                is_replay,
-                                previous_output_clone,
-                            )
-                            .await
-                    })];
-                    futures.extend(self.produce_peeks(data_list).await);
+        match control {
+            PostMatchControlState::DispatchOnly => {
+                let dispatch_result = self
+                    .dispatch(
+                        dispatch.continuation,
+                        dispatch.data_list,
+                        dispatch.is_replay,
+                        dispatch.previous_output,
+                    )
+                    .await?;
+                Ok(self.completed_step_result(dispatch_result, remaining_before))
+            }
+            PostMatchControlState::DispatchAndReconsume(receive_state) => {
+                let dispatch_state = dispatch.clone();
+                let dispatch_result = self
+                    .dispatch(
+                        dispatch.continuation,
+                        dispatch.data_list,
+                        dispatch.is_replay,
+                        dispatch.previous_output,
+                    )
+                    .await?;
+                Ok(self.suspended_step_result(
+                    dispatch_state,
+                    dispatch_result,
+                    PostMatchControlState::Reconsume(receive_state),
+                    remaining_before,
+                ))
+            }
+            PostMatchControlState::DispatchAndReproduce(produce_state) => {
+                let dispatch_state = dispatch.clone();
+                let dispatch_result = self
+                    .dispatch(
+                        dispatch.continuation,
+                        dispatch.data_list,
+                        dispatch.is_replay,
+                        dispatch.previous_output,
+                    )
+                    .await?;
+                Ok(self.suspended_step_result(
+                    dispatch_state,
+                    dispatch_result,
+                    PostMatchControlState::Reproduce(produce_state),
+                    remaining_before,
+                ))
+            }
+            PostMatchControlState::DispatchAndRestorePeeks => {
+                let dispatch_state = dispatch.clone();
+                let dispatch_result = self
+                    .dispatch(
+                        dispatch.continuation,
+                        dispatch.data_list,
+                        dispatch.is_replay,
+                        dispatch.previous_output,
+                    )
+                    .await?;
+                Ok(self.suspended_step_result(
+                    dispatch_state,
+                    dispatch_result,
+                    PostMatchControlState::RestorePeeks,
+                    remaining_before,
+                ))
+            }
+            PostMatchControlState::Reconsume(receive_state) => {
+                let reduce_result = self
+                    .consume(
+                        receive_state.binds,
+                        receive_state.body,
+                        receive_state.persistent,
+                        receive_state.peek,
+                    )
+                    .await?;
+                Ok(self.completed_step_result(reduce_result, remaining_before))
+            }
+            PostMatchControlState::Reproduce(produce_state) => {
+                let reduce_result = self
+                    .produce(
+                        produce_state.chan,
+                        produce_state.data,
+                        produce_state.persistent,
+                    )
+                    .await?;
+                Ok(self.completed_step_result(reduce_result, remaining_before))
+            }
+            PostMatchControlState::RestorePeeks => {
+                let restore_result = self.restore_peeks(dispatch.data_list).await?;
+                Ok(self.completed_step_result(restore_result, remaining_before))
+            }
+        }
+    }
 
-                    // parTraverseSafe
-                    let results: Vec<Result<DispatchType, InterpreterError>> =
-                        futures::future::join_all(futures).await;
-                    let flattened_results: Vec<InterpreterError> = results
-                        .into_iter()
-                        .filter_map(|result| result.err())
-                        .collect();
+    fn completed_step_result(
+        &self,
+        dispatch_result: DispatchType,
+        remaining_before: i64,
+    ) -> StepResult {
+        StepResult {
+            emitted_effects: dispatch_emits_effects(&dispatch_result),
+            dispatch_result,
+            next_state: None,
+            consumed_gas: compute_consumed_gas(remaining_before, self.cost.get().value),
+            terminal_status: StepTerminalStatus::Completed,
+        }
+    }
 
-                    self.aggregate_evaluator_errors(flattened_results)
-                } else {
-                    self.dispatch(continuation, data_list, is_replay, previous_output_as_par)
-                        .await
+    fn suspended_step_result(
+        &self,
+        dispatch_state: DispatchExecState,
+        dispatch_result: DispatchType,
+        next_control: PostMatchControlState,
+        remaining_before: i64,
+    ) -> StepResult {
+        let next_state = PostMatchExecState {
+            dispatch: DispatchExecState {
+                _remaining_phlo: self.cost.get().value,
+                ..dispatch_state
+            },
+            control: next_control,
+        };
+
+        StepResult {
+            emitted_effects: dispatch_emits_effects(&dispatch_result),
+            dispatch_result,
+            next_state: Some(next_state),
+            consumed_gas: compute_consumed_gas(remaining_before, self.cost.get().value),
+            terminal_status: StepTerminalStatus::Suspended,
+        }
+    }
+
+    async fn execute_post_match_to_completion(
+        &self,
+        mut state: PostMatchExecState,
+        gas_limit_per_step: i64,
+    ) -> Result<DispatchType, InterpreterError> {
+        loop {
+            let step_result = self.reduce_step(state, gas_limit_per_step).await?;
+            let StepResult {
+                dispatch_result,
+                emitted_effects: _emitted_effects,
+                next_state,
+                consumed_gas: _consumed_gas,
+                terminal_status,
+            } = step_result;
+
+            match terminal_status {
+                StepTerminalStatus::Completed => return Ok(dispatch_result),
+                StepTerminalStatus::Suspended => {
+                    state = next_state.ok_or_else(|| {
+                        InterpreterError::BugFoundError(
+                            "reduce_step suspended without next state".to_string(),
+                        )
+                    })?;
                 }
             }
-            None => Ok(DispatchType::Skip),
         }
+    }
+
+    async fn execute_post_match_with_runtime_policy(
+        &self,
+        state: PostMatchExecState,
+    ) -> Result<DispatchType, InterpreterError> {
+        let split_config = self.split_post_match_config.read().unwrap().clone();
+        if !split_config.enabled {
+            return self.execute_post_match_to_completion(state, i64::MAX).await;
+        }
+
+        let step_result = self
+            .reduce_step(state, split_config.initial_step_gas_limit)
+            .await?;
+        self.handle_split_step_result(step_result, split_config)
+    }
+
+    fn handle_split_step_result(
+        &self,
+        step_result: StepResult,
+        split_config: SplitPostMatchConfig,
+    ) -> Result<DispatchType, InterpreterError> {
+        let StepResult {
+            dispatch_result,
+            emitted_effects,
+            next_state,
+            consumed_gas,
+            terminal_status,
+        } = step_result;
+
+        debug!(
+            target: "f1r3fly.rholang",
+            split_post_match_enabled = true,
+            emitted_effects,
+            consumed_gas,
+            gas_limit_per_step = split_config.initial_step_gas_limit,
+            terminal_status = match terminal_status {
+                StepTerminalStatus::Completed => "completed",
+                StepTerminalStatus::Suspended => "suspended",
+            },
+            "post-match split step completed",
+        );
+
+        match terminal_status {
+            StepTerminalStatus::Completed => {
+                metrics::counter!("rholang.split_post_match.completed").increment(1);
+                Ok(dispatch_result)
+            }
+            StepTerminalStatus::Suspended => {
+                metrics::counter!("rholang.split_post_match.suspended").increment(1);
+                let suspended_state = next_state.ok_or_else(|| {
+                    InterpreterError::BugFoundError(
+                        "split step suspended without next state".to_string(),
+                    )
+                })?;
+                let _ = self.persist_suspended_post_match_state(suspended_state, split_config)?;
+                Ok(dispatch_result)
+            }
+        }
+    }
+
+    fn persist_suspended_post_match_state(
+        &self,
+        state: PostMatchExecState,
+        split_config: SplitPostMatchConfig,
+    ) -> Result<ContinuationHandle, InterpreterError> {
+        if state.dispatch.data_list.len() > MAX_CONTINUATION_BRANCH_FANOUT {
+            return Err(InterpreterError::IllegalArgumentError(format!(
+                "continuation fan-out {} exceeds maximum {}",
+                state.dispatch.data_list.len(),
+                MAX_CONTINUATION_BRANCH_FANOUT
+            )));
+        }
+        let serialized_state = serialize_post_match_state(&state)?;
+        if serialized_state.len() > MAX_CONTINUATION_STATE_BYTES {
+            return Err(InterpreterError::IllegalArgumentError(format!(
+                "continuation state size {} exceeds maximum {} bytes",
+                serialized_state.len(),
+                MAX_CONTINUATION_STATE_BYTES
+            )));
+        }
+        let origin_reference = state.dispatch.continuation.encode_to_vec();
+        let origin = Blake2b256::hash(origin_reference.clone()).to_vec();
+        let nonce = self.continuation_nonce.fetch_add(1, Ordering::SeqCst);
+        let handle = ContinuationHandle::new(origin, nonce);
+
+        let state_size_bytes = serialized_state.len() as f64;
+        let create = CreateContinuation {
+            handle: handle.clone(),
+            origin_reference,
+            serialized_state,
+            gas_limit_per_step: split_config.initial_step_gas_limit,
+            funding_policy: split_config.continuation_funding_policy,
+            visibility: split_config.continuation_visibility,
+            bounty: split_config.continuation_bounty,
+            ttl_epochs: split_config.continuation_ttl_epochs,
+            subtype: split_config.continuation_subtype,
+        };
+
+        let mut store = self.continuation_store.write().unwrap();
+        store.create(create).map_err(|e| {
+            InterpreterError::BugFoundError(format!(
+                "failed to persist suspended continuation: {e:?}"
+            ))
+        })?;
+
+        metrics::counter!("rholang.split_post_match.continuation_persisted").increment(1);
+        metrics::counter!("rholang.continuation.created").increment(1);
+        metrics::histogram!("rholang.continuation.state_bytes").record(state_size_bytes);
+        debug!(
+            target: "f1r3fly.rholang",
+            continuation_nonce = nonce,
+            "persisted suspended post-match continuation",
+        );
+
+        Ok(handle)
+    }
+
+    /// Compatibility path: run the post-match machine in a single full call.
+    /// Kept for equivalence testing against `reduce_step` progression.
+    #[cfg(test)]
+    async fn execute_post_match_exec_state_full(
+        &self,
+        state: PostMatchExecState,
+    ) -> Result<DispatchType, InterpreterError> {
+        let PostMatchExecState { dispatch, control } = state;
+
+        match control {
+            PostMatchControlState::DispatchOnly => {
+                self.dispatch(
+                    dispatch.continuation,
+                    dispatch.data_list,
+                    dispatch.is_replay,
+                    dispatch.previous_output,
+                )
+                .await
+            }
+            PostMatchControlState::DispatchAndReconsume(receive_state) => {
+                let self_clone1 = self.clone();
+                let self_clone2 = self.clone();
+
+                let dispatch_fut = self_clone1.dispatch(
+                    dispatch.continuation,
+                    dispatch.data_list,
+                    dispatch.is_replay,
+                    dispatch.previous_output,
+                );
+                let consume_fut = self_clone2.consume(
+                    receive_state.binds,
+                    receive_state.body,
+                    receive_state.persistent,
+                    receive_state.peek,
+                );
+
+                let futures: Vec<DispatchResultFuture<'_>> = vec![
+                    Box::pin(dispatch_fut) as DispatchResultFuture<'_>,
+                    Box::pin(consume_fut) as DispatchResultFuture<'_>,
+                ];
+
+                let results: Vec<Result<DispatchType, InterpreterError>> =
+                    futures::future::join_all(futures).await;
+                let flattened_results: Vec<InterpreterError> = results
+                    .into_iter()
+                    .filter_map(|result| result.err())
+                    .collect();
+
+                self.aggregate_evaluator_errors(flattened_results)
+            }
+            PostMatchControlState::DispatchAndReproduce(produce_state) => {
+                let self_clone1 = self.clone();
+                let self_clone2 = self.clone();
+
+                let dispatch_fut = self_clone1.dispatch(
+                    dispatch.continuation,
+                    dispatch.data_list,
+                    dispatch.is_replay,
+                    dispatch.previous_output,
+                );
+                let produce_fut = self_clone2.produce(
+                    produce_state.chan,
+                    produce_state.data,
+                    produce_state.persistent,
+                );
+
+                let futures: Vec<DispatchResultFuture<'_>> = vec![
+                    Box::pin(dispatch_fut) as DispatchResultFuture<'_>,
+                    Box::pin(produce_fut) as DispatchResultFuture<'_>,
+                ];
+
+                let results: Vec<Result<DispatchType, InterpreterError>> =
+                    futures::future::join_all(futures).await;
+                let flattened_results: Vec<InterpreterError> = results
+                    .into_iter()
+                    .filter_map(|result| result.err())
+                    .collect();
+
+                self.aggregate_evaluator_errors(flattened_results)
+            }
+            PostMatchControlState::DispatchAndRestorePeeks => {
+                let self_clone = self.clone();
+                let dispatch_state = dispatch.clone();
+
+                let mut futures: Vec<DispatchResultFuture<'_>> = vec![Box::pin(async move {
+                    self_clone
+                        .dispatch(
+                            dispatch_state.continuation,
+                            dispatch_state.data_list,
+                            dispatch_state.is_replay,
+                            dispatch_state.previous_output,
+                        )
+                        .await
+                })
+                    as DispatchResultFuture<'_>];
+                futures.extend(self.produce_peeks(dispatch.data_list).await);
+
+                let results: Vec<Result<DispatchType, InterpreterError>> =
+                    futures::future::join_all(futures).await;
+                let flattened_results: Vec<InterpreterError> = results
+                    .into_iter()
+                    .filter_map(|result| result.err())
+                    .collect();
+
+                self.aggregate_evaluator_errors(flattened_results)
+            }
+            PostMatchControlState::Reconsume(receive_state) => {
+                self.consume(
+                    receive_state.binds,
+                    receive_state.body,
+                    receive_state.persistent,
+                    receive_state.peek,
+                )
+                .await
+            }
+            PostMatchControlState::Reproduce(produce_state) => {
+                self.produce(
+                    produce_state.chan,
+                    produce_state.data,
+                    produce_state.persistent,
+                )
+                .await
+            }
+            PostMatchControlState::RestorePeeks => self.restore_peeks(dispatch.data_list).await,
+        }
+    }
+
+    async fn restore_peeks(
+        &self,
+        data_list: Vec<MatchedData>,
+    ) -> Result<DispatchType, InterpreterError> {
+        let futures = self.produce_peeks(data_list).await;
+        let results: Vec<Result<DispatchType, InterpreterError>> =
+            futures::future::join_all(futures).await;
+        let flattened_results: Vec<InterpreterError> = results
+            .into_iter()
+            .filter_map(|result| result.err())
+            .collect();
+
+        self.aggregate_evaluator_errors(flattened_results)
     }
 
     async fn continue_consume_process(
@@ -748,118 +1805,26 @@ impl DebruijnInterpreter {
     ) -> Result<DispatchType, InterpreterError> {
         // println!("\ncontinue_consume_process");
         // println!("\napplication in continue_consume_process: {:?}", res);
-        let previous_output_as_par = previous_output
-            .into_iter()
-            .map(|bytes| {
-                Par::decode(&bytes[..]).map_err(|e| InterpreterError::DecodeError(e.to_string()))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+        let previous_output_as_par = self.decode_previous_output(previous_output)?;
+        let Some(state) = self.build_post_match_exec_state(
+            res,
+            binds,
+            body,
+            persistent,
+            peek,
+            is_replay,
+            previous_output_as_par,
+        ) else {
+            return Ok(DispatchType::Skip);
+        };
 
-        match res {
-            Some((continuation, data_list, _peek)) => {
-                if persistent {
-                    // dispatchAndRun
-                    let self_clone1 = self.clone();
-                    let self_clone2 = self.clone();
-                    let continuation_clone = continuation.clone();
-                    let data_list_clone = data_list.clone();
-                    let previous_output_clone = previous_output_as_par.clone();
-                    let binds_clone = binds.clone();
-                    let body_clone = body.clone();
-                    let persistent_flag = persistent;
-                    let peek_flag = peek;
-                    let is_replay_flag = is_replay;
-
-                    let mut futures: Vec<
-                        Pin<
-                            Box<
-                                dyn futures::Future<Output = Result<DispatchType, InterpreterError>>
-                                    + std::marker::Send,
-                            >,
-                        >,
-                    > = vec![];
-
-                    let dispatch_fut = self_clone1.dispatch(
-                        continuation_clone,
-                        data_list_clone,
-                        is_replay_flag,
-                        previous_output_clone,
-                    );
-                    futures.push(Box::pin(dispatch_fut)
-                        as Pin<
-                            Box<
-                                dyn futures::Future<Output = Result<DispatchType, InterpreterError>>
-                                    + std::marker::Send,
-                            >,
-                        >);
-
-                    let consume_fut =
-                        self_clone2.consume(binds_clone, body_clone, persistent_flag, peek_flag);
-                    futures.push(Box::pin(consume_fut)
-                        as Pin<
-                            Box<
-                                dyn futures::Future<Output = Result<DispatchType, InterpreterError>>
-                                    + std::marker::Send,
-                            >,
-                        >);
-
-                    // parTraverseSafe
-                    let results: Vec<Result<DispatchType, InterpreterError>> =
-                        futures::future::join_all(futures).await;
-                    let flattened_results: Vec<InterpreterError> = results
-                        .into_iter()
-                        .filter_map(|result| result.err())
-                        .collect();
-
-                    self.aggregate_evaluator_errors(flattened_results)
-                } else if _peek {
-                    // dispatchAndRun
-                    let self_clone = self.clone();
-                    let continuation_clone = continuation.clone();
-                    let data_list_clone = data_list.clone();
-                    let previous_output_clone = previous_output_as_par.clone();
-
-                    let mut futures: Vec<
-                        Pin<
-                            Box<
-                                dyn futures::Future<Output = Result<DispatchType, InterpreterError>>
-                                    + std::marker::Send,
-                            >,
-                        >,
-                    > = vec![Box::pin(async move {
-                        self_clone
-                            .dispatch(
-                                continuation_clone,
-                                data_list_clone,
-                                is_replay,
-                                previous_output_clone,
-                            )
-                            .await
-                    })];
-                    futures.extend(self.produce_peeks(data_list).await);
-
-                    // parTraverseSafe
-                    let results: Vec<Result<DispatchType, InterpreterError>> =
-                        futures::future::join_all(futures).await;
-                    let flattened_results: Vec<InterpreterError> = results
-                        .into_iter()
-                        .filter_map(|result| result.err())
-                        .collect();
-
-                    self.aggregate_evaluator_errors(flattened_results)
-                } else {
-                    self.dispatch(continuation, data_list, is_replay, previous_output_as_par)
-                        .await
-                }
-            }
-            None => Ok(DispatchType::Skip),
-        }
+        self.execute_post_match_with_runtime_policy(state).await
     }
 
     fn dispatch<'a>(
         &'a self,
         continuation: TaggedContinuation,
-        data_list: Vec<(Par, ListParWithRandom, ListParWithRandom, bool)>,
+        data_list: Vec<MatchedData>,
         is_replay: bool,
         previous_output: Vec<Par>,
     ) -> Pin<
@@ -877,7 +1842,7 @@ impl DebruijnInterpreter {
     async fn dispatch_inner(
         &self,
         continuation: TaggedContinuation,
-        data_list: Vec<(Par, ListParWithRandom, ListParWithRandom, bool)>,
+        data_list: Vec<MatchedData>,
         is_replay: bool,
         previous_output: Vec<Par>,
     ) -> Result<DispatchType, InterpreterError> {
@@ -927,7 +1892,7 @@ impl DebruijnInterpreter {
 
     async fn produce_peeks(
         &self,
-        data_list: Vec<(Par, ListParWithRandom, ListParWithRandom, bool)>,
+        data_list: Vec<MatchedData>,
     ) -> Vec<
         Pin<
             Box<
@@ -1641,7 +2606,8 @@ impl DebruijnInterpreter {
                 }
 
                 (ExprInstance::GBigInt(b1), ExprInstance::GBigInt(b2)) => {
-                    self.cost.charge(bigint_comparison_cost(b1.len(), b2.len()))?;
+                    self.cost
+                        .charge(bigint_comparison_cost(b1.len(), b2.len()))?;
                     let cmp = compare_twos_complement_bytes(&b1, &b2);
                     Ok(Expr {
                         expr_instance: Some(ExprInstance::GBool(relopi(cmp as i64, 0))),
@@ -1650,8 +2616,10 @@ impl DebruijnInterpreter {
 
                 (ExprInstance::GBigRat(r1), ExprInstance::GBigRat(r2)) => {
                     self.cost.charge(bigrat_comparison_cost(
-                        r1.numerator.len(), r1.denominator.len(),
-                        r2.numerator.len(), r2.denominator.len(),
+                        r1.numerator.len(),
+                        r1.denominator.len(),
+                        r2.numerator.len(),
+                        r2.denominator.len(),
                     ))?;
                     let cmp = compare_big_rationals(&r1, &r2);
                     Ok(Expr {
@@ -1660,7 +2628,10 @@ impl DebruijnInterpreter {
                 }
 
                 (ExprInstance::GFixedPoint(fp1), ExprInstance::GFixedPoint(fp2)) => {
-                    self.cost.charge(bigint_comparison_cost(fp1.unscaled.len(), fp2.unscaled.len()))?;
+                    self.cost.charge(bigint_comparison_cost(
+                        fp1.unscaled.len(),
+                        fp2.unscaled.len(),
+                    ))?;
                     let cmp = compare_fixed_points(&fp1, &fp2)?;
                     Ok(Expr {
                         expr_instance: Some(ExprInstance::GBool(relopi(cmp as i64, 0))),
@@ -1743,7 +2714,8 @@ impl DebruijnInterpreter {
                             make_bigint_expr(negate_twos_complement(&bytes), "negation")
                         }
                         ExprInstance::GBigRat(rat) => {
-                            self.cost.charge(bigrat_negation_cost(rat.numerator.len()))?;
+                            self.cost
+                                .charge(bigrat_negation_cost(rat.numerator.len()))?;
                             make_bigrat_expr(
                                 models::rhoapi::GBigRational {
                                     numerator: negate_twos_complement(&rat.numerator),
@@ -1793,13 +2765,16 @@ impl DebruijnInterpreter {
                             })
                         }
                         (ExprInstance::GBigInt(b1), ExprInstance::GBigInt(b2)) => {
-                            self.cost.charge(bigint_multiplication_cost(b1.len(), b2.len()))?;
+                            self.cost
+                                .charge(bigint_multiplication_cost(b1.len(), b2.len()))?;
                             make_bigint_expr(multiply_twos_complement(&b1, &b2), "multiplication")
                         }
                         (ExprInstance::GBigRat(r1), ExprInstance::GBigRat(r2)) => {
                             self.cost.charge(bigrat_multiplication_cost(
-                                r1.numerator.len(), r1.denominator.len(),
-                                r2.numerator.len(), r2.denominator.len(),
+                                r1.numerator.len(),
+                                r1.denominator.len(),
+                                r2.numerator.len(),
+                                r2.denominator.len(),
                             ))?;
                             make_bigrat_expr(multiply_big_rationals(&r1, &r2), "multiplication")
                         }
@@ -1811,8 +2786,14 @@ impl DebruijnInterpreter {
                                     other_type: format!("FixedPoint(p{})", fp2.scale),
                                 });
                             }
-                            self.cost.charge(bigint_multiplication_cost(fp1.unscaled.len(), fp2.unscaled.len()))?;
-                            make_fixedpoint_expr(multiply_fixed_points(&fp1, &fp2), "multiplication")
+                            self.cost.charge(bigint_multiplication_cost(
+                                fp1.unscaled.len(),
+                                fp2.unscaled.len(),
+                            ))?;
+                            make_fixedpoint_expr(
+                                multiply_fixed_points(&fp1, &fp2),
+                                "multiplication",
+                            )
                         }
                         (lhs, rhs) => {
                             let lhs_type = get_type(lhs);
@@ -1872,8 +2853,10 @@ impl DebruijnInterpreter {
                         }
                         (ExprInstance::GBigRat(r1), ExprInstance::GBigRat(r2)) => {
                             self.cost.charge(bigrat_division_cost(
-                                r1.numerator.len(), r1.denominator.len(),
-                                r2.numerator.len(), r2.denominator.len(),
+                                r1.numerator.len(),
+                                r1.denominator.len(),
+                                r2.numerator.len(),
+                                r2.denominator.len(),
                             ))?;
                             if is_zero_twos_complement(&r2.numerator) {
                                 return Err(InterpreterError::ReduceError(
@@ -1890,7 +2873,10 @@ impl DebruijnInterpreter {
                                     other_type: format!("FixedPoint(p{})", fp2.scale),
                                 });
                             }
-                            self.cost.charge(bigint_division_cost(fp1.unscaled.len(), fp2.unscaled.len()))?;
+                            self.cost.charge(bigint_division_cost(
+                                fp1.unscaled.len(),
+                                fp2.unscaled.len(),
+                            ))?;
                             if is_zero_twos_complement(&fp2.unscaled) {
                                 return Err(InterpreterError::ReduceError(
                                     "Division by zero".to_string(),
@@ -2041,8 +3027,10 @@ impl DebruijnInterpreter {
 
                         (ExprInstance::GBigRat(r1), ExprInstance::GBigRat(r2)) => {
                             self.cost.charge(bigrat_sum_cost(
-                                r1.numerator.len(), r1.denominator.len(),
-                                r2.numerator.len(), r2.denominator.len(),
+                                r1.numerator.len(),
+                                r1.denominator.len(),
+                                r2.numerator.len(),
+                                r2.denominator.len(),
                             ))?;
                             make_bigrat_expr(add_big_rationals(&r1, &r2), "+")
                         }
@@ -2055,7 +3043,8 @@ impl DebruijnInterpreter {
                                     other_type: format!("FixedPoint(p{})", fp2.scale),
                                 });
                             }
-                            self.cost.charge(bigint_sum_cost(fp1.unscaled.len(), fp2.unscaled.len()))?;
+                            self.cost
+                                .charge(bigint_sum_cost(fp1.unscaled.len(), fp2.unscaled.len()))?;
                             make_fixedpoint_expr(
                                 models::rhoapi::GFixedPoint {
                                     unscaled: add_twos_complement(&fp1.unscaled, &fp2.unscaled),
@@ -2121,14 +3110,17 @@ impl DebruijnInterpreter {
                         }
 
                         (ExprInstance::GBigInt(b1), ExprInstance::GBigInt(b2)) => {
-                            self.cost.charge(bigint_subtraction_cost(b1.len(), b2.len()))?;
+                            self.cost
+                                .charge(bigint_subtraction_cost(b1.len(), b2.len()))?;
                             make_bigint_expr(subtract_twos_complement(&b1, &b2), "-")
                         }
 
                         (ExprInstance::GBigRat(r1), ExprInstance::GBigRat(r2)) => {
                             self.cost.charge(bigrat_subtraction_cost(
-                                r1.numerator.len(), r1.denominator.len(),
-                                r2.numerator.len(), r2.denominator.len(),
+                                r1.numerator.len(),
+                                r1.denominator.len(),
+                                r2.numerator.len(),
+                                r2.denominator.len(),
                             ))?;
                             make_bigrat_expr(subtract_big_rationals(&r1, &r2), "-")
                         }
@@ -2141,7 +3133,10 @@ impl DebruijnInterpreter {
                                     other_type: format!("FixedPoint(p{})", fp2.scale),
                                 });
                             }
-                            self.cost.charge(bigint_subtraction_cost(fp1.unscaled.len(), fp2.unscaled.len()))?;
+                            self.cost.charge(bigint_subtraction_cost(
+                                fp1.unscaled.len(),
+                                fp2.unscaled.len(),
+                            ))?;
                             make_fixedpoint_expr(
                                 models::rhoapi::GFixedPoint {
                                     unscaled: subtract_twos_complement(
@@ -2205,45 +3200,37 @@ impl DebruijnInterpreter {
                     }
                 }
 
-                ExprInstance::ELtBody(ELt { p1, p2 }) => {
-                    relop(
-                        &p1.clone().unwrap(),
-                        &p2.clone().unwrap(),
-                        |b1: bool, b2: bool| b1 < b2,
-                        |i1: i64, i2: i64| i1 < i2,
-                        |s1: String, s2: String| s1 < s2,
-                    )
-                }
+                ExprInstance::ELtBody(ELt { p1, p2 }) => relop(
+                    &p1.clone().unwrap(),
+                    &p2.clone().unwrap(),
+                    |b1: bool, b2: bool| b1 < b2,
+                    |i1: i64, i2: i64| i1 < i2,
+                    |s1: String, s2: String| s1 < s2,
+                ),
 
-                ExprInstance::ELteBody(ELte { p1, p2 }) => {
-                    relop(
-                        &p1.clone().unwrap(),
-                        &p2.clone().unwrap(),
-                        |b1: bool, b2: bool| b1 <= b2,
-                        |i1: i64, i2: i64| i1 <= i2,
-                        |s1: String, s2: String| s1 <= s2,
-                    )
-                }
+                ExprInstance::ELteBody(ELte { p1, p2 }) => relop(
+                    &p1.clone().unwrap(),
+                    &p2.clone().unwrap(),
+                    |b1: bool, b2: bool| b1 <= b2,
+                    |i1: i64, i2: i64| i1 <= i2,
+                    |s1: String, s2: String| s1 <= s2,
+                ),
 
-                ExprInstance::EGtBody(EGt { p1, p2 }) => {
-                    relop(
-                        &p1.clone().unwrap(),
-                        &p2.clone().unwrap(),
-                        |b1: bool, b2: bool| b1 > b2,
-                        |i1: i64, i2: i64| i1 > i2,
-                        |s1: String, s2: String| s1 > s2,
-                    )
-                }
+                ExprInstance::EGtBody(EGt { p1, p2 }) => relop(
+                    &p1.clone().unwrap(),
+                    &p2.clone().unwrap(),
+                    |b1: bool, b2: bool| b1 > b2,
+                    |i1: i64, i2: i64| i1 > i2,
+                    |s1: String, s2: String| s1 > s2,
+                ),
 
-                ExprInstance::EGteBody(EGte { p1, p2 }) => {
-                    relop(
-                        &p1.clone().unwrap(),
-                        &p2.clone().unwrap(),
-                        |b1: bool, b2: bool| b1 >= b2,
-                        |i1: i64, i2: i64| i1 >= i2,
-                        |s1: String, s2: String| s1 >= s2,
-                    )
-                }
+                ExprInstance::EGteBody(EGte { p1, p2 }) => relop(
+                    &p1.clone().unwrap(),
+                    &p2.clone().unwrap(),
+                    |b1: bool, b2: bool| b1 >= b2,
+                    |i1: i64, i2: i64| i1 >= i2,
+                    |s1: String, s2: String| s1 >= s2,
+                ),
 
                 ExprInstance::EEqBody(EEq { p1, p2 }) => {
                     let v1 = self.eval_expr(&p1.clone().unwrap(), env)?;
@@ -2253,9 +3240,7 @@ impl DebruijnInterpreter {
                     let sv2 = self.substitute.substitute_and_charge(&v2, 0, env)?;
                     self.cost.charge(equality_check_cost(&sv1, &sv2))?;
 
-                    let result = if par_contains_nan_double(&sv1)
-                        || par_contains_nan_double(&sv2)
-                    {
+                    let result = if par_contains_nan_double(&sv1) || par_contains_nan_double(&sv2) {
                         false
                     } else {
                         sv1 == sv2
@@ -2272,9 +3257,7 @@ impl DebruijnInterpreter {
                     let sv2 = self.substitute.substitute_and_charge(&v2, 0, env)?;
                     self.cost.charge(equality_check_cost(&sv1, &sv2))?;
 
-                    let result = if par_contains_nan_double(&sv1)
-                        || par_contains_nan_double(&sv2)
-                    {
+                    let result = if par_contains_nan_double(&sv1) || par_contains_nan_double(&sv2) {
                         true
                     } else {
                         sv1 != sv2
@@ -7240,11 +8223,740 @@ impl DebruijnInterpreter {
             mergeable_tag_name,
             cost: cost.clone(),
             substitute: Substitute { cost: cost.clone() },
+            split_post_match_config: Arc::new(RwLock::new(SplitPostMatchConfig::default())),
+            continuation_store: Arc::new(RwLock::new(InMemoryContinuationStore::default())),
+            continuation_nonce: Arc::new(AtomicU64::new(0)),
         });
 
         reducer_cell.set(Arc::downgrade(&reducer)).ok().unwrap();
         reducer
     }
+
+    pub fn set_split_post_match_config(&self, config: SplitPostMatchConfig) {
+        let mut config_guard = self.split_post_match_config.write().unwrap();
+        *config_guard = config;
+    }
+
+    pub fn continuation_store_len(&self) -> usize {
+        self.continuation_store.read().unwrap().len()
+    }
+
+    pub fn list_continuation_handles(&self) -> Vec<ContinuationHandle> {
+        self.continuation_store.read().unwrap().handles()
+    }
+
+    pub fn set_continuation_epoch(
+        &self,
+        epoch: u64,
+    ) -> Result<Vec<ContinuationHandle>, InterpreterError> {
+        let mut store = self.continuation_store.write().unwrap();
+        store
+            .set_epoch(epoch)
+            .map_err(map_continuation_store_error)?;
+        let expired = store.expire_due().map_err(map_continuation_store_error)?;
+        let expired_handles = expired
+            .iter()
+            .map(|continuation| continuation.handle.clone())
+            .collect::<Vec<_>>();
+        if !expired_handles.is_empty() {
+            metrics::counter!("rholang.continuation.expired")
+                .increment(expired_handles.len() as u64);
+        }
+        Ok(expired_handles)
+    }
+
+    pub fn list_public_continuation_queue(
+        &self,
+        epoch: u64,
+    ) -> Result<Vec<PublicContinuationInfo>, InterpreterError> {
+        let mut store = self.continuation_store.write().unwrap();
+        store
+            .set_epoch(epoch)
+            .map_err(map_continuation_store_error)?;
+        let expired = store.expire_due().map_err(map_continuation_store_error)?;
+        if !expired.is_empty() {
+            metrics::counter!("rholang.continuation.expired").increment(expired.len() as u64);
+        }
+
+        let queue = store
+            .public_active_continuations()
+            .into_iter()
+            .filter(|continuation| continuation.funding_policy == FundingPolicy::ExecutorPays)
+            .map(|continuation| PublicContinuationInfo {
+                handle: continuation.handle,
+                version: continuation.version,
+                gas_limit_per_step: continuation.gas_limit_per_step,
+                bounty: continuation.bounty,
+                expires_at_epoch: continuation.expires_at_epoch,
+            })
+            .collect();
+        Ok(queue)
+    }
+
+    pub fn list_bridge_continuation_queue_by_deadline(
+        &self,
+        epoch: u64,
+    ) -> Result<Vec<BridgeContinuationInfo>, InterpreterError> {
+        let mut store = self.continuation_store.write().unwrap();
+        store
+            .set_epoch(epoch)
+            .map_err(map_continuation_store_error)?;
+        let expired = store.expire_due().map_err(map_continuation_store_error)?;
+        if !expired.is_empty() {
+            metrics::counter!("rholang.continuation.expired").increment(expired.len() as u64);
+        }
+
+        metrics::counter!("rholang.bridge.queue.deadline_requests").increment(1);
+        Ok(store
+            .bridge_active_continuations_sorted_by_deadline()
+            .into_iter()
+            .filter_map(persisted_to_bridge_info)
+            .collect())
+    }
+
+    pub fn list_bridge_continuation_queue_by_reward(
+        &self,
+        epoch: u64,
+    ) -> Result<Vec<BridgeContinuationInfo>, InterpreterError> {
+        let mut store = self.continuation_store.write().unwrap();
+        store
+            .set_epoch(epoch)
+            .map_err(map_continuation_store_error)?;
+        let expired = store.expire_due().map_err(map_continuation_store_error)?;
+        if !expired.is_empty() {
+            metrics::counter!("rholang.continuation.expired").increment(expired.len() as u64);
+        }
+
+        metrics::counter!("rholang.bridge.queue.reward_requests").increment(1);
+        Ok(store
+            .bridge_active_continuations_sorted_by_reward()
+            .into_iter()
+            .filter_map(persisted_to_bridge_info)
+            .collect())
+    }
+
+    pub fn list_bridge_rescue_candidates(
+        &self,
+        epoch: u64,
+    ) -> Result<Vec<BridgeContinuationInfo>, InterpreterError> {
+        let mut store = self.continuation_store.write().unwrap();
+        store
+            .set_epoch(epoch)
+            .map_err(map_continuation_store_error)?;
+        let expired = store.expire_due().map_err(map_continuation_store_error)?;
+        if !expired.is_empty() {
+            metrics::counter!("rholang.continuation.expired").increment(expired.len() as u64);
+        }
+
+        metrics::counter!("rholang.bridge.queue.rescue_requests").increment(1);
+        Ok(store
+            .bridge_rescue_candidates(epoch)
+            .into_iter()
+            .filter_map(persisted_to_bridge_info)
+            .collect())
+    }
+
+    pub fn update_bridge_finality_phase(
+        &self,
+        handle: &ContinuationHandle,
+        expected_version: u64,
+        finality_phase: BridgeFinalityPhase,
+    ) -> Result<PersistedContinuation, InterpreterError> {
+        self.continuation_store
+            .write()
+            .unwrap()
+            .update_bridge_finality_phase_with_version(handle, expected_version, finality_phase)
+            .map_err(map_continuation_store_error)
+    }
+
+    pub fn load_continuation(
+        &self,
+        handle: &ContinuationHandle,
+    ) -> Result<PersistedContinuation, InterpreterError> {
+        self.continuation_store
+            .read()
+            .unwrap()
+            .load(handle)
+            .map_err(map_continuation_store_error)
+    }
+
+    pub async fn execute_public_continuation(
+        &self,
+        handle: &ContinuationHandle,
+        expected_version: u64,
+        gas_limit: i64,
+        epoch: u64,
+    ) -> Result<ContinuationExecutionResult, InterpreterError> {
+        {
+            let mut store = self.continuation_store.write().unwrap();
+            store
+                .set_epoch(epoch)
+                .map_err(map_continuation_store_error)?;
+            let expired = store.expire_due().map_err(map_continuation_store_error)?;
+            if !expired.is_empty() {
+                metrics::counter!("rholang.continuation.expired").increment(expired.len() as u64);
+            }
+
+            let persisted = store.load(handle).map_err(map_continuation_store_error)?;
+            if persisted.visibility != ContinuationVisibility::Public {
+                return Err(InterpreterError::IllegalArgumentError(format!(
+                    "continuation {}:{} is not publicly visible",
+                    hex::encode(&persisted.handle.origin),
+                    persisted.handle.nonce
+                )));
+            }
+            if persisted.funding_policy != FundingPolicy::ExecutorPays {
+                return Err(InterpreterError::IllegalArgumentError(format!(
+                    "continuation {}:{} is not executor-funded",
+                    hex::encode(&persisted.handle.origin),
+                    persisted.handle.nonce
+                )));
+            }
+        }
+
+        self.execute_continuation(handle, expected_version, gas_limit)
+            .await
+    }
+
+    pub async fn execute_bridge_continuation(
+        &self,
+        handle: &ContinuationHandle,
+        expected_version: u64,
+        gas_limit: i64,
+        epoch: u64,
+    ) -> Result<ContinuationExecutionResult, InterpreterError> {
+        {
+            let mut store = self.continuation_store.write().unwrap();
+            store
+                .set_epoch(epoch)
+                .map_err(map_continuation_store_error)?;
+            let expired = store.expire_due().map_err(map_continuation_store_error)?;
+            if !expired.is_empty() {
+                metrics::counter!("rholang.continuation.expired").increment(expired.len() as u64);
+            }
+            let persisted = store.load(handle).map_err(map_continuation_store_error)?;
+            if persisted.subtype.as_bridge().is_none() {
+                return Err(InterpreterError::IllegalArgumentError(format!(
+                    "continuation {}:{} is not a bridge continuation",
+                    hex::encode(&persisted.handle.origin),
+                    persisted.handle.nonce
+                )));
+            }
+        }
+        metrics::counter!("rholang.bridge.execute.requests").increment(1);
+        self.execute_continuation(handle, expected_version, gas_limit)
+            .await
+    }
+
+    pub async fn execute_next_bridge_by_deadline(
+        &self,
+        epoch: u64,
+        gas_limit: i64,
+    ) -> Result<Option<ContinuationExecutionResult>, InterpreterError> {
+        let queue = self.list_bridge_continuation_queue_by_deadline(epoch)?;
+        let Some(next) = queue.first() else {
+            return Ok(None);
+        };
+
+        let result = self
+            .execute_bridge_continuation(&next.handle, next.version, gas_limit, epoch)
+            .await?;
+        Ok(Some(result))
+    }
+
+    pub async fn execute_next_bridge_by_reward(
+        &self,
+        epoch: u64,
+        gas_limit: i64,
+    ) -> Result<Option<ContinuationExecutionResult>, InterpreterError> {
+        let queue = self.list_bridge_continuation_queue_by_reward(epoch)?;
+        let Some(next) = queue.first() else {
+            return Ok(None);
+        };
+
+        let result = self
+            .execute_bridge_continuation(&next.handle, next.version, gas_limit, epoch)
+            .await?;
+        Ok(Some(result))
+    }
+
+    pub async fn execute_continuation(
+        &self,
+        handle: &ContinuationHandle,
+        expected_version: u64,
+        gas_limit: i64,
+    ) -> Result<ContinuationExecutionResult, InterpreterError> {
+        {
+            let mut store = self.continuation_store.write().unwrap();
+            let expired = store.expire_due().map_err(map_continuation_store_error)?;
+            if !expired.is_empty() {
+                metrics::counter!("rholang.continuation.expired").increment(expired.len() as u64);
+            }
+        }
+
+        let persisted = self.load_continuation(handle)?;
+        if persisted.status != ContinuationStatus::Active {
+            return Err(InterpreterError::IllegalArgumentError(format!(
+                "continuation {}:{} is not active (status {:?})",
+                hex::encode(&persisted.handle.origin),
+                persisted.handle.nonce,
+                persisted.status
+            )));
+        }
+        if persisted.version != expected_version {
+            return Err(map_continuation_store_error(
+                ContinuationStoreError::VersionMismatch {
+                    handle: persisted.handle.clone(),
+                    expected: expected_version,
+                    actual: persisted.version,
+                },
+            ));
+        }
+
+        let effective_gas_limit = gas_limit.min(persisted.gas_limit_per_step);
+        let state = deserialize_post_match_state(&persisted.serialized_state)?;
+        let step_result = match self.reduce_step(state, effective_gas_limit).await {
+            Ok(step_result) => step_result,
+            Err(error) => {
+                if let Err(mark_error) = self
+                    .continuation_store
+                    .write()
+                    .unwrap()
+                    .fail_with_version(handle, expected_version)
+                    .map_err(map_continuation_store_error)
+                {
+                    return Err(InterpreterError::BugFoundError(format!(
+                        "continuation step failed and could not mark continuation as failed: {mark_error}"
+                    )));
+                }
+
+                metrics::counter!("rholang.continuation.resume.failed").increment(1);
+                return Err(error);
+            }
+        };
+
+        let StepResult {
+            dispatch_result: _dispatch_result,
+            emitted_effects,
+            next_state,
+            consumed_gas,
+            terminal_status,
+        } = step_result;
+        metrics::histogram!("rholang.continuation.gas_per_step").record(consumed_gas as f64);
+        metrics::counter!("rholang.continuation.resumed").increment(1);
+
+        match terminal_status {
+            StepTerminalStatus::Completed => {
+                let updated = self
+                    .continuation_store
+                    .write()
+                    .unwrap()
+                    .complete_with_version(handle, expected_version)
+                    .map_err(map_continuation_store_error)?;
+                metrics::counter!("rholang.continuation.resume.completed").increment(1);
+                metrics::histogram!("rholang.continuation.steps_to_completion")
+                    .record(updated.version.saturating_sub(1) as f64);
+                Ok(ContinuationExecutionResult {
+                    handle: updated.handle,
+                    status: ContinuationExecutionStatus::Completed,
+                    version: updated.version,
+                    state_root: updated.state_root,
+                    consumed_gas,
+                    emitted_effects,
+                })
+            }
+            StepTerminalStatus::Suspended => {
+                let suspended_state = next_state.ok_or_else(|| {
+                    InterpreterError::BugFoundError(
+                        "continuation step suspended without next state".to_string(),
+                    )
+                })?;
+                let serialized_state = serialize_post_match_state(&suspended_state)?;
+                let updated = self
+                    .continuation_store
+                    .write()
+                    .unwrap()
+                    .update_state_with_version(
+                        handle,
+                        expected_version,
+                        serialized_state,
+                        persisted.gas_limit_per_step,
+                    )
+                    .map_err(map_continuation_store_error)?;
+                metrics::counter!("rholang.continuation.resume.suspended").increment(1);
+                Ok(ContinuationExecutionResult {
+                    handle: updated.handle,
+                    status: ContinuationExecutionStatus::Suspended,
+                    version: updated.version,
+                    state_root: updated.state_root,
+                    consumed_gas,
+                    emitted_effects,
+                })
+            }
+        }
+    }
+}
+
+fn persisted_to_bridge_info(continuation: PersistedContinuation) -> Option<BridgeContinuationInfo> {
+    match continuation.subtype {
+        ContinuationSubtype::Standard => None,
+        ContinuationSubtype::Bridge(bridge_metadata) => Some(BridgeContinuationInfo {
+            handle: continuation.handle,
+            version: continuation.version,
+            gas_limit_per_step: continuation.gas_limit_per_step,
+            bounty: continuation.bounty,
+            bridge_metadata,
+        }),
+    }
+}
+
+fn map_continuation_store_error(error: ContinuationStoreError) -> InterpreterError {
+    match error {
+        ContinuationStoreError::AlreadyExists(handle) => InterpreterError::BugFoundError(format!(
+            "continuation already exists: {}:{}",
+            hex::encode(&handle.origin),
+            handle.nonce
+        )),
+        ContinuationStoreError::NotFound(handle) => {
+            InterpreterError::IllegalArgumentError(format!(
+                "continuation not found: {}:{}",
+                hex::encode(&handle.origin),
+                handle.nonce
+            ))
+        }
+        ContinuationStoreError::NotBridgeContinuation(handle) => {
+            InterpreterError::IllegalArgumentError(format!(
+                "continuation {}:{} is not a bridge continuation",
+                hex::encode(&handle.origin),
+                handle.nonce
+            ))
+        }
+        ContinuationStoreError::VersionMismatch {
+            handle,
+            expected,
+            actual,
+        } => InterpreterError::IllegalArgumentError(format!(
+            "stale continuation version for {}:{} (expected {}, actual {})",
+            hex::encode(&handle.origin),
+            handle.nonce,
+            expected,
+            actual
+        )),
+        ContinuationStoreError::EpochRegression { current, attempted } => {
+            InterpreterError::IllegalArgumentError(format!(
+                "continuation epoch regression is not allowed (current {}, attempted {})",
+                current, attempted
+            ))
+        }
+        ContinuationStoreError::InvalidTransition { handle, from, to } => {
+            InterpreterError::IllegalArgumentError(format!(
+                "invalid continuation transition for {}:{} from {:?} to {:?}",
+                hex::encode(&handle.origin),
+                handle.nonce,
+                from,
+                to
+            ))
+        }
+        ContinuationStoreError::UnsupportedEncodingVersion(version) => {
+            InterpreterError::DecodeError(format!(
+                "unsupported continuation encoding version: {}",
+                version
+            ))
+        }
+        ContinuationStoreError::InvalidFormat(message) => {
+            InterpreterError::DecodeError(format!("invalid continuation encoding: {}", message))
+        }
+    }
+}
+
+const MAX_CONTINUATION_STATE_BYTES: usize = 128 * 1024;
+const MAX_CONTINUATION_BRANCH_FANOUT: usize = 128;
+const POST_MATCH_STATE_ENCODING_VERSION: u8 = 1;
+
+fn serialize_post_match_state(state: &PostMatchExecState) -> Result<Vec<u8>, InterpreterError> {
+    let mut out = Vec::new();
+    out.push(POST_MATCH_STATE_ENCODING_VERSION);
+
+    let control_tag = match &state.control {
+        PostMatchControlState::DispatchOnly => 0u8,
+        PostMatchControlState::DispatchAndReconsume(_) => 1u8,
+        PostMatchControlState::DispatchAndReproduce(_) => 2u8,
+        PostMatchControlState::DispatchAndRestorePeeks => 3u8,
+        PostMatchControlState::Reconsume(_) => 4u8,
+        PostMatchControlState::Reproduce(_) => 5u8,
+        PostMatchControlState::RestorePeeks => 6u8,
+    };
+    out.push(control_tag);
+
+    serialize_dispatch_exec_state(&state.dispatch, &mut out);
+
+    match &state.control {
+        PostMatchControlState::DispatchAndReconsume(receive_state)
+        | PostMatchControlState::Reconsume(receive_state) => {
+            serialize_receive_registration_state(receive_state, &mut out);
+        }
+        PostMatchControlState::DispatchAndReproduce(produce_state)
+        | PostMatchControlState::Reproduce(produce_state) => {
+            serialize_produce_registration_state(produce_state, &mut out);
+        }
+        PostMatchControlState::DispatchOnly
+        | PostMatchControlState::DispatchAndRestorePeeks
+        | PostMatchControlState::RestorePeeks => {}
+    }
+
+    Ok(out)
+}
+
+fn serialize_receive_registration_state(
+    receive_state: &ReceiveRegistrationState,
+    out: &mut Vec<u8>,
+) {
+    put_u32(out, receive_state.binds.len() as u32);
+    for (bind_pattern, source) in receive_state.binds.iter() {
+        put_bytes(out, &bind_pattern.encode_to_vec());
+        put_bytes(out, &source.encode_to_vec());
+    }
+    put_bytes(out, &receive_state.body.encode_to_vec());
+    put_bool(out, receive_state.persistent);
+    put_bool(out, receive_state.peek);
+}
+
+fn serialize_produce_registration_state(
+    produce_state: &ProduceRegistrationState,
+    out: &mut Vec<u8>,
+) {
+    put_bytes(out, &produce_state.chan.encode_to_vec());
+    put_bytes(out, &produce_state.data.encode_to_vec());
+    put_bool(out, produce_state.persistent);
+}
+
+fn serialize_dispatch_exec_state(dispatch: &DispatchExecState, out: &mut Vec<u8>) {
+    put_bytes(out, &dispatch.continuation.encode_to_vec());
+    put_u32(out, dispatch.data_list.len() as u32);
+    for (chan, matched_data, removed_data, persistent) in dispatch.data_list.iter() {
+        put_bytes(out, &chan.encode_to_vec());
+        put_bytes(out, &matched_data.encode_to_vec());
+        put_bytes(out, &removed_data.encode_to_vec());
+        put_bool(out, *persistent);
+    }
+    put_bool(out, dispatch.is_replay);
+    put_u32(out, dispatch.previous_output.len() as u32);
+    for par in dispatch.previous_output.iter() {
+        put_bytes(out, &par.encode_to_vec());
+    }
+    put_i64(out, dispatch._remaining_phlo);
+}
+
+fn put_bool(out: &mut Vec<u8>, value: bool) {
+    out.push(if value { 1 } else { 0 });
+}
+
+fn put_u32(out: &mut Vec<u8>, value: u32) {
+    out.extend_from_slice(&value.to_le_bytes());
+}
+
+fn put_i64(out: &mut Vec<u8>, value: i64) {
+    out.extend_from_slice(&value.to_le_bytes());
+}
+
+fn put_bytes(out: &mut Vec<u8>, bytes: &[u8]) {
+    put_u32(out, bytes.len() as u32);
+    out.extend_from_slice(bytes);
+}
+
+fn deserialize_post_match_state(input: &[u8]) -> Result<PostMatchExecState, InterpreterError> {
+    let mut idx = 0usize;
+    let encoding_version = read_u8(input, &mut idx)?;
+    if encoding_version != POST_MATCH_STATE_ENCODING_VERSION {
+        return Err(InterpreterError::DecodeError(format!(
+            "unsupported post-match state encoding version: {}",
+            encoding_version
+        )));
+    }
+
+    let control_tag = read_u8(input, &mut idx)?;
+    let dispatch = deserialize_dispatch_exec_state(input, &mut idx)?;
+    let control = match control_tag {
+        0 => PostMatchControlState::DispatchOnly,
+        1 => PostMatchControlState::DispatchAndReconsume(deserialize_receive_registration_state(
+            input, &mut idx,
+        )?),
+        2 => PostMatchControlState::DispatchAndReproduce(deserialize_produce_registration_state(
+            input, &mut idx,
+        )?),
+        3 => PostMatchControlState::DispatchAndRestorePeeks,
+        4 => PostMatchControlState::Reconsume(deserialize_receive_registration_state(
+            input, &mut idx,
+        )?),
+        5 => PostMatchControlState::Reproduce(deserialize_produce_registration_state(
+            input, &mut idx,
+        )?),
+        6 => PostMatchControlState::RestorePeeks,
+        _ => {
+            return Err(InterpreterError::DecodeError(format!(
+                "unknown post-match control tag: {}",
+                control_tag
+            )))
+        }
+    };
+
+    if idx != input.len() {
+        return Err(InterpreterError::DecodeError(
+            "trailing bytes in post-match state encoding".to_string(),
+        ));
+    }
+
+    Ok(PostMatchExecState { dispatch, control })
+}
+
+fn deserialize_receive_registration_state(
+    input: &[u8],
+    idx: &mut usize,
+) -> Result<ReceiveRegistrationState, InterpreterError> {
+    let bind_count = read_u32(input, idx)? as usize;
+    let mut binds = Vec::with_capacity(bind_count);
+    for _ in 0..bind_count {
+        let bind_pattern = decode_message::<BindPattern>(&read_bytes(input, idx)?, "BindPattern")?;
+        let source = decode_message::<Par>(&read_bytes(input, idx)?, "Par")?;
+        binds.push((bind_pattern, source));
+    }
+
+    let body = decode_message::<ParWithRandom>(&read_bytes(input, idx)?, "ParWithRandom")?;
+    let persistent = read_bool(input, idx)?;
+    let peek = read_bool(input, idx)?;
+
+    Ok(ReceiveRegistrationState {
+        binds,
+        body,
+        persistent,
+        peek,
+    })
+}
+
+fn deserialize_produce_registration_state(
+    input: &[u8],
+    idx: &mut usize,
+) -> Result<ProduceRegistrationState, InterpreterError> {
+    let chan = decode_message::<Par>(&read_bytes(input, idx)?, "Par")?;
+    let data = decode_message::<ListParWithRandom>(&read_bytes(input, idx)?, "ListParWithRandom")?;
+    let persistent = read_bool(input, idx)?;
+    Ok(ProduceRegistrationState {
+        chan,
+        data,
+        persistent,
+    })
+}
+
+fn deserialize_dispatch_exec_state(
+    input: &[u8],
+    idx: &mut usize,
+) -> Result<DispatchExecState, InterpreterError> {
+    let continuation =
+        decode_message::<TaggedContinuation>(&read_bytes(input, idx)?, "TaggedContinuation")?;
+
+    let data_list_count = read_u32(input, idx)? as usize;
+    let mut data_list = Vec::with_capacity(data_list_count);
+    for _ in 0..data_list_count {
+        let chan = decode_message::<Par>(&read_bytes(input, idx)?, "Par")?;
+        let matched_data =
+            decode_message::<ListParWithRandom>(&read_bytes(input, idx)?, "ListParWithRandom")?;
+        let removed_data =
+            decode_message::<ListParWithRandom>(&read_bytes(input, idx)?, "ListParWithRandom")?;
+        let persistent = read_bool(input, idx)?;
+        data_list.push((chan, matched_data, removed_data, persistent));
+    }
+
+    let is_replay = read_bool(input, idx)?;
+    let previous_output_count = read_u32(input, idx)? as usize;
+    let mut previous_output = Vec::with_capacity(previous_output_count);
+    for _ in 0..previous_output_count {
+        previous_output.push(decode_message::<Par>(&read_bytes(input, idx)?, "Par")?);
+    }
+    let remaining_phlo = read_i64(input, idx)?;
+
+    Ok(DispatchExecState {
+        continuation,
+        data_list,
+        is_replay,
+        previous_output,
+        _remaining_phlo: remaining_phlo,
+    })
+}
+
+fn decode_message<T>(bytes: &[u8], type_name: &str) -> Result<T, InterpreterError>
+where
+    T: Message + Default,
+{
+    T::decode(bytes).map_err(|e| {
+        InterpreterError::DecodeError(format!(
+            "failed to decode {} from continuation state: {}",
+            type_name, e
+        ))
+    })
+}
+
+fn read_bool(input: &[u8], idx: &mut usize) -> Result<bool, InterpreterError> {
+    match read_u8(input, idx)? {
+        0 => Ok(false),
+        1 => Ok(true),
+        value => Err(InterpreterError::DecodeError(format!(
+            "invalid bool encoding: {}",
+            value
+        ))),
+    }
+}
+
+fn read_u8(input: &[u8], idx: &mut usize) -> Result<u8, InterpreterError> {
+    if *idx + 1 > input.len() {
+        return Err(InterpreterError::DecodeError(
+            "unexpected end of bytes while decoding u8".to_string(),
+        ));
+    }
+    let value = input[*idx];
+    *idx += 1;
+    Ok(value)
+}
+
+fn read_u32(input: &[u8], idx: &mut usize) -> Result<u32, InterpreterError> {
+    if *idx + 4 > input.len() {
+        return Err(InterpreterError::DecodeError(
+            "unexpected end of bytes while decoding u32".to_string(),
+        ));
+    }
+    let mut bytes = [0u8; 4];
+    bytes.copy_from_slice(&input[*idx..*idx + 4]);
+    *idx += 4;
+    Ok(u32::from_le_bytes(bytes))
+}
+
+fn read_i64(input: &[u8], idx: &mut usize) -> Result<i64, InterpreterError> {
+    if *idx + 8 > input.len() {
+        return Err(InterpreterError::DecodeError(
+            "unexpected end of bytes while decoding i64".to_string(),
+        ));
+    }
+    let mut bytes = [0u8; 8];
+    bytes.copy_from_slice(&input[*idx..*idx + 8]);
+    *idx += 8;
+    Ok(i64::from_le_bytes(bytes))
+}
+
+fn read_bytes(input: &[u8], idx: &mut usize) -> Result<Vec<u8>, InterpreterError> {
+    let len = read_u32(input, idx)? as usize;
+    let end = idx.checked_add(len).ok_or_else(|| {
+        InterpreterError::DecodeError(
+            "byte length overflow while decoding continuation state".to_string(),
+        )
+    })?;
+    if end > input.len() {
+        return Err(InterpreterError::DecodeError(
+            "unexpected end of bytes while decoding length-delimited bytes".to_string(),
+        ));
+    }
+
+    let bytes = input[*idx..end].to_vec();
+    *idx = end;
+    Ok(bytes)
 }
 
 fn get_type(expr_instance: ExprInstance) -> String {
@@ -7394,9 +9106,7 @@ fn compare_twos_complement_bytes(a: &[u8], b: &[u8]) -> i32 {
     }
 }
 
-fn bytes_to_bigrat(
-    rat: &models::rhoapi::GBigRational,
-) -> num_rational::BigRational {
+fn bytes_to_bigrat(rat: &models::rhoapi::GBigRational) -> num_rational::BigRational {
     num_rational::BigRational::new(
         bytes_to_bigint(&rat.numerator),
         bytes_to_bigint(&rat.denominator),
@@ -7467,7 +9177,10 @@ fn multiply_fixed_points(
     a: &models::rhoapi::GFixedPoint,
     b: &models::rhoapi::GFixedPoint,
 ) -> models::rhoapi::GFixedPoint {
-    debug_assert_eq!(a.scale, b.scale, "multiply_fixed_points called with mismatched scales");
+    debug_assert_eq!(
+        a.scale, b.scale,
+        "multiply_fixed_points called with mismatched scales"
+    );
     // Scale-preserving: (ua * ub) / 10^scale, using floor division
     let ua = bytes_to_bigint(&a.unscaled);
     let ub = bytes_to_bigint(&b.unscaled);
@@ -7492,7 +9205,10 @@ fn divide_fixed_points(
     a: &models::rhoapi::GFixedPoint,
     b: &models::rhoapi::GFixedPoint,
 ) -> models::rhoapi::GFixedPoint {
-    debug_assert_eq!(a.scale, b.scale, "divide_fixed_points called with mismatched scales");
+    debug_assert_eq!(
+        a.scale, b.scale,
+        "divide_fixed_points called with mismatched scales"
+    );
     let ten = num_bigint::BigInt::from(10);
     let factor = num_traits::pow::pow(ten, b.scale as usize);
     let scaled = bytes_to_bigint(&a.unscaled) * factor;

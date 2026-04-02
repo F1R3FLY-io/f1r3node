@@ -4,6 +4,7 @@ use std::{
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     i64,
     sync::Arc,
+    time::Duration,
 };
 
 use crypto::rust::hash::blake2b512_random::Blake2b512Random;
@@ -41,8 +42,15 @@ use rholang::rust::interpreter::{
     env::Env,
     errors::InterpreterError,
     matcher::r#match::Matcher,
-    reduce::DebruijnInterpreter,
+    reduce::{
+        ContinuationExecutionResult, ContinuationExecutionStatus, DebruijnInterpreter,
+        SplitPostMatchConfig,
+    },
     rho_runtime::RhoISpace,
+    storage::continuation_store::{
+        BridgeContinuationMetadata, BridgeFinalityPhase, BridgeRewardPolicy, ContinuationHandle,
+        ContinuationSubtype, ContinuationVisibility, FundingPolicy,
+    },
     test_utils::persistent_store_tester::create_test_space,
 };
 use rspace_plus_plus::rspace::{
@@ -125,6 +133,113 @@ fn check_continuation(
     }
 
     true
+}
+
+async fn create_split_continuation_with_persistent_send(
+    reducer: &Arc<DebruijnInterpreter>,
+    channel_name: &str,
+    result_channel_name: &str,
+    payload: i64,
+    seed: i8,
+) {
+    let channel = new_gstring_par(channel_name.to_string(), Vec::new(), false);
+    let result_channel = new_gstring_par(result_channel_name.to_string(), Vec::new(), false);
+
+    let receive = Par::default().with_receives(vec![Receive {
+        binds: vec![ReceiveBind {
+            patterns: vec![new_freevar_par(0, Vec::new())],
+            source: Some(channel.clone()),
+            remainder: None,
+            free_count: 1,
+        }],
+        body: Some(Par::default().with_sends(vec![Send {
+            chan: Some(result_channel),
+            data: vec![new_gstring_par("Success".to_string(), Vec::new(), false)],
+            persistent: false,
+            locally_free: Vec::new(),
+            connective_used: false,
+        }])),
+        persistent: false,
+        peek: false,
+        bind_count: 1,
+        locally_free: Vec::new(),
+        connective_used: false,
+    }]);
+
+    let send = Par::default().with_sends(vec![Send {
+        chan: Some(channel),
+        data: vec![new_gint_par(payload, Vec::new(), false)],
+        persistent: true,
+        locally_free: Vec::new(),
+        connective_used: false,
+    }]);
+
+    let env: Env<Par> = Env::new();
+    assert!(reducer
+        .eval(receive, &env, rand().split_byte(seed))
+        .await
+        .is_ok());
+    assert!(reducer
+        .eval(send, &env, rand().split_byte(seed.wrapping_add(1)))
+        .await
+        .is_ok());
+}
+
+async fn run_split_replay_case(
+    channel_name: &str,
+    result_channel_name: &str,
+    payload: i64,
+    seed: i8,
+) -> (
+    Vec<u8>,
+    Vec<u8>,
+    Vec<u8>,
+    ContinuationExecutionResult,
+    HashMap<Vec<Par>, Row<BindPattern, ListParWithRandom, TaggedContinuation>>,
+) {
+    let (space, reducer) =
+        create_test_space::<RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>()
+            .await;
+    reducer.set_split_post_match_config(SplitPostMatchConfig {
+        enabled: true,
+        initial_step_gas_limit: i64::MAX,
+        ..Default::default()
+    });
+    create_split_continuation_with_persistent_send(
+        &reducer,
+        channel_name,
+        result_channel_name,
+        payload,
+        seed,
+    )
+    .await;
+
+    let handles = reducer.list_continuation_handles();
+    assert_eq!(
+        handles.len(),
+        1,
+        "exactly one continuation should be persisted"
+    );
+    let handle = handles[0].clone();
+
+    let before = reducer
+        .load_continuation(&handle)
+        .expect("persisted continuation should load before replay");
+    let resumed = reducer
+        .execute_continuation(&handle, before.version, i64::MAX)
+        .await
+        .expect("replay run should complete continuation");
+    let after = reducer
+        .load_continuation(&handle)
+        .expect("persisted continuation should load after replay");
+
+    (
+        before.serialized_state,
+        before.state_root,
+        after.state_root,
+        resumed,
+        space.to_map(),
+    )
 }
 
 #[tokio::test]
@@ -884,6 +999,1161 @@ async fn eval_of_send_pipe_receive_with_peek_should_meet_in_the_tuple_space_and_
 
     let receive_result = space.to_map();
     assert_eq!(receive_result, map_data(expected_elements));
+}
+
+#[tokio::test]
+async fn eval_of_persistent_receive_should_remain_registered_after_each_match() {
+    let (space, reducer) =
+        create_test_space::<RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>()
+            .await;
+
+    let channel = new_gstring_par("channel".to_string(), Vec::new(), false);
+    let result_channel = new_gstring_par("result".to_string(), Vec::new(), false);
+
+    let receive = Par::default().with_receives(vec![Receive {
+        binds: vec![ReceiveBind {
+            patterns: vec![new_freevar_par(0, Vec::new())],
+            source: Some(channel.clone()),
+            remainder: None,
+            free_count: 1,
+        }],
+        body: Some(Par::default().with_sends(vec![Send {
+            chan: Some(result_channel.clone()),
+            data: vec![new_gstring_par("Success".to_string(), Vec::new(), false)],
+            persistent: false,
+            locally_free: Vec::new(),
+            connective_used: false,
+        }])),
+        persistent: true,
+        peek: false,
+        bind_count: 1,
+        locally_free: Vec::new(),
+        connective_used: false,
+    }]);
+
+    let send_1 = Par::default().with_sends(vec![Send {
+        chan: Some(channel.clone()),
+        data: vec![new_gint_par(1, Vec::new(), false)],
+        persistent: false,
+        locally_free: Vec::new(),
+        connective_used: false,
+    }]);
+
+    let send_2 = Par::default().with_sends(vec![Send {
+        chan: Some(channel.clone()),
+        data: vec![new_gint_par(2, Vec::new(), false)],
+        persistent: false,
+        locally_free: Vec::new(),
+        connective_used: false,
+    }]);
+
+    let env: Env<Par> = Env::new();
+    assert!(reducer
+        .eval(receive, &env, rand().split_byte(0))
+        .await
+        .is_ok());
+    assert!(reducer
+        .eval(send_1, &env, rand().split_byte(1))
+        .await
+        .is_ok());
+
+    let first_state = space.to_map();
+    let first_receive_row = first_state
+        .get(&vec![channel.clone()])
+        .expect("persistent receive should remain registered");
+    let first_result_row = first_state
+        .get(&vec![result_channel.clone()])
+        .expect("first match should emit one result");
+
+    assert_eq!(first_receive_row.wks.len(), 1);
+    assert_eq!(first_result_row.data.len(), 1);
+
+    assert!(reducer
+        .eval(send_2, &env, rand().split_byte(2))
+        .await
+        .is_ok());
+
+    let second_state = space.to_map();
+    let second_receive_row = second_state
+        .get(&vec![channel.clone()])
+        .expect("persistent receive should still be registered");
+    let second_result_row = second_state
+        .get(&vec![result_channel.clone()])
+        .expect("second match should append another result");
+
+    assert_eq!(second_receive_row.wks.len(), 1);
+    assert_eq!(second_result_row.data.len(), 2);
+}
+
+#[tokio::test]
+async fn split_post_match_enabled_should_commit_dispatch_effects_and_persist_remainder() {
+    let (space, reducer) =
+        create_test_space::<RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>()
+            .await;
+
+    reducer.set_split_post_match_config(SplitPostMatchConfig {
+        enabled: true,
+        initial_step_gas_limit: i64::MAX,
+        ..SplitPostMatchConfig::default()
+    });
+
+    let channel = new_gstring_par("split-channel".to_string(), Vec::new(), false);
+    let result_channel = new_gstring_par("split-result".to_string(), Vec::new(), false);
+
+    let receive = Par::default().with_receives(vec![Receive {
+        binds: vec![ReceiveBind {
+            patterns: vec![new_freevar_par(0, Vec::new())],
+            source: Some(channel.clone()),
+            remainder: None,
+            free_count: 1,
+        }],
+        body: Some(Par::default().with_sends(vec![Send {
+            chan: Some(result_channel.clone()),
+            data: vec![new_gstring_par("Success".to_string(), Vec::new(), false)],
+            persistent: false,
+            locally_free: Vec::new(),
+            connective_used: false,
+        }])),
+        persistent: false,
+        peek: false,
+        bind_count: 1,
+        locally_free: Vec::new(),
+        connective_used: false,
+    }]);
+
+    let send = Par::default().with_sends(vec![Send {
+        chan: Some(channel.clone()),
+        data: vec![new_gint_par(1, Vec::new(), false)],
+        persistent: true,
+        locally_free: Vec::new(),
+        connective_used: false,
+    }]);
+
+    let env: Env<Par> = Env::new();
+    assert!(reducer
+        .eval(receive, &env, rand().split_byte(0))
+        .await
+        .is_ok());
+    assert_eq!(reducer.continuation_store_len(), 0);
+    assert!(reducer.eval(send, &env, rand().split_byte(1)).await.is_ok());
+
+    let state = space.to_map();
+    let result_row = state
+        .get(&vec![result_channel.clone()])
+        .expect("dispatch effects should be committed immediately");
+    assert_eq!(result_row.data.len(), 1);
+
+    assert_eq!(reducer.continuation_store_len(), 1);
+    if let Some(channel_row) = state.get(&vec![channel.clone()]) {
+        assert_eq!(
+            channel_row.data.len(),
+            0,
+            "persistent send re-registration should be deferred to continuation resume"
+        );
+    }
+}
+
+#[tokio::test]
+async fn split_post_match_disabled_should_execute_full_post_match_path() {
+    let (space, reducer) =
+        create_test_space::<RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>()
+            .await;
+
+    reducer.set_split_post_match_config(SplitPostMatchConfig {
+        enabled: false,
+        initial_step_gas_limit: 1,
+        ..SplitPostMatchConfig::default()
+    });
+
+    let channel = new_gstring_par("full-channel".to_string(), Vec::new(), false);
+    let result_channel = new_gstring_par("full-result".to_string(), Vec::new(), false);
+
+    let receive = Par::default().with_receives(vec![Receive {
+        binds: vec![ReceiveBind {
+            patterns: vec![new_freevar_par(0, Vec::new())],
+            source: Some(channel.clone()),
+            remainder: None,
+            free_count: 1,
+        }],
+        body: Some(Par::default().with_sends(vec![Send {
+            chan: Some(result_channel.clone()),
+            data: vec![new_gstring_par("Success".to_string(), Vec::new(), false)],
+            persistent: false,
+            locally_free: Vec::new(),
+            connective_used: false,
+        }])),
+        persistent: true,
+        peek: false,
+        bind_count: 1,
+        locally_free: Vec::new(),
+        connective_used: false,
+    }]);
+
+    let send = Par::default().with_sends(vec![Send {
+        chan: Some(channel.clone()),
+        data: vec![new_gint_par(1, Vec::new(), false)],
+        persistent: false,
+        locally_free: Vec::new(),
+        connective_used: false,
+    }]);
+
+    let env: Env<Par> = Env::new();
+    assert!(reducer
+        .eval(receive, &env, rand().split_byte(0))
+        .await
+        .is_ok());
+    assert!(reducer.eval(send, &env, rand().split_byte(1)).await.is_ok());
+
+    let state = space.to_map();
+    let channel_row = state
+        .get(&vec![channel.clone()])
+        .expect("persistent receive should be restored in full execution mode");
+    let result_row = state
+        .get(&vec![result_channel.clone()])
+        .expect("dispatch effects should be committed");
+
+    assert_eq!(channel_row.wks.len(), 1);
+    assert_eq!(result_row.data.len(), 1);
+    assert_eq!(reducer.continuation_store_len(), 0);
+}
+
+#[tokio::test]
+async fn execute_continuation_should_resume_to_completion_and_reject_terminal_resume() {
+    let (space, reducer) =
+        create_test_space::<RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>()
+            .await;
+    reducer.set_split_post_match_config(SplitPostMatchConfig {
+        enabled: true,
+        initial_step_gas_limit: i64::MAX,
+        ..SplitPostMatchConfig::default()
+    });
+
+    let channel = new_gstring_par("resume-channel".to_string(), Vec::new(), false);
+    let result_channel = new_gstring_par("resume-result".to_string(), Vec::new(), false);
+
+    let receive = Par::default().with_receives(vec![Receive {
+        binds: vec![ReceiveBind {
+            patterns: vec![new_freevar_par(0, Vec::new())],
+            source: Some(channel.clone()),
+            remainder: None,
+            free_count: 1,
+        }],
+        body: Some(Par::default().with_sends(vec![Send {
+            chan: Some(result_channel.clone()),
+            data: vec![new_gstring_par("Success".to_string(), Vec::new(), false)],
+            persistent: false,
+            locally_free: Vec::new(),
+            connective_used: false,
+        }])),
+        persistent: false,
+        peek: false,
+        bind_count: 1,
+        locally_free: Vec::new(),
+        connective_used: false,
+    }]);
+
+    let send = Par::default().with_sends(vec![Send {
+        chan: Some(channel.clone()),
+        data: vec![new_gint_par(1, Vec::new(), false)],
+        persistent: true,
+        locally_free: Vec::new(),
+        connective_used: false,
+    }]);
+
+    let env: Env<Par> = Env::new();
+    assert!(reducer
+        .eval(receive, &env, rand().split_byte(0))
+        .await
+        .is_ok());
+    assert!(reducer.eval(send, &env, rand().split_byte(1)).await.is_ok());
+
+    assert_eq!(reducer.continuation_store_len(), 1);
+    let handle = reducer
+        .list_continuation_handles()
+        .into_iter()
+        .next()
+        .expect("one continuation should be persisted");
+    let persisted = reducer
+        .load_continuation(&handle)
+        .expect("persisted continuation should load");
+
+    let resume_result = reducer
+        .execute_continuation(&handle, persisted.version, i64::MAX)
+        .await
+        .expect("continuation should complete");
+    assert_eq!(resume_result.status, ContinuationExecutionStatus::Completed);
+    assert_eq!(resume_result.version, persisted.version + 1);
+
+    let state = space.to_map();
+    let channel_row = state
+        .get(&vec![channel.clone()])
+        .expect("persistent send should be restored after completion");
+    let result_row = state
+        .get(&vec![result_channel.clone()])
+        .expect("dispatch effect should remain committed");
+    assert_eq!(channel_row.data.len(), 1);
+    assert_eq!(result_row.data.len(), 1);
+
+    let terminal_resume = reducer
+        .execute_continuation(&handle, resume_result.version, i64::MAX)
+        .await;
+    assert!(matches!(
+        terminal_resume,
+        Err(InterpreterError::IllegalArgumentError(msg)) if msg.contains("not active")
+    ));
+}
+
+#[tokio::test]
+async fn execute_continuation_should_handle_partial_progress_and_reject_stale_or_invalid_handles() {
+    let (_, reducer) =
+        create_test_space::<RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>()
+            .await;
+    reducer.set_split_post_match_config(SplitPostMatchConfig {
+        enabled: true,
+        initial_step_gas_limit: i64::MAX,
+        ..SplitPostMatchConfig::default()
+    });
+
+    let channel = new_gstring_par("partial-channel".to_string(), Vec::new(), false);
+    let result_channel = new_gstring_par("partial-result".to_string(), Vec::new(), false);
+
+    let receive = Par::default().with_receives(vec![Receive {
+        binds: vec![ReceiveBind {
+            patterns: vec![new_freevar_par(0, Vec::new())],
+            source: Some(channel.clone()),
+            remainder: None,
+            free_count: 1,
+        }],
+        body: Some(Par::default().with_sends(vec![Send {
+            chan: Some(result_channel.clone()),
+            data: vec![new_gstring_par("Success".to_string(), Vec::new(), false)],
+            persistent: false,
+            locally_free: Vec::new(),
+            connective_used: false,
+        }])),
+        persistent: false,
+        peek: false,
+        bind_count: 1,
+        locally_free: Vec::new(),
+        connective_used: false,
+    }]);
+
+    let send = Par::default().with_sends(vec![Send {
+        chan: Some(channel.clone()),
+        data: vec![new_gint_par(1, Vec::new(), false)],
+        persistent: true,
+        locally_free: Vec::new(),
+        connective_used: false,
+    }]);
+
+    let env: Env<Par> = Env::new();
+    assert!(reducer
+        .eval(receive, &env, rand().split_byte(0))
+        .await
+        .is_ok());
+    assert!(reducer.eval(send, &env, rand().split_byte(1)).await.is_ok());
+
+    let handle = reducer
+        .list_continuation_handles()
+        .into_iter()
+        .next()
+        .expect("one continuation should be persisted");
+    let persisted = reducer
+        .load_continuation(&handle)
+        .expect("persisted continuation should load");
+
+    let stale_before_progress = reducer.execute_continuation(&handle, 0, i64::MAX).await;
+    assert!(matches!(
+        stale_before_progress,
+        Err(InterpreterError::IllegalArgumentError(msg)) if msg.contains("stale continuation version")
+    ));
+
+    let partial = reducer
+        .execute_continuation(&handle, persisted.version, 0)
+        .await
+        .expect("zero gas limit should suspend without completing");
+    assert_eq!(partial.status, ContinuationExecutionStatus::Suspended);
+    assert_eq!(partial.version, persisted.version + 1);
+
+    let stale_after_progress = reducer
+        .execute_continuation(&handle, persisted.version, i64::MAX)
+        .await;
+    assert!(matches!(
+        stale_after_progress,
+        Err(InterpreterError::IllegalArgumentError(msg)) if msg.contains("stale continuation version")
+    ));
+
+    let completed = reducer
+        .execute_continuation(&handle, partial.version, i64::MAX)
+        .await
+        .expect("latest version should complete continuation");
+    assert_eq!(completed.status, ContinuationExecutionStatus::Completed);
+
+    let unknown = ContinuationHandle::new(vec![0u8; 32], 999);
+    let unknown_result = reducer.execute_continuation(&unknown, 1, i64::MAX).await;
+    assert!(matches!(
+        unknown_result,
+        Err(InterpreterError::IllegalArgumentError(msg)) if msg.contains("not found")
+    ));
+}
+
+#[tokio::test]
+async fn split_replay_runs_should_be_deterministic_for_multiple_cases() {
+    let replay_cases = [
+        ("det-channel-a", "det-result-a", 1_i64, 31_i8),
+        ("det-channel-b", "det-result-b", 2_i64, 37_i8),
+        ("det-channel-c", "det-result-c", 3_i64, 41_i8),
+    ];
+
+    for (idx, (channel_name, result_channel_name, payload, seed)) in
+        replay_cases.iter().copied().enumerate()
+    {
+        let first = run_split_replay_case(channel_name, result_channel_name, payload, seed).await;
+        let second = run_split_replay_case(channel_name, result_channel_name, payload, seed).await;
+        assert_eq!(
+            first, second,
+            "non-deterministic replay output for case {}",
+            idx
+        );
+    }
+}
+
+#[tokio::test]
+async fn continuation_replay_retries_should_be_idempotent_and_non_mutating() {
+    let retry_cases = [
+        ("idem-channel-a", "idem-result-a", 11_i64, 51_i8),
+        ("idem-channel-b", "idem-result-b", 12_i64, 57_i8),
+    ];
+
+    for (idx, (channel_name, result_channel_name, payload, seed)) in
+        retry_cases.iter().copied().enumerate()
+    {
+        let (_, reducer) =
+            create_test_space::<RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>()
+                .await;
+        reducer.set_split_post_match_config(SplitPostMatchConfig {
+            enabled: true,
+            initial_step_gas_limit: i64::MAX,
+            ..SplitPostMatchConfig::default()
+        });
+        create_split_continuation_with_persistent_send(
+            &reducer,
+            channel_name,
+            result_channel_name,
+            payload,
+            seed,
+        )
+        .await;
+
+        let handle = reducer
+            .list_continuation_handles()
+            .into_iter()
+            .next()
+            .expect("one continuation should be persisted");
+        let persisted = reducer
+            .load_continuation(&handle)
+            .expect("persisted continuation should load");
+        let completed = reducer
+            .execute_continuation(&handle, persisted.version, i64::MAX)
+            .await
+            .expect("initial replay should complete continuation");
+        assert_eq!(completed.status, ContinuationExecutionStatus::Completed);
+
+        let stable_terminal_state = reducer
+            .load_continuation(&handle)
+            .expect("completed continuation should load");
+
+        for attempt in 0..3 {
+            let replay_retry = reducer
+                .execute_continuation(&handle, completed.version, i64::MAX)
+                .await;
+            match replay_retry {
+                Err(InterpreterError::IllegalArgumentError(message)) => {
+                    assert!(
+                        message.contains("not active"),
+                        "unexpected replay retry error for case {} attempt {}: {}",
+                        idx,
+                        attempt,
+                        message
+                    );
+                }
+                other => panic!(
+                    "replay retry should fail idempotently for case {} attempt {}: {:?}",
+                    idx, attempt, other
+                ),
+            }
+
+            let after_retry = reducer
+                .load_continuation(&handle)
+                .expect("continuation should remain readable after replay retry");
+            assert_eq!(
+                after_retry, stable_terminal_state,
+                "replay retry mutated stored continuation for case {} attempt {}",
+                idx, attempt
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn public_executor_should_advance_executor_funded_public_continuations() {
+    let (_, reducer) =
+        create_test_space::<RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>()
+            .await;
+    reducer.set_split_post_match_config(SplitPostMatchConfig {
+        enabled: true,
+        initial_step_gas_limit: i64::MAX,
+        continuation_funding_policy: FundingPolicy::ExecutorPays,
+        continuation_visibility: ContinuationVisibility::Public,
+        continuation_bounty: Some(42),
+        continuation_ttl_epochs: Some(10),
+        continuation_subtype: ContinuationSubtype::Standard,
+    });
+
+    let channel = new_gstring_par("public-channel".to_string(), Vec::new(), false);
+    let result_channel = new_gstring_par("public-result".to_string(), Vec::new(), false);
+
+    let receive = Par::default().with_receives(vec![Receive {
+        binds: vec![ReceiveBind {
+            patterns: vec![new_freevar_par(0, Vec::new())],
+            source: Some(channel.clone()),
+            remainder: None,
+            free_count: 1,
+        }],
+        body: Some(Par::default().with_sends(vec![Send {
+            chan: Some(result_channel.clone()),
+            data: vec![new_gstring_par("Success".to_string(), Vec::new(), false)],
+            persistent: false,
+            locally_free: Vec::new(),
+            connective_used: false,
+        }])),
+        persistent: false,
+        peek: false,
+        bind_count: 1,
+        locally_free: Vec::new(),
+        connective_used: false,
+    }]);
+
+    let send = Par::default().with_sends(vec![Send {
+        chan: Some(channel.clone()),
+        data: vec![new_gint_par(1, Vec::new(), false)],
+        persistent: true,
+        locally_free: Vec::new(),
+        connective_used: false,
+    }]);
+
+    let env: Env<Par> = Env::new();
+    assert!(reducer
+        .eval(receive, &env, rand().split_byte(0))
+        .await
+        .is_ok());
+    assert!(reducer.eval(send, &env, rand().split_byte(1)).await.is_ok());
+
+    let queue = reducer
+        .list_public_continuation_queue(0)
+        .expect("public queue listing should succeed");
+    assert_eq!(queue.len(), 1);
+    assert_eq!(queue[0].bounty, Some(42));
+
+    let result = reducer
+        .execute_public_continuation(&queue[0].handle, queue[0].version, i64::MAX, 0)
+        .await
+        .expect("public executor should advance eligible continuation");
+    assert_eq!(result.status, ContinuationExecutionStatus::Completed);
+}
+
+#[tokio::test]
+async fn phase6_private_producer_continuations_should_stay_private_or_expire() {
+    let (_, reducer) =
+        create_test_space::<RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>()
+            .await;
+    reducer.set_split_post_match_config(SplitPostMatchConfig {
+        enabled: true,
+        initial_step_gas_limit: i64::MAX,
+        continuation_funding_policy: FundingPolicy::ProducerOnly,
+        continuation_visibility: ContinuationVisibility::Private,
+        continuation_bounty: None,
+        continuation_ttl_epochs: Some(1),
+        continuation_subtype: ContinuationSubtype::Standard,
+    });
+
+    let channel = new_gstring_par("private-channel".to_string(), Vec::new(), false);
+    let result_channel = new_gstring_par("private-result".to_string(), Vec::new(), false);
+
+    let receive = Par::default().with_receives(vec![Receive {
+        binds: vec![ReceiveBind {
+            patterns: vec![new_freevar_par(0, Vec::new())],
+            source: Some(channel.clone()),
+            remainder: None,
+            free_count: 1,
+        }],
+        body: Some(Par::default().with_sends(vec![Send {
+            chan: Some(result_channel.clone()),
+            data: vec![new_gstring_par("Success".to_string(), Vec::new(), false)],
+            persistent: false,
+            locally_free: Vec::new(),
+            connective_used: false,
+        }])),
+        persistent: false,
+        peek: false,
+        bind_count: 1,
+        locally_free: Vec::new(),
+        connective_used: false,
+    }]);
+
+    let send = Par::default().with_sends(vec![Send {
+        chan: Some(channel.clone()),
+        data: vec![new_gint_par(1, Vec::new(), false)],
+        persistent: true,
+        locally_free: Vec::new(),
+        connective_used: false,
+    }]);
+
+    let env: Env<Par> = Env::new();
+    assert!(reducer
+        .eval(receive, &env, rand().split_byte(0))
+        .await
+        .is_ok());
+    assert!(reducer.eval(send, &env, rand().split_byte(1)).await.is_ok());
+
+    let handle = reducer
+        .list_continuation_handles()
+        .into_iter()
+        .next()
+        .expect("one continuation should be persisted");
+    let persisted = reducer
+        .load_continuation(&handle)
+        .expect("persisted continuation should load");
+
+    let public_queue = reducer
+        .list_public_continuation_queue(0)
+        .expect("public queue listing should succeed");
+    assert!(
+        public_queue.is_empty(),
+        "private continuation must not be listed"
+    );
+
+    let public_attempt = reducer
+        .execute_public_continuation(&handle, persisted.version, i64::MAX, 0)
+        .await;
+    assert!(matches!(
+        public_attempt,
+        Err(InterpreterError::IllegalArgumentError(msg))
+            if msg.contains("not publicly visible") || msg.contains("not executor-funded")
+    ));
+
+    let expired = reducer
+        .set_continuation_epoch(1)
+        .expect("advancing epoch should succeed");
+    assert_eq!(expired.len(), 1);
+    assert_eq!(expired[0], handle);
+
+    let resume_after_expiry = reducer
+        .execute_continuation(&handle, persisted.version, i64::MAX)
+        .await;
+    assert!(matches!(
+        resume_after_expiry,
+        Err(InterpreterError::IllegalArgumentError(msg)) if msg.contains("not active")
+    ));
+}
+
+#[tokio::test]
+async fn bridge_subtype_metadata_should_be_available_to_scheduler_and_rescue_hooks() {
+    let (_, reducer) =
+        create_test_space::<RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>()
+            .await;
+    reducer.set_split_post_match_config(SplitPostMatchConfig {
+        enabled: true,
+        initial_step_gas_limit: i64::MAX,
+        continuation_funding_policy: FundingPolicy::ExecutorPays,
+        continuation_visibility: ContinuationVisibility::Public,
+        continuation_bounty: Some(11),
+        continuation_ttl_epochs: Some(20),
+        continuation_subtype: ContinuationSubtype::Bridge(BridgeContinuationMetadata {
+            lane_id: "lane-42".to_string(),
+            source_domain: "eth-mainnet".to_string(),
+            target_domain: "f1r3node".to_string(),
+            message_nonce: 42,
+            finality_phase: BridgeFinalityPhase::Pending,
+            deadline_epoch: Some(9),
+            reward_policy: BridgeRewardPolicy::Fixed(77),
+            rescue_epoch: Some(12),
+        }),
+    });
+
+    create_split_continuation_with_persistent_send(
+        &reducer,
+        "bridge-meta-channel",
+        "bridge-meta-result",
+        7,
+        10,
+    )
+    .await;
+
+    let by_deadline = reducer
+        .list_bridge_continuation_queue_by_deadline(0)
+        .expect("bridge deadline queue should be available");
+    assert_eq!(by_deadline.len(), 1);
+    assert_eq!(by_deadline[0].bridge_metadata.lane_id, "lane-42");
+    assert_eq!(by_deadline[0].bridge_metadata.message_nonce, 42);
+    assert_eq!(
+        by_deadline[0].bridge_metadata.reward_policy,
+        BridgeRewardPolicy::Fixed(77)
+    );
+
+    let by_reward = reducer
+        .list_bridge_continuation_queue_by_reward(0)
+        .expect("bridge reward queue should be available");
+    assert_eq!(by_reward.len(), 1);
+    assert_eq!(by_reward[0].handle, by_deadline[0].handle);
+
+    let rescue_before = reducer
+        .list_bridge_rescue_candidates(11)
+        .expect("bridge rescue candidates should be queryable");
+    assert!(rescue_before.is_empty());
+    let rescue_due = reducer
+        .list_bridge_rescue_candidates(12)
+        .expect("bridge rescue candidates should be queryable");
+    assert_eq!(rescue_due.len(), 1);
+    assert_eq!(rescue_due[0].handle, by_deadline[0].handle);
+}
+
+#[tokio::test]
+async fn bridge_queue_should_support_deadline_and_reward_priority_and_shared_execution_path() {
+    let (_, reducer) =
+        create_test_space::<RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>()
+            .await;
+
+    let mk_bridge_config =
+        |message_nonce: u64, deadline_epoch: u64, reward: u64| SplitPostMatchConfig {
+            enabled: true,
+            initial_step_gas_limit: i64::MAX,
+            continuation_funding_policy: FundingPolicy::ExecutorPays,
+            continuation_visibility: ContinuationVisibility::Public,
+            continuation_bounty: Some(reward),
+            continuation_ttl_epochs: Some(50),
+            continuation_subtype: ContinuationSubtype::Bridge(BridgeContinuationMetadata {
+                lane_id: "lane-priority".to_string(),
+                source_domain: "eth-mainnet".to_string(),
+                target_domain: "f1r3node".to_string(),
+                message_nonce,
+                finality_phase: BridgeFinalityPhase::Pending,
+                deadline_epoch: Some(deadline_epoch),
+                reward_policy: BridgeRewardPolicy::Fixed(reward),
+                rescue_epoch: Some(40),
+            }),
+        };
+
+    reducer.set_split_post_match_config(mk_bridge_config(1, 20, 3));
+    create_split_continuation_with_persistent_send(
+        &reducer,
+        "bridge-priority-channel-a",
+        "bridge-priority-result-a",
+        1,
+        20,
+    )
+    .await;
+
+    reducer.set_split_post_match_config(mk_bridge_config(2, 10, 1));
+    create_split_continuation_with_persistent_send(
+        &reducer,
+        "bridge-priority-channel-b",
+        "bridge-priority-result-b",
+        2,
+        30,
+    )
+    .await;
+
+    reducer.set_split_post_match_config(mk_bridge_config(3, 15, 9));
+    create_split_continuation_with_persistent_send(
+        &reducer,
+        "bridge-priority-channel-c",
+        "bridge-priority-result-c",
+        3,
+        40,
+    )
+    .await;
+
+    let by_deadline = reducer
+        .list_bridge_continuation_queue_by_deadline(0)
+        .expect("bridge deadline queue should be available");
+    assert_eq!(by_deadline.len(), 3);
+    assert_eq!(by_deadline[0].bridge_metadata.message_nonce, 2);
+    assert_eq!(by_deadline[1].bridge_metadata.message_nonce, 3);
+    assert_eq!(by_deadline[2].bridge_metadata.message_nonce, 1);
+
+    let by_reward = reducer
+        .list_bridge_continuation_queue_by_reward(0)
+        .expect("bridge reward queue should be available");
+    assert_eq!(by_reward.len(), 3);
+    assert_eq!(by_reward[0].bridge_metadata.message_nonce, 3);
+    assert_eq!(by_reward[1].bridge_metadata.message_nonce, 1);
+    assert_eq!(by_reward[2].bridge_metadata.message_nonce, 2);
+
+    let exec = reducer
+        .execute_bridge_continuation(&by_deadline[0].handle, by_deadline[0].version, i64::MAX, 0)
+        .await
+        .expect("bridge continuation should execute through shared runtime");
+    assert_eq!(exec.status, ContinuationExecutionStatus::Completed);
+}
+
+#[tokio::test]
+async fn bridge_followup_scheduler_hooks_should_support_phase_updates_and_next_execution() {
+    let (_, reducer) =
+        create_test_space::<RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>()
+            .await;
+
+    let mk_bridge_config =
+        |message_nonce: u64, deadline_epoch: u64, reward: u64| SplitPostMatchConfig {
+            enabled: true,
+            initial_step_gas_limit: i64::MAX,
+            continuation_funding_policy: FundingPolicy::ExecutorPays,
+            continuation_visibility: ContinuationVisibility::Public,
+            continuation_bounty: Some(reward),
+            continuation_ttl_epochs: Some(50),
+            continuation_subtype: ContinuationSubtype::Bridge(BridgeContinuationMetadata {
+                lane_id: "lane-followup".to_string(),
+                source_domain: "eth-mainnet".to_string(),
+                target_domain: "f1r3node".to_string(),
+                message_nonce,
+                finality_phase: BridgeFinalityPhase::Pending,
+                deadline_epoch: Some(deadline_epoch),
+                reward_policy: BridgeRewardPolicy::Fixed(reward),
+                rescue_epoch: Some(40),
+            }),
+        };
+
+    reducer.set_split_post_match_config(mk_bridge_config(10, 30, 2));
+    create_split_continuation_with_persistent_send(
+        &reducer,
+        "bridge-followup-channel-a",
+        "bridge-followup-result-a",
+        1,
+        50,
+    )
+    .await;
+
+    reducer.set_split_post_match_config(mk_bridge_config(11, 10, 7));
+    create_split_continuation_with_persistent_send(
+        &reducer,
+        "bridge-followup-channel-b",
+        "bridge-followup-result-b",
+        2,
+        60,
+    )
+    .await;
+
+    let queue = reducer
+        .list_bridge_continuation_queue_by_deadline(0)
+        .expect("bridge queue should be available");
+    assert_eq!(queue.len(), 2);
+
+    let updated = reducer
+        .update_bridge_finality_phase(
+            &queue[0].handle,
+            queue[0].version,
+            BridgeFinalityPhase::Retrying,
+        )
+        .expect("bridge finality phase update should succeed");
+    assert_eq!(updated.version, queue[0].version + 1);
+
+    let queue_after_update = reducer
+        .list_bridge_continuation_queue_by_deadline(0)
+        .expect("bridge queue should be available");
+    assert_eq!(
+        queue_after_update[0].bridge_metadata.finality_phase,
+        BridgeFinalityPhase::Retrying
+    );
+
+    let next_deadline = reducer
+        .execute_next_bridge_by_deadline(0, i64::MAX)
+        .await
+        .expect("deadline scheduler should execute bridge continuation");
+    assert!(next_deadline.is_some());
+    assert_eq!(
+        next_deadline.unwrap().status,
+        ContinuationExecutionStatus::Completed
+    );
+
+    let next_reward = reducer
+        .execute_next_bridge_by_reward(0, i64::MAX)
+        .await
+        .expect("reward scheduler should execute bridge continuation");
+    assert!(next_reward.is_some());
+    assert_eq!(
+        next_reward.unwrap().status,
+        ContinuationExecutionStatus::Completed
+    );
+}
+
+#[tokio::test]
+async fn eval_of_persistent_receive_pipe_send_should_produce_same_state_in_any_order() {
+    let (space_a, reducer_a) =
+        create_test_space::<RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>()
+            .await;
+    let (space_b, reducer_b) =
+        create_test_space::<RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>()
+            .await;
+
+    let channel = new_gstring_par("channel".to_string(), Vec::new(), false);
+    let result_channel = new_gstring_par("result".to_string(), Vec::new(), false);
+
+    let receive = Par::default().with_receives(vec![Receive {
+        binds: vec![ReceiveBind {
+            patterns: vec![new_freevar_par(0, Vec::new())],
+            source: Some(channel.clone()),
+            remainder: None,
+            free_count: 1,
+        }],
+        body: Some(Par::default().with_sends(vec![Send {
+            chan: Some(result_channel.clone()),
+            data: vec![new_gstring_par("Success".to_string(), Vec::new(), false)],
+            persistent: false,
+            locally_free: Vec::new(),
+            connective_used: false,
+        }])),
+        persistent: true,
+        peek: false,
+        bind_count: 1,
+        locally_free: Vec::new(),
+        connective_used: false,
+    }]);
+
+    let send = Par::default().with_sends(vec![Send {
+        chan: Some(channel.clone()),
+        data: vec![new_gint_par(7, Vec::new(), false)],
+        persistent: false,
+        locally_free: Vec::new(),
+        connective_used: false,
+    }]);
+
+    let env: Env<Par> = Env::new();
+    let receive_rand = rand().split_byte(0);
+    let send_rand = rand().split_byte(1);
+
+    // Order A: receive then send.
+    assert!(reducer_a
+        .eval(receive.clone(), &env, receive_rand.clone())
+        .await
+        .is_ok());
+    assert!(reducer_a
+        .eval(send.clone(), &env, send_rand.clone())
+        .await
+        .is_ok());
+    let state_a = space_a.to_map();
+
+    // Order B: send then receive.
+    assert!(reducer_b.eval(send, &env, send_rand).await.is_ok());
+    assert!(reducer_b.eval(receive, &env, receive_rand).await.is_ok());
+    let state_b = space_b.to_map();
+
+    assert_eq!(state_a, state_b);
+
+    let channel_row = state_a
+        .get(&vec![channel.clone()])
+        .expect("persistent receive should stay in tuplespace");
+    let result_row = state_a
+        .get(&vec![result_channel.clone()])
+        .expect("match should emit result");
+
+    assert_eq!(channel_row.wks.len(), 1);
+    assert_eq!(channel_row.data.len(), 0);
+    assert_eq!(result_row.data.len(), 1);
+}
+
+#[tokio::test]
+async fn eval_of_persistent_send_should_remain_registered_after_each_match() {
+    let (space, reducer) =
+        create_test_space::<RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>()
+            .await;
+
+    let channel = new_gstring_par("channel".to_string(), Vec::new(), false);
+    let result_channel = new_gstring_par("result".to_string(), Vec::new(), false);
+
+    let receive = Par::default().with_receives(vec![Receive {
+        binds: vec![ReceiveBind {
+            patterns: vec![new_freevar_par(0, Vec::new())],
+            source: Some(channel.clone()),
+            remainder: None,
+            free_count: 1,
+        }],
+        body: Some(Par::default().with_sends(vec![Send {
+            chan: Some(result_channel.clone()),
+            data: vec![new_gstring_par("Success".to_string(), Vec::new(), false)],
+            persistent: false,
+            locally_free: Vec::new(),
+            connective_used: false,
+        }])),
+        persistent: false,
+        peek: false,
+        bind_count: 1,
+        locally_free: Vec::new(),
+        connective_used: false,
+    }]);
+
+    let send = Par::default().with_sends(vec![Send {
+        chan: Some(channel.clone()),
+        data: vec![new_gint_par(7, Vec::new(), false)],
+        persistent: true,
+        locally_free: Vec::new(),
+        connective_used: false,
+    }]);
+
+    let env: Env<Par> = Env::new();
+    assert!(reducer
+        .eval(receive.clone(), &env, rand().split_byte(0))
+        .await
+        .is_ok());
+    assert!(reducer.eval(send, &env, rand().split_byte(1)).await.is_ok());
+
+    let first_state = space.to_map();
+    let first_channel_row = first_state
+        .get(&vec![channel.clone()])
+        .expect("persistent send should remain registered");
+    let first_result_row = first_state
+        .get(&vec![result_channel.clone()])
+        .expect("first match should emit one result");
+
+    assert_eq!(first_channel_row.data.len(), 1);
+    assert_eq!(first_result_row.data.len(), 1);
+
+    assert!(reducer
+        .eval(receive, &env, rand().split_byte(2))
+        .await
+        .is_ok());
+
+    let second_state = space.to_map();
+    let second_channel_row = second_state
+        .get(&vec![channel.clone()])
+        .expect("persistent send should still be registered");
+    let second_result_row = second_state
+        .get(&vec![result_channel.clone()])
+        .expect("second match should append another result");
+
+    assert_eq!(second_channel_row.data.len(), 1);
+    assert_eq!(second_result_row.data.len(), 2);
+}
+
+#[tokio::test]
+async fn eval_of_persistent_send_pipe_receive_should_produce_same_state_in_any_order() {
+    let (space_a, reducer_a) =
+        create_test_space::<RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>()
+            .await;
+    let (space_b, reducer_b) =
+        create_test_space::<RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>()
+            .await;
+
+    let channel = new_gstring_par("channel".to_string(), Vec::new(), false);
+    let result_channel = new_gstring_par("result".to_string(), Vec::new(), false);
+
+    let send = Par::default().with_sends(vec![Send {
+        chan: Some(channel.clone()),
+        data: vec![new_gint_par(7, Vec::new(), false)],
+        persistent: true,
+        locally_free: Vec::new(),
+        connective_used: false,
+    }]);
+
+    let receive = Par::default().with_receives(vec![Receive {
+        binds: vec![ReceiveBind {
+            patterns: vec![new_freevar_par(0, Vec::new())],
+            source: Some(channel.clone()),
+            remainder: None,
+            free_count: 1,
+        }],
+        body: Some(Par::default().with_sends(vec![Send {
+            chan: Some(result_channel.clone()),
+            data: vec![new_gstring_par("Success".to_string(), Vec::new(), false)],
+            persistent: false,
+            locally_free: Vec::new(),
+            connective_used: false,
+        }])),
+        persistent: false,
+        peek: false,
+        bind_count: 1,
+        locally_free: Vec::new(),
+        connective_used: false,
+    }]);
+
+    let env: Env<Par> = Env::new();
+    let receive_rand = rand().split_byte(0);
+    let send_rand = rand().split_byte(1);
+
+    // Order A: receive then send (exercise produce-match continuation path).
+    assert!(reducer_a
+        .eval(receive.clone(), &env, receive_rand.clone())
+        .await
+        .is_ok());
+    assert!(reducer_a
+        .eval(send.clone(), &env, send_rand.clone())
+        .await
+        .is_ok());
+    let state_a = space_a.to_map();
+
+    // Order B: send then receive (exercise consume-match continuation path).
+    assert!(reducer_b.eval(send, &env, send_rand).await.is_ok());
+    assert!(reducer_b.eval(receive, &env, receive_rand).await.is_ok());
+    let state_b = space_b.to_map();
+
+    assert_eq!(state_a, state_b);
+
+    let channel_row = state_a
+        .get(&vec![channel.clone()])
+        .expect("persistent send should remain in tuplespace");
+    let result_row = state_a
+        .get(&vec![result_channel.clone()])
+        .expect("match should emit result");
+
+    assert_eq!(channel_row.data.len(), 1);
+    assert_eq!(result_row.data.len(), 1);
+}
+
+#[tokio::test]
+#[ignore = "Known issue: persistent + peek receive can recurse indefinitely"]
+async fn eval_of_persistent_peek_receive_should_complete_without_non_termination() {
+    let (_, reducer) =
+        create_test_space::<RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>()
+            .await;
+
+    let channel = new_gstring_par("channel".to_string(), Vec::new(), false);
+    let receive = Par::default().with_receives(vec![Receive {
+        binds: vec![ReceiveBind {
+            patterns: vec![new_freevar_par(0, Vec::new())],
+            source: Some(channel.clone()),
+            remainder: None,
+            free_count: 1,
+        }],
+        body: Some(Par::default()),
+        persistent: true,
+        peek: true,
+        bind_count: 1,
+        locally_free: Vec::new(),
+        connective_used: false,
+    }]);
+
+    let send = Par::default().with_sends(vec![Send {
+        chan: Some(channel),
+        data: vec![new_gint_par(7, Vec::new(), false)],
+        persistent: false,
+        locally_free: Vec::new(),
+        connective_used: false,
+    }]);
+
+    let env: Env<Par> = Env::new();
+    assert!(reducer
+        .eval(receive, &env, rand().split_byte(0))
+        .await
+        .is_ok());
+
+    let completion = tokio::time::timeout(
+        Duration::from_secs(1),
+        reducer.eval(send, &env, rand().split_byte(1)),
+    )
+    .await;
+    assert!(
+        completion.is_ok(),
+        "persistent+peek send/receive should complete within timeout"
+    );
 }
 
 #[tokio::test]
