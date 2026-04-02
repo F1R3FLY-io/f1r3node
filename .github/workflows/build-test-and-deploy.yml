@@ -592,38 +592,33 @@ jobs:
 
   smoke_local_standalone:
     name: Smoke Test (Local Standalone)
-    needs: build_base
+    needs: build_rust_docker_image
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - name: Clone Repository
         uses: actions/checkout@v4
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
-
-      - name: Install APT Dependencies
-        shell: bash -ex {0}
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y $(cat .github/apt-dependencies.txt)
-
       - name: Install just
         shell: bash -ex {0}
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin
 
-      - name: Load Working Tree
+      - name: Load Docker Image
         uses: actions/download-artifact@v4
         with:
-          name: f1r3fly-worktree
+          name: artifacts-docker-amd64
           path: /tmp
 
-      - name: Restore Working Tree
+      - name: Extract node binary from Docker image
         shell: bash -ex {0}
-        run: tar -H posix -xzf /tmp/f1r3fly-worktree.tar.gz
+        run: |
+          zcat /tmp/rust-node-docker.tar.gz | docker image load
+          CONTAINER_ID=$(docker create f1r3flyindustries/f1r3fly-rust-node:amd64)
+          mkdir -p target/release
+          docker cp "$CONTAINER_ID:/opt/docker/bin/node" ./target/release/node
+          docker rm "$CONTAINER_ID"
+          chmod +x ./target/release/node
 
       - name: Setup standalone data
         shell: bash -ex {0}
