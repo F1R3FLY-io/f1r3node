@@ -326,10 +326,12 @@ When AI is disabled, contracts using `rho:ai:*` processes will fail at deploy ti
 - **Custom location**: `--config-file <path>`
 - **Format**: [HOCON](https://github.com/lightbend/config/blob/master/HOCON.md)
 
+The node ships with a built-in [defaults.conf](node/src/main/resources/defaults.conf) containing every available option and its default value. Operator config files are **minimal overrides** -- you only specify the values you want to change (typically ~40 lines for network, ports, and consensus tuning). HOCON's fallback semantics merge your overrides on top of the built-in defaults automatically.
+
 Reference configs:
-- [defaults.conf](node/src/main/resources/defaults.conf) - All available options
-- [docker/conf/standalone-dev.conf](docker/conf/standalone-dev.conf) - Standalone development config
-- [docker/conf/default.conf](docker/conf/default.conf) - Shard config
+- [defaults.conf](node/src/main/resources/defaults.conf) - Built-in defaults with all available options
+- [docker/conf/standalone-dev.conf](docker/conf/standalone-dev.conf) - Minimal standalone override (~20 lines)
+- [docker/conf/default.conf](docker/conf/default.conf) - Minimal shard override
 - [Consensus Configuration Guide](https://github.com/F1R3FLY-io/system-integration/blob/main/docs/consensus-configuration.md) - FTT, synchrony threshold semantics, finalization formula, recommended values
 
 ## Rust Codebase Documentation

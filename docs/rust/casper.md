@@ -1,4 +1,4 @@
-> Last updated: 2026-03-23
+> Last updated: 2026-03-29
 
 # Crate: casper (Consensus Layer)
 
@@ -142,7 +142,31 @@ Computes normalized fault tolerance between -1.0 and 1.0:
 
 `merging/dag_merger.rs` -- Multi-parent state merging for blocks with multiple parents.
 
+### Parent State Merge
+
+When a block has multiple parents (selected by the fork choice rule), the node must compute a merged post-state before executing new deploys. The merge procedure:
+
+1. **Find the LCA** (Lowest Common Ancestor) of the parent blocks in the DAG.
+2. **Determine visible blocks** -- all blocks between the LCA and the parents (exclusive of LCA, inclusive of parents).
+3. **Run ConflictSetMerger** -- collects deploys from visible blocks, detects conflicts (deploys touching overlapping channels), and resolves them deterministically.
+
+### LCA-Scoped Merge
+
+The merge scope is limited to blocks at or above the LCA. Blocks below the LCA are common ancestors whose state is already reflected in the LCA's post-state -- replaying them would be redundant and expensive. Because the LCA is derived purely from DAG structure (parent pointers and block heights), every validator computes the same LCA for the same set of parent blocks.
+
+### Determinism Constraint
+
+The merge scope cannot rely on local finalization status because different validators may have temporarily different finalized views. A validator that has finalized block B and one that has not must still compute the same merge result for identical parent sets. Using block height and LCA (both derived from the immutable DAG) ensures this.
+
 **Deterministic ordering**: Merge paths in `conflict_set_merger.rs` and casper-buffer eviction enforce deterministic tie-breaks to ensure consistent behavior across nodes.
+
+### Performance
+
+Merge cost is O(visible_blocks^2 x deploys^2) for the conflict resolution phase, dominated by pairwise conflict detection across deploys in the visible block set. LCA scoping keeps the visible block count bounded, preventing merge cost from degrading under sustained load.
+
+### Fallback
+
+If the visible block count exceeds `MAX_PARENT_MERGE_SCOPE_BLOCKS` (512) or the LCA distance exceeds `MAX_LCA_DISTANCE_BLOCKS` (256), the merge falls back to the latest parent's post-state. This caps worst-case merge latency at the cost of discarding deploys from non-selected parents, which will be re-proposed in subsequent blocks.
 
 ## Tests
 

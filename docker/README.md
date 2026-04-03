@@ -70,11 +70,13 @@ docker compose -f standalone.yml down -v
 
 ## Configuration
 
+Config files are **minimal overrides** (~40 lines each) that merge on top of the node's built-in [defaults.conf](../../node/src/main/resources/defaults.conf). There is no need to duplicate the full default configuration -- only specify values you want to change. HOCON's include/fallback semantics handle the rest.
+
 All compose files use 2 shared config files. Per-role behavior is controlled via CLI flags in compose commands.
 
 | Config File | Used By | Purpose |
 |-------------|---------|---------|
-| `conf/default.conf` | All shard roles | Shared shard defaults |
+| `conf/default.conf` | All shard roles | Minimal shard overrides (network, ports, consensus tuning) |
 | `conf/standalone-dev.conf` | Standalone | `standalone = true`, instant finalization |
 
 CLI flags used per role:
