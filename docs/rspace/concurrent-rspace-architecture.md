@@ -115,7 +115,9 @@ Replaced with `AtomicI64` + CAS (compare-and-swap) loop. CAS is a hardware atomi
 
 Additionally, COMM cost accounting differed depending on which side triggered the COMM (produce vs consume fired different refund paths). The fix normalizes all COMMs to produce-triggered semantics in `charging_rspace.rs`, making the total cost commutative:
 
-  Σᵢ cost(opᵢ) = Σᵢ cost(op_σ(i))  ∀ permutations σ
+```
+Σᵢ cost(opᵢ) = Σᵢ cost(op_σ(i))  ∀ permutations σ
+```
 
 ## 4. Phase 2 — Exposing DashMap Concurrency
 
