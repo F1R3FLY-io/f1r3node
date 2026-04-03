@@ -28,14 +28,7 @@ pub struct CostManager {
 
 impl CostManager {
     fn resolve_max_log_entries() -> usize {
-        if cfg!(test) {
-            return usize::MAX;
-        }
-
-        std::env::var("F1R3_COST_LOG_MAX_ENTRIES")
-            .ok()
-            .and_then(|v| v.parse::<usize>().ok())
-            .unwrap_or(0)
+        1024
     }
 
     pub fn new(initial_value: Cost, semaphore_count: usize) -> Self {

@@ -59,6 +59,23 @@ pub struct CasperConf {
     #[serde(rename = "heartbeat")]
     pub heartbeat_conf: HeartbeatConf,
 
+    #[serde(rename = "finalizer", default)]
+    pub finalizer: FinalizerConf,
+
+    #[serde(rename = "synchrony-recovery-stall-window", deserialize_with = "de_duration", default = "default_synchrony_recovery_stall_window")]
+    pub synchrony_recovery_stall_window: Duration,
+    #[serde(rename = "synchrony-recovery-cooldown", deserialize_with = "de_duration", default = "default_synchrony_recovery_cooldown")]
+    pub synchrony_recovery_cooldown: Duration,
+    #[serde(rename = "synchrony-recovery-max-bypasses", default = "default_synchrony_recovery_max_bypasses")]
+    pub synchrony_recovery_max_bypasses: u32,
+    #[serde(rename = "synchrony-finalized-baseline-enabled", default = "default_synchrony_finalized_baseline_enabled")]
+    pub synchrony_finalized_baseline_enabled: bool,
+    #[serde(rename = "synchrony-finalized-baseline-max-distance", default = "default_synchrony_finalized_baseline_max_distance")]
+    pub synchrony_finalized_baseline_max_distance: u64,
+
+    #[serde(rename = "max-user-deploys-per-block", default = "default_max_user_deploys_per_block")]
+    pub max_user_deploys_per_block: u32,
+
     /// Disable late block filtering in DagMerger.
     /// When true (default), all blocks are included in merged state regardless of when
     /// they were observed. This prevents deploy loss during network partitions.
@@ -93,6 +110,30 @@ pub struct CasperConf {
         default = "default_mergeable_channels_gc_depth_buffer"
     )]
     pub mergeable_channels_gc_depth_buffer: i32,
+}
+
+fn default_synchrony_recovery_stall_window() -> Duration {
+    Duration::from_secs(60)
+}
+
+fn default_synchrony_recovery_cooldown() -> Duration {
+    Duration::from_secs(20)
+}
+
+fn default_synchrony_recovery_max_bypasses() -> u32 {
+    2
+}
+
+fn default_synchrony_finalized_baseline_enabled() -> bool {
+    true
+}
+
+fn default_synchrony_finalized_baseline_max_distance() -> u64 {
+    2048
+}
+
+fn default_max_user_deploys_per_block() -> u32 {
+    32
 }
 
 fn default_disable_late_block_filtering() -> bool {
@@ -187,6 +228,51 @@ pub struct HeartbeatConf {
     pub check_interval: Duration,
     #[serde(rename = "max-lfb-age", deserialize_with = "de_duration")]
     pub max_lfb_age: Duration,
+    #[serde(rename = "self-propose-cooldown", deserialize_with = "de_duration", default = "default_self_propose_cooldown")]
+    pub self_propose_cooldown: Duration,
+}
+
+fn default_self_propose_cooldown() -> Duration {
+    Duration::from_secs(15)
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FinalizerConf {
+    #[serde(rename = "work-budget", deserialize_with = "de_duration", default = "default_finalizer_work_budget")]
+    pub work_budget: Duration,
+    #[serde(rename = "step-timeout", deserialize_with = "de_duration", default = "default_finalizer_step_timeout")]
+    pub step_timeout: Duration,
+    #[serde(rename = "catchup-work-budget", deserialize_with = "de_duration", default = "default_finalizer_catchup_work_budget")]
+    pub catchup_work_budget: Duration,
+    #[serde(rename = "catchup-step-timeout", deserialize_with = "de_duration", default = "default_finalizer_catchup_step_timeout")]
+    pub catchup_step_timeout: Duration,
+}
+
+impl Default for FinalizerConf {
+    fn default() -> Self {
+        Self {
+            work_budget: default_finalizer_work_budget(),
+            step_timeout: default_finalizer_step_timeout(),
+            catchup_work_budget: default_finalizer_catchup_work_budget(),
+            catchup_step_timeout: default_finalizer_catchup_step_timeout(),
+        }
+    }
+}
+
+fn default_finalizer_work_budget() -> Duration {
+    Duration::from_secs(8)
+}
+
+fn default_finalizer_step_timeout() -> Duration {
+    Duration::from_secs(1)
+}
+
+fn default_finalizer_catchup_work_budget() -> Duration {
+    Duration::from_secs(8)
+}
+
+fn default_finalizer_catchup_step_timeout() -> Duration {
+    Duration::from_secs(1)
 }
 
 pub fn de_duration<'de, D>(deserializer: D) -> Result<Duration, D::Error>

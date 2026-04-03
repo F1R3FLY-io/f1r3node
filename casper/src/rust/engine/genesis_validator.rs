@@ -5,7 +5,7 @@ use dashmap::DashSet;
 use std::collections::{HashSet, VecDeque};
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 
 use tokio::sync::mpsc;
 
@@ -105,14 +105,7 @@ impl SeenCandidates {
 }
 
 fn genesis_seen_candidates_max_entries() -> usize {
-    static GENESIS_SEEN_CANDIDATES_MAX_ENTRIES: OnceLock<usize> = OnceLock::new();
-    *GENESIS_SEEN_CANDIDATES_MAX_ENTRIES.get_or_init(|| {
-        std::env::var("F1R3_GENESIS_SEEN_CANDIDATES_MAX_ENTRIES")
-            .ok()
-            .and_then(|v| v.parse::<usize>().ok())
-            .filter(|v| *v > 0)
-            .unwrap_or(4096)
-    })
+    4_096
 }
 
 impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisValidator<T> {

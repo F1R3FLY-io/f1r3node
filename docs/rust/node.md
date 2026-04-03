@@ -115,27 +115,28 @@ Inline transfer data on `DeployInfo` for `get_block` and `last_finalized_block` 
 
 Both gRPC and REST APIs retry `find_deploy` on `DeployNotFoundError`:
 
-| API | Env: Interval | Default | Env: Max Attempts | Default |
-|-----|---------------|---------|-------------------|---------|
-| gRPC | `F1R3_GRPC_FIND_DEPLOY_RETRY_INTERVAL_MS` | 100ms | `F1R3_GRPC_FIND_DEPLOY_MAX_ATTEMPTS` | 80 |
-| REST | `F1R3_FIND_DEPLOY_RETRY_INTERVAL_MS` | 50ms | `F1R3_FIND_DEPLOY_MAX_ATTEMPTS` | 1 |
+| API | Retry Interval | Max Attempts |
+|-----|----------------|--------------|
+| gRPC | 100ms | 80 |
+| REST | 50ms | 1 |
+
+These values are hardcoded (previously configurable via `F1R3_*` env vars, removed in v0.4.10).
 
 ## Runtime Instances
 
 **`BlockProcessorInstance`** -- Receives blocks, validates, applies to DAG. Semaphore-bounded parallelism. Re-queues on `FinalizationInProgress`.
 
-**`ProposerInstance`** -- Dequeues proposal requests. Non-blocking locking (try_lock). 5-minute timeout for stuck proposals. Min-interval between proposals configurable via `F1R3_PROPOSER_MIN_INTERVAL_MS` (default 250ms).
+**`ProposerInstance`** -- Dequeues proposal requests. Non-blocking locking (try_lock). 5-minute timeout for stuck proposals. Min-interval between proposals is 250ms (hardcoded).
 
-**`HeartbeatProposer`** -- Periodic proposals for network liveness with env-configurable behavior:
+**`HeartbeatProposer`** -- Periodic proposals for network liveness. Operator-tunable heartbeat settings (enabled, check-interval, max-lfb-age, self-propose-cooldown) are in `defaults.conf` under the `casper.heartbeat` section. The following behavioral parameters are hardcoded:
 
-| Env Var | Default | Purpose |
-|---------|---------|---------|
-| `F1R3_HEARTBEAT_FRONTIER_CHASE_MAX_LAG` | 0 | Max lag permitting frontier-chase proposals |
-| `F1R3_HEARTBEAT_PENDING_DEPLOY_MAX_LAG` | 20 | Lag threshold above which pending deploy proposals throttle |
-| `F1R3_HEARTBEAT_DEPLOY_RECOVERY_MAX_LAG` | 64 | Lag threshold for deploy recovery mode |
-| `F1R3_HEARTBEAT_SELF_PROPOSE_COOLDOWN_MS` | 0 | Cooldown between validator's own proposals |
-| `F1R3_HEARTBEAT_STALE_RECOVERY_MIN_INTERVAL_MS` | 12000 | Min interval for stale-LFB recovery proposals |
-| `F1R3_HEARTBEAT_DEPLOY_FINALIZATION_GRACE_MS` | 25000 | Grace period bypassing min-interval during deploy finalization |
+| Parameter | Value | Purpose |
+|-----------|-------|---------|
+| Frontier chase max lag | 0 | Max lag permitting frontier-chase proposals |
+| Pending deploy max lag | 20 | Lag threshold above which pending deploy proposals throttle |
+| Deploy recovery max lag | 64 | Lag threshold for deploy recovery mode |
+| Stale recovery min interval | 12000ms | Min interval for stale-LFB recovery proposals |
+| Deploy finalization grace | 25000ms | Grace period bypassing min-interval during deploy finalization |
 
 **Deploy grace window**: When a deploy is proposed or finalization-critical parents observed, a grace window opens (default 25s) that allows proposals which would normally be blocked by cooldown/interval constraints.
 

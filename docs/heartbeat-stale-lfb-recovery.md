@@ -5,8 +5,8 @@
 Validators could stall with `last-finalized-block` (LFB) stuck even though heartbeat was running.
 The stall happened in a low-lag window:
 
-- `F1R3_HEARTBEAT_FRONTIER_CHASE_MAX_LAG=0` blocks frontier-chasing once a validator is ahead.
-- Leader lag recovery only started at `lag > F1R3_HEARTBEAT_PENDING_DEPLOY_MAX_LAG` (default `20`).
+- `frontier_chase_max_lag = 0` (hardcoded) blocks frontier-chasing once a validator is ahead.
+- Leader lag recovery only started at `lag > pending_deploy_max_lag` (hardcoded default `20`).
 - For stale LFB with lag in `1..20`, no validator proposed, so finality could not advance.
 
 ## Correct behavior

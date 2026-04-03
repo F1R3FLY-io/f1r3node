@@ -38,8 +38,7 @@ impl OllamaConfig {
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(config_timeout_sec);
-        let validate_connection =
-            parse_bool_env("OLLAMA_VALIDATE_CONNECTION").unwrap_or(config_validate_connection);
+        let validate_connection = enabled;
 
         Self {
             enabled,

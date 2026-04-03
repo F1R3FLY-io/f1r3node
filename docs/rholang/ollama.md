@@ -35,21 +35,19 @@ sbt stage
 ```bash
 # Enable Ollama integration
 export OLLAMA_ENABLED=true
-
-# Optional: Disable connection validation if needed
-export OLLAMA_VALIDATE_CONNECTION=false
 ```
+
+Connection validation happens automatically when Ollama is enabled.
 
 ### Configuration File
 
-Alternatively, you can configure via `application.conf`:
+Alternatively, you can configure via `defaults.conf`:
 
 ```hocon
 ollama {
   enabled = true
   base-url = "http://localhost:11434"
   default-model = "llama3.2"
-  validate-connection = true
   timeout-sec = 30
 }
 ```
@@ -157,7 +155,6 @@ If you see connection errors:
 
 1. Verify Ollama is running: `curl http://localhost:11434/api/tags`
 2. Check the model is available: `ollama list`
-3. Disable connection validation: `export OLLAMA_VALIDATE_CONNECTION=false`
 
 ### Configuration Issues
 

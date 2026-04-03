@@ -100,28 +100,15 @@ fn recoverable_propose_failure_message(status: &ProposeStatus) -> Option<String>
     }
 }
 
-const DEPLOY_PROPOSE_MAX_ATTEMPTS_ENV: &str = "F1R3_DEPLOY_PROPOSE_MAX_ATTEMPTS";
-const DEPLOY_PROPOSE_RETRY_DELAY_MS_ENV: &str = "F1R3_DEPLOY_PROPOSE_RETRY_DELAY_MS";
-const DEFAULT_DEPLOY_PROPOSE_MAX_ATTEMPTS: u32 = 4;
-const DEFAULT_DEPLOY_PROPOSE_RETRY_DELAY_MS: u64 = 250;
-const MAX_DEPLOY_PROPOSE_RETRY_DELAY_MS: u64 = 2_000;
+const DEPLOY_PROPOSE_MAX_ATTEMPTS: u32 = 4;
+const DEPLOY_PROPOSE_RETRY_DELAY_MS: u64 = 250;
 
 fn deploy_propose_max_attempts() -> u32 {
-    std::env::var(DEPLOY_PROPOSE_MAX_ATTEMPTS_ENV)
-        .ok()
-        .and_then(|value| value.parse::<u32>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(DEFAULT_DEPLOY_PROPOSE_MAX_ATTEMPTS)
+    DEPLOY_PROPOSE_MAX_ATTEMPTS
 }
 
 fn deploy_propose_retry_delay() -> Duration {
-    let delay_ms = std::env::var(DEPLOY_PROPOSE_RETRY_DELAY_MS_ENV)
-        .ok()
-        .and_then(|value| value.parse::<u64>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(DEFAULT_DEPLOY_PROPOSE_RETRY_DELAY_MS)
-        .min(MAX_DEPLOY_PROPOSE_RETRY_DELAY_MS);
-    Duration::from_millis(delay_ms)
+    Duration::from_millis(DEPLOY_PROPOSE_RETRY_DELAY_MS)
 }
 
 fn should_retry_deploy_propose(status: &ProposeStatus) -> bool {
@@ -229,11 +216,7 @@ impl std::error::Error for LatestBlockMessageError {}
 
 impl BlockAPI {
     fn find_deploy_scan_depth() -> usize {
-        std::env::var("F1R3_FIND_DEPLOY_SCAN_DEPTH")
-            .ok()
-            .and_then(|value| value.parse::<usize>().ok())
-            .filter(|value| *value > 0)
-            .unwrap_or(128)
+        128
     }
 
     async fn find_deploy_by_recent_blocks(

@@ -59,7 +59,7 @@ pub struct CasperSnapshot {
    - Filter by validity window (block number, expiration timestamp)
    - Exclude deploys already in scope (prevent duplication)
    - Remove expired deploys
-   - **Adaptive deploy cap**: EMA-based controller dynamically adjusts per-block deploy count to maintain a 1-second latency target. Controlled by `F1R3_ADAPTIVE_DEPLOY_CAP_*` env vars. Small batches (≤ 3 deploys) bypass the cap. A backlog floor mechanism prevents deploy starvation when many deploys are pending.
+   - **Adaptive deploy cap**: EMA-based controller dynamically adjusts per-block deploy count to maintain a 1-second latency target. Parameters are hardcoded (target: 1000ms, min cap: 1, small batch bypass: 3 deploys, backlog floor enabled with trigger: 2, divisor: 2, min: 2, max: 8). Small batches bypass the cap. A backlog floor mechanism prevents deploy starvation when many deploys are pending.
 
 2. **System deploy preparation**:
    - Slashing deploys (punish equivocators)

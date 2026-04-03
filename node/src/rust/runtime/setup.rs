@@ -37,7 +37,6 @@ use comm::rust::{
     rp::connect::ConnectionsCell, transport::transport_layer::TransportLayer,
 };
 
-use shared::rust::env;
 use shared::rust::shared::f1r3fly_events::F1r3flyEvents;
 
 use crate::rust::{
@@ -50,10 +49,8 @@ use crate::rust::{
     web::reporting_routes::{ReportingHttpRoutes, ReportingRoutes},
 };
 
-const PROPOSER_QUEUE_MAX_PENDING_DEFAULT: usize = 1024;
-const PROPOSER_QUEUE_MAX_PENDING_ENV: &str = "F1R3_PROPOSER_QUEUE_MAX_PENDING";
-const BLOCK_PROCESSOR_QUEUE_MAX_PENDING_DEFAULT: usize = 512;
-const BLOCK_PROCESSOR_QUEUE_MAX_PENDING_ENV: &str = "F1R3_MAX_BLOCKS_IN_PROCESSING";
+const PROPOSER_QUEUE_MAX_PENDING: usize = 1_024;
+const BLOCK_PROCESSOR_QUEUE_MAX_PENDING: usize = 2_048;
 
 type ProposerQueueEntry = (
     Arc<dyn Casper + Send + Sync>,
@@ -63,19 +60,11 @@ type ProposerQueueEntry = (
 );
 
 fn proposer_queue_max_pending() -> usize {
-    env::var_or_filtered(
-        PROPOSER_QUEUE_MAX_PENDING_ENV,
-        PROPOSER_QUEUE_MAX_PENDING_DEFAULT,
-        |v: &usize| *v > 0,
-    )
+    PROPOSER_QUEUE_MAX_PENDING
 }
 
 fn block_processor_queue_max_pending() -> usize {
-    env::var_or_filtered(
-        BLOCK_PROCESSOR_QUEUE_MAX_PENDING_ENV,
-        BLOCK_PROCESSOR_QUEUE_MAX_PENDING_DEFAULT,
-        |v: &usize| *v > 0,
-    )
+    BLOCK_PROCESSOR_QUEUE_MAX_PENDING
 }
 
 pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'static>(
@@ -847,6 +836,13 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
             disable_validator_progress_check: conf.standalone,
             enable_mergeable_channel_gc: conf.casper.enable_mergeable_channel_gc,
             mergeable_channels_gc_depth_buffer: conf.casper.mergeable_channels_gc_depth_buffer,
+            finalizer_conf: conf.casper.finalizer.clone(),
+            synchrony_recovery_stall_window: conf.casper.synchrony_recovery_stall_window,
+            synchrony_recovery_cooldown: conf.casper.synchrony_recovery_cooldown,
+            synchrony_recovery_max_bypasses: conf.casper.synchrony_recovery_max_bypasses,
+            synchrony_finalized_baseline_enabled: conf.casper.synchrony_finalized_baseline_enabled,
+            synchrony_finalized_baseline_max_distance: conf.casper.synchrony_finalized_baseline_max_distance,
+            max_user_deploys_per_block: conf.casper.max_user_deploys_per_block,
         };
 
         Some(Arc::new(

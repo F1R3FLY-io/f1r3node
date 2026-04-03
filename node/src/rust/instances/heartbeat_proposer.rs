@@ -16,7 +16,7 @@ use casper::rust::validator_identity::ValidatorIdentity;
 use models::rust::block_hash::BlockHash;
 use models::rust::casper::pretty_printer::PrettyPrinter;
 use rand::Rng;
-use shared::rust::env;
+
 use tokio::sync::Notify;
 
 use casper::rust::ProposeFunction;
@@ -37,65 +37,11 @@ impl HeartbeatSignal for NotifyHeartbeatSignal {
 /// needs to be proposed to maintain liveness.
 pub struct HeartbeatProposer;
 
-const HEARTBEAT_FRONTIER_CHASE_MAX_LAG_ENV: &str = "F1R3_HEARTBEAT_FRONTIER_CHASE_MAX_LAG";
-const DEFAULT_HEARTBEAT_FRONTIER_CHASE_MAX_LAG: i64 = 0;
-const HEARTBEAT_PENDING_DEPLOY_MAX_LAG_ENV: &str = "F1R3_HEARTBEAT_PENDING_DEPLOY_MAX_LAG";
-const DEFAULT_HEARTBEAT_PENDING_DEPLOY_MAX_LAG: i64 = 20;
-const HEARTBEAT_DEPLOY_RECOVERY_MAX_LAG_ENV: &str = "F1R3_HEARTBEAT_DEPLOY_RECOVERY_MAX_LAG";
-const DEFAULT_HEARTBEAT_DEPLOY_RECOVERY_MAX_LAG: i64 = 64;
-const HEARTBEAT_SELF_PROPOSE_COOLDOWN_MS_ENV: &str = "F1R3_HEARTBEAT_SELF_PROPOSE_COOLDOWN_MS";
-const DEFAULT_HEARTBEAT_SELF_PROPOSE_COOLDOWN_MS: u128 = 0;
-const HEARTBEAT_STALE_RECOVERY_MIN_INTERVAL_MS_ENV: &str =
-    "F1R3_HEARTBEAT_STALE_RECOVERY_MIN_INTERVAL_MS";
-const DEFAULT_HEARTBEAT_STALE_RECOVERY_MIN_INTERVAL_MS: u128 = 12_000;
-const HEARTBEAT_DEPLOY_FINALIZATION_GRACE_MS_ENV: &str =
-    "F1R3_HEARTBEAT_DEPLOY_FINALIZATION_GRACE_MS";
-const DEFAULT_HEARTBEAT_DEPLOY_FINALIZATION_GRACE_MS: u128 = 25_000;
-
-fn heartbeat_frontier_chase_max_lag() -> i64 {
-    env::var_or_filtered(
-        HEARTBEAT_FRONTIER_CHASE_MAX_LAG_ENV,
-        DEFAULT_HEARTBEAT_FRONTIER_CHASE_MAX_LAG,
-        |value: &i64| *value >= 0,
-    )
-}
-
-fn heartbeat_pending_deploy_max_lag() -> i64 {
-    env::var_or_filtered(
-        HEARTBEAT_PENDING_DEPLOY_MAX_LAG_ENV,
-        DEFAULT_HEARTBEAT_PENDING_DEPLOY_MAX_LAG,
-        |value: &i64| *value >= 0,
-    )
-}
-
-fn heartbeat_deploy_recovery_max_lag() -> i64 {
-    env::var_or_filtered(
-        HEARTBEAT_DEPLOY_RECOVERY_MAX_LAG_ENV,
-        DEFAULT_HEARTBEAT_DEPLOY_RECOVERY_MAX_LAG,
-        |value: &i64| *value >= 0,
-    )
-}
-
-fn heartbeat_self_propose_cooldown_ms() -> u128 {
-    env::var_or(
-        HEARTBEAT_SELF_PROPOSE_COOLDOWN_MS_ENV,
-        DEFAULT_HEARTBEAT_SELF_PROPOSE_COOLDOWN_MS,
-    )
-}
-
-fn heartbeat_stale_recovery_min_interval_ms() -> u128 {
-    env::var_or(
-        HEARTBEAT_STALE_RECOVERY_MIN_INTERVAL_MS_ENV,
-        DEFAULT_HEARTBEAT_STALE_RECOVERY_MIN_INTERVAL_MS,
-    )
-}
-
-fn heartbeat_deploy_finalization_grace_ms() -> u128 {
-    env::var_or(
-        HEARTBEAT_DEPLOY_FINALIZATION_GRACE_MS_ENV,
-        DEFAULT_HEARTBEAT_DEPLOY_FINALIZATION_GRACE_MS,
-    )
-}
+const FRONTIER_CHASE_MAX_LAG: i64 = 0;
+const PENDING_DEPLOY_MAX_LAG: i64 = 20;
+const DEPLOY_RECOVERY_MAX_LAG: i64 = 64;
+const STALE_RECOVERY_MIN_INTERVAL_MS: u128 = 12_000;
+const DEPLOY_FINALIZATION_GRACE_MS: u128 = 25_000;
 
 #[derive(Debug, Clone, Copy, Default)]
 struct HeartbeatCheckResult {
@@ -244,7 +190,7 @@ impl HeartbeatProposer {
                     {
                         Ok(outcome) => {
                             if outcome.refresh_deploy_grace_window {
-                                let grace_ms = heartbeat_deploy_finalization_grace_ms();
+                                let grace_ms = DEPLOY_FINALIZATION_GRACE_MS;
                                 let grace_duration = Duration::from_millis(std::cmp::min(
                                     grace_ms,
                                     u128::from(u64::MAX),
@@ -448,7 +394,7 @@ async fn check_lfb_and_propose(
             _ => None,
         });
     let self_proposed_too_recently = self_latest_block_timestamp_ms.is_some_and(|timestamp_ms| {
-        now.saturating_sub(timestamp_ms) < heartbeat_self_propose_cooldown_ms()
+        now.saturating_sub(timestamp_ms) < config.self_propose_cooldown.as_millis()
     });
 
     // Check if we have new parents (new blocks since our last block) and whether
@@ -461,8 +407,8 @@ async fn check_lfb_and_propose(
     // once deploy pressure is gone.
     let deploy_recovery_hint = has_pending_deploys || has_new_parent_with_user_deploys;
     let deploy_recovery_max_lag = std::cmp::max(
-        heartbeat_pending_deploy_max_lag(),
-        heartbeat_deploy_recovery_max_lag(),
+        PENDING_DEPLOY_MAX_LAG,
+        DEPLOY_RECOVERY_MAX_LAG,
     );
 
     // Under active deploy-finalization recovery, allow a wider bounded chase window so
@@ -475,14 +421,14 @@ async fn check_lfb_and_propose(
     };
     let effective_frontier_chase_cap = if deploy_recovery_hint {
         std::cmp::max(
-            heartbeat_frontier_chase_max_lag(),
+            FRONTIER_CHASE_MAX_LAG,
             deploy_recovery_frontier_chase_cap,
         )
     } else {
-        heartbeat_frontier_chase_max_lag()
+        FRONTIER_CHASE_MAX_LAG
     };
     let stale_recovery_interval_elapsed =
-        frontier_age_ms >= heartbeat_stale_recovery_min_interval_ms();
+        frontier_age_ms >= STALE_RECOVERY_MIN_INTERVAL_MS;
     let stale_recovery_window_open = stale_recovery_interval_elapsed || deploy_recovery_hint;
 
     // Proposal logic:
@@ -501,7 +447,7 @@ async fn check_lfb_and_propose(
     let can_propose_pending_deploys_while_ahead = if deploy_grace_active {
         lfb_lag_blocks <= deploy_recovery_max_lag
     } else {
-        lfb_lag_blocks <= heartbeat_pending_deploy_max_lag()
+        lfb_lag_blocks <= PENDING_DEPLOY_MAX_LAG
     };
     let pending_deploys_due =
         has_pending_deploys && (!self_recently_proposed || can_propose_pending_deploys_while_ahead);
@@ -512,7 +458,7 @@ async fn check_lfb_and_propose(
         && !can_propose_pending_deploys_while_ahead
         && self_latest_block_timestamp_ms
             .map(|timestamp_ms| {
-                now.saturating_sub(timestamp_ms) >= heartbeat_stale_recovery_min_interval_ms()
+                now.saturating_sub(timestamp_ms) >= STALE_RECOVERY_MIN_INTERVAL_MS
             })
             .unwrap_or(true)
         && (!self_proposed_too_recently || deploy_grace_active);
@@ -539,7 +485,7 @@ async fn check_lfb_and_propose(
         && stale_recovery_window_open
         && (!self_recently_proposed || can_chase_frontier_while_ahead || deploy_grace_active);
     let lag_recovery_leader = is_lag_recovery_leader(&snapshot, validator_identity);
-    let lag_recovery_threshold = heartbeat_pending_deploy_max_lag();
+    let lag_recovery_threshold = PENDING_DEPLOY_MAX_LAG;
     let moderate_lag_recovery_threshold = std::cmp::max(1, lag_recovery_threshold / 2);
     let stale_lfb_leader_recovery_due = lfb_is_stale
         && (frontier_is_stale || lfb_lag_blocks > moderate_lag_recovery_threshold)
@@ -580,15 +526,15 @@ async fn check_lfb_and_propose(
                 if deploy_grace_active {
                     deploy_recovery_max_lag
                 } else {
-                    heartbeat_pending_deploy_max_lag()
+                    PENDING_DEPLOY_MAX_LAG
                 },
-                heartbeat_stale_recovery_min_interval_ms()
+                STALE_RECOVERY_MIN_INTERVAL_MS
             )
         } else if has_pending_deploys && !pending_deploys_due {
             format!(
                 "pending deploys exist but lag={} exceeds pending-deploy cap={} while already ahead of finalized (throttling)",
                 lfb_lag_blocks,
-                heartbeat_pending_deploy_max_lag()
+                PENDING_DEPLOY_MAX_LAG
             )
         } else if has_pending_deploys {
             "pending user deploys in storage".to_string()
@@ -598,12 +544,12 @@ async fn check_lfb_and_propose(
                 lfb_lag_blocks,
                 self_recently_proposed,
                 self_proposed_too_recently,
-                heartbeat_self_propose_cooldown_ms(),
+                config.self_propose_cooldown.as_millis(),
                 allow_cooldown_override_for_deploy_recovery,
                 effective_frontier_chase_cap,
                 has_new_parent_with_user_deploys,
                 deploy_grace_active,
-                heartbeat_stale_recovery_min_interval_ms()
+                STALE_RECOVERY_MIN_INTERVAL_MS
             )
         } else if stale_lfb_leader_recovery_due {
             format!(
@@ -613,7 +559,7 @@ async fn check_lfb_and_propose(
                 frontier_is_stale,
                 moderate_lag_recovery_threshold,
                 deploy_grace_active,
-                heartbeat_stale_recovery_min_interval_ms()
+                STALE_RECOVERY_MIN_INTERVAL_MS
             )
         } else if convergence_recovery_due {
             format!(
@@ -628,7 +574,7 @@ async fn check_lfb_and_propose(
                 lfb_lag_blocks,
                 lag_recovery_threshold,
                 deploy_grace_active,
-                heartbeat_stale_recovery_min_interval_ms()
+                STALE_RECOVERY_MIN_INTERVAL_MS
             )
         } else if self_recently_proposed && has_new_parents && !can_chase_frontier_while_ahead {
             format!(
@@ -708,7 +654,7 @@ async fn check_lfb_and_propose(
             {
                 let pending_backstop_remaining_ms = self_latest_block_timestamp_ms
                     .map(|timestamp_ms| {
-                        heartbeat_stale_recovery_min_interval_ms()
+                        STALE_RECOVERY_MIN_INTERVAL_MS
                             .saturating_sub(now.saturating_sub(timestamp_ms))
                     })
                     .unwrap_or(0);
@@ -718,7 +664,7 @@ async fn check_lfb_and_propose(
                     if deploy_grace_active {
                         deploy_recovery_max_lag
                     } else {
-                        heartbeat_pending_deploy_max_lag()
+                        PENDING_DEPLOY_MAX_LAG
                     },
                     pending_backstop_remaining_ms
                 )
@@ -735,7 +681,7 @@ async fn check_lfb_and_propose(
                 format!(
                     "frontier-follow throttled by stale-recovery cadence: frontier_age_ms={}, min_interval_ms={}, user_deploy_parent={}, deploy_grace_active={}",
                     frontier_age_ms,
-                    heartbeat_stale_recovery_min_interval_ms(),
+                    STALE_RECOVERY_MIN_INTERVAL_MS,
                     has_new_parent_with_user_deploys,
                     deploy_grace_active
                 )
@@ -770,7 +716,7 @@ async fn check_lfb_and_propose(
             format!(
                 "LFB is stale but stale-recovery cadence gate is active: frontier_age_ms={}, min_interval_ms={}, user_deploy_parent={}, deploy_grace_active={}",
                 frontier_age_ms,
-                heartbeat_stale_recovery_min_interval_ms(),
+                STALE_RECOVERY_MIN_INTERVAL_MS,
                 has_new_parent_with_user_deploys,
                 deploy_grace_active
             )
@@ -953,6 +899,7 @@ mod tests {
             enabled: false,
             check_interval: Duration::from_secs(10),
             max_lfb_age: Duration::from_secs(60),
+            self_propose_cooldown: Duration::from_secs(15),
         };
         let validator = create_test_validator_identity();
         let heartbeat_signal_ref = new_heartbeat_signal_ref();
@@ -983,6 +930,7 @@ mod tests {
             enabled: true,
             check_interval: Duration::from_secs(10),
             max_lfb_age: Duration::from_secs(60),
+            self_propose_cooldown: Duration::from_secs(15),
         };
         let validator = create_test_validator_identity();
         let heartbeat_signal_ref = new_heartbeat_signal_ref();
@@ -1014,6 +962,7 @@ mod tests {
             enabled: true,
             check_interval: Duration::from_secs(1),
             max_lfb_age: Duration::from_secs(60),
+            self_propose_cooldown: Duration::from_secs(15),
         };
         let validator = create_test_validator_identity();
         let heartbeat_signal_ref = new_heartbeat_signal_ref();
@@ -1114,6 +1063,7 @@ mod tests {
                 enabled: true,
                 check_interval: Duration::from_secs(1),
                 max_lfb_age: Duration::from_secs(10),
+                self_propose_cooldown: Duration::from_secs(15),
             };
 
             // Call do_heartbeat_check directly (standalone=false for multi-node test)
@@ -1158,6 +1108,7 @@ mod tests {
                 enabled: true,
                 check_interval: Duration::from_secs(1),
                 max_lfb_age: Duration::from_secs(1),
+                self_propose_cooldown: Duration::from_secs(15),
             };
 
             // Call do_heartbeat_check directly (standalone=false for multi-node test)
@@ -1196,6 +1147,7 @@ mod tests {
                 enabled: true,
                 check_interval: Duration::from_secs(1),
                 max_lfb_age: Duration::from_secs(1),
+                self_propose_cooldown: Duration::from_secs(15),
             };
 
             // Call do_heartbeat_check directly (standalone=false for multi-node test)
@@ -1240,6 +1192,7 @@ mod tests {
                 enabled: true,
                 check_interval: Duration::from_secs(1),
                 max_lfb_age: Duration::from_secs(10),
+                self_propose_cooldown: Duration::from_secs(15),
             };
 
             // Call do_heartbeat_check directly (standalone=false for multi-node test)
@@ -1287,6 +1240,7 @@ mod tests {
                 enabled: true,
                 check_interval: Duration::from_secs(1),
                 max_lfb_age: Duration::from_secs(10),
+                self_propose_cooldown: Duration::from_secs(15),
             };
 
             // Call do_heartbeat_check directly (standalone=false for multi-node test)

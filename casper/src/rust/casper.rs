@@ -8,6 +8,7 @@ use std::{
     collections::HashMap,
     fmt::{self, Display},
     sync::{Arc, Mutex},
+    time::Duration,
 };
 
 use block_storage::rust::{
@@ -296,6 +297,13 @@ pub struct CasperShardConf {
     /// Depth buffer for mergeable channels garbage collection.
     /// Additional safety margin beyond max-parent-depth before deleting data.
     pub mergeable_channels_gc_depth_buffer: i32,
+    pub finalizer_conf: crate::rust::casper_conf::FinalizerConf,
+    pub synchrony_recovery_stall_window: Duration,
+    pub synchrony_recovery_cooldown: Duration,
+    pub synchrony_recovery_max_bypasses: u32,
+    pub synchrony_finalized_baseline_enabled: bool,
+    pub synchrony_finalized_baseline_max_distance: u64,
+    pub max_user_deploys_per_block: u32,
 }
 
 impl CasperShardConf {
@@ -321,6 +329,13 @@ impl CasperShardConf {
             disable_validator_progress_check: false,
             enable_mergeable_channel_gc: false,
             mergeable_channels_gc_depth_buffer: 10,
+            finalizer_conf: crate::rust::casper_conf::FinalizerConf::default(),
+            synchrony_recovery_stall_window: Duration::from_secs(60),
+            synchrony_recovery_cooldown: Duration::from_secs(20),
+            synchrony_recovery_max_bypasses: 2,
+            synchrony_finalized_baseline_enabled: true,
+            synchrony_finalized_baseline_max_distance: 2048,
+            max_user_deploys_per_block: 32,
         }
     }
 }
