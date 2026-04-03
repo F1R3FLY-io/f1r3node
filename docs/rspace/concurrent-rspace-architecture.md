@@ -2,7 +2,7 @@
 
 ## Background
 
-RSpace is the tuple space at the core of the Rholang runtime. It mediates all inter-process communication through two operations — `produce` (deposit a datum on a channel) and `consume` (register a continuation waiting for data) — with a COMM event firing when both sides match. Rholang's Par operator (`|`) composes processes concurrently; the runtime evaluates each branch as an asynchronous future. Join patterns (`for(@x <- @A & @y <- @B) { P }`) create cross-channel dependencies by consuming from multiple channels atomically.
+RSpace is the tuple space at the core of the Rholang runtime. It mediates all inter-process communication through two operations — `produce` (deposit a datum on a channel) and `consume` (register a continuation waiting for data) — with a COMM event firing when both sides match. Rholang's Par operator (`|`) composes processes concurrently; the runtime evaluates each branch as an asynchronous future. Join patterns (`for(@x <- A & @y <- B) { P }`) create cross-channel dependencies by consuming from multiple channels atomically.
 
 For consensus, evaluation must be deterministic: all validators must produce identical state hashes, event logs, and phlogiston (gas) costs. The play/replay model requires that an observer replaying a block reproduces the exact COMM events and costs recorded by the block creator. A COST_MISMATCH — any difference in total phlogiston — causes the observer to reject the block.
 
@@ -201,10 +201,10 @@ Per-channel-group locks solve this with ordered acquisition (preventing deadlock
     ┌────────────────────────────────────────────────────┐
     │  Channel Operations and Their Lock Requirements    │
     │                                                    │
-    │  @priv_1!(data)           → DashMap shard lock only│
-    │  for(@x <- @priv_2){ P }  → DashMap shard lock only│
+    │  priv_1!(data)           → DashMap shard lock only│
+    │  for(@x <- priv_2){ P }  → DashMap shard lock only│
     │                                                    │
-    │  for(@x <- @A & @y <- @B){ P }                     │
+    │  for(@x <- A & @y <- B){ P }                     │
     │    produce(@A, v)  → channel_group_lock({A,B})     │
     │    produce(@B, v)  → channel_group_lock({A,B})     │
     │                      (same lock, serialized)       │
