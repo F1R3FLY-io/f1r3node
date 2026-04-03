@@ -22,6 +22,7 @@ pub mod sorted_par_map;
 pub mod string_ops;
 pub mod test_utils;
 pub mod utils;
+pub mod serde_helpers;
 pub mod validator;
 pub mod rhoapi {
     pub mod par_lattice_impl;
