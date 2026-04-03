@@ -8,7 +8,7 @@ For consensus, evaluation must be deterministic: all validators must produce ide
 
 ## 1. Problem: Global Serialization
 
-The `rust/dev` baseline uses `futures::future::join_all` for concurrent Par evaluation with receives ordered before sends (commit `194f409f`). However, `join_all` delivers no actual concurrency because two global mutexes serialize all RSpace operations:
+The `rust/dev` baseline uses `futures::future::join_all` for concurrent Par evaluation. However, `join_all` delivers no actual concurrency because two global mutexes serialize all RSpace operations:
 
 ```
     ┌─────────────┐      ┌──────────────────────────────────────────┐
@@ -311,7 +311,7 @@ The fix separates matching (concurrent) from body evaluation (sequential):
     ╠═══════════════════════════════════════════════════════════╣
     ║                                                           ║
     ║  procedure EVAL_INNER(par, env, rand):                    ║
-    ║    terms ← COLLECT_TERMS(par)   ── receives first ──      ║
+    ║    terms ← COLLECT_TERMS(par)                             ║
     ║    futures ← [EVAL_TERM(t, env, SPLIT(rand, i))           ║
     ║               for i, t in ENUMERATE(terms)]               ║
     ║                                                           ║
