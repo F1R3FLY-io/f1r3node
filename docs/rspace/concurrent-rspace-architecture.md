@@ -201,10 +201,10 @@ Per-channel-group locks solve this with ordered acquisition (preventing deadlock
     ┌────────────────────────────────────────────────────┐
     │  Channel Operations and Their Lock Requirements    │
     │                                                    │
-    │  priv_1!(data)           → DashMap shard lock only│
-    │  for(@x <- priv_2){ P }  → DashMap shard lock only│
+    │  priv_1!(data)           → DashMap shard lock only │
+    │  for(@x <- priv_2){ P }  → DashMap shard lock only │
     │                                                    │
-    │  for(@x <- A & @y <- B){ P }                     │
+    │  for(@x <- A & @y <- B){ P }                       │
     │    produce(@A, v)  → channel_group_lock({A,B})     │
     │    produce(@B, v)  → channel_group_lock({A,B})     │
     │                      (same lock, serialized)       │
