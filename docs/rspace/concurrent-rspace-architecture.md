@@ -388,6 +388,103 @@ Nested `eval` calls from Phase 2 dispatch create their own two-phase cycle:
 
 Produce/consume matching (pattern matching, hot store reads/writes, DashMap shard locks, atomic cost accounting) runs concurrently. Only COMM body callbacks — which recurse into `eval()` and create arbitrary new state — are sequenced.
 
+### 8.6 Why Bodies Must Be Sequential
+
+A COMM body is an arbitrary Rholang program. When dispatched, it calls `eval()` recursively, which performs new produce/consume operations on the shared RSpace. If two bodies run in parallel and both touch the same channel, the interleaving determines which side stores first and which side fires a COMM — and storing a datum vs storing a continuation have different phlogiston costs (`storage_cost_produce` ≠ `storage_cost_consume`).
+
+Consider two bodies dispatched from the same Par:
+
+```rholang
+    body₀: ch!(1)              // produces on ch
+    body₁: for(@x <- ch){ … }  // consumes from ch
+```
+
+If body₀ runs first:
+1. `produce(ch, 1)` — no continuation waiting → store datum, charge `storage_cost_produce`
+2. `consume(ch, …)` — finds datum → COMM fires, refund `storage_cost_produce`
+
+If body₁ runs first:
+1. `consume(ch, …)` — no data waiting → store continuation, charge `storage_cost_consume`
+2. `produce(ch, 1)` — finds continuation → COMM fires, refund `storage_cost_consume`
+
+The COMM cost itself is normalized (Phase 1), but the intermediate storage charges differ: `storage_cost_produce(ch, data)` ≠ `storage_cost_consume(channels, patterns, continuation)`. The total phlogiston consumed changes depending on which side stored first. Since RSpace (play) and ReplayRSpace (replay) would interleave body evaluations differently — their code paths have different yield points — the total cost diverges, causing a COST_MISMATCH.
+
+Sequential dispatch eliminates this: bodies run one at a time, so the interleaving is identical on every node.
+
+### 8.7 Future Optimization: Channel-Based Body Partitioning
+
+Bodies that operate on provably independent channels could safely run in parallel. At dispatch time, each deferred body has a concrete AST (the continuation's `Par`) and the matched data from the COMM (available in the `Application` field). A static analysis can extract the channels a body references and partition bodies into independent groups.
+
+**Direct channel extraction.** A body's AST contains sends with `.chan` fields and receives with `.binds[i].source` fields. After substituting bound variables with the COMM's matched data (which is available in the `DeferredComm`), these fields resolve to concrete channel values — unforgeable names (`GPrivate`), public names (`GInt`, `GString`), or other Par structures. Two bodies whose substituted channel sets are completely disjoint cannot interfere through the RSpace, regardless of whether those channels are unforgeable or public.
+
+**Dynamic channel flow.** Static analysis has a limitation: a body can create new channels at runtime and pass existing channels through them:
+
+```rholang
+    new x in { x!(ch) | for(@y <- x) { y!(data) } }
+```
+
+Here `ch` does not appear in the body's top-level sends or receives — it flows through the intermediate unforgeable name `x` and is only used after evaluation. Static analysis of the unevaluated body cannot discover `ch` as a target channel in this case. Bodies containing such dynamic patterns must fall back to sequential dispatch.
+
+**Unforgeable name guarantee.** For bodies whose COMM channels are all unforgeable names (`GPrivate`), an additional guarantee applies beyond what static analysis provides. Unforgeable names are capability tokens created by `new` — only code that received the name through explicit communication can produce or consume on it. If a body's channels are all unforgeable and disjoint from another body's channels, even dynamic channel flow cannot create interference (the names cannot be guessed or forged by outside code):
+
+```rholang
+    new a, b in {
+      a!(1) | for(@x <- a){ P }    // COMM on a → body₀ holds only a
+      |
+      b!(2) | for(@y <- b){ Q }    // COMM on b → body₁ holds only b
+    }
+```
+
+body₀ and body₁ are provably non-interfering: neither holds the other's unforgeable name.
+
+**Partitioning algorithm.** At the Phase 2 boundary, the algorithm substitutes bound variables, extracts channel sets from each body's AST, and partitions into independent groups using union-find. Bodies containing unresolvable channel references (expressions, method calls, or nested `new` blocks with channel forwarding patterns) fall back to sequential dispatch:
+
+```
+    ╔═══════════════════════════════════════════════════════════╗
+    ║  ALGORITHM: Channel-Based Body Partitioning               ║
+    ╠═══════════════════════════════════════════════════════════╣
+    ║                                                           ║
+    ║  procedure PARTITION_BODIES(deferred):                    ║
+    ║    sequential_group ← []                                  ║
+    ║    groups ← []                                            ║
+    ║    channel_to_group ← {}                                  ║
+    ║                                                           ║
+    ║    for body in deferred:                                  ║
+    ║      substituted ← SUBSTITUTE(body.ast, body.matched_data)║
+    ║      channels ← EXTRACT_CHANNELS(substituted)             ║
+    ║                                                           ║
+    ║      ── fall back if any channel is unresolvable ──       ║
+    ║      if channels contains BoundVar or Expr:               ║
+    ║        sequential_group.append(body)                      ║
+    ║        continue                                           ║
+    ║                                                           ║
+    ║      ── union-find: merge groups sharing channels ──      ║
+    ║      overlapping ← {channel_to_group[ch]                  ║
+    ║                      for ch in channels                   ║
+    ║                      if ch ∈ channel_to_group}            ║
+    ║      if overlapping is empty:                             ║
+    ║        group ← new Group([body])                          ║
+    ║      else:                                                ║
+    ║        group ← MERGE(overlapping) + body                  ║
+    ║      for ch in channels:                                  ║
+    ║        channel_to_group[ch] ← group                       ║
+    ║      groups.append(group)                                 ║
+    ║                                                           ║
+    ║    ── dispatch: parallel across groups, ──                ║
+    ║    ── sequential within each group and fallback ──        ║
+    ║    PARALLEL_FOR group in groups:                          ║
+    ║      for body in group:                                   ║
+    ║        DISPATCH(body)                                     ║
+    ║    for body in sequential_group:                          ║
+    ║      DISPATCH(body)                                       ║
+    ║                                                           ║
+    ╚═══════════════════════════════════════════════════════════╝
+```
+
+The analysis is conservative: bodies with fully resolved, disjoint channel sets run in parallel; anything with unresolvable references falls back to sequential. For the common Rholang pattern of isolated processes communicating over private unforgeable names, most bodies would qualify for parallel dispatch.
+
+This optimization is not yet implemented.
+
 ## 9. Determinism Guarantees
 
 **State hash.** The history trie is content-addressed. The root hash depends only on the set of stored key-value pairs, not insertion order:
