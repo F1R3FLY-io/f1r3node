@@ -354,6 +354,7 @@ jobs:
             integration-tests/test/test_propose.py \
             integration-tests/test/test_replay_determinism.py \
             integration-tests/test/test_bridge_admin.py \
+            integration-tests/test/test_shard_degradation.py \
             integration-tests/test/test_consensus_health.py \
             integration-tests/test/test_synchrony_constraint.py \
             integration-tests/test/test_asymmetric_bonds.py \
