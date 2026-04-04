@@ -2,7 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use lazy_static::lazy_static;
 
@@ -88,6 +88,7 @@ impl SynchronyRecoveryState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     fn test_conf() -> CasperShardConf {
         let mut conf = CasperShardConf::new();

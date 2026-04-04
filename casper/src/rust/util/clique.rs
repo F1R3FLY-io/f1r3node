@@ -1,6 +1,5 @@
 // See casper/src/main/scala/coop/rchain/casper/util/Clique.scala
 
-use std::cmp::max;
 use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
 

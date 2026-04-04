@@ -588,7 +588,7 @@ async fn run_visible_blocks_scope_test() {
     let v3: Bytes = v3_pk.bytes.clone().into();
 
     let mut kvm = InMemoryStoreManager::new();
-    let mut block_store = KeyValueBlockStore::create_from_kvm(&mut kvm)
+    let block_store = KeyValueBlockStore::create_from_kvm(&mut kvm)
         .await
         .expect("Failed to create block store");
     let dag_storage = BlockDagKeyValueStorage::new(&mut kvm)
@@ -690,13 +690,6 @@ async fn run_visible_blocks_scope_test() {
 
             // At the end of each round, check the visible_blocks count
             if vi == 2 {
-                let snapshot = mk_snapshot(
-                    dag_storage.get_representation(),
-                    validators[0].clone(),
-                    shard_name.clone(),
-                    genesis_hash.clone(),
-                );
-
                 let parents = proto_util::get_parents(&block_store, &block);
 
                 // Replicate visible_blocks + LCA-scoped filter from compute_parents_post_state
