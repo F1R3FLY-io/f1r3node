@@ -63,6 +63,16 @@ lock,
        "oracle-3": true
        }) |
     verifierCh!("default_verifier") |
+     relayerCh!("unset") |
+
+     // Derive deployer's vault address and set as admin
+     new deployerAddrCh in {
+      VaultAddress!("fromDeployerId", *deployerId, *deployerAddrCh) |
+      for (@deployerAddr <- deployerAddrCh) {
+       adminCh!(deployerAddr) |
+       stdout!(["bridge admin set to deployer", deployerAddr])
+      }
+     } |
 
      for (@bridgeVaultAddr <- bridgeVaultAddrCh) {
       new bridgeVaultCh, bridgeAuthKeyCh in {
@@ -419,18 +429,33 @@ lock,
         }
         |
 
+       // Admin dispatch contract — routes to individual admin functions
+       contract adminApiCh(@method, @caller, @param, ret) = {
+        match method {
+         "addOracle" => addOracle!(caller, param, *ret)
+         "removeOracle" => removeOracle!(caller, param, *ret)
+         "setRequiredSignatures" => setRequiredSignatures!(caller, param, *ret)
+         "setVerifier" => setVerifier!(caller, param, *ret)
+         "setRelayer" => setRelayer!(caller, param, *ret)
+         _ => ret!({"status": "error", "error": "UnknownAdminMethod"})
+        }
+       }
+       |
+
        // Register query/lock/unlock/admin APIs in the registry.
-       new queryUriCh, lockUriCh, unlockUriCh in {
+       new queryUriCh, lockUriCh, unlockUriCh, adminUriCh in {
          insertArbitrary!(bundle+{*queryCh}, *queryUriCh) |
          insertArbitrary!(bundle+{*lock}, *lockUriCh) |
          insertArbitrary!(bundle+{*unlock}, *unlockUriCh) |
-         for (@queryUri <- queryUriCh; @lockUri <- lockUriCh; @unlockUri <- unlockUriCh) {
+         insertArbitrary!(bundle+{*adminApiCh}, *adminUriCh) |
+         for (@queryUri <- queryUriCh; @lockUri <- lockUriCh; @unlockUri <- unlockUriCh; @adminUri <- adminUriCh) {
           stdout!(["ASIChainBridge registered", {
             "queryUri": queryUri,
             "lockUri": lockUri,
             "unlockUri": unlockUri,
+            "adminUri": adminUri
             }]) |
-          deployId!([queryUri, lockUri, unlockUri])
+          deployId!([queryUri, lockUri, unlockUri, adminUri])
          }
        }
       }

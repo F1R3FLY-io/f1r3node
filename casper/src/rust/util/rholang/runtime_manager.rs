@@ -1086,7 +1086,7 @@ impl RuntimeManager {
      * the time. For some situations, we can just use the value directly for better performance.
      */
     pub fn empty_state_hash_fixed() -> StateHash {
-        hex::decode("0d715feed4a3f2188d9e28904112a8eb72dc353fbaadb339bae7afee4895e86b")
+        hex::decode("6fd88addb9708fdbd89156e23e305763d643f437079cef10a8ab00095c60a345")
             .unwrap()
             .into()
     }

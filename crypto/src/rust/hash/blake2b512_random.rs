@@ -143,21 +143,29 @@ impl Blake2b512Random {
     }
 
     fn hash(&mut self) {
-        // println!("\nhash_array: {:?}", self.hash_array);
         self.digest
             .peek_final_root(self.last_block.as_slice(), 0, &mut self.hash_array, 0);
-        let low = self.count_view[0];
-        // println!("\nlow: {}", low);
+        // countView is a LongBuffer view of lastBlock starting at offset 112.
+        // Scala: countView = lastBlock.duplicate().position(112).slice().asLongBuffer()
+        // So countView.get(0) reads the long at lastBlock[112..120].
+        // Rust: count_view[14] maps to last_block[112..120] (14 * 8 = 112).
+        let low = self.count_view[14];
         if low == u64::MAX {
-            let high = self.count_view[1];
-            self.count_view[0] = 0;
-            self.last_block[0] = 0;
-            self.count_view[1] = high + 1;
-            self.last_block[1] = high as i8 + 1;
+            let high = self.count_view[15];
+            self.count_view[14] = 0;
+            self.count_view[15] = high + 1;
         } else {
-            self.count_view[0] = low + 1;
-            self.last_block[112] = low as i8 + 1; // TODO: review this hardcoded index
-                                                  // println!("\ncount_view: {:?}", self.count_view);
+            self.count_view[14] = low + 1;
+        }
+        // Sync last_block[112..120] with count_view[14] (full 8-byte little-endian write)
+        let bytes = self.count_view[14].to_le_bytes();
+        for i in 0..8 {
+            self.last_block[112 + i] = bytes[i] as i8;
+        }
+        // Sync last_block[120..128] with count_view[15] for overflow case
+        let bytes_high = self.count_view[15].to_le_bytes();
+        for i in 0..8 {
+            self.last_block[120 + i] = bytes_high[i] as i8;
         }
     }
 
