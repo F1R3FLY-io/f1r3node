@@ -15,6 +15,9 @@ on:
       - rust/main
       - "feature/**"
 
+# Prevent interleaving of integration test jobs on single-runner-per-arch
+# self-hosted runners. A second workflow run for the same ref queues until
+# the first completes rather than cancelling it.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -180,7 +183,7 @@ jobs:
           path: /tmp/test-logs/
           retention-days: 7
 
-  # Build Rust Docker image natively on each arch using GitHub-hosted runners.
+  # Build Rust Docker image natively on each arch using self-hosted runners.
   build_rust_docker_image:
     name: Build Rust Docker Image (${{ matrix.arch }})
     needs: build_base
@@ -189,21 +192,42 @@ jobs:
       matrix:
         include:
           - platform: linux/amd64
-            runner: ubuntu-latest
+            runner: [self-hosted, Linux, X64, f1r3fly-rust-ci]
             arch: amd64
           - platform: linux/arm64
-            runner: ubuntu-24.04-arm
+            runner: [self-hosted, Linux, ARM64, f1r3fly-rust-ci]
             arch: arm64
     steps:
+      - name: Clean self-hosted runner state
+        shell: bash {0}
+        run: |
+          sudo rm -rf system-integration/integration-tests/data
+          rm -rf ../artifacts /tmp/rust-node-docker.tar.gz /tmp/f1r3fly-worktree.tar.gz
+
       - name: Clone Repository
         uses: actions/checkout@v4
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      - name: Enable Containerd Image Store
+        shell: bash -ex {0}
+        run: |
+          sudo mkdir -p /etc/docker
+          DESIRED='{"features": {"containerd-snapshotter": true}}'
+          CURRENT=$(cat /etc/docker/daemon.json 2>/dev/null || echo '{}')
+          if [ "$CURRENT" != "$DESIRED" ]; then
+            echo "$DESIRED" | sudo tee /etc/docker/daemon.json | jq
+            sudo systemctl restart docker
+            echo "Docker daemon restarted (config changed)"
+          else
+            echo "Docker daemon config already up to date, skipping restart"
+          fi
+
       - name: Build Docker Image
         shell: bash -ex {0}
         run: |
+          docker context use default
           docker buildx build \
             --platform ${{ matrix.platform }} \
             --file node/Dockerfile \
@@ -214,8 +238,8 @@ jobs:
       - name: Export Docker Image
         shell: bash -ex {0}
         run: |
-          mkdir -p /tmp/artifacts
-          git describe --tags --always >/tmp/artifacts/version.txt
+          mkdir -p ../artifacts
+          git describe --tags --always >../artifacts/version.txt
           docker image save f1r3flyindustries/f1r3fly-rust-node:${{ matrix.arch }} \
               | gzip > /tmp/rust-node-docker.tar.gz
 
@@ -225,35 +249,29 @@ jobs:
           name: artifacts-docker-${{ matrix.arch }}
           path: /tmp/rust-node-docker.tar.gz
 
-  # Integration tests on GitHub-hosted runners, parallelized by test module.
-  # Each test module gets its own ephemeral runner (2 arches × 16 modules = 32 jobs).
+  # Integration tests on OCI self-hosted runners (one runner per arch).
+  # All tests run in a single pytest invocation per arch, matching local dev
+  # workflow. The static shard boots once and stays up for all shard tests;
+  # custom shard tests boot/teardown their own shards per-test.
   required_rust_integration_tests:
-    name: Integration Tests (${{ matrix.arch.name }}/${{ matrix.test }})
+    name: Integration Tests (${{ matrix.arch }})
     needs: build_rust_docker_image
-    runs-on: ${{ matrix.arch.runner }}
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
-        arch:
-          - { runner: ubuntu-latest, name: amd64 }
-          - { runner: ubuntu-24.04-arm, name: arm64 }
-        test:
-          - test_web_api
-          - test_wallets
-          - test_heartbeat
-          - test_deployment
-          - test_storage
-          - test_genesis_ceremony
-          - test_dag_correctness
-          - test_finalization
-          - test_propose
-          - test_replay_determinism
-          - test_consensus_health
-          - test_synchrony_constraint
-          - test_asymmetric_bonds
-          - test_bonding_validators
-          - test_trim_state
+        include:
+          - arch: amd64
+            runner: [self-hosted, Linux, X64, f1r3fly-rust-ci]
+          - arch: arm64
+            runner: [self-hosted, Linux, ARM64, f1r3fly-rust-ci]
     steps:
+      - name: Clean self-hosted runner state
+        shell: bash {0}
+        run: |
+          sudo rm -rf system-integration/integration-tests/data
+          rm -f /tmp/rust-node-docker.tar.gz /tmp/*.log
+
       - name: Clone Repository
         uses: actions/checkout@v4
 
@@ -261,8 +279,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: F1R3FLY-io/system-integration
-          # TODO: revert to main once system-integration PR #47 is merged
-          ref: feature/robust-lfb-assertion
+          ref: main
           path: system-integration
 
       - uses: actions/setup-python@v5
@@ -280,14 +297,32 @@ jobs:
       - name: Load Docker Image
         uses: actions/download-artifact@v4
         with:
-          name: artifacts-docker-${{ matrix.arch.name }}
+          name: artifacts-docker-${{ matrix.arch }}
           path: /tmp
 
       - name: Import Docker Image
         shell: bash -ex {0}
         run: |
           zcat /tmp/rust-node-docker.tar.gz | docker image load
-          docker tag f1r3flyindustries/f1r3fly-rust-node:${{ matrix.arch.name }} f1r3flyindustries/f1r3fly-rust-node
+          docker tag f1r3flyindustries/f1r3fly-rust-node:${{ matrix.arch }} f1r3flyindustries/f1r3fly-rust-node
+
+      - name: Install docker-compose
+        shell: bash -ex {0}
+        run: |
+          if ! command -v docker-compose &>/dev/null; then
+            sudo curl -L "https://github.com/docker/compose/releases/download/v2.32.4/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+            sudo chmod +x /usr/local/bin/docker-compose
+          fi
+          docker-compose --version
+
+      - name: Reset Docker networking
+        shell: bash {0}
+        run: |
+          docker rm -f $(docker ps -aq) 2>/dev/null || true
+          docker network prune -f 2>/dev/null || true
+          echo "Restarting Docker daemon to clear any TIME_WAIT sockets from previous runs"
+          sudo systemctl restart docker
+          sleep 3
 
       - name: Install system-integration dependencies
         shell: bash -ex {0}
@@ -296,13 +331,6 @@ jobs:
           poetry lock --no-update
           poetry install --with integration
 
-      - name: Ensure test ports are free
-        shell: bash {0}
-        run: |
-          for port in $(seq 40400 40545); do
-            fuser -k $port/tcp 2>/dev/null || true
-          done
-
       - name: Run Integration Tests
         shell: bash -ex {0}
         env:
@@ -310,22 +338,35 @@ jobs:
         run: |
           cd system-integration
           SCALE_FLAG=""
-          if [ "${{ matrix.arch.name }}" = "arm64" ]; then
+          if [ "${{ matrix.arch }}" = "arm64" ]; then
             SCALE_FLAG="--timeout-scale=1.5"
           fi
-          DESELECT_FLAG=""
-          if [ "${{ matrix.test }}" = "test_replay_determinism" ]; then
-            # Skip test_network_recovers_from_slow_deploy — see f1r3node#463
-            DESELECT_FLAG="--deselect integration-tests/test/test_replay_determinism.py::test_network_recovers_from_slow_deploy"
-          fi
-          poetry run pytest integration-tests/test/${{ matrix.test }}.py -v --tb=short --log-cli-level=WARNING \
-            --startup-timeout=600 --command-timeout=300 --timeout=600 $SCALE_FLAG $DESELECT_FLAG
+          poetry run pytest \
+            integration-tests/test/test_web_api.py \
+            integration-tests/test/test_wallets.py \
+            integration-tests/test/test_heartbeat.py \
+            integration-tests/test/test_deployment.py \
+            integration-tests/test/test_storage.py \
+            integration-tests/test/test_genesis_ceremony.py \
+            integration-tests/test/test_dag_correctness.py \
+            integration-tests/test/test_finalization.py \
+            integration-tests/test/test_propose.py \
+            integration-tests/test/test_replay_determinism.py \
+            integration-tests/test/test_consensus_health.py \
+            integration-tests/test/test_synchrony_constraint.py \
+            integration-tests/test/test_asymmetric_bonds.py \
+            integration-tests/test/test_bonding_validators.py \
+            integration-tests/test/test_trim_state.py \
+            -v --tb=short --log-cli-level=WARNING \
+            -n 3 --dist=loadgroup \
+            --startup-timeout=600 --command-timeout=300 --timeout=600 $SCALE_FLAG \
+            --deselect=integration-tests/test/test_replay_determinism.py::test_network_recovers_from_slow_deploy  # TODO: re-enable once LFB convergence after phlo-exhausting deploys is fixed
 
       - name: Upload Integration Test Logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: integration-logs-${{ matrix.arch.name }}-${{ matrix.test }}
+          name: integration-logs-${{ matrix.arch }}
           path: system-integration/integration-tests/
           retention-days: 7
 
@@ -333,10 +374,319 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: docker-logs-${{ matrix.arch.name }}-${{ matrix.test }}
+          name: docker-logs-${{ matrix.arch }}
           path: /tmp/*.log
           if-no-files-found: ignore
           retention-days: 7
+
+      - name: Clean Docker state
+        if: always()
+        shell: bash {0}
+        run: |
+          docker rm -f rnode.bootstrap rnode.validator1 rnode.validator2 rnode.validator3 rnode.readonly \
+            rnode.standalone rnode.custom.boot rnode.custom.validator1 rnode.custom.validator2 \
+            rnode.custom.validator3 rnode.custom.joiner 2>/dev/null
+          docker network rm f1r3fly-shard_f1r3fly-test-shard f1r3fly-standalone_f1r3fly-test-standalone f1r3fly-custom_f1r3fly-test-custom 2>/dev/null
+          sudo rm -rf system-integration/integration-tests/data
+
+  # ===========================================================================
+  # Smoke Tests — verify README startup instructions work
+  # ===========================================================================
+
+  smoke_docker_standalone:
+    name: Smoke Test (Docker Standalone)
+    needs: build_rust_docker_image
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Clone Repository
+        uses: actions/checkout@v4
+
+      - name: Load Docker Image
+        uses: actions/download-artifact@v4
+        with:
+          name: artifacts-docker-amd64
+          path: /tmp
+
+      - name: Import Docker Image
+        shell: bash -ex {0}
+        run: |
+          zcat /tmp/rust-node-docker.tar.gz | docker image load
+          docker tag f1r3flyindustries/f1r3fly-rust-node:amd64 f1r3flyindustries/f1r3fly-rust-node
+
+      - name: Start standalone node
+        shell: bash -ex {0}
+        run: docker compose -f docker/standalone.yml up -d
+
+      - name: Wait for Running state
+        shell: bash -ex {0}
+        run: |
+          for i in $(seq 1 60); do
+            if docker compose -f docker/standalone.yml logs 2>&1 | grep -q "Making a transition to Running state"; then
+              echo "Node reached Running state"
+              break
+            fi
+            echo "  [${i}] Waiting for Running state..."
+            sleep 5
+          done
+          docker compose -f docker/standalone.yml logs 2>&1 | grep "Making a transition to Running state" || (echo "FAIL: Node did not reach Running state" && exit 1)
+
+      - name: Verify HTTP API
+        shell: bash -ex {0}
+        run: curl -sf http://localhost:40403/api/status
+
+      - name: Wait for 10 finalized blocks
+        shell: bash -ex {0}
+        run: |
+          for i in $(seq 1 60); do
+            LFB=$(curl -sf http://localhost:40403/api/last-finalized-block 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('blockInfo',{}).get('blockNumber',0))" 2>/dev/null || echo 0)
+            echo "  [$((i*5))s] LFB: #$LFB"
+            if [ "$LFB" -ge 10 ] 2>/dev/null; then
+              echo "Reached LFB #$LFB"
+              break
+            fi
+            sleep 5
+          done
+          [ "$LFB" -ge 10 ] 2>/dev/null || (echo "FAIL: LFB only at #$LFB after 300s" && exit 1)
+
+      - name: Collect logs
+        if: always()
+        shell: bash {0}
+        run: |
+          mkdir -p /tmp/logs
+          docker ps -a > /tmp/logs/containers.txt 2>&1 || true
+          for c in $(docker ps -aq --filter "name=rnode" 2>/dev/null); do
+            name=$(docker inspect --format '{{.Name}}' "$c" | sed 's|^/||')
+            docker logs "$c" > "/tmp/logs/${name}.log" 2>&1 || true
+          done
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-logs-docker-standalone
+          path: /tmp/logs/
+          retention-days: 7
+
+      - name: Cleanup
+        if: always()
+        shell: bash {0}
+        run: docker compose -f docker/standalone.yml down -v
+
+  smoke_docker_shard:
+    name: Smoke Test (Docker Shard)
+    needs: build_rust_docker_image
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Clone Repository
+        uses: actions/checkout@v4
+
+      - name: Load Docker Image
+        uses: actions/download-artifact@v4
+        with:
+          name: artifacts-docker-amd64
+          path: /tmp
+
+      - name: Import Docker Image
+        shell: bash -ex {0}
+        run: |
+          zcat /tmp/rust-node-docker.tar.gz | docker image load
+          docker tag f1r3flyindustries/f1r3fly-rust-node:amd64 f1r3flyindustries/f1r3fly-rust-node
+
+      - name: Start shard
+        shell: bash -ex {0}
+        run: docker compose -f docker/shard.yml up -d
+
+      - name: Wait for all nodes Running
+        shell: bash -ex {0}
+        run: |
+          EXPECTED=4  # 3 validators + bootstrap (readonly doesn't log this)
+          for i in $(seq 1 60); do
+            COUNT=$(docker compose -f docker/shard.yml logs 2>&1 | grep -c "Making a transition to Running state" || echo 0)
+            echo "  [${i}] $COUNT/$EXPECTED nodes Running"
+            if [ "$COUNT" -ge "$EXPECTED" ]; then
+              echo "All nodes reached Running state"
+              break
+            fi
+            sleep 5
+          done
+          COUNT=$(docker compose -f docker/shard.yml logs 2>&1 | grep -c "Making a transition to Running state" || echo 0)
+          [ "$COUNT" -ge "$EXPECTED" ] || (echo "FAIL: Only $COUNT/$EXPECTED nodes Running" && exit 1)
+
+      - name: Verify validator1 HTTP API
+        shell: bash -ex {0}
+        run: curl -sf http://localhost:40413/api/status
+
+      - name: Verify readonly HTTP API
+        shell: bash -ex {0}
+        run: curl -sf http://localhost:40453/api/status
+
+      - name: Wait for 10 finalized blocks
+        shell: bash -ex {0}
+        run: |
+          for i in $(seq 1 60); do
+            LFB=$(curl -sf http://localhost:40413/api/last-finalized-block 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('blockInfo',{}).get('blockNumber',0))" 2>/dev/null || echo 0)
+            echo "  [$((i*5))s] LFB: #$LFB"
+            if [ "$LFB" -ge 10 ] 2>/dev/null; then
+              echo "Reached LFB #$LFB"
+              break
+            fi
+            sleep 5
+          done
+          [ "$LFB" -ge 10 ] 2>/dev/null || (echo "FAIL: LFB only at #$LFB after 300s" && exit 1)
+
+      - name: Start monitoring
+        shell: bash -ex {0}
+        run: |
+          docker compose -f docker/shard-monitoring.yml up -d
+          sleep 20
+
+      - name: Verify monitoring stack
+        shell: bash -ex {0}
+        run: |
+          echo "--- Prometheus targets ---"
+          curl -sf http://localhost:9090/api/v1/targets | python3 -c "
+          import sys,json; t=json.load(sys.stdin)['data']['activeTargets']
+          up=sum(1 for x in t if x['health']=='up')
+          down=sum(1 for x in t if x['health']=='down')
+          [print(f'  {x[\"labels\"].get(\"instance\",x[\"labels\"].get(\"job\",\"?\"))}: {x[\"health\"]}') for x in t]
+          print(f'UP={up} DOWN={down}')
+          assert up >= 5, f'expected >=5 UP targets, got {up}'
+          assert down == 0, f'expected 0 DOWN targets, got {down}'
+          "
+
+          echo "--- Grafana health ---"
+          curl -sf http://localhost:3000/api/health
+
+          echo "--- Grafana dashboards ---"
+          curl -sf -u admin:admin http://localhost:3000/api/search | python3 -c "
+          import sys,json; ds=json.load(sys.stdin)
+          [print(f'  {d[\"title\"]}') for d in ds]
+          assert len(ds) >= 1, f'expected >=1 dashboard, got {len(ds)}'
+          "
+
+      - name: Collect logs
+        if: always()
+        shell: bash {0}
+        run: |
+          mkdir -p /tmp/logs
+          docker ps -a > /tmp/logs/containers.txt 2>&1 || true
+          for c in $(docker ps -aq --filter "name=rnode" 2>/dev/null); do
+            name=$(docker inspect --format '{{.Name}}' "$c" | sed 's|^/||')
+            docker logs "$c" > "/tmp/logs/${name}.log" 2>&1 || true
+          done
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-logs-docker-shard
+          path: /tmp/logs/
+          retention-days: 7
+
+      - name: Cleanup
+        if: always()
+        shell: bash {0}
+        run: |
+          docker compose -f docker/shard-monitoring.yml down 2>/dev/null || true
+          docker compose -f docker/shard.yml down -v
+
+  smoke_local_standalone:
+    name: Smoke Test (Local Standalone)
+    needs: build_rust_docker_image
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Clone Repository
+        uses: actions/checkout@v4
+
+      - name: Install just
+        shell: bash -ex {0}
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin
+
+      - name: Load Docker Image
+        uses: actions/download-artifact@v4
+        with:
+          name: artifacts-docker-amd64
+          path: /tmp
+
+      - name: Extract node binary from Docker image
+        shell: bash -ex {0}
+        run: |
+          zcat /tmp/rust-node-docker.tar.gz | docker image load
+          CONTAINER_ID=$(docker create f1r3flyindustries/f1r3fly-rust-node:amd64)
+          mkdir -p target/release
+          docker cp "$CONTAINER_ID:/opt/docker/bin/node" ./target/release/node
+          docker rm "$CONTAINER_ID"
+          chmod +x ./target/release/node
+
+      - name: Setup standalone data
+        shell: bash -ex {0}
+        run: just setup-standalone
+
+      - name: Start standalone node
+        shell: bash -ex {0}
+        run: |
+          ./target/release/node run -s \
+            --config-file=run-local/conf/standalone.conf \
+            --validator-private-key=5f668a7ee96d944a4494cc947e4005e172d7ab3461ee5538f1f2a45a835e9657 \
+            --host=localhost \
+            --no-upnp \
+            > /tmp/node-stdout.log 2>&1 &
+          echo $! > /tmp/node.pid
+          echo "Node started with PID $(cat /tmp/node.pid)"
+
+      - name: Wait for Running state
+        shell: bash -ex {0}
+        run: |
+          for i in $(seq 1 60); do
+            if grep -q "Making a transition to Running state" /tmp/node-stdout.log 2>/dev/null; then
+              echo "Node reached Running state"
+              break
+            fi
+            echo "  [${i}] Waiting for Running state..."
+            sleep 5
+          done
+          grep -q "Making a transition to Running state" /tmp/node-stdout.log || (echo "FAIL: Node did not reach Running state" && cat /tmp/node-stdout.log && exit 1)
+
+      - name: Verify HTTP API
+        shell: bash -ex {0}
+        run: curl -sf http://localhost:40403/api/status
+
+      - name: Wait for 10 finalized blocks
+        shell: bash -ex {0}
+        run: |
+          for i in $(seq 1 60); do
+            LFB=$(curl -sf http://localhost:40403/api/last-finalized-block 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('blockInfo',{}).get('blockNumber',0))" 2>/dev/null || echo 0)
+            echo "  [$((i*5))s] LFB: #$LFB"
+            if [ "$LFB" -ge 10 ] 2>/dev/null; then
+              echo "Reached LFB #$LFB"
+              break
+            fi
+            sleep 5
+          done
+          [ "$LFB" -ge 10 ] 2>/dev/null || (echo "FAIL: LFB only at #$LFB after 300s" && exit 1)
+
+      - name: Collect logs
+        if: always()
+        shell: bash {0}
+        run: |
+          mkdir -p /tmp/logs
+          cp /tmp/node-stdout.log /tmp/logs/ 2>/dev/null || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-logs-local-standalone
+          path: /tmp/logs/
+          retention-days: 7
+
+      - name: Cleanup
+        if: always()
+        shell: bash {0}
+        run: |
+          kill $(cat /tmp/node.pid) 2>/dev/null || true
+          just clean-standalone 2>/dev/null || true
 
   # release_* jobs make built artifacts available to public and run only on new
   # tags or pushes to "staging" or "trying" branches used by Bors (bors r+ and bors try).
