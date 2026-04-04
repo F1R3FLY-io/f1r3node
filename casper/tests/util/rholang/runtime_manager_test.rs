@@ -1464,3 +1464,208 @@ async fn replay_on_independent_runtime_should_match_play_cost_for_duplicate_send
         failures.join("\n")
     );
 }
+
+#[tokio::test]
+async fn cross_deploy_bridge_full_admin_flow() {
+    use crate::util::rholang::resources::{
+        mk_runtime_manager_with_history_at, mk_test_rnode_store_manager_from_genesis,
+    };
+
+    crate::init_logger();
+    let genesis_context = crate::util::rholang::resources::genesis_context()
+        .await
+        .unwrap();
+    let genesis_post_state = genesis_context.genesis_block.body.state.post_state_hash.clone();
+
+    let bridge_rho = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/resources/bridge.rho"),
+    ).expect("Failed to read bridge.rho");
+
+    let mut kvm = mk_test_rnode_store_manager_from_genesis(&genesis_context);
+    let (mut rm, _) = mk_runtime_manager_with_history_at(&mut *kvm).await;
+
+    let uri_regex = regex::Regex::new(r"rho:id:[a-zA-Z0-9]+").unwrap();
+
+    let make_deploy_id_par = |sig: &[u8]| -> models::rhoapi::Par {
+        models::rhoapi::Par {
+            unforgeables: vec![models::rhoapi::GUnforgeable {
+                unf_instance: Some(
+                    models::rhoapi::g_unforgeable::UnfInstance::GDeployIdBody(
+                        models::rhoapi::GDeployId { sig: sig.to_vec() },
+                    ),
+                ),
+            }],
+            ..Default::default()
+        }
+    };
+
+    let mut block_number = 0u64;
+    let mut current_state = genesis_post_state.clone();
+
+    // Step 1: Deploy bridge.rho
+    tracing::info!("Step 1: Deploying bridge.rho");
+    block_number += 1;
+    let deploy1 = construct_deploy::source_deploy_now_full(
+        bridge_rho, None, None, None, None, None,
+    ).unwrap();
+
+    let (post_state_1, pd1_vec, _) = rm
+        .compute_state(
+            &current_state,
+            vec![deploy1],
+            Vec::new(),
+            BlockData {
+                time_stamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as i64,
+                block_number: block_number as i64,
+                sender: genesis_context.validator_pks()[0].clone(),
+                seq_num: block_number as i32,
+            },
+            None,
+        )
+        .await
+        .unwrap();
+
+    let pd1 = &pd1_vec[0];
+    assert!(!pd1.is_failed, "Step 1: bridge deploy failed: {:?}", pd1.system_deploy_error);
+    tracing::info!("Step 1: cost={}, events={}", pd1.cost.cost, pd1.deploy_log.len());
+
+    let deploy1_data = rm.get_data(post_state_1.clone(), &make_deploy_id_par(&pd1_vec[0].deploy.sig)).await.unwrap();
+    assert!(!deploy1_data.is_empty(), "Step 1: bridge deploy wrote no data to deployId");
+
+    let data_str = format!("{:?}", deploy1_data);
+    let uris: Vec<String> = uri_regex.find_iter(&data_str).map(|m| m.as_str().to_string()).collect();
+    let mut unique_uris: Vec<String> = Vec::new();
+    for uri in &uris {
+        if !unique_uris.contains(uri) { unique_uris.push(uri.clone()); }
+    }
+    assert!(unique_uris.len() >= 2, "Expected at least 2 URIs, got: {:?}", unique_uris);
+    let query_uri = unique_uris[0].clone();
+    let admin_uri = unique_uris.last().unwrap().clone();
+    tracing::info!("  queryUri: {}, adminUri: {}", query_uri, admin_uri);
+    current_state = post_state_1;
+
+    // Steps 2-7: getNonce + admin calls
+    let steps: Vec<(&str, String)> = vec![
+        ("getNonce", format!(r#"
+new deployId(`rho:system:deployId`),
+    lookup(`rho:registry:lookup`),
+    queryCh, ret
+in {{
+  lookup!(`{}`, *queryCh) |
+  for (query <- queryCh) {{
+    query!("getNonce", Nil, *ret) |
+    for (@result <- ret) {{ deployId!(result) }}
+  }}
+}}
+"#, query_uri)),
+        ("setVerifier", format!(r#"
+new deployId(`rho:system:deployId`), deployerId(`rho:system:deployerId`),
+    lookup(`rho:registry:lookup`), VaultAddress(`rho:vault:address`),
+    adminBridgeCh, callerAddrCh, ret
+in {{
+  lookup!(`{}`, *adminBridgeCh) |
+  VaultAddress!("fromDeployerId", *deployerId, *callerAddrCh) |
+  for (adminBridge <- adminBridgeCh; @callerAddr <- callerAddrCh) {{
+    adminBridge!("setVerifier", callerAddr, "verifier_v2", *ret) |
+    for (@result <- ret) {{ deployId!(result) }}
+  }}
+}}
+"#, admin_uri)),
+        ("setRelayer", format!(r#"
+new deployId(`rho:system:deployId`), deployerId(`rho:system:deployerId`),
+    lookup(`rho:registry:lookup`), VaultAddress(`rho:vault:address`),
+    adminBridgeCh, callerAddrCh, ret
+in {{
+  lookup!(`{}`, *adminBridgeCh) |
+  VaultAddress!("fromDeployerId", *deployerId, *callerAddrCh) |
+  for (adminBridge <- adminBridgeCh; @callerAddr <- callerAddrCh) {{
+    adminBridge!("setRelayer", callerAddr, "relayer_addr_1", *ret) |
+    for (@result <- ret) {{ deployId!(result) }}
+  }}
+}}
+"#, admin_uri)),
+        ("setRequiredSignatures", format!(r#"
+new deployId(`rho:system:deployId`), deployerId(`rho:system:deployerId`),
+    lookup(`rho:registry:lookup`), VaultAddress(`rho:vault:address`),
+    adminBridgeCh, callerAddrCh, ret
+in {{
+  lookup!(`{}`, *adminBridgeCh) |
+  VaultAddress!("fromDeployerId", *deployerId, *callerAddrCh) |
+  for (adminBridge <- adminBridgeCh; @callerAddr <- callerAddrCh) {{
+    adminBridge!("setRequiredSignatures", callerAddr, 2, *ret) |
+    for (@result <- ret) {{ deployId!(result) }}
+  }}
+}}
+"#, admin_uri)),
+        ("addOracle", format!(r#"
+new deployId(`rho:system:deployId`), deployerId(`rho:system:deployerId`),
+    lookup(`rho:registry:lookup`), VaultAddress(`rho:vault:address`),
+    adminBridgeCh, callerAddrCh, ret
+in {{
+  lookup!(`{}`, *adminBridgeCh) |
+  VaultAddress!("fromDeployerId", *deployerId, *callerAddrCh) |
+  for (adminBridge <- adminBridgeCh; @callerAddr <- callerAddrCh) {{
+    adminBridge!("addOracle", callerAddr, "oracle-4", *ret) |
+    for (@result <- ret) {{ deployId!(result) }}
+  }}
+}}
+"#, admin_uri)),
+        ("removeOracle", format!(r#"
+new deployId(`rho:system:deployId`), deployerId(`rho:system:deployerId`),
+    lookup(`rho:registry:lookup`), VaultAddress(`rho:vault:address`),
+    adminBridgeCh, callerAddrCh, ret
+in {{
+  lookup!(`{}`, *adminBridgeCh) |
+  VaultAddress!("fromDeployerId", *deployerId, *callerAddrCh) |
+  for (adminBridge <- adminBridgeCh; @callerAddr <- callerAddrCh) {{
+    adminBridge!("removeOracle", callerAddr, "oracle-4", *ret) |
+    for (@result <- ret) {{ deployId!(result) }}
+  }}
+}}
+"#, admin_uri)),
+    ];
+
+    let mut failures = Vec::new();
+    for (name, code) in &steps {
+        block_number += 1;
+        tracing::info!("{}", name);
+
+        let deploy = construct_deploy::source_deploy_now_full(
+            code.clone(), None, None, None, None, None,
+        ).unwrap();
+
+        let (post_state_n, pdn_vec, _) = rm
+            .compute_state(
+                &current_state,
+                vec![deploy],
+                Vec::new(),
+                BlockData {
+                    time_stamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as i64,
+                    block_number: block_number as i64,
+                    sender: genesis_context.validator_pks()[0].clone(),
+                    seq_num: block_number as i32,
+                },
+                None,
+            )
+            .await
+            .unwrap();
+
+        let pdn = &pdn_vec[0];
+        assert!(!pdn.is_failed, "{}: deploy failed: {:?}", name, pdn.system_deploy_error);
+        let deploy_data = rm.get_data(post_state_n.clone(), &make_deploy_id_par(&pdn_vec[0].deploy.sig)).await.unwrap();
+        let has_data = !deploy_data.is_empty();
+        tracing::info!("  {}: cost={}, events={}, deployId_data={}", name, pdn.cost.cost, pdn.deploy_log.len(), has_data);
+
+        if !has_data {
+            failures.push(format!("{} returned no data. cost={}, events={}", name, pdn.cost.cost, pdn.deploy_log.len()));
+        }
+        current_state = post_state_n;
+    }
+
+    assert!(
+        failures.is_empty(),
+        "Bridge admin API failures:\n{}",
+        failures.join("\n")
+    );
+}

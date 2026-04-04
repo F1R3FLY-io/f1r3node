@@ -279,7 +279,8 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: F1R3FLY-io/system-integration
-          ref: main
+          # TODO: revert to main once system-integration PR #47 is merged
+          ref: feature/robust-lfb-assertion
           path: system-integration
 
       - uses: actions/setup-python@v5
@@ -352,6 +353,7 @@ jobs:
             integration-tests/test/test_finalization.py \
             integration-tests/test/test_propose.py \
             integration-tests/test/test_replay_determinism.py \
+            integration-tests/test/test_bridge_admin.py \
             integration-tests/test/test_consensus_health.py \
             integration-tests/test/test_synchrony_constraint.py \
             integration-tests/test/test_asymmetric_bonds.py \

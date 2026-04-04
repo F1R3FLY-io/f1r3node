@@ -524,15 +524,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_detect_unexpected_reuse_of_name_context_free() {
+        // for/; is desugared to nested for loops by the normalizer, so
+        // "for (x <- @Nil; y <- @Nil) { x | y }" becomes
+        // "for (x <- @Nil) { for (y <- @Nil) { x | y } }"
+        // x is bound as a name (channel) but used in process context (x | y).
         let code = "for (x <- @Nil; y <- @Nil) { x | y }";
         let diagnostics = validate_and_get_diagnostics(code).await;
-
         assert_eq!(diagnostics.len(), 1);
         check_diagnostic_basics(&diagnostics[0]);
         assert_eq!(
             diagnostics[0].message,
-            "Receiving on the same channels is currently not allowed (at 0:0)." // in Scala the error message is different "Name variable: x at 1:6 used in process context at 1:30".
-                                                                                // Check the Compiler::source_to_adt_with_normalizer_env logic
+            "Name variable: x at 0:5 used in process context at 0:29"
         );
     }
 
@@ -564,15 +566,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_detect_receive_on_same_channels_error() {
+        // for/; is desugared to nested for loops by the normalizer, so
+        // "for (x <- @Nil; x <- @Nil) { Nil }" becomes
+        // "for (x <- @Nil) { for (x <- @Nil) { Nil } }" — each receive
+        // has a single channel, so the same-channels error no longer fires.
         let code = "for (x <- @Nil; x <- @Nil) { Nil }";
         let diagnostics = validate_and_get_diagnostics(code).await;
-
-        assert_eq!(diagnostics.len(), 1);
-        check_diagnostic_basics(&diagnostics[0]);
-        assert_eq!(
-            diagnostics[0].message,
-            "Receiving on the same channels is currently not allowed (at 0:0)."
-        );
+        assert_eq!(diagnostics.len(), 0);
     }
 
     #[tokio::test]

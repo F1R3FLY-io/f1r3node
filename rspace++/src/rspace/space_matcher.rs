@@ -101,36 +101,13 @@ where
             Some(((channel, pattern), tail)) => {
                 let maybe_tuple: Option<MatchingDataCandidate<C, A>> =
                     match channel_to_indexed_data.get(channel) {
-                        Some(indexed_data) => {
-                            // TODO: Review — Scala does not sort here but passes at the
-                            // Rholang level for duplicate-channel joins. Rust needs this
-                            // sort to ensure deterministic datum selection regardless of
-                            // whether the datum list was shuffled (play) or sequential
-                            // (replay).
-                            //
-                            // When the same channel appears at multiple positions in a
-                            // multi-channel join (e.g., [ch, other, ch]), both positions
-                            // share the same entry in channel_to_indexed_data. The first
-                            // processed position picks a datum and removes it, affecting
-                            // what's available for the second position. Without sorting,
-                            // play's shuffle produces a different pick order than replay's
-                            // sequential order, causing different datum-to-position
-                            // assignments. Since Blake2b512Random::merge is order-dependent,
-                            // this cascades into different execution paths.
-                            //
-                            // Duplicate-channel joins arise at runtime when a Receive node's
-                            // bound variables resolve to the same channel through
-                            // substitution — the normalizer cannot prevent this.
-                            let mut sorted_data = indexed_data.clone();
-                            sorted_data.sort_by_key(|(_, idx)| *idx);
-                            self.find_matching_data_candidate(
-                                &matcher,
-                                channel.clone(),
-                                sorted_data,
-                                pattern.clone(),
-                                Vec::new(),
-                            )
-                        }
+                        Some(indexed_data) => self.find_matching_data_candidate(
+                            &matcher,
+                            channel.clone(),
+                            indexed_data.clone(),
+                            pattern.clone(),
+                            Vec::new(),
+                        ),
                         None => None,
                     };
 

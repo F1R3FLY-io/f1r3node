@@ -91,5 +91,13 @@ fn main() {
         .collect::<Vec<String>>()
         .join("\n");
 
+    // Normalize locally_free in serde serialization — always serialize as empty vec.
+    // This matches Scala's AlwaysEqual semantics where locally_free is a transient
+    // analysis field that must not affect Blake2b256 channel hashes in RSpace.
+    let modified_content = modified_content.replace(
+        "pub locally_free: ::prost::alloc::vec::Vec<u8>,",
+        "#[serde(serialize_with = \"crate::rust::serde_helpers::serialize_as_empty_bytes\")]\n    pub locally_free: ::prost::alloc::vec::Vec<u8>,",
+    );
+
     fs::write(file_path, modified_content).expect("Unable to write file");
 }

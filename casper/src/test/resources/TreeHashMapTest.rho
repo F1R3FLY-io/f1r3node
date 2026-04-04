@@ -314,16 +314,14 @@ in {
             TreeHashMap!("set", thm, "some key1", "some val1", *insertReady) |
             TreeHashMap!("set", thm, "some key2", "some val2", *insertReady) |
 
-            for (_ <- insertReady) {
-              for (_ <- insertReady) {
-                TreeHashMap!("toMap", thm, *toMapCh) |
-                rhoSpec!(
-                  "assert",
-                  ({"some key1": "some val1", "some key2": "some val2"}, "== <-", *toMapCh),
-                  "toMapCh contains equal map",
-                  *ackCh
-                )
-              }
+            for (_ <- insertReady; _ <- insertReady) {
+              TreeHashMap!("toMap", thm, *toMapCh) |
+              rhoSpec!(
+                "assert",
+                ({"some key1": "some val1", "some key2": "some val2"}, "== <-", *toMapCh),
+                "toMapCh contains equal map",
+                *ackCh
+              )
             }
           }
         }
@@ -337,18 +335,14 @@ in {
             TreeHashMap!("set", thm, "some key2", "some val2", *insertReady) |
             TreeHashMap!("set", thm, "some key3", "some val3", *insertReady) |
 
-            for (_ <- insertReady) {
-              for (_ <- insertReady) {
-                for (_ <- insertReady) {
-                  TreeHashMap!("toMap", thm, *toMapCh) |
-                  rhoSpec!(
-                    "assert",
-                    ({"some key1": "some val1", "some key2": "some val2", "some key3": "some val3"}, "== <-", *toMapCh),
-                    "toMapCh contains equal map",
-                    *ackCh
-                  )
-                }
-              }
+            for (_ <- insertReady; _ <- insertReady; _ <- insertReady) {
+              TreeHashMap!("toMap", thm, *toMapCh) |
+              rhoSpec!(
+                "assert",
+                ({"some key1": "some val1", "some key2": "some val2", "some key3": "some val3"}, "== <-", *toMapCh),
+                "toMapCh contains equal map",
+                *ackCh
+              )
             }
           }
         }
@@ -363,20 +357,14 @@ in {
             TreeHashMap!("set", thm, "some key3", "some val3", *insertReady) |
             TreeHashMap!("set", thm, "some key4", "some val4", *insertReady) |
 
-            for (_ <- insertReady) {
-              for (_ <- insertReady) {
-                for (_ <- insertReady) {
-                  for (_ <- insertReady) {
-                    TreeHashMap!("toMap", thm, *toMapCh) |
-                    rhoSpec!(
-                      "assert",
-                      ({"some key1": "some val1", "some key2": "some val2", "some key3": "some val3", "some key4": "some val4"}, "== <-", *toMapCh),
-                      "toMapCh contains equal map",
-                      *ackCh
-                    )
-                  }
-                }
-              }
+            for (_ <- insertReady; _ <- insertReady; _ <- insertReady; _ <- insertReady) {
+              TreeHashMap!("toMap", thm, *toMapCh) |
+              rhoSpec!(
+                "assert",
+                ({"some key1": "some val1", "some key2": "some val2", "some key3": "some val3", "some key4": "some val4"}, "== <-", *toMapCh),
+                "toMapCh contains equal map",
+                *ackCh
+              )
             }
           }
         }
