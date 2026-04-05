@@ -1373,3 +1373,94 @@ async fn joins_should_be_replayed_correctly() {
     .await
     .unwrap();
 }
+
+/// Reproduce ReplayCostMismatch with duplicate channel sends (bridge.rho pattern).
+///
+/// Uses two independent RuntimeManagers sharing the same genesis RSpace scope.
+/// The first plays the deploy (hot store populated from execution).
+/// The second replays with a fresh hot store (loads from history).
+/// This simulates the block creator vs replayer divergence.
+#[tokio::test]
+async fn replay_on_independent_runtime_should_match_play_cost_for_duplicate_sends() {
+    use crate::util::rholang::resources::{
+        mk_runtime_manager_with_history_at, mk_test_rnode_store_manager_from_genesis,
+    };
+
+    crate::init_logger();
+    let genesis_context = crate::util::rholang::resources::genesis_context()
+        .await
+        .unwrap();
+    let genesis_block = genesis_context.genesis_block.clone();
+    let genesis_post_state = genesis_block.body.state.post_state_hash.clone();
+
+    let bridge_rho = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/resources/bridge.rho"),
+    )
+    .expect("Failed to read bridge.rho");
+
+    let mut failures = Vec::new();
+    for attempt in 0..10 {
+        let mut kvm_play = mk_test_rnode_store_manager_from_genesis(&genesis_context);
+        let (mut rm_play, _) = mk_runtime_manager_with_history_at(&mut *kvm_play).await;
+
+        let deploy = construct_deploy::source_deploy_now_full(
+            bridge_rho.clone(),
+            None, None, None, None, None,
+        ).unwrap();
+
+        let play_block_data = BlockData {
+            time_stamp: deploy.data.time_stamp,
+            block_number: 1,
+            sender: genesis_context.validator_pks()[0].clone(),
+            seq_num: 1,
+        };
+
+        let (_play_post, play_deploys, play_sys_deploys) = rm_play
+            .compute_state(
+                &genesis_post_state,
+                vec![deploy],
+                Vec::new(),
+                play_block_data.clone(),
+                None,
+            )
+            .await
+            .unwrap();
+
+        let play_cost = play_deploys[0].cost.cost;
+
+        let mut kvm_replay = mk_test_rnode_store_manager_from_genesis(&genesis_context);
+        let (mut rm_replay, _) = mk_runtime_manager_with_history_at(&mut *kvm_replay).await;
+
+        let replay_result = rm_replay
+            .replay_compute_state(
+                &genesis_post_state,
+                play_deploys,
+                play_sys_deploys,
+                &play_block_data,
+                None,
+                false,
+            )
+            .await;
+
+        match replay_result {
+            Ok(_) => {}
+            Err(CasperError::ReplayFailure(ref failure)) => {
+                failures.push(format!(
+                    "attempt {}: play_cost={}, {:?}",
+                    attempt, play_cost, failure
+                ));
+            }
+            Err(e) => {
+                failures.push(format!("attempt {}: {:?}", attempt, e));
+            }
+        }
+    }
+
+    assert!(
+        failures.is_empty(),
+        "ReplayCostMismatch in {}/10 attempts:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
+}
