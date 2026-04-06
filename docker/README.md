@@ -94,6 +94,22 @@ Key settings in `default.conf` (see [Consensus Configuration Guide](https://gith
 - `enable-mergeable-channel-gc = true`
 - `heartbeat.enabled = true` (overridden via `--heartbeat-disabled` for bootstrap/observer)
 
+## Environment Variables
+
+The Rust node reads a small set of environment variables. All other configuration is in HOCON config files (see [Configuration](#configuration) above). Env vars are used only for secrets and logging.
+
+| Variable | Description |
+|---|---|
+| `RUST_LOG` | Log level filtering (e.g. `info`, `debug`) |
+| `OPENAI_ENABLED` | Enable OpenAI AI services (`true`/`false`) |
+| `OPENAI_API_KEY` | OpenAI API key (required when `OPENAI_ENABLED=true`) |
+| `OLLAMA_ENABLED` | Enable local Ollama AI services (`true`/`false`) |
+| `OLLAMA_BASE_URL` | Ollama server URL (default: `http://localhost:11434`) |
+| `OLLAMA_MODEL` | Ollama model name (default: `llama3.2`) |
+| `OLLAMA_TIMEOUT_SEC` | Ollama request timeout in seconds (default: `120`) |
+
+See [`.env.example`](.env.example) for Docker defaults.
+
 ## Port Mapping
 
 | Node | Protocol | gRPC Ext | gRPC Int | HTTP | Discovery | Admin |
