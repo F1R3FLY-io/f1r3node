@@ -4,6 +4,13 @@ All notable changes to the Rust implementation of F1r3node will be documented in
 This changelog is automatically generated from conventional commits.
 
 
+## [v0.4.10] - 2026-04-06
+
+### Bug Fixes
+
+- v0.4.9 eval order, observer stability, and client-reported issues (#468) ([#468](https://github.com/F1R3FLY-io/f1r3node/pull/468))
+
+
 ## [v0.4.9] - 2026-04-01
 
 ### Bug Fixes
