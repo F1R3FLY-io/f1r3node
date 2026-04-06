@@ -848,7 +848,7 @@ pub fn compute_parents_post_state(
 
             // Flatten all ancestor sets to get visible blocks
             let flatten_visible_started = std::time::Instant::now();
-            let visible_blocks: HashSet<BlockHash> = visible_ancestor_sets_with_parents
+            let mut visible_blocks: HashSet<BlockHash> = visible_ancestor_sets_with_parents
                 .iter()
                 .flat_map(|s| s.iter().cloned())
                 .collect();
@@ -931,6 +931,29 @@ pub fn compute_parents_post_state(
             // Get the LFB block to use its post-state as the merge base
             let lfb_block = block_store.get_unsafe(&lfb_for_descendants);
             let lfb_state = Blake2b256Hash::from_bytes_prost(&lfb_block.body.state.post_state_hash);
+
+            // Scope visible_blocks to only include blocks at or above the LCA.
+            // Blocks below the LCA are common ancestors of all parents — their
+            // state is already reflected in the LCA's post-state and merging
+            // them is redundant O(n²) work. This is deterministic because both
+            // the LCA and block numbers come from the DAG structure.
+            let lca_block_number = lfb_block.body.state.block_number;
+            let pre_filter_count = visible_blocks.len();
+            visible_blocks.retain(|bh| {
+                match s.dag.lookup_unsafe(bh) {
+                    Ok(meta) => meta.block_number >= lca_block_number,
+                    Err(_) => true, // keep on lookup error (conservative)
+                }
+            });
+            if visible_blocks.len() < pre_filter_count {
+                tracing::debug!(
+                    target: "f1r3fly.compute_parents_post_state",
+                    "LCA-scoped merge: reduced visible_blocks from {} to {} (LCA at block #{})",
+                    pre_filter_count,
+                    visible_blocks.len(),
+                    lca_block_number,
+                );
+            }
 
             if tracing::enabled!(tracing::Level::DEBUG) {
                 let parent_hash_str: Vec<String> = parent_hashes

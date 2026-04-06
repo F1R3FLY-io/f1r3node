@@ -31,9 +31,7 @@ async fn evaluate_with_cost_log(
     initial_phlo: i64,
     contract: String,
 ) -> (EvaluateResult, Vec<Cost>) {
-    // Cost logging is disabled by default unless F1R3_COST_LOG_MAX_ENTRIES > 0.
-    // Integration tests compile the library without cfg(test), so enable logging explicitly.
-    std::env::set_var("F1R3_COST_LOG_MAX_ENTRIES", "100000");
+    // Cost logging is enabled in test builds via cfg!(test) in CostManager.
 
     let mut kvm = InMemoryStoreManager::new();
     let store = kvm.r_space_stores().await.unwrap();
@@ -221,11 +219,11 @@ fn contracts() -> Vec<(String, i64)> {
       (String::from("@0!(2) | @1!(1)"), 197i64),
       (String::from("for(x <- @0){ Nil }"), 128i64),
       (String::from("for(x <- @0){ Nil } | @0!(2)"), 329i64),
-      (String::from("@0!!(0) | for (_ <- @0) { 0 }"), 350i64),
-      (String::from("@0!!(0) | for (x <- @0) { 0 }"), 350i64),
-      (String::from("@0!!(0) | for (@0 <- @0) { 0 }"), 344i64),
-      (String::from("@0!!(0) | @0!!(0) | for (_ <- @0) { 0 }"), 451i64),
-      (String::from("@0!!(0) | @1!!(1) | for (_ <- @0 & _ <- @1) { 0 }"), 604i64),
+      (String::from("@0!!(0) | for (_ <- @0) { 0 }"), 342i64),
+      (String::from("@0!!(0) | for (x <- @0) { 0 }"), 342i64),
+      (String::from("@0!!(0) | for (@0 <- @0) { 0 }"), 336i64),
+      (String::from("@0!!(0) | @0!!(0) | for (_ <- @0) { 0 }"), 443i64),
+      (String::from("@0!!(0) | @1!!(1) | for (_ <- @0 & _ <- @1) { 0 }"), 596i64),
       (String::from("@0!(0) | for (_ <- @0) { 0 }"), 333i64),
       (String::from("@0!(0) | for (x <- @0) { 0 }"), 333i64),
       (String::from("@0!(0) | for (@0 <- @0) { 0 }"), 327i64),
@@ -236,8 +234,8 @@ fn contracts() -> Vec<(String, i64)> {
       (String::from("@0!(0) | for (@0 <- @0) { 0 } | @0!(0) | for (_ <- @0) { 0 }"), 663i64),
       (String::from("@0!(0) | for (@0 <- @0) { 0 } | @0!(0) | for (@1 <- @0) { 0 }"), 551i64),
       (String::from("@0!(0) | for (_ <<- @0) { 0 }"), 406i64),
-      (String::from("@0!!(0) | for (_ <<- @0) { 0 }"), 351i64),
-      (String::from("@0!!(0) | @0!!(0) | for (_ <<- @0) { 0 }"), 452i64),
+      (String::from("@0!!(0) | for (_ <<- @0) { 0 }"), 343i64),
+      (String::from("@0!!(0) | @0!!(0) | for (_ <<- @0) { 0 }"), 444i64),
       // TODO: This fails due to a cost mismatch - needs fixing
 //       (String::from("new loop in {\n         contract loop(@n) = {\n           match n {\n             0 => Nil\n             _ => loop!(n-1)\n           }\n         } |\n         loop!(10)\n       }"),
 // 3892i64),

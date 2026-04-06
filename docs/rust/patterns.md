@@ -38,34 +38,33 @@
 - Span-based tracing for operation timing
 - Source prefixes: `f1r3fly.comm.*`, `f1r3fly.casper.*`, `f1r3fly.rspace.*`
 
-### Environment Variables (Runtime Tuning)
+### Hardcoded Runtime Parameters
 
-| Variable | Default | Component |
-|----------|---------|-----------|
-| `F1R3_PROPOSER_MIN_INTERVAL_MS` | 250 | Proposer |
-| `F1R3_HEARTBEAT_FRONTIER_CHASE_MAX_LAG` | 0 | Heartbeat |
-| `F1R3_HEARTBEAT_PENDING_DEPLOY_MAX_LAG` | 20 | Heartbeat |
-| `F1R3_HEARTBEAT_DEPLOY_RECOVERY_MAX_LAG` | 64 | Heartbeat |
-| `F1R3_HEARTBEAT_SELF_PROPOSE_COOLDOWN_MS` | 0 | Heartbeat |
-| `F1R3_HEARTBEAT_STALE_RECOVERY_MIN_INTERVAL_MS` | 12000 | Heartbeat |
-| `F1R3_HEARTBEAT_DEPLOY_FINALIZATION_GRACE_MS` | 25000 | Heartbeat |
-| `F1R3_FIND_DEPLOY_RETRY_INTERVAL_MS` | 50 | REST API |
-| `F1R3_FIND_DEPLOY_MAX_ATTEMPTS` | 1 | REST API |
-| `F1R3_GRPC_FIND_DEPLOY_RETRY_INTERVAL_MS` | 100 | gRPC API |
-| `F1R3_GRPC_FIND_DEPLOY_MAX_ATTEMPTS` | 80 | gRPC API |
-| `F1R3_ADAPTIVE_DEPLOY_CAP_ENABLED` | true | Block creation |
-| `F1R3_ADAPTIVE_DEPLOY_CAP_TARGET_MS` | 1000 | Block creation |
-| `F1R3_ADAPTIVE_DEPLOY_CAP_MIN` | 1 | Block creation |
-| `F1R3_ADAPTIVE_DEPLOY_CAP_SMALL_BATCH_BYPASS` | 3 | Block creation |
-| `F1R3_ADAPTIVE_DEPLOY_CAP_BACKLOG_FLOOR_ENABLED` | true | Block creation |
-| `F1R3_ADAPTIVE_DEPLOY_CAP_BACKLOG_TRIGGER` | 2 | Block creation |
-| `F1R3_ADAPTIVE_DEPLOY_CAP_BACKLOG_DIVISOR` | 2 | Block creation |
-| `F1R3_ADAPTIVE_DEPLOY_CAP_BACKLOG_MIN` | 2 | Block creation |
-| `F1R3_ADAPTIVE_DEPLOY_CAP_BACKLOG_MAX` | 8 | Block creation |
-| `F1R3_CLIQUE_YIELD_CHECK_INTERVAL` | - | Safety oracle |
-| `F1R3_CLIQUE_YIELD_TIMESLICE_MS` | - | Safety oracle |
-| `F1R3_FINALIZER_WORK_BUDGET_MS` | - | Finalization |
-| `F1R3_FINALIZER_STEP_TIMEOUT_MS` | - | Finalization |
+The `F1R3_*` environment variables were removed in v0.4.10. These parameters are now hardcoded. Operator-tunable settings (heartbeat enabled/interval/max-lfb-age/cooldown) are in `defaults.conf` under `casper.heartbeat`.
+
+Hardcoded values for reference:
+
+| Parameter | Value | Component |
+|-----------|-------|-----------|
+| Proposer min interval | 250ms | Proposer |
+| Heartbeat frontier chase max lag | 0 | Heartbeat |
+| Heartbeat pending deploy max lag | 20 | Heartbeat |
+| Heartbeat deploy recovery max lag | 64 | Heartbeat |
+| Heartbeat stale recovery min interval | 12000ms | Heartbeat |
+| Heartbeat deploy finalization grace | 25000ms | Heartbeat |
+| REST find-deploy retry interval | 50ms | REST API |
+| REST find-deploy max attempts | 1 | REST API |
+| gRPC find-deploy retry interval | 100ms | gRPC API |
+| gRPC find-deploy max attempts | 80 | gRPC API |
+| Adaptive deploy cap enabled | true | Block creation |
+| Adaptive deploy cap target | 1000ms | Block creation |
+| Adaptive deploy cap min | 1 | Block creation |
+| Adaptive deploy cap small batch bypass | 3 | Block creation |
+| Adaptive deploy cap backlog floor enabled | true | Block creation |
+| Adaptive deploy cap backlog trigger | 2 | Block creation |
+| Adaptive deploy cap backlog divisor | 2 | Block creation |
+| Adaptive deploy cap backlog min | 2 | Block creation |
+| Adaptive deploy cap backlog max | 8 | Block creation |
 
 ### FFI Boundary (Scala Interop)
 - C ABI via `extern "C"` functions in `rholang/src/lib.rs` and `rspace_rhotypes`

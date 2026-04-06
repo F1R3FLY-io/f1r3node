@@ -53,16 +53,7 @@ struct PreparedUserDeploys {
 }
 
 fn deploy_selection_reserve_tail_enabled() -> bool {
-    const ENV: &str = "F1R3_DEPLOY_SELECTION_RESERVE_TAIL";
-    static VALUE: OnceLock<bool> = OnceLock::new();
-
-    *VALUE.get_or_init(|| match std::env::var(ENV) {
-        Ok(raw) => {
-            let normalized = raw.trim().to_ascii_lowercase();
-            !matches!(normalized.as_str(), "0" | "false" | "no" | "off")
-        }
-        Err(_) => true,
-    })
+    true
 }
 
 async fn prepare_user_deploys(
@@ -190,9 +181,10 @@ async fn prepare_user_deploys(
     }
 
     let pending_unique_count = valid_unique.len();
+    let max_deploys = casper_snapshot.on_chain_state.shard_conf.max_user_deploys_per_block as usize;
     if should_bypass_adaptive_cap_for_small_batch(
         pending_unique_count,
-        max_user_deploys_per_block(),
+        max_deploys,
         adaptive_small_batch_bypass_threshold(),
     ) {
         return Ok(PreparedUserDeploys {
@@ -202,7 +194,7 @@ async fn prepare_user_deploys(
         });
     }
 
-    let max_user_deploys = effective_user_deploys_per_block_cap(pending_unique_count);
+    let max_user_deploys = effective_user_deploys_per_block_cap(pending_unique_count, max_deploys);
     if valid_unique.len() <= max_user_deploys {
         return Ok(PreparedUserDeploys {
             deploys: valid_unique,
@@ -272,20 +264,6 @@ async fn prepare_user_deploys(
     })
 }
 
-fn max_user_deploys_per_block() -> usize {
-    // Keep default permissive for compatibility; cap is still tunable for stress scenarios.
-    const MAX_USER_DEPLOYS_DEFAULT: usize = 32;
-    const MAX_USER_DEPLOYS_ENV: &str = "F1R3_MAX_USER_DEPLOYS_PER_BLOCK";
-    static VALUE: OnceLock<usize> = OnceLock::new();
-
-    *VALUE.get_or_init(|| {
-        std::env::var(MAX_USER_DEPLOYS_ENV)
-            .ok()
-            .and_then(|v| v.parse::<usize>().ok())
-            .filter(|v| *v > 0)
-            .unwrap_or(MAX_USER_DEPLOYS_DEFAULT)
-    })
-}
 
 #[derive(Debug)]
 struct AdaptiveDeployCapState {
@@ -294,58 +272,19 @@ struct AdaptiveDeployCapState {
 }
 
 fn adaptive_user_deploy_cap_enabled() -> bool {
-    const ENV: &str = "F1R3_ADAPTIVE_DEPLOY_CAP_ENABLED";
-    static VALUE: OnceLock<bool> = OnceLock::new();
-
-    *VALUE.get_or_init(|| match std::env::var(ENV) {
-        Ok(raw) => {
-            let normalized = raw.trim().to_ascii_lowercase();
-            !matches!(normalized.as_str(), "0" | "false" | "no" | "off")
-        }
-        Err(_) => true,
-    })
+    true
 }
 
 fn adaptive_user_deploy_target_ms() -> u64 {
-    const ENV: &str = "F1R3_ADAPTIVE_DEPLOY_CAP_TARGET_MS";
-    const DEFAULT: u64 = 1_000;
-    static VALUE: OnceLock<u64> = OnceLock::new();
-
-    *VALUE.get_or_init(|| {
-        std::env::var(ENV)
-            .ok()
-            .and_then(|v| v.parse::<u64>().ok())
-            .filter(|v| *v > 0)
-            .unwrap_or(DEFAULT)
-    })
+    1_000
 }
 
 fn adaptive_user_deploy_min_cap(max_cap: usize) -> usize {
-    const ENV: &str = "F1R3_ADAPTIVE_DEPLOY_CAP_MIN";
-    const DEFAULT: usize = 1;
-    static VALUE: OnceLock<usize> = OnceLock::new();
-
-    (*VALUE.get_or_init(|| {
-        std::env::var(ENV)
-            .ok()
-            .and_then(|v| v.parse::<usize>().ok())
-            .filter(|v| *v > 0)
-            .unwrap_or(DEFAULT)
-    }))
-    .clamp(1, max_cap)
+    1_usize.clamp(1, max_cap)
 }
 
 fn adaptive_small_batch_bypass_threshold() -> usize {
-    const ENV: &str = "F1R3_ADAPTIVE_DEPLOY_CAP_SMALL_BATCH_BYPASS";
-    const DEFAULT: usize = 3;
-    static VALUE: OnceLock<usize> = OnceLock::new();
-
-    *VALUE.get_or_init(|| {
-        std::env::var(ENV)
-            .ok()
-            .and_then(|v| v.parse::<usize>().ok())
-            .unwrap_or(DEFAULT)
-    })
+    3
 }
 
 fn should_bypass_adaptive_cap_for_small_batch(
@@ -375,74 +314,23 @@ fn adaptive_user_deploy_cap_state(
 }
 
 fn adaptive_backlog_floor_enabled() -> bool {
-    const ENV: &str = "F1R3_ADAPTIVE_DEPLOY_CAP_BACKLOG_FLOOR_ENABLED";
-    static VALUE: OnceLock<bool> = OnceLock::new();
-
-    *VALUE.get_or_init(|| match std::env::var(ENV) {
-        Ok(raw) => {
-            let normalized = raw.trim().to_ascii_lowercase();
-            !matches!(normalized.as_str(), "0" | "false" | "no" | "off")
-        }
-        Err(_) => true,
-    })
+    true
 }
 
 fn adaptive_backlog_floor_trigger() -> usize {
-    const ENV: &str = "F1R3_ADAPTIVE_DEPLOY_CAP_BACKLOG_TRIGGER";
-    const DEFAULT: usize = 2;
-    static VALUE: OnceLock<usize> = OnceLock::new();
-
-    *VALUE.get_or_init(|| {
-        std::env::var(ENV)
-            .ok()
-            .and_then(|v| v.parse::<usize>().ok())
-            .filter(|v| *v > 0)
-            .unwrap_or(DEFAULT)
-    })
+    2
 }
 
 fn adaptive_backlog_floor_divisor() -> usize {
-    const ENV: &str = "F1R3_ADAPTIVE_DEPLOY_CAP_BACKLOG_DIVISOR";
-    const DEFAULT: usize = 2;
-    static VALUE: OnceLock<usize> = OnceLock::new();
-
-    *VALUE.get_or_init(|| {
-        std::env::var(ENV)
-            .ok()
-            .and_then(|v| v.parse::<usize>().ok())
-            .filter(|v| *v > 0)
-            .unwrap_or(DEFAULT)
-    })
+    2
 }
 
 fn adaptive_backlog_floor_min(max_cap: usize) -> usize {
-    const ENV: &str = "F1R3_ADAPTIVE_DEPLOY_CAP_BACKLOG_MIN";
-    const DEFAULT: usize = 2;
-    static VALUE: OnceLock<usize> = OnceLock::new();
-
-    (*VALUE.get_or_init(|| {
-        std::env::var(ENV)
-            .ok()
-            .and_then(|v| v.parse::<usize>().ok())
-            .filter(|v| *v > 0)
-            .unwrap_or(DEFAULT)
-    }))
-    .clamp(1, max_cap)
+    2_usize.clamp(1, max_cap)
 }
 
 fn adaptive_backlog_floor_max(max_cap: usize) -> usize {
-    const ENV: &str = "F1R3_ADAPTIVE_DEPLOY_CAP_BACKLOG_MAX";
-    const DEFAULT: usize = 8;
-    static VALUE: OnceLock<usize> = OnceLock::new();
-
-    (*VALUE.get_or_init(|| {
-        std::env::var(ENV)
-            .ok()
-            .and_then(|v| v.parse::<usize>().ok())
-            .filter(|v| *v > 0)
-            .unwrap_or(DEFAULT)
-    }))
-    .clamp(1, max_cap)
+    8_usize.clamp(1, max_cap)
 }
 
 fn backlog_floor_for_pending(
@@ -484,8 +372,7 @@ fn adaptive_backlog_floor(max_cap: usize, pending_count: usize) -> usize {
     )
 }
 
-fn effective_user_deploys_per_block_cap(pending_count: usize) -> usize {
-    let max_cap = max_user_deploys_per_block();
+fn effective_user_deploys_per_block_cap(pending_count: usize, max_cap: usize) -> usize {
     if !adaptive_user_deploy_cap_enabled() {
         return max_cap;
     }
@@ -549,12 +436,13 @@ fn update_adaptive_user_deploy_cap(
     observed_create_block_ms: u128,
     selected_user_deploys: usize,
     cap_hit: bool,
+    max_deploys: usize,
 ) {
     if !adaptive_user_deploy_cap_enabled() || selected_user_deploys == 0 {
         return;
     }
 
-    let max_cap = max_user_deploys_per_block();
+    let max_cap = max_deploys;
     let min_cap = adaptive_user_deploy_min_cap(max_cap);
     if min_cap >= max_cap {
         return;
@@ -980,6 +868,7 @@ pub async fn create(
         total_create_block_ms,
         selected_user_deploy_count,
         selected_user_deploy_cap_hit && selected_user_deploy_count >= selected_user_deploy_cap,
+        casper_snapshot.on_chain_state.shard_conf.max_user_deploys_per_block as usize,
     );
 
     RuntimeManager::trim_allocator();

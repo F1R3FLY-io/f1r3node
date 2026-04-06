@@ -3,7 +3,7 @@
 //! This module provides a gRPC service for deploy functionality,
 //! allowing clients to deploy contracts, query blocks, and perform various blockchain operations.
 
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use crate::rust::web::version_info::get_version_info_str;
 use block_storage::rust::key_value_block_store::KeyValueBlockStore;
@@ -53,31 +53,15 @@ impl IntoServiceError for casper::rust::api::block_report_api::BlockReportError 
     }
 }
 
-const FIND_DEPLOY_RETRY_INTERVAL_MS_ENV: &str = "F1R3_GRPC_FIND_DEPLOY_RETRY_INTERVAL_MS";
-const FIND_DEPLOY_MAX_ATTEMPTS_ENV: &str = "F1R3_GRPC_FIND_DEPLOY_MAX_ATTEMPTS";
-const DEFAULT_FIND_DEPLOY_RETRY_INTERVAL_MS: u64 = 100;
-const DEFAULT_FIND_DEPLOY_MAX_ATTEMPTS: u8 = 80;
+const FIND_DEPLOY_RETRY_INTERVAL_MS: u64 = 100;
+const FIND_DEPLOY_MAX_ATTEMPTS: u8 = 80;
 
 fn find_deploy_retry_interval_ms() -> u64 {
-    static VALUE: OnceLock<u64> = OnceLock::new();
-    *VALUE.get_or_init(|| {
-        shared::rust::env::var_or_filtered(
-            FIND_DEPLOY_RETRY_INTERVAL_MS_ENV,
-            DEFAULT_FIND_DEPLOY_RETRY_INTERVAL_MS,
-            |value: &u64| *value > 0,
-        )
-    })
+    FIND_DEPLOY_RETRY_INTERVAL_MS
 }
 
 fn find_deploy_max_attempts() -> u8 {
-    static VALUE: OnceLock<u8> = OnceLock::new();
-    *VALUE.get_or_init(|| {
-        shared::rust::env::var_or_filtered(
-            FIND_DEPLOY_MAX_ATTEMPTS_ENV,
-            DEFAULT_FIND_DEPLOY_MAX_ATTEMPTS,
-            |value: &u8| *value > 0,
-        )
-    })
+    FIND_DEPLOY_MAX_ATTEMPTS
 }
 
 /// Deploy gRPC Service V1 implementation

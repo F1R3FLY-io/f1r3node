@@ -8,7 +8,6 @@ use crate::rust::util::clique::Clique;
 use block_storage::rust::dag::block_dag_key_value_storage::KeyValueDagRepresentation;
 use models::rust::{block_hash::BlockHash, validator::Validator};
 
-use shared::rust::env;
 use shared::rust::store::key_value_store::KvStoreError;
 
 pub struct CliqueOracle;
@@ -18,14 +17,8 @@ type V = Validator; // type for message creator/validator
 type WeightMap = HashMap<V, i64>; // stakes per message creator
 const COOPERATIVE_YIELD_CHECK_INTERVAL: usize = 8;
 const COOPERATIVE_YIELD_TIMESLICE_MS: u64 = 1;
-const COOPERATIVE_YIELD_CHECK_INTERVAL_ENV: &str = "F1R3_CLIQUE_YIELD_CHECK_INTERVAL";
-const COOPERATIVE_YIELD_TIMESLICE_MS_ENV: &str = "F1R3_CLIQUE_YIELD_TIMESLICE_MS";
 const MAX_SELF_JUSTIFICATION_CACHE_ENTRIES: usize = 10_000;
-const MAX_SELF_JUSTIFICATION_CACHE_ENTRIES_ENV: &str =
-    "F1R3_CLIQUE_SELF_JUSTIFICATION_CACHE_MAX_ENTRIES";
 const MAX_IN_MAIN_CHAIN_CACHE_ENTRIES: usize = 10_000;
-const MAX_IN_MAIN_CHAIN_CACHE_ENTRIES_ENV: &str =
-    "F1R3_CLIQUE_IN_MAIN_CHAIN_CACHE_MAX_ENTRIES";
 
 pub struct CliqueOracleRunCache {
     latest_message_cache: BTreeMap<V, Option<M>>,
@@ -45,42 +38,11 @@ impl CliqueOracle {
             latest_justifications_cache: BTreeMap::new(),
             self_justification_cache: BTreeMap::new(),
             in_main_chain_cache: BTreeMap::new(),
-            yield_check_interval: Self::cooperative_yield_check_interval(),
-            yield_timeslice: Duration::from_millis(Self::cooperative_yield_timeslice_ms()),
-            max_self_justification_cache_entries: Self::max_self_justification_cache_entries(),
-            max_in_main_chain_cache_entries: Self::max_in_main_chain_cache_entries(),
+            yield_check_interval: COOPERATIVE_YIELD_CHECK_INTERVAL,
+            yield_timeslice: Duration::from_millis(COOPERATIVE_YIELD_TIMESLICE_MS),
+            max_self_justification_cache_entries: MAX_SELF_JUSTIFICATION_CACHE_ENTRIES,
+            max_in_main_chain_cache_entries: MAX_IN_MAIN_CHAIN_CACHE_ENTRIES,
         }
-    }
-
-    fn cooperative_yield_check_interval() -> usize {
-        env::var_or_filtered(
-            COOPERATIVE_YIELD_CHECK_INTERVAL_ENV,
-            COOPERATIVE_YIELD_CHECK_INTERVAL,
-            |v: &usize| *v > 0,
-        )
-    }
-
-    fn cooperative_yield_timeslice_ms() -> u64 {
-        env::var_or(
-            COOPERATIVE_YIELD_TIMESLICE_MS_ENV,
-            COOPERATIVE_YIELD_TIMESLICE_MS,
-        )
-    }
-
-    fn max_self_justification_cache_entries() -> usize {
-        env::var_or_filtered(
-            MAX_SELF_JUSTIFICATION_CACHE_ENTRIES_ENV,
-            MAX_SELF_JUSTIFICATION_CACHE_ENTRIES,
-            |v: &usize| *v > 0,
-        )
-    }
-
-    fn max_in_main_chain_cache_entries() -> usize {
-        env::var_or_filtered(
-            MAX_IN_MAIN_CHAIN_CACHE_ENTRIES_ENV,
-            MAX_IN_MAIN_CHAIN_CACHE_ENTRIES,
-            |v: &usize| *v > 0,
-        )
     }
 
     fn bounded_cache_insert<K: Ord + Clone, V>(

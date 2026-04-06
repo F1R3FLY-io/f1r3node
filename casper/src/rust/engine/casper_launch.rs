@@ -1,7 +1,7 @@
 // See casper/src/main/scala/coop/rchain/casper/engine/CasperLaunch.scala
 
 use dashmap::DashSet;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 
 use tokio::sync::mpsc;
 
@@ -75,18 +75,10 @@ pub struct CasperLaunchImpl<T: TransportLayer + Send + Sync + Clone + 'static> {
     heartbeat_signal_ref: crate::rust::heartbeat_signal::HeartbeatSignalRef,
 }
 
-const MAX_BLOCKS_IN_PROCESSING_DEFAULT: usize = 512;
-const MAX_BLOCKS_IN_PROCESSING_ENV: &str = "F1R3_MAX_BLOCKS_IN_PROCESSING";
-static MAX_BLOCKS_IN_PROCESSING: OnceLock<usize> = OnceLock::new();
+const MAX_BLOCKS_IN_PROCESSING: usize = 2_048;
 
 fn max_blocks_in_processing() -> usize {
-    *MAX_BLOCKS_IN_PROCESSING.get_or_init(|| {
-        std::env::var(MAX_BLOCKS_IN_PROCESSING_ENV)
-            .ok()
-            .and_then(|v| v.parse::<usize>().ok())
-            .filter(|v| *v > 0)
-            .unwrap_or(MAX_BLOCKS_IN_PROCESSING_DEFAULT)
-    })
+    MAX_BLOCKS_IN_PROCESSING
 }
 
 impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
@@ -170,6 +162,13 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
             disable_validator_progress_check: standalone,
             enable_mergeable_channel_gc: conf.enable_mergeable_channel_gc,
             mergeable_channels_gc_depth_buffer: conf.mergeable_channels_gc_depth_buffer,
+            finalizer_conf: conf.finalizer.clone(),
+            synchrony_recovery_stall_window: conf.synchrony_recovery_stall_window,
+            synchrony_recovery_cooldown: conf.synchrony_recovery_cooldown,
+            synchrony_recovery_max_bypasses: conf.synchrony_recovery_max_bypasses,
+            synchrony_finalized_baseline_enabled: conf.synchrony_finalized_baseline_enabled,
+            synchrony_finalized_baseline_max_distance: conf.synchrony_finalized_baseline_max_distance,
+            max_user_deploys_per_block: conf.max_user_deploys_per_block,
         };
 
         Self {

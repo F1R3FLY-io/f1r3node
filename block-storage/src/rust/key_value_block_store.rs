@@ -3,8 +3,8 @@
 use prost::Message;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::sync::{Arc, Mutex};
 use std::sync::OnceLock;
+use std::sync::{Arc, Mutex};
 
 use models::casper::{ApprovedBlockProto, BlockMessageProto};
 use models::rust::casper::protocol::casper_message::{ApprovedBlock, BlockMessage};
@@ -27,10 +27,8 @@ thread_local! {
 impl KeyValueBlockStore {
     // Keep a small bounded decompression scratch buffer per thread to prevent
     // long-lived memory retention from repeatedly decoding block payloads.
-    const DECOMPRESS_BUFFER_RETAIN_BYTES_DEFAULT: usize = 64 * 1024;
-    const DECOMPRESS_BUFFER_RETAIN_BYTES_ENV: &str = "F1R3_BLOCK_PROTO_DECODE_BUFFER_BYTES";
-    const DEPLOY_SIG_CACHE_MAX_ENTRIES_DEFAULT: usize = 1024;
-    const DEPLOY_SIG_CACHE_MAX_ENTRIES_ENV: &str = "F1R3_BLOCK_STORE_DEPLOY_SIG_CACHE_MAX_ENTRIES";
+    const DECOMPRESS_BUFFER_RETAIN_BYTES: usize = 65_536;
+    const DEPLOY_SIG_CACHE_MAX_ENTRIES: usize = 1_024;
     const MIN_DEPLOY_SIG_BYTES: usize = 32;
 
     pub fn new(
@@ -354,24 +352,11 @@ impl KeyValueBlockStore {
     }
 
     fn decode_buffer_retain_bytes() -> usize {
-        static VALUE: OnceLock<usize> = OnceLock::new();
-        *VALUE.get_or_init(|| {
-            std::env::var(Self::DECOMPRESS_BUFFER_RETAIN_BYTES_ENV)
-                .ok()
-                .and_then(|v| v.parse::<usize>().ok())
-                .filter(|v| *v > 0)
-                .unwrap_or(Self::DECOMPRESS_BUFFER_RETAIN_BYTES_DEFAULT)
-        })
+        Self::DECOMPRESS_BUFFER_RETAIN_BYTES
     }
 
     fn max_deploy_sig_cache_entries() -> usize {
-        static VALUE: OnceLock<usize> = OnceLock::new();
-        *VALUE.get_or_init(|| {
-            std::env::var(Self::DEPLOY_SIG_CACHE_MAX_ENTRIES_ENV)
-                .ok()
-                .and_then(|v| v.parse::<usize>().ok())
-                .unwrap_or(Self::DEPLOY_SIG_CACHE_MAX_ENTRIES_DEFAULT)
-        })
+        Self::DEPLOY_SIG_CACHE_MAX_ENTRIES
     }
 
     #[cfg(test)]

@@ -83,7 +83,7 @@ docker compose -f docker/shard.yml up
 
 Data persists in named Docker volumes. Fresh start: `docker compose -f docker/standalone.yml down -v`
 
-Docker Compose loads `docker/.env` automatically — it contains node credentials and optional tuning. See [docker/.env.example](docker/.env.example) for all available variables.
+Docker Compose loads `docker/.env` automatically — it contains node credentials and AI service configuration. See [docker/.env.example](docker/.env.example) for all available variables.
 
 See [docker/README.md](docker/README.md) for shard setup, validator bonding, and network configuration.
 
@@ -316,7 +316,19 @@ F1r3fly nodes expose AI capabilities as Rholang system processes. These are avai
 | `rho:ai:ollama:generate` | Ollama (local) | Text generation via local Ollama |
 | `rho:ai:ollama:models` | Ollama (local) | List available local models |
 
-AI services are disabled by default. Enable via environment variables (Docker) or HOCON config (local). See [docker/.env.example](docker/.env.example) for all available env vars and [defaults.conf](node/src/main/resources/defaults.conf) for HOCON config reference.
+AI services are disabled by default. Enable via environment variables (Docker) or HOCON config (local). The node reads these env vars:
+
+| Variable | Description |
+|---|---|
+| `RUST_LOG` | Log level filtering (e.g. `info`, `debug`, `info,f1r3fly.compute_parents_post_state.timing=debug`) |
+| `OPENAI_ENABLED` | Enable OpenAI AI services (`true`/`false`) |
+| `OPENAI_API_KEY` | OpenAI API key (required when `OPENAI_ENABLED=true`) |
+| `OLLAMA_ENABLED` | Enable local Ollama AI services (`true`/`false`) |
+| `OLLAMA_BASE_URL` | Ollama server URL (default: `http://localhost:11434`) |
+| `OLLAMA_MODEL` | Ollama model name (default: `llama3.2`) |
+| `OLLAMA_TIMEOUT_SEC` | Ollama request timeout in seconds (default: `120`) |
+
+All other node configuration is in HOCON config files. See [docker/.env.example](docker/.env.example) for Docker defaults and [defaults.conf](node/src/main/resources/defaults.conf) for HOCON config reference.
 
 When AI is disabled, contracts using `rho:ai:*` processes will fail at deploy time.
 
@@ -326,10 +338,12 @@ When AI is disabled, contracts using `rho:ai:*` processes will fail at deploy ti
 - **Custom location**: `--config-file <path>`
 - **Format**: [HOCON](https://github.com/lightbend/config/blob/master/HOCON.md)
 
+The node ships with a built-in [defaults.conf](node/src/main/resources/defaults.conf) containing every available option and its default value. Operator config files are **minimal overrides** -- you only specify the values you want to change (typically ~40 lines for network, ports, and consensus tuning). HOCON's fallback semantics merge your overrides on top of the built-in defaults automatically.
+
 Reference configs:
-- [defaults.conf](node/src/main/resources/defaults.conf) - All available options
-- [docker/conf/standalone-dev.conf](docker/conf/standalone-dev.conf) - Standalone development config
-- [docker/conf/default.conf](docker/conf/default.conf) - Shard config
+- [defaults.conf](node/src/main/resources/defaults.conf) - Built-in defaults with all available options
+- [docker/conf/standalone-dev.conf](docker/conf/standalone-dev.conf) - Minimal standalone override (~20 lines)
+- [docker/conf/default.conf](docker/conf/default.conf) - Minimal shard override
 - [Consensus Configuration Guide](https://github.com/F1R3FLY-io/system-integration/blob/main/docs/consensus-configuration.md) - FTT, synchrony threshold semantics, finalization formula, recommended values
 
 ## Rust Codebase Documentation

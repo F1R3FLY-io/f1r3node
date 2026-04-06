@@ -70,11 +70,9 @@ impl OpenAIConfig {
         // enabled: env var takes priority over config
         let enabled = parse_bool_env("OPENAI_ENABLED").unwrap_or(config_enabled);
 
-        // api_key: env vars take priority, then config
-        // Matches Scala's (apiKeyFromEnv orElse apiKeyFromConfig) behavior
+        // api_key: env var takes priority, then config
         let api_key = if enabled {
             let key = env::var("OPENAI_API_KEY")
-                .or_else(|_| env::var("OPENAI_SCALA_CLIENT_API_KEY"))
                 .ok()
                 .filter(|k| !k.is_empty())
                 .or_else(|| {
@@ -88,12 +86,12 @@ impl OpenAIConfig {
             if key.is_none() {
                 tracing::error!(
                     "OpenAI is enabled but no API key provided. \
-                     Set OPENAI_API_KEY or OPENAI_SCALA_CLIENT_API_KEY environment variable, \
+                     Set OPENAI_API_KEY environment variable, \
                      or configure 'openai.api-key' in the config file."
                 );
                 panic!(
-                    "OpenAI API key is not configured. Provide it via env var OPENAI_API_KEY, \
-                     OPENAI_SCALA_CLIENT_API_KEY, or openai.api-key config when openai is enabled."
+                    "OpenAI API key is not configured. Provide it via env var OPENAI_API_KEY \
+                     or openai.api-key config when openai is enabled."
                 );
             }
             key
@@ -101,15 +99,8 @@ impl OpenAIConfig {
             None
         };
 
-        // validate_api_key: env var takes priority over config
-        let validate_api_key =
-            parse_bool_env("OPENAI_VALIDATE_API_KEY").unwrap_or(config_validate_api_key);
-
-        // validation_timeout_sec: env var takes priority over config
-        let validation_timeout_sec = env::var("OPENAI_VALIDATION_TIMEOUT_SEC")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(config_validation_timeout_sec);
+        let validate_api_key = config_validate_api_key;
+        let validation_timeout_sec = config_validation_timeout_sec;
 
         Self {
             enabled,

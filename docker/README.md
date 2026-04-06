@@ -70,11 +70,13 @@ docker compose -f standalone.yml down -v
 
 ## Configuration
 
+Config files are **minimal overrides** (~40 lines each) that merge on top of the node's built-in [defaults.conf](../../node/src/main/resources/defaults.conf). There is no need to duplicate the full default configuration -- only specify values you want to change. HOCON's include/fallback semantics handle the rest.
+
 All compose files use 2 shared config files. Per-role behavior is controlled via CLI flags in compose commands.
 
 | Config File | Used By | Purpose |
 |-------------|---------|---------|
-| `conf/default.conf` | All shard roles | Shared shard defaults |
+| `conf/default.conf` | All shard roles | Minimal shard overrides (network, ports, consensus tuning) |
 | `conf/standalone-dev.conf` | Standalone | `standalone = true`, instant finalization |
 
 CLI flags used per role:
@@ -91,6 +93,22 @@ Key settings in `default.conf` (see [Consensus Configuration Guide](https://gith
 - `synchrony-constraint-threshold = 0` (no synchrony gate on proposals — correct for multi-parent DAG)
 - `enable-mergeable-channel-gc = true`
 - `heartbeat.enabled = true` (overridden via `--heartbeat-disabled` for bootstrap/observer)
+
+## Environment Variables
+
+The Rust node reads a small set of environment variables. All other configuration is in HOCON config files (see [Configuration](#configuration) above). Env vars are used only for secrets and logging.
+
+| Variable | Description |
+|---|---|
+| `RUST_LOG` | Log level filtering (e.g. `info`, `debug`) |
+| `OPENAI_ENABLED` | Enable OpenAI AI services (`true`/`false`) |
+| `OPENAI_API_KEY` | OpenAI API key (required when `OPENAI_ENABLED=true`) |
+| `OLLAMA_ENABLED` | Enable local Ollama AI services (`true`/`false`) |
+| `OLLAMA_BASE_URL` | Ollama server URL (default: `http://localhost:11434`) |
+| `OLLAMA_MODEL` | Ollama model name (default: `llama3.2`) |
+| `OLLAMA_TIMEOUT_SEC` | Ollama request timeout in seconds (default: `120`) |
+
+See [`.env.example`](.env.example) for Docker defaults.
 
 ## Port Mapping
 

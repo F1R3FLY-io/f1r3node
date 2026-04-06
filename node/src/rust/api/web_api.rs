@@ -30,25 +30,15 @@ use tokio::time::sleep;
 use tracing::warn;
 use utoipa::ToSchema;
 
-const FIND_DEPLOY_RETRY_INTERVAL_MS_ENV: &str = "F1R3_FIND_DEPLOY_RETRY_INTERVAL_MS";
-const FIND_DEPLOY_MAX_ATTEMPTS_ENV: &str = "F1R3_FIND_DEPLOY_MAX_ATTEMPTS";
-const DEFAULT_FIND_DEPLOY_RETRY_INTERVAL_MS: u64 = 50;
-const DEFAULT_FIND_DEPLOY_MAX_ATTEMPTS: u16 = 1;
+const FIND_DEPLOY_RETRY_INTERVAL_MS: u64 = 50;
+const FIND_DEPLOY_MAX_ATTEMPTS: u16 = 1;
 
 fn find_deploy_retry_interval_ms() -> u64 {
-    shared::rust::env::var_or_filtered(
-        FIND_DEPLOY_RETRY_INTERVAL_MS_ENV,
-        DEFAULT_FIND_DEPLOY_RETRY_INTERVAL_MS,
-        |value: &u64| *value > 0,
-    )
+    FIND_DEPLOY_RETRY_INTERVAL_MS
 }
 
 fn find_deploy_max_attempts() -> u16 {
-    shared::rust::env::var_or_filtered(
-        FIND_DEPLOY_MAX_ATTEMPTS_ENV,
-        DEFAULT_FIND_DEPLOY_MAX_ATTEMPTS,
-        |value: &u16| *value > 0,
-    )
+    FIND_DEPLOY_MAX_ATTEMPTS
 }
 
 /// Web API trait defining the interface for HTTP endpoints

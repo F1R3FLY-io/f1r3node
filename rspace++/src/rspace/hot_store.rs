@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use dashmap::DashMap;
@@ -36,12 +36,8 @@ const MAX_HISTORY_STORE_CACHE_ENTRIES: usize = 512;
 const MAX_HISTORY_STORE_CACHE_CONT_ITEMS: usize = 8192;
 const MAX_HISTORY_STORE_CACHE_DATA_ITEMS: usize = 8192;
 const MAX_HISTORY_STORE_CACHE_JOIN_ITEMS: usize = 8192;
-const HOT_STORE_STATE_METRICS_UPDATE_INTERVAL_MS_DEFAULT: u64 = 250;
-const HOT_STORE_STATE_METRICS_UPDATE_INTERVAL_MS_ENV: &str =
-    "F1R3_HOT_STORE_STATE_METRICS_UPDATE_INTERVAL_MS";
-const HOT_STORE_HISTORY_CACHE_METRICS_UPDATE_INTERVAL_MS_DEFAULT: u64 = 250;
-const HOT_STORE_HISTORY_CACHE_METRICS_UPDATE_INTERVAL_MS_ENV: &str =
-    "F1R3_HOT_STORE_HISTORY_CACHE_METRICS_UPDATE_INTERVAL_MS";
+const HOT_STORE_STATE_METRICS_UPDATE_INTERVAL_MS: u64 = 250;
+const HOT_STORE_HISTORY_CACHE_METRICS_UPDATE_INTERVAL_MS: u64 = 250;
 
 // See rspace/src/main/scala/coop/rchain/rspace/HotStore.scala
 pub trait HotStore<C: Clone + Hash + Eq, P: Clone, A: Clone, K: Clone>: Sync + Send {
@@ -799,23 +795,11 @@ where
     }
 
     fn state_metrics_update_interval_ms() -> u64 {
-        static VALUE: OnceLock<u64> = OnceLock::new();
-        *VALUE.get_or_init(|| {
-            std::env::var(HOT_STORE_STATE_METRICS_UPDATE_INTERVAL_MS_ENV)
-                .ok()
-                .and_then(|v| v.parse::<u64>().ok())
-                .unwrap_or(HOT_STORE_STATE_METRICS_UPDATE_INTERVAL_MS_DEFAULT)
-        })
+        HOT_STORE_STATE_METRICS_UPDATE_INTERVAL_MS
     }
 
     fn history_cache_metrics_update_interval_ms() -> u64 {
-        static VALUE: OnceLock<u64> = OnceLock::new();
-        *VALUE.get_or_init(|| {
-            std::env::var(HOT_STORE_HISTORY_CACHE_METRICS_UPDATE_INTERVAL_MS_ENV)
-                .ok()
-                .and_then(|v| v.parse::<u64>().ok())
-                .unwrap_or(HOT_STORE_HISTORY_CACHE_METRICS_UPDATE_INTERVAL_MS_DEFAULT)
-        })
+        HOT_STORE_HISTORY_CACHE_METRICS_UPDATE_INTERVAL_MS
     }
 
     fn should_emit_metrics(last_emit_at_ms: &AtomicU64, update_interval_ms: u64) -> bool {

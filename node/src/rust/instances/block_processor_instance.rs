@@ -3,7 +3,6 @@
 use dashmap::DashSet;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::sync::OnceLock;
 use tokio::sync::mpsc;
 
 use models::rust::block_hash::BlockHash;
@@ -17,52 +16,19 @@ use casper::rust::{ProposeFunction, ValidBlockProcessing};
 
 use comm::rust::transport::transport_layer::TransportLayer;
 
-const MAX_BLOCKS_IN_PROCESSING_DEFAULT: usize = 512;
-const MAX_BLOCKS_IN_PROCESSING_ENV: &str = "F1R3_MAX_BLOCKS_IN_PROCESSING";
+const MAX_BLOCKS_IN_PROCESSING: usize = 2_048;
 const BLOCK_PROCESSING_RESULT_QUEUE_CAPACITY: usize = 128;
+const MALLOC_TRIM_EVERY_BLOCKS: usize = 8;
+const TRIGGER_PROPOSE_AFTER_BLOCK_PROCESSING: bool = false;
 static PROCESSED_BLOCKS: AtomicUsize = AtomicUsize::new(0);
-static MALLOC_TRIM_EVERY_BLOCKS: OnceLock<usize> = OnceLock::new();
-static MAX_BLOCKS_IN_PROCESSING: OnceLock<usize> = OnceLock::new();
-static TRIGGER_PROPOSE_AFTER_BLOCK_PROCESSING: OnceLock<bool> = OnceLock::new();
 
 #[cfg(target_os = "linux")]
 unsafe extern "C" {
     fn malloc_trim(pad: usize) -> i32;
 }
 
-fn malloc_trim_every_blocks() -> usize {
-    *MALLOC_TRIM_EVERY_BLOCKS.get_or_init(|| {
-        std::env::var("F1R3_MALLOC_TRIM_EVERY_BLOCKS")
-            .ok()
-            .and_then(|v| v.parse::<usize>().ok())
-            .unwrap_or(0)
-    })
-}
-
-fn max_blocks_in_processing() -> usize {
-    *MAX_BLOCKS_IN_PROCESSING.get_or_init(|| {
-        std::env::var(MAX_BLOCKS_IN_PROCESSING_ENV)
-            .ok()
-            .and_then(|v| v.parse::<usize>().ok())
-            .filter(|v| *v > 0)
-            .unwrap_or(MAX_BLOCKS_IN_PROCESSING_DEFAULT)
-    })
-}
-
-fn trigger_propose_after_block_processing_enabled() -> bool {
-    *TRIGGER_PROPOSE_AFTER_BLOCK_PROCESSING.get_or_init(|| {
-        std::env::var("F1R3_TRIGGER_PROPOSE_AFTER_BLOCK_PROCESSING")
-            .ok()
-            .map(|v| {
-                let normalized = v.trim().to_ascii_lowercase();
-                normalized == "1" || normalized == "true" || normalized == "yes"
-            })
-            .unwrap_or(false)
-    })
-}
-
 fn maybe_trim_allocator_after_block() {
-    let interval = malloc_trim_every_blocks();
+    let interval = MALLOC_TRIM_EVERY_BLOCKS;
     if interval == 0 {
         return;
     }
@@ -177,7 +143,7 @@ impl<T: TransportLayer + Send + Sync + 'static> BlockProcessorInstance<T> {
                     if !blocks_in_processing.contains(&block.block_hash) {
                         // Fallback for legacy enqueue paths: mark before processing.
                         blocks_in_processing.insert(block.block_hash.clone());
-                        let max_in_flight = max_blocks_in_processing();
+                        let max_in_flight = MAX_BLOCKS_IN_PROCESSING;
                         if blocks_in_processing.len() > max_in_flight {
                             // Ensure in-flight marker is always cleared, even when ack cleanup fails.
                             blocks_in_processing.remove(&block.block_hash);
@@ -261,7 +227,7 @@ impl<T: TransportLayer + Send + Sync + 'static> BlockProcessorInstance<T> {
                             for pendant in &buffer_pendants {
                                 let pendant_hash = BlockHash::from(pendant.block_hash.clone());
                                 if blocks_in_processing.insert(pendant_hash.clone()) {
-                                    let max_in_flight = max_blocks_in_processing();
+                                    let max_in_flight = MAX_BLOCKS_IN_PROCESSING;
                                     if blocks_in_processing.len() > max_in_flight {
                                         blocks_in_processing.remove(&pendant_hash);
                                         tracing::warn!(
@@ -298,7 +264,7 @@ impl<T: TransportLayer + Send + Sync + 'static> BlockProcessorInstance<T> {
                             // Only call trigger_propose if get_dependency_free_from_buffer succeeded
                             // and this path is explicitly enabled. Heartbeat proposer is the
                             // default liveness path to avoid propose storms under heavy replay.
-                            if trigger_propose_after_block_processing_enabled() {
+                            if TRIGGER_PROPOSE_AFTER_BLOCK_PROCESSING {
                                 if let Some(trigger_propose) = trigger_propose_f {
                                     // Skip trigger if local validator is not currently bonded.
                                     // This avoids repeated ReadOnlyMode propose attempts on non-bonded nodes.

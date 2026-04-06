@@ -2,11 +2,9 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
 
 use block_storage::rust::dag::block_dag_key_value_storage::KeyValueDagRepresentation;
 use models::rust::{block_hash::BlockHash, block_metadata::BlockMetadata, validator::Validator};
-use shared::rust::env;
 use shared::rust::store::key_value_store::KvStoreError;
 
 use crate::rust::safety::clique_oracle::CliqueOracle;
@@ -32,46 +30,9 @@ use crate::rust::safety::clique_oracle::CliqueOracle;
 ///   2. Execute [`CliqueOracle::compute_output`] on these targets.
 ///   3. First message passing FT threshold becomes the next LFB.
 pub struct Finalizer;
-const FINALIZER_WORK_BUDGET_MS: u64 = 2_000;
-const FINALIZER_STEP_TIMEOUT_MS: u64 = 200;
 const FINALIZER_CATCHUP_LAG_THRESHOLD_BLOCKS: i64 = 1_024;
-const FINALIZER_CATCHUP_WORK_BUDGET_MS: u64 = 2_000;
-const FINALIZER_CATCHUP_STEP_TIMEOUT_MS: u64 = 200;
-const FINALIZER_WORK_BUDGET_MS_ENV: &str = "F1R3_FINALIZER_WORK_BUDGET_MS";
-const FINALIZER_STEP_TIMEOUT_MS_ENV: &str = "F1R3_FINALIZER_STEP_TIMEOUT_MS";
-const FINALIZER_CATCHUP_WORK_BUDGET_MS_ENV: &str = "F1R3_FINALIZER_CATCHUP_WORK_BUDGET_MS";
-const FINALIZER_CATCHUP_STEP_TIMEOUT_MS_ENV: &str = "F1R3_FINALIZER_CATCHUP_STEP_TIMEOUT_MS";
-const FINALIZER_MAX_CLIQUE_CANDIDATES_DEFAULT: usize = 128;
-const FINALIZER_MAX_CLIQUE_CANDIDATES_ENV: &str = "F1R3_FINALIZER_MAX_CLIQUE_CANDIDATES";
-const FINALIZER_CANDIDATE_RANKING_ENV: &str = "F1R3_FINALIZER_CANDIDATE_RANKING";
+const MAX_CLIQUE_CANDIDATES: usize = 128;
 
-#[derive(Debug, Clone, Copy)]
-enum CandidateRankingStrategy {
-    RecencySmallSetStake,
-    StakeDesc,
-    RecencyStake,
-}
-
-impl CandidateRankingStrategy {
-    fn from_env() -> Self {
-        let value = env::var_parsed::<String>(FINALIZER_CANDIDATE_RANKING_ENV)
-            .unwrap_or_default()
-            .to_lowercase();
-        match value.as_str() {
-            "stake_desc" => Self::StakeDesc,
-            "recency_smallset_stake" => Self::RecencySmallSetStake,
-            _ => Self::RecencyStake,
-        }
-    }
-
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::RecencySmallSetStake => "recency_smallset_stake",
-            Self::StakeDesc => "stake_desc",
-            Self::RecencyStake => "recency_stake",
-        }
-    }
-}
 
 type WeightMap = HashMap<Validator, i64>;
 type SharedWeightMap = Arc<WeightMap>;
@@ -83,45 +44,6 @@ impl Finalizer {
             .try_fold(0_i64, |acc, stake| acc.checked_add(*stake))
     }
 
-    fn finalizer_max_clique_candidates() -> usize {
-        env::var_or_filtered(
-            FINALIZER_MAX_CLIQUE_CANDIDATES_ENV,
-            FINALIZER_MAX_CLIQUE_CANDIDATES_DEFAULT,
-            |v: &usize| *v > 0,
-        )
-    }
-
-    fn finalizer_work_budget_ms() -> u64 {
-        env::var_or_filtered(
-            FINALIZER_WORK_BUDGET_MS_ENV,
-            FINALIZER_WORK_BUDGET_MS,
-            |v: &u64| *v > 0,
-        )
-    }
-
-    fn finalizer_step_timeout_ms() -> u64 {
-        env::var_or_filtered(
-            FINALIZER_STEP_TIMEOUT_MS_ENV,
-            FINALIZER_STEP_TIMEOUT_MS,
-            |v: &u64| *v > 0,
-        )
-    }
-
-    fn finalizer_catchup_work_budget_ms() -> u64 {
-        env::var_or_filtered(
-            FINALIZER_CATCHUP_WORK_BUDGET_MS_ENV,
-            FINALIZER_CATCHUP_WORK_BUDGET_MS,
-            |v: &u64| *v > 0,
-        )
-    }
-
-    fn finalizer_catchup_step_timeout_ms() -> u64 {
-        env::var_or_filtered(
-            FINALIZER_CATCHUP_STEP_TIMEOUT_MS_ENV,
-            FINALIZER_CATCHUP_STEP_TIMEOUT_MS,
-            |v: &u64| *v > 0,
-        )
-    }
 
     /// weight map as per message, look inside [`CliqueOracle::get_corresponding_weight_map`] description for more info
     async fn message_weight_map_f(
@@ -217,6 +139,7 @@ impl Finalizer {
         fault_tolerance_threshold: f32,
         curr_lfb_height: i64,
         mut new_lfb_found_effect: F,
+        finalizer_conf: &crate::rust::casper_conf::FinalizerConf,
     ) -> Result<Option<BlockHash>, KvStoreError>
     where
         F: FnMut(BlockHash) -> Fut,
@@ -225,18 +148,17 @@ impl Finalizer {
         let total_started = std::time::Instant::now();
         let lfb_lag = dag.latest_block_number().saturating_sub(curr_lfb_height);
         let catchup_mode = lfb_lag > FINALIZER_CATCHUP_LAG_THRESHOLD_BLOCKS;
-        let work_budget = Duration::from_millis(if catchup_mode {
-            Self::finalizer_catchup_work_budget_ms()
+        let work_budget = if catchup_mode {
+            finalizer_conf.catchup_work_budget
         } else {
-            Self::finalizer_work_budget_ms()
-        });
-        let step_timeout = Duration::from_millis(if catchup_mode {
-            Self::finalizer_catchup_step_timeout_ms()
+            finalizer_conf.work_budget
+        };
+        let step_timeout = if catchup_mode {
+            finalizer_conf.catchup_step_timeout
         } else {
-            Self::finalizer_step_timeout_ms()
-        });
-        let max_clique_candidates = Self::finalizer_max_clique_candidates();
-        let ranking_strategy = CandidateRankingStrategy::from_env();
+            finalizer_conf.step_timeout
+        };
+        let max_clique_candidates = MAX_CLIQUE_CANDIDATES;
         /*
          * Stream of agreements passed down from all latest messages to main parents.
          * Starts with agreements of latest message on themselves.
@@ -402,26 +324,15 @@ impl Finalizer {
             i64,
             usize,
         )> = filtered_agreements;
+        // Sort candidates by recency (block height desc), then stake (desc), then set size (asc).
         deduped_filtered_agreements.sort_by(
-            |(msg_l, _, _, stake_l, size_l), (msg_r, _, _, stake_r, size_r)| match ranking_strategy
-            {
-                CandidateRankingStrategy::RecencySmallSetStake => msg_r
-                    .block_number
-                    .cmp(&msg_l.block_number)
-                    .then_with(|| size_l.cmp(size_r))
-                    .then_with(|| stake_r.cmp(stake_l))
-                    .then_with(|| msg_l.block_hash.cmp(&msg_r.block_hash)),
-                CandidateRankingStrategy::StakeDesc => stake_r
-                    .cmp(stake_l)
-                    .then_with(|| msg_r.block_number.cmp(&msg_l.block_number))
-                    .then_with(|| size_l.cmp(size_r))
-                    .then_with(|| msg_l.block_hash.cmp(&msg_r.block_hash)),
-                CandidateRankingStrategy::RecencyStake => msg_r
+            |(msg_l, _, _, stake_l, size_l), (msg_r, _, _, stake_r, size_r)| {
+                msg_r
                     .block_number
                     .cmp(&msg_l.block_number)
                     .then_with(|| stake_r.cmp(stake_l))
                     .then_with(|| size_l.cmp(size_r))
-                    .then_with(|| msg_l.block_hash.cmp(&msg_r.block_hash)),
+                    .then_with(|| msg_l.block_hash.cmp(&msg_r.block_hash))
             },
         );
         let deduped_filtered_agreements_count = deduped_filtered_agreements.len();
@@ -524,7 +435,7 @@ impl Finalizer {
             main_parent_cache_hit,
             main_parent_cache_miss,
             max_clique_candidates,
-            ranking_strategy.as_str(),
+            "recency_stake",
             candidate_capped,
             upper_bound_pruned_count,
             upper_bound_passed_count,

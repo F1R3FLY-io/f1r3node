@@ -1,3 +1,5 @@
+> **Note:** The `F1R3_*` environment variables referenced below were removed in v0.4.10. These parameters are now hardcoded. See `defaults.conf` for operator-tunable settings.
+
 # Adaptive Per-Block Deploy Capping (Validation, 2026-03-05)
 
 ## Summary

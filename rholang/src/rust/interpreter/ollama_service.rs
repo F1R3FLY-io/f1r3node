@@ -19,8 +19,7 @@ impl OllamaConfig {
             false,
             "http://localhost:11434".to_string(),
             "llama4:latest".to_string(),
-            30,   // default timeout
-            true, // default validate_connection
+            30,
         )
     }
 
@@ -29,7 +28,6 @@ impl OllamaConfig {
         config_base_url: String,
         config_model: String,
         config_timeout_sec: u64,
-        config_validate_connection: bool,
     ) -> Self {
         let enabled = parse_bool_env("OLLAMA_ENABLED").unwrap_or(config_enabled);
         let base_url = env::var("OLLAMA_BASE_URL").unwrap_or(config_base_url);
@@ -38,8 +36,7 @@ impl OllamaConfig {
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(config_timeout_sec);
-        let validate_connection =
-            parse_bool_env("OLLAMA_VALIDATE_CONNECTION").unwrap_or(config_validate_connection);
+        let validate_connection = enabled;
 
         Self {
             enabled,
