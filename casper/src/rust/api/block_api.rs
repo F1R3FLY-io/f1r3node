@@ -501,7 +501,7 @@ impl BlockAPI {
 
             let r: ApiErr<String> = match proposer_result {
                 ProposerResult::Empty => log_debug("Failure: another propose is in progress"),
-                ProposerResult::Failure(status, seq_number) => {
+                ProposerResult::Failure(ref status, seq_number) => {
                     log_debug(&format!("Failure: {} (seqNum {})", status, seq_number))
                 }
                 ProposerResult::Started(seq_number) => {
@@ -1559,7 +1559,8 @@ impl BlockAPI {
                     data_with_block_info.block.unwrap_or_default(),
                 ))
             } else {
-                Err(eyre::eyre!("No data found"))
+                let block_info = BlockAPI::get_light_block_info(casper, &block).await?;
+                Ok((vec![], block_info))
             }
         }
 

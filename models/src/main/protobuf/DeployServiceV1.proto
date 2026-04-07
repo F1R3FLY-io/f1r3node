@@ -30,7 +30,7 @@ option (scalapb.options) = {
 // `ProposeServiceV2.propose` to make a new block with the results of running them
 // all.
 //
-// To get results back, use `listenForDataAtName`.
+// To get results back, use `getDataAtName`.
 service DeployService {
   // Queue deployment of Rholang code (or fail to parse).
   rpc doDeploy(DeployDataProto) returns (DeployResponse) {}

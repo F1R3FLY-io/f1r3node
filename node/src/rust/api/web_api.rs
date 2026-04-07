@@ -1,6 +1,7 @@
 //! Web API implementation for F1r3fly node
 
 use crate::rust::api::serde_types::block_info::BlockInfoSerde;
+use crate::rust::api::serde_types::deploy_info::TransferInfoSerde;
 use crate::rust::api::serde_types::light_block_info::LightBlockInfoSerde;
 use crate::rust::web::block_info_enricher::BlockEnricher;
 use crate::rust::web::transaction::{CacheTransactionAPI, TransactionAPI, TransactionResponse};
@@ -76,6 +77,9 @@ pub trait WebApi {
 
     /// Find a deploy by ID
     async fn find_deploy(&self, deploy_id: String) -> Result<LightBlockInfoSerde>;
+
+    /// Find a deploy by ID, returning deploy execution details with block context
+    async fn find_deploy_detail(&self, deploy_id: String) -> Result<DeployDetailResponse>;
 
     /// Find a deploy by ID, returning minimal response
     async fn find_deploy_minimal(&self, deploy_id: String) -> Result<DeployLookupResponse>;
@@ -351,6 +355,37 @@ where
         }
     }
 
+    async fn find_deploy_detail(&self, deploy_id: String) -> Result<DeployDetailResponse> {
+        let light_block = self.find_deploy(deploy_id.clone()).await?;
+        let block_info = self.get_block(light_block.block_hash.clone()).await?;
+
+        let matching_deploy = block_info
+            .deploys
+            .iter()
+            .find(|d| d.sig == deploy_id)
+            .cloned();
+
+        match matching_deploy {
+            Some(deploy) => Ok(DeployDetailResponse {
+                block_hash: light_block.block_hash,
+                block_number: light_block.block_number,
+                timestamp: light_block.timestamp,
+                deployer: deploy.deployer,
+                term: deploy.term,
+                cost: deploy.cost,
+                errored: deploy.errored,
+                system_deploy_error: deploy.system_deploy_error,
+                phlo_price: deploy.phlo_price,
+                phlo_limit: deploy.phlo_limit,
+                sig: deploy.sig,
+                sig_algorithm: deploy.sig_algorithm,
+                valid_after_block_number: deploy.valid_after_block_number,
+                transfers: deploy.transfers,
+            }),
+            None => Err(eyre!("Deploy {} found in block {} but not in deploy list", deploy_id, light_block.block_hash)),
+        }
+    }
+
     async fn find_deploy_minimal(&self, deploy_id: String) -> Result<DeployLookupResponse> {
         let full = self.find_deploy(deploy_id).await?;
         Ok(DeployLookupResponse::from(full))
@@ -570,6 +605,32 @@ pub struct ApiStatus {
 pub struct VersionInfo {
     pub api: String,
     pub node: String,
+}
+
+/// Deploy detail response with execution info and block context
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct DeployDetailResponse {
+    #[serde(rename = "blockHash")]
+    pub block_hash: String,
+    #[serde(rename = "blockNumber")]
+    pub block_number: i64,
+    pub timestamp: i64,
+    pub deployer: String,
+    pub term: String,
+    pub cost: u64,
+    pub errored: bool,
+    #[serde(rename = "systemDeployError")]
+    pub system_deploy_error: String,
+    #[serde(rename = "phloPrice")]
+    pub phlo_price: i64,
+    #[serde(rename = "phloLimit")]
+    pub phlo_limit: i64,
+    pub sig: String,
+    #[serde(rename = "sigAlgorithm")]
+    pub sig_algorithm: String,
+    #[serde(rename = "validAfterBlockNumber")]
+    pub valid_after_block_number: i64,
+    pub transfers: Vec<TransferInfoSerde>,
 }
 
 /// Minimal deploy lookup response containing only essential fields
