@@ -1,17 +1,29 @@
-# RChain Cryptography module
+# Crypto
 
-`crypto` module provides cryptography functionalities for `node`.
+Cryptographic primitives for the F1r3fly node: hashing, signing, key management, and TLS certificates.
 
-## Available functionality
+## Features
 
-| Feature                                                                       | Description                               |
-| ----------------------------------------------------------------------------  | ----------------------------------------- | 
-| [Base16](./src/main/scala/coop/rchain/crypto/codec/Base16.scala)              | Traditional hexadecimal String encoding   |
-| [Curve25519](./src/main/scala/coop/rchain/crypto/encryption/Curve25519.scala) | Elliptic curve cryptography               |
-| [Sha256](./src/main/scala/coop/rchain/crypto/hash/Sha256.sclaa)               | Sha256 hashing algorithm                  |
-| [Keccak256](./src/main/scala/coop/rchain/crypto/hash/Keccak256.scala)         | Keccak256 hashing algorithm               |
-| [Blake2b256](./src/main/scala/coop/rchain/crypto/hash/Blake2b256.scala)       | Blake2b256 hashing algorithm              |
-| [Ed25519](./src/main/scala/coop/rchain/crypto/signatures/Ed25519.scala)       | Edwards-curve Digital Signature Algorithm |
+| Category | Implementations |
+|----------|----------------|
+| Hashing | Blake2b256, Blake2b512, Keccak256, SHA-256 |
+| Signing | Secp256k1, Secp256k1Eth (Ethereum-compatible), Ed25519, Schnorr (secp256k1), FROST (threshold signatures) |
+| Keys | Private/public key types, key generation, Base16 encoding |
+| TLS | Certificate generation and validation |
+
+## Building
+
+```bash
+cargo build --release -p crypto
+cargo build --profile dev -p crypto   # debug mode
+```
+
+## Testing
+
+```bash
+cargo test -p crypto
+cargo test --release -p crypto
+```
 
 ## Documentation
 
