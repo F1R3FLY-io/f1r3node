@@ -33,3 +33,9 @@ Run all tests in release mode: `cargo test --release`
 To run specific test file: `cargo test --test <test_file_name>`
 
 To run specific test in specific folder: `cargo test --test <test_folder_name>::<test_file_name>`
+
+## Documentation
+
+- [Casper Module Overview](../docs/casper/README.md) — Block creation, validation, DAG, safety oracle, finalization
+- [Byzantine Fault Tolerance](../docs/casper/BYZANTINE_FAULT_TOLERANCE.md) — BFT architecture, clique oracle, slashing
+- [Synchrony Constraint](../docs/casper/SYNC_CONSTRAINT.md) — Synchrony constraint mechanism and configuration

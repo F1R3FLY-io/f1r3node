@@ -174,4 +174,6 @@ These values are hardcoded (previously configurable via `F1R3_*` env vars, remov
 
 Integration tests in `tests/`: `transaction_api_test.rs` (end-to-end transaction API), `rho_trie_traverser_test.rs`. Inline tests in `block_info_enricher.rs` (3 unit tests for enrichment logic).
 
-[← Back to overview](./README.md)
+**See also:** [node/ crate README](../../node/README.md) | [Docker Setup](../../docker/README.md)
+
+[← Back to docs index](../README.md)

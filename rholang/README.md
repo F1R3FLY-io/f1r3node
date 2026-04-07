@@ -128,4 +128,12 @@ In general:
   * 0-arity send and receive is currently broken.
   * We don't pre-evaluate match cases. So matching 7 + 8 as a pattern currently doesn't work. Instead, you must match against 15.
 ### The good
-Several working examples have been included in the examples directory, and the examples in the [Rholang tutorial](https://github.com/rchain/rchain/blob/dev/docs/rholang/rholangtut.md) also work. If you run into something that doesn't work, check the bugtracker to see if it's a known issue, and if not, feel free to a GitHub issue. We want Rholang to be a useful programming environment.
+Several working examples have been included in the examples directory, and the examples in the [Rholang tutorial](../docs/rholang/rholangtut.md) also work. If you run into something that doesn't work, check the bugtracker to see if it's a known issue, and if not, feel free to open a GitHub issue. We want Rholang to be a useful programming environment.
+
+## Documentation
+
+- [Rholang Module Overview](../docs/rholang/README.md) — Interpreter, reducer, cost accounting, system processes
+- [Rholang Tutorial](../docs/rholang/rholangtut.md) — Language tutorial
+- [Pattern Matching Tutorial](../docs/rholang/rholangmatchingtut.md) — Pattern matching guide
+- [Ollama Integration](../docs/rholang/ollama.md) — Local LLM integration via Ollama
+- [Reference Documentation](./reference_doc/README.md) — Language reference by topic

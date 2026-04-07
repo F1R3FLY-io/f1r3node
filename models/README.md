@@ -52,3 +52,7 @@ Run all tests in release mode: `cargo test --release`
 To run specific test file: `cargo test --test <test_file_name>`
 
 To run specific test in specific folder: `cargo test --test <test_folder_name>::<test_file_name>`
+
+## Documentation
+
+- [Models Module Overview](../docs/models/README.md) — Protobuf types, Rholang AST, sorted collections

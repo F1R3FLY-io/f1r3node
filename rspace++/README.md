@@ -69,3 +69,7 @@ Standing up network using RSpace++ (Under Docker)
  
  - (Optional) Run this command to ensure nodes preform genesis ceremony: `scripts/delete_data.sh`<br>
  - Sometimes the nodes will not reach a fully complete state so it is recommended to delete the container after every restart -->
+
+## Documentation
+
+- [RSpace Module Overview](../docs/rspace/README.md) — Tuple space engine, produce/consume matching, trie history

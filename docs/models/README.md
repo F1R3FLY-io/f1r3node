@@ -117,4 +117,6 @@ Supports indexed Rholang structures:
 - `NormalizerEnv` -- Deploy execution context (`rho:system:deployId`, `rho:system:deployerId`)
 - `ParToSExpr` -- Process-to-S-expression conversion for PathMap paths
 
-[← Back to overview](./README.md)
+**See also:** [models/ crate README](../../models/README.md)
+
+[← Back to docs index](../README.md)

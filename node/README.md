@@ -244,4 +244,7 @@ The current version of the node produces metrics on some communications-related 
 
 This is very much a work in progress. The networking overlay is only known to work when it can avail itself of visible IP addresses, either public or all contained within the same network. It does not yet include any special code for getting around a home firewall or a closed router, though it does contain some uPNP handling. Any port used must be open or mapped through the router. Depending on your setup, it might be necessary to configure port-forwarding on your router. In some cases, it might even be necessary to specify your router's public IP address as the node address if your router's port-forwarding requires it.
 
+## Documentation
 
+- [Node Module Overview](../docs/node/README.md) — Binary entry point, gRPC/HTTP servers, CLI, diagnostics
+- [Docker Setup](../docker/README.md) — Docker compose for shard, standalone, and monitoring

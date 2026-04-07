@@ -94,4 +94,6 @@ Counters: connect, disconnect, ping, lookup, send. Histograms: connect-time, pin
 
 19 test files in `tests/`: transport specs (stream_handler, grpc_transport, transport_layer, uri_parse), discovery specs (distance, kademlia_rpc, kademlia, peer_table), RP specs (find_and_connect, clear_connections, connect, connections), `who_am_i_spec.rs`. Chunker includes inline unit tests.
 
-[← Back to overview](./README.md)
+**See also:** [comm/ crate README](../../comm/README.md)
+
+[← Back to docs index](../README.md)
