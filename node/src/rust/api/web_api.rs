@@ -290,7 +290,7 @@ where
         &self,
         request: DataAtNameByBlockHashRequest,
     ) -> Result<RhoDataResponse> {
-        let res = BlockAPI::get_data_at_par(
+        let (pars, block) = BlockAPI::get_data_at_par(
             &self.engine_cell,
             &to_par(request.name),
             request.block_hash,
@@ -298,7 +298,7 @@ where
         )
         .await?;
 
-        Ok(to_rho_data_response(res))
+        Ok(to_rho_data_response(pars, block, 0))
     }
 
     async fn last_finalized_block(&self) -> Result<BlockInfoSerde> {
@@ -397,7 +397,7 @@ where
         block_hash: Option<String>,
         use_pre_state_hash: bool,
     ) -> Result<RhoDataResponse> {
-        let res = BlockAPI::exploratory_deploy(
+        let (pars, block, cost) = BlockAPI::exploratory_deploy(
             &self.engine_cell,
             term,
             block_hash,
@@ -406,7 +406,7 @@ where
         )
         .await?;
 
-        Ok(to_rho_data_response(res))
+        Ok(to_rho_data_response(pars, block, cost))
     }
 
     async fn get_blocks_by_heights(
@@ -554,6 +554,7 @@ pub struct ExploratoryDeployResponse {
 pub struct RhoDataResponse {
     pub expr: Vec<RhoExpr>,
     pub block: LightBlockInfoSerde,
+    pub cost: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -928,18 +929,14 @@ fn to_data_at_name_response(req: (Vec<DataWithBlockInfo>, i32)) -> DataAtNameRes
 
 /// Convert (Vec<Par>, LightBlockInfo) to RhoDataResponse
 /// Equivalent to Scala's toRhoDataResponse function
-fn to_rho_data_response(data: (Vec<Par>, LightBlockInfo)) -> RhoDataResponse {
-    let (pars, light_block_info) = data;
-
-    // Convert Vec<Par> to Vec<RhoExpr> using expr_from_par_proto
+fn to_rho_data_response(pars: Vec<Par>, light_block_info: LightBlockInfo, cost: u64) -> RhoDataResponse {
     let rho_exprs: Vec<RhoExpr> = pars.into_iter().filter_map(expr_from_par_proto).collect();
-
-    // Convert LightBlockInfo to LightBlockInfoSerde
     let block = LightBlockInfoSerde::from(light_block_info);
 
     RhoDataResponse {
         expr: rho_exprs,
         block,
+        cost,
     }
 }
 

@@ -369,7 +369,7 @@ async fn test_case(
     assert_eq!(rejected_sigs, expected_rejected);
 
     let mut runtime_ops = RuntimeOps::new(runtime);
-    let res = runtime_ops
+    let (res, _cost) = runtime_ops
         .play_exploratory_deploy(RHO_EXPLORE_READ.to_owned(), &final_hash.to_bytes_prost())
         .await
         .unwrap();

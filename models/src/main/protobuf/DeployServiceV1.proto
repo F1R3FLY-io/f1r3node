@@ -83,6 +83,7 @@ message ExploratoryDeployResponse{
     servicemodelapi.ServiceError error = 1;
     DataWithBlockInfo result = 2;
   }
+  uint64 cost = 3;
 }
 
 // doDeploy

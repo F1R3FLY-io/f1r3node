@@ -710,7 +710,7 @@ impl DeployService for DeployGrpcServiceV1Impl {
         )
         .await
         {
-            Ok((par, block)) => {
+            Ok((par, block, cost)) => {
                 let data_with_block_info = models::casper::DataWithBlockInfo {
                     post_block_data: par,
                     block: Some(block),
@@ -721,6 +721,7 @@ impl DeployService for DeployGrpcServiceV1Impl {
                             data_with_block_info,
                         ),
                     ),
+                    cost,
                 }))
             }
             Err(e) => {
@@ -731,6 +732,7 @@ impl DeployService for DeployGrpcServiceV1Impl {
                             e.into_service_error(),
                         ),
                     ),
+                    cost: 0,
                 }))
             }
         }
