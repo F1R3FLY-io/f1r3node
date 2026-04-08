@@ -8,11 +8,13 @@ on:
       - trying
       - rust/dev
       - rust/main
+      - rust/staging
     tags: "**"
   pull_request:
     branches:
       - rust/dev
       - rust/main
+      - rust/staging
       - "feature/**"
 
 # Prevent interleaving of integration test jobs on single-runner-per-arch

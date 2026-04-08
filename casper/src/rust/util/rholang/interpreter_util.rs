@@ -86,8 +86,13 @@ pub async fn validate_block_checkpoint(
     let incoming_pre_state_hash = proto_util::pre_state_hash(block);
     let parents = proto_util::get_parents(block_store, block);
     tracing::debug!(target: "f1r3fly.casper", "before-compute-parents-post-state");
+    let parents_post_state_start = std::time::Instant::now();
     let computed_parents_info =
         compute_parents_post_state(block_store, parents.clone(), s, runtime_manager, None);
+    metrics::histogram!(
+        crate::rust::metrics_constants::BLOCK_PROCESSING_PARENTS_POST_STATE_TIME_METRIC,
+        "source" => crate::rust::metrics_constants::CASPER_METRICS_SOURCE
+    ).record(parents_post_state_start.elapsed().as_secs_f64());
 
     tracing::info!(
         "Computed parents post state for {}.",
