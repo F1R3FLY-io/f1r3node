@@ -213,7 +213,7 @@ impl DeployService for DeployGrpcServiceV1Impl {
         {
             Ok(result) => Self::create_success_deploy_response(result),
             Err(e) => {
-                error!("Deploy service method error do_deploy");
+                error!("Deploy service method error do_deploy: {}", e);
                 Self::create_error_deploy_response(e.into_service_error())
             }
         }
@@ -234,7 +234,7 @@ impl DeployService for DeployGrpcServiceV1Impl {
                 Self::create_success_block_response(enriched)
             }
             Err(e) => {
-                error!("Deploy service method error get_block");
+                error!("Deploy service method error get_block: {}", e);
                 Self::create_error_block_response(e.into_service_error())
             }
         }
@@ -332,7 +332,7 @@ impl DeployService for DeployGrpcServiceV1Impl {
                 ),
             })),
             Err(e) => {
-                error!("Deploy service method error machine_verifiable_dag");
+                error!("Deploy service method error machine_verifiable_dag: {}", e);
                 Ok(tonic::Response::new(MachineVerifyResponse {
                     message: Some(models::casper::v1::machine_verify_response::Message::Error(
                         e.into_service_error(),
@@ -400,7 +400,7 @@ impl DeployService for DeployGrpcServiceV1Impl {
                     }
                 }
                 Err(e) => {
-                    error!("Deploy service method error get_blocks");
+                    error!("Deploy service method error get_blocks: {}", e);
                     let _ = tx.send(Err(tonic::Status::internal(e.to_string()))).await;
                 }
             }
@@ -411,11 +411,12 @@ impl DeployService for DeployGrpcServiceV1Impl {
         ))
     }
 
-    /// Listen for data at name
+    /// Listen for data at name (DEPRECATED — use get_data_at_name instead)
     async fn listen_for_data_at_name(
         &self,
         request: tonic::Request<DataAtNameQuery>,
     ) -> Result<tonic::Response<ListeningNameDataResponse>, tonic::Status> {
+        tracing::warn!("listenForDataAtName is deprecated, use getDataAtName(DataAtNameByBlockQuery) instead");
         let request = request.into_inner();
         match BlockAPI::get_listening_name_data_response(
             &self.engine_cell,
@@ -434,7 +435,7 @@ impl DeployService for DeployGrpcServiceV1Impl {
                 }))
             }
             Err(e) => {
-                error!("Deploy service method error listen_for_data_at_name");
+                error!("Deploy service method error listen_for_data_at_name: {}", e);
                 Ok(tonic::Response::new(ListeningNameDataResponse {
                     message: Some(
                         models::casper::v1::listening_name_data_response::Message::Error(
@@ -472,7 +473,7 @@ impl DeployService for DeployGrpcServiceV1Impl {
                 }))
             }
             Err(e) => {
-                error!("Deploy service method error get_data_at_name");
+                error!("Deploy service method error get_data_at_name: {}", e);
                 Ok(tonic::Response::new(RhoDataResponse {
                     message: Some(models::casper::v1::rho_data_response::Message::Error(
                         e.into_service_error(),
@@ -510,7 +511,7 @@ impl DeployService for DeployGrpcServiceV1Impl {
                 }))
             }
             Err(e) => {
-                error!("Deploy service method error listen_for_continuation_at_name");
+                error!("Deploy service method error listen_for_continuation_at_name: {}", e);
                 Ok(tonic::Response::new(ContinuationAtNameResponse {
                     message: Some(
                         models::casper::v1::continuation_at_name_response::Message::Error(
@@ -548,7 +549,7 @@ impl DeployService for DeployGrpcServiceV1Impl {
                         .downcast_ref::<casper::rust::api::block_api::DeployNotFoundError>()
                         .is_some();
                     if !not_found || attempt >= max_attempts {
-                        error!("Deploy service method error find_deploy");
+                        error!("Deploy service method error find_deploy: {}", e);
                         return Ok(tonic::Response::new(FindDeployResponse {
                             message: Some(
                                 models::casper::v1::find_deploy_response::Message::Error(
@@ -596,7 +597,7 @@ impl DeployService for DeployGrpcServiceV1Impl {
                 }))
             }
             Err(e) => {
-                error!("Deploy service method error preview_private_names");
+                error!("Deploy service method error preview_private_names: {}", e);
                 Ok(tonic::Response::new(PrivateNamePreviewResponse {
                     message: Some(
                         models::casper::v1::private_name_preview_response::Message::Error(
@@ -630,7 +631,7 @@ impl DeployService for DeployGrpcServiceV1Impl {
                 }))
             }
             Err(e) => {
-                error!("Deploy service method error last_finalized_block");
+                error!("Deploy service method error last_finalized_block: {}", e);
                 Ok(tonic::Response::new(LastFinalizedBlockResponse {
                     message: Some(
                         models::casper::v1::last_finalized_block_response::Message::Error(
@@ -655,7 +656,7 @@ impl DeployService for DeployGrpcServiceV1Impl {
                 ),
             })),
             Err(e) => {
-                error!("Deploy service method error is_finalized");
+                error!("Deploy service method error is_finalized: {}", e);
                 Ok(tonic::Response::new(IsFinalizedResponse {
                     message: Some(models::casper::v1::is_finalized_response::Message::Error(
                         e.into_service_error(),
@@ -678,7 +679,7 @@ impl DeployService for DeployGrpcServiceV1Impl {
                 )),
             })),
             Err(e) => {
-                error!("Deploy service method error bond_status");
+                error!("Deploy service method error bond_status: {}", e);
                 Ok(tonic::Response::new(BondStatusResponse {
                     message: Some(models::casper::v1::bond_status_response::Message::Error(
                         e.into_service_error(),
@@ -709,7 +710,7 @@ impl DeployService for DeployGrpcServiceV1Impl {
         )
         .await
         {
-            Ok((par, block)) => {
+            Ok((par, block, cost)) => {
                 let data_with_block_info = models::casper::DataWithBlockInfo {
                     post_block_data: par,
                     block: Some(block),
@@ -720,16 +721,18 @@ impl DeployService for DeployGrpcServiceV1Impl {
                             data_with_block_info,
                         ),
                     ),
+                    cost,
                 }))
             }
             Err(e) => {
-                error!("Deploy service method error exploratory_deploy");
+                error!("Deploy service method error exploratory_deploy: {}", e);
                 Ok(tonic::Response::new(ExploratoryDeployResponse {
                     message: Some(
                         models::casper::v1::exploratory_deploy_response::Message::Error(
                             e.into_service_error(),
                         ),
                     ),
+                    cost: 0,
                 }))
             }
         }
@@ -768,7 +771,7 @@ impl DeployService for DeployGrpcServiceV1Impl {
                 )),
             })),
             Err(e) => {
-                error!("Deploy service method error get_event_by_hash");
+                error!("Deploy service method error get_event_by_hash: {}", e);
                 Ok(tonic::Response::new(EventInfoResponse {
                     message: Some(models::casper::v1::event_info_response::Message::Error(
                         e.into_service_error(),
@@ -812,7 +815,7 @@ impl DeployService for DeployGrpcServiceV1Impl {
                     }
                 }
                 Err(e) => {
-                    error!("Deploy service method error get_blocks_by_heights");
+                    error!("Deploy service method error get_blocks_by_heights: {}", e);
                     let _ = tx.send(Err(tonic::Status::internal(e.to_string()))).await;
                 }
             }
@@ -837,7 +840,7 @@ impl DeployService for DeployGrpcServiceV1Impl {
         let connections = match self.connections_cell.read() {
             Ok(conns) => conns,
             Err(e) => {
-                error!("Deploy service method error status");
+                error!("Deploy service method error status (connections): {}", e);
                 return Err(tonic::Status::internal(e.to_string()));
             }
         };
@@ -845,7 +848,7 @@ impl DeployService for DeployGrpcServiceV1Impl {
         let discovered_nodes = match self.node_discovery.peers() {
             Ok(peers) => peers,
             Err(e) => {
-                error!("Deploy service method error status");
+                error!("Deploy service method error status (discovery): {}", e);
                 return Err(tonic::Status::internal(e.to_string()));
             }
         };

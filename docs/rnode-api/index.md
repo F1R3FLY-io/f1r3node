@@ -800,7 +800,7 @@ Use `DoDeploy` to queue deployments of Rholang code and then
 `createBlock` to make a new block with the results of running them
 all.
 
-To get results back, use `listenForDataAtName`.
+To get results back, use `getDataAtName` (recommended) or `listenForDataAtName` (deprecated).
 
 | Method Name | Request Type | Response Type | Description |
 | ----------- | ------------ | ------------- | ------------|
