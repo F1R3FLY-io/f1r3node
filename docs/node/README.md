@@ -77,7 +77,7 @@ CLI flags are applied to the parsed `NodeConf` by `config_mapper.rs`:
 
 | Service | Port | Methods |
 |---------|------|---------|
-| **DeployService** | 40401 (external) | `do_deploy`, `show_main_chain`, `get_blocks`, `get_block`, `find_deploy`, `exploratory_deploy`, `last_finalized_block`, `is_finalized`, `bond_status`, `listen_for_data_at_name`, `listen_for_continuation_at_name`, `status`, `machine_verifiable_dag`, `visualize_dag`, `get_blocks_by_heights` |
+| **DeployService** | 40401 (external) | `do_deploy`, `show_main_chain`, `get_blocks`, `get_block`, `find_deploy`, `exploratory_deploy`, `last_finalized_block`, `is_finalized`, `bond_status`, `get_data_at_name`, `listen_for_data_at_name` (deprecated), `listen_for_continuation_at_name`, `status`, `machine_verifiable_dag`, `visualize_dag`, `get_blocks_by_heights`, `get_event_by_hash` |
 | **ProposeService** | 40402 (internal) | `propose`, `propose_result` |
 | **ReplService** | 40402 (internal) | `run` (single command), `eval` (full program) |
 | **LspService** | 40402 (internal) | `validate` (Rholang syntax diagnostics) |
