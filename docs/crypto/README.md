@@ -60,4 +60,6 @@ pub struct PublicKey(pub Bytes);
 
 Property-based tests (proptest) for DER encoding roundtrips, certificate generation, and key pair operations in `tests/util/`.
 
-[← Back to overview](./README.md)
+**See also:** [crypto/ crate README](../../crypto/README.md)
+
+[← Back to docs index](../README.md)

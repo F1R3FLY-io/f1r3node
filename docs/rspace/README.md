@@ -204,4 +204,6 @@ Memory management: Rust allocates via `Box::leak()`, returns raw pointer. Scala 
 
 Extensive test suites in `tests/`: `hot_store_spec.rs` (property-based), `storage_actions_test.rs`, `replay_rspace_tests.rs`, `reporting_rspace_tests.rs`, `export_import_tests.rs`, `install_test.rs`, plus `history/` subdirectory tests.
 
-[← Back to overview](./README.md)
+**See also:** [rspace++/ crate README](../../rspace++/README.md)
+
+[← Back to docs index](../README.md)

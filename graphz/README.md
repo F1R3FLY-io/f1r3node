@@ -288,4 +288,8 @@ This library is a faithful port of the original Scala graphz library. The API cl
 
 ## License
 
-This project follows the same license as the original Scala implementation. 
+This project follows the same license as the original Scala implementation.
+
+## Documentation
+
+- [Graphz Module Overview](../docs/graphz/README.md) — DOT generation for DAG visualization 
