@@ -20,7 +20,7 @@
   - [Smoke Test](#smoke-test)
   - [F1r3flyFS](#f1r3flyfs)
 - [Configuration](#configuration-file)
-- [Rust Codebase Documentation](#rust-codebase-documentation)
+- [Documentation](#documentation)
 - [Troubleshooting](#troubleshooting)
 - [Support & Community](#support--community)
 - [Known Issues & Reporting](#caveats-and-filing-issues)
@@ -180,9 +180,8 @@ docker compose -f docker/standalone.yml down
 ```bash
 docker compose -f docker/shard.yml up -d
 
-# Wait for genesis (~2-3 min)
+# Wait for genesis (~2-3 min), then check all nodes reached Running state
 docker compose -f docker/shard.yml logs 2>&1 | grep "Making a transition to Running state"
-# Ctrl+C once all validators report Running
 
 docker compose -f docker/shard.yml logs -f         # Follow logs
 docker compose -f docker/shard.yml down             # Stop
@@ -346,24 +345,34 @@ Reference configs:
 - [docker/conf/default.conf](docker/conf/default.conf) - Minimal shard override
 - [Consensus Configuration Guide](https://github.com/F1R3FLY-io/system-integration/blob/main/docs/consensus-configuration.md) - FTT, synchrony threshold semantics, finalization formula, recommended values
 
-## Rust Codebase Documentation
+## Documentation
 
-Detailed architecture and API documentation for each Rust crate is available in [docs/rust/](docs/rust/README.md):
+Detailed architecture and API documentation for each crate is available in [docs/](docs/README.md):
 
 | Module | Description |
 |--------|-------------|
-| [shared](docs/rust/shared.md) | Foundation types, KV store abstraction, LMDB bindings |
-| [crypto](docs/rust/crypto.md) | Hashing, signing, certificates |
-| [models](docs/rust/models.md) | Protobuf types, Rholang AST, sorted collections |
-| [rspace](docs/rust/rspace.md) | Tuple space engine, produce/consume matching, trie history |
-| [rholang](docs/rust/rholang.md) | Interpreter, reducer, cost accounting, system processes |
-| [casper](docs/rust/casper.md) | CBC Casper consensus, block creation/validation, finalization |
-| [block-storage](docs/rust/block-storage.md) | Block persistence, DAG storage, deploy index |
-| [comm](docs/rust/comm.md) | P2P networking, Kademlia DHT, TLS transport |
-| [node](docs/rust/node.md) | Binary entry point, gRPC/HTTP servers, CLI, diagnostics |
-| [graphz](docs/rust/graphz.md) | Graphviz DOT generation |
+| [shared](docs/shared/) | Foundation types, KV store abstraction, LMDB bindings |
+| [crypto](docs/crypto/) | Hashing, signing, certificates |
+| [models](docs/models/) | Protobuf types, Rholang AST, sorted collections |
+| [rspace](docs/rspace/) | Tuple space engine, produce/consume matching, trie history |
+| [rholang](docs/rholang/) | Interpreter, reducer, cost accounting, system processes |
+| [casper](docs/casper/) | CBC Casper consensus, block creation/validation, finalization |
+| [block-storage](docs/block-storage/) | Block persistence, DAG storage, deploy index |
+| [comm](docs/comm/) | P2P networking, Kademlia DHT, TLS transport |
+| [node](docs/node/) | Binary entry point, gRPC/HTTP servers, CLI, diagnostics |
+| [graphz](docs/graphz/) | Graphviz DOT generation |
 
-See also: [Data Flows](docs/rust/data-flows.md) | [Patterns & Conventions](docs/rust/patterns.md)
+**Cross-cutting:** [Data Flows](docs/data-flows/) | [Patterns & Conventions](docs/patterns/)
+
+**Rholang Language:**
+- [Rholang Evaluator](rholang/README.md) — Language overview, CLI usage, known issues
+- [Rholang Tutorial](docs/rholang/rholangtut.md) — Language tutorial
+- [Pattern Matching](docs/rholang/rholangmatchingtut.md) — Pattern matching guide
+- [Reference Documentation](rholang/reference_doc/README.md) — Language reference by topic
+
+**Consensus:**
+- [Byzantine Fault Tolerance](docs/casper/BYZANTINE_FAULT_TOLERANCE.md) — BFT architecture, clique oracle, slashing
+- [Synchrony Constraint](docs/casper/SYNC_CONSTRAINT.md) — Synchrony constraint mechanism and configuration
 
 ## Troubleshooting
 

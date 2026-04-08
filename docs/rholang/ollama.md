@@ -1,6 +1,6 @@
 # Ollama Integration for F1R3FLY
 
-This document describes how to use the Ollama REST API integration with F1R3FLY's RChain blockchain platform.
+This document describes how to use the Ollama REST API integration with the F1R3FLY blockchain platform.
 
 ## Overview
 
@@ -25,7 +25,7 @@ ollama pull llama3.2
 
 ```bash
 # Build the project
-sbt stage
+cargo build --release
 ```
 
 ## Configuration
@@ -137,7 +137,7 @@ The Ollama integration provides three system processes:
 Run the Ollama-specific tests:
 
 ```bash
-sbt "rholang/testOnly *OllamaServiceSpec"
+cargo test -p rholang -- ollama
 ```
 
 ### Integration Testing
