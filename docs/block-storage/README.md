@@ -56,4 +56,6 @@ Block persistence, DAG state management, casper buffer, and deploy indexing.
 
 `block_dag_storage_test.rs` (proptest integration), `key_value_block_store.rs` (proptest unit), `casper_buffer_key_value_storage.rs` (tokio async), `doubly_linked_dag_operations.rs` (DAG unit tests).
 
-[← Back to overview](./README.md)
+**See also:** [block-storage/ crate](../../block-storage/)
+
+[← Back to docs index](../README.md)

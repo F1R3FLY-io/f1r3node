@@ -46,7 +46,7 @@ Where:
 - `otherValidatorsWeight` = Total stake of all validators excluding the proposer
 - `synchronyConstraintThreshold` = Configured threshold (default: 0.67)
 
-**Code Location:** `casper/src/main/scala/coop/rchain/casper/SynchronyConstraintChecker.scala`
+**Code Location:** `casper/src/rust/synchrony_constraint_checker.rs`
 
 ### Example
 
@@ -128,7 +128,7 @@ maybeCreatorJustification       = creatorJustificationHash(block)
 isNotEquivocation               = maybeCreatorJustification == maybeLatestMessageOfCreatorHash
 ```
 
-**Code Location:** `casper/src/main/scala/coop/rchain/casper/EquivocationDetector.scala:32-34`
+**Code Location:** `casper/src/rust/equivocation_detector.rs`
 
 ### Equivocation Types
 
@@ -180,7 +180,7 @@ When processing a new block, the system checks three conditions:
 - Validator couldn't have known about equivocation
 - **Action:** No action taken
 
-**Code Location:** `models/src/main/scala/coop/rchain/models/EquivocationRecord.scala:20-24`
+**Code Location:** `casper/src/rust/equivocation_detector.rs` (EquivocationRecord struct)
 
 #### Example Scenario
 
@@ -223,7 +223,7 @@ The implementation is based on Ethereum's CBC Casper research and the clique ora
 
 **Source:** [Casper the Friendly Finality Gadget](https://github.com/ethereum/research/blob/master/papers/CasperTFG/CasperTFG.pdf)
 
-**Code Location:** `casper/src/main/scala/coop/rchain/casper/safety/CliqueOracle.scala`
+**Code Location:** `casper/src/rust/safety/clique_oracle.rs`
 
 ### Algorithm Overview
 
@@ -401,7 +401,7 @@ case InvalidBlock.AdmissibleEquivocation =>
   CasperBufferStorage.remove(block.blockHash)
 ```
 
-**Code Location:** `casper/src/main/scala/coop/rchain/casper/MultiParentCasperImpl.scala:447-471`
+**Code Location:** `casper/src/rust/multi_parent_casper_impl.rs`
 
 ### Stake Forfeiture
 
@@ -422,7 +422,7 @@ maybeEquivocatingValidatorBond match {
 }
 ```
 
-**Code Location:** `casper/src/main/scala/coop/rchain/casper/EquivocationDetector.scala:152-168`
+**Code Location:** `casper/src/rust/equivocation_detector.rs`
 
 The actual stake forfeiture is enforced through the Proof-of-Stake smart contract deployed on-chain.
 
@@ -615,7 +615,7 @@ for {
 } yield ValidBlock
 ```
 
-**Code Location:** `casper/src/main/scala/coop/rchain/casper/MultiParentCasperImpl.scala:342-382`
+**Code Location:** `casper/src/rust/multi_parent_casper_impl.rs`
 
 ### Equivocation Tracker Storage
 
@@ -634,7 +634,7 @@ trait EquivocationsTracker[F[_]] {
 }
 ```
 
-**Storage Location:** `block-storage/src/main/scala/coop/rchain/blockstorage/dag/EquivocationTrackerStore.scala`
+**Storage Location:** `block-storage/src/rust/dag/block_dag_key_value_storage.rs`
 
 ### Safety Oracle Integration
 
@@ -660,7 +660,7 @@ def getBlockInfo[F[_]: Monad: SafetyOracle: BlockStore](
 }
 ```
 
-**Code Location:** `casper/src/main/scala/coop/rchain/casper/api/BlockAPI.scala:570-593`
+**Code Location:** `casper/src/rust/api/block_api.rs`
 
 ### Synchrony Constraint Integration
 
@@ -699,9 +699,9 @@ def checkSynchronyConstraint[F[_]](
 The Byzantine fault tolerance implementation includes comprehensive test coverage:
 
 **Test Locations:**
-- `casper/src/test/scala/coop/rchain/casper/batch1/` - Core consensus tests
-- `casper/src/test/scala/coop/rchain/casper/batch2/` - Extended validation tests  
-- `casper/src/test/scala/coop/rchain/casper/batch2/CliqueOracleTest.scala` - Safety oracle tests
+- `casper/tests/batch2/finalizer_test.rs` — Finalizer tests
+- `casper/tests/batch2/` — Extended validation tests
+- `casper/src/test/scala/coop/rchain/casper/batch2/CliqueOracleTest.scala` — Safety oracle tests (Scala)
 
 ### Critical Test Scenarios
 
@@ -905,16 +905,21 @@ When sharding is implemented:
 
 ### Implementation References
 
-**Core Implementation Files:**
+**Rust Implementation Files:**
+- `casper/src/rust/equivocation_detector.rs` — Equivocation detection (simple, admissible, neglected)
+- `casper/src/rust/safety/clique_oracle.rs` — Clique oracle, fault tolerance calculation
+- `casper/src/rust/synchrony_constraint_checker.rs` — Synchrony constraint, recovery bypasses
+- `casper/src/rust/finality/finalizer.rs` — Finalization algorithm, work budget
+- `casper/src/rust/multi_parent_casper_impl.rs` — Core Casper implementation
+
+**Scala Implementation Files (legacy reference):**
 - `casper/src/main/scala/coop/rchain/casper/EquivocationDetector.scala`
 - `casper/src/main/scala/coop/rchain/casper/safety/CliqueOracle.scala`
 - `casper/src/main/scala/coop/rchain/casper/SynchronyConstraintChecker.scala`
-- `casper/src/main/scala/coop/rchain/casper/SafetyOracle.scala`
-- `models/src/main/scala/coop/rchain/models/EquivocationRecord.scala`
 
 **Documentation:**
-- `docs/casper/SYNC_CONSTRAINT.md` - Detailed synchrony constraint documentation
-- `CLAUDE/casper/DESIGN.md` - Casper consensus protocol design overview
+- [Synchrony Constraint](./SYNC_CONSTRAINT.md) — Detailed synchrony constraint documentation
+- [Casper Module Overview](./README.md) — Block creation, validation, merging, finalization
 
 ---
 

@@ -33,9 +33,12 @@ This ensures:
 
 ### Location
 
-- **Primary Implementation**: `/Users/leaf/Pyrofex/firefly/f1r3fly/casper/src/main/scala/coop/rchain/casper/SynchronyConstraintChecker.scala`
-- **Error Type**: `/Users/leaf/Pyrofex/firefly/f1r3fly/casper/src/main/scala/coop/rchain/casper/blocks/proposer/ProposeResult.scala` (lines 23, 41)
-- **Used By**: `/Users/leaf/Pyrofex/firefly/f1r3fly/casper/src/main/scala/coop/rchain/casper/blocks/proposer/Proposer.scala` (lines 184-190)
+- **Rust Implementation**: `casper/src/rust/synchrony_constraint_checker.rs`
+- **Error Type**: `casper/src/rust/blocks/proposer/propose_result.rs`
+- **Used By**: `casper/src/rust/blocks/proposer/proposer.rs`
+
+**Scala (legacy reference):**
+- `casper/src/main/scala/coop/rchain/casper/SynchronyConstraintChecker.scala`
 
 ### The Algorithm
 
@@ -158,7 +161,7 @@ casper {
 }
 ```
 
-**Location**: `/Users/leaf/Pyrofex/firefly/f1r3fly/node/src/main/resources/defaults.conf` (line 239)
+**Location**: `node/src/main/resources/defaults.conf`
 
 **Type**: `Double` (0.0 to 1.0)
 
