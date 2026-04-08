@@ -197,7 +197,7 @@ pub async fn find_deploy_handler(
     Query(query): Query<ViewQuery>,
 ) -> Response {
     match query.view.as_deref() {
-        Some("block") => match app_state.web_api.find_deploy(deploy_id).await {
+        Some("detail") => match app_state.web_api.find_deploy_detail(deploy_id).await {
             Ok(response) => Json(response).into_response(),
             Err(e) => AppError(e).into_response(),
         },
@@ -205,7 +205,7 @@ pub async fn find_deploy_handler(
             Ok(response) => Json(response).into_response(),
             Err(e) => AppError(e).into_response(),
         },
-        _ => match app_state.web_api.find_deploy_detail(deploy_id).await {
+        _ => match app_state.web_api.find_deploy(deploy_id).await {
             Ok(response) => Json(response).into_response(),
             Err(e) => AppError(e).into_response(),
         },
