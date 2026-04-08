@@ -75,7 +75,7 @@ use crate::rust::{
 const FINALIZER_BLOCKING_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 const MAX_ACTIVE_VALIDATORS_CACHE_ENTRIES: usize = 4096;
 fn deploy_heartbeat_wake_enabled() -> bool {
-    true
+    false
 }
 
 /// RAII guard that ensures the finalization flag is reset on drop.
