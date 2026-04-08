@@ -41,7 +41,7 @@ async fn pos_contract_should_return_correct_bonds_at_genesis() {
 
     let post_state_hash = genesis.genesis_block.body.state.post_state_hash.clone();
 
-    let result = node
+    let (result, _cost) = node
         .runtime_manager
         .play_exploratory_deploy(get_bonds_query.to_string(), &post_state_hash)
         .await
@@ -97,7 +97,7 @@ async fn system_vault_should_be_accessible_at_genesis() {
 
     let post_state_hash = genesis.genesis_block.body.state.post_state_hash.clone();
 
-    let result = node
+    let (result, _cost) = node
         .runtime_manager
         .play_exploratory_deploy(get_vault_query, &post_state_hash)
         .await
@@ -146,7 +146,7 @@ async fn validator_vaults_should_have_zero_balance_at_genesis() {
 
     let post_state_hash = genesis.genesis_block.body.state.post_state_hash.clone();
 
-    let result = node
+    let (result, _cost) = node
         .runtime_manager
         .play_exploratory_deploy(get_validator_vault_query, &post_state_hash)
         .await
@@ -277,7 +277,7 @@ async fn system_contracts_should_work_after_adding_block() {
     tracing::info!("Added block: {:?}", block.block_hash);
 
     // Query PoS in the new block's post-state
-    let result = node
+    let (result, _cost) = node
         .runtime_manager
         .play_exploratory_deploy(
             get_bonds_query.to_string(),
@@ -332,7 +332,7 @@ async fn validator_key_lookup_should_succeed_in_all_bonds() {
 
     let post_state_hash = genesis.genesis_block.body.state.post_state_hash.clone();
 
-    let result = node
+    let (result, _cost) = node
         .runtime_manager
         .play_exploratory_deploy(lookup_query, &post_state_hash)
         .await

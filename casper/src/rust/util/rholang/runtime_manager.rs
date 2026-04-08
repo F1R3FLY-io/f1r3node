@@ -751,11 +751,10 @@ impl RuntimeManager {
         &self,
         term: String,
         hash: &StateHash,
-    ) -> Result<Vec<Par>, CasperError> {
+    ) -> Result<(Vec<Par>, u64), CasperError> {
         let runtime = self.spawn_runtime().await;
         let mut runtime_ops = RuntimeOps::new(runtime);
-        let computed = runtime_ops.play_exploratory_deploy(term, hash).await?;
-        Ok(computed)
+        runtime_ops.play_exploratory_deploy(term, hash).await
     }
 
     pub async fn get_data(&self, hash: StateHash, channel: &Par) -> Result<Vec<Par>, CasperError> {

@@ -251,10 +251,17 @@ impl<T: TransportLayer + Send + Sync + 'static> ProposerInstance<T> {
                                     }
                                 }
                                 None => {
-                                    tracing::error!(
-                                        "Propose failed: {}",
-                                        propose_result.propose_status
-                                    )
+                                    if propose_result.is_no_new_deploys() {
+                                        tracing::info!(
+                                            "Propose: {}",
+                                            propose_result.propose_status
+                                        )
+                                    } else {
+                                        tracing::error!(
+                                            "Propose failed: {}",
+                                            propose_result.propose_status
+                                        )
+                                    }
                                 }
                             }
 

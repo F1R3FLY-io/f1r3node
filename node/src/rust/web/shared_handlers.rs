@@ -190,6 +190,7 @@ pub async fn data_at_name_handler(
     State(app_state): State<AppState>,
     Json(request): Json<DataAtNameRequest>,
 ) -> Response {
+    tracing::warn!("/data-at-name is deprecated, use /data-at-name-by-block-hash instead");
     match app_state.web_api.listen_for_data_at_name(request).await {
         Ok(response) => Json(response).into_response(),
         Err(e) => AppError(e).into_response(),
