@@ -75,7 +75,7 @@ use crate::rust::{
 const FINALIZER_BLOCKING_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 const MAX_ACTIVE_VALIDATORS_CACHE_ENTRIES: usize = 4096;
 fn deploy_heartbeat_wake_enabled() -> bool {
-    false
+    true
 }
 
 /// RAII guard that ensures the finalization flag is reset on drop.
@@ -1756,8 +1756,10 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasperImpl<T> {
         let deploy_info = PrettyPrinter::build_string_signed_deploy_data(&deploy);
         tracing::info!("Received {}", deploy_info);
 
-        // Deploy API already triggers propose asynchronously. Keep heartbeat wake opt-in to
-        // avoid duplicate propose races that inflate inclusion latency.
+        // Wake the heartbeat immediately so it picks up the new deploy without
+        // waiting for the next timer tick (up to check_interval seconds).
+        // ProposerInstance's Semaphore(1) prevents concurrent proposals even if
+        // both the heartbeat and autopropose (when enabled) try to propose.
         if deploy_heartbeat_wake_enabled() {
             if let Some(signal) = self.heartbeat_signal_ref.get() {
                 tracing::debug!(

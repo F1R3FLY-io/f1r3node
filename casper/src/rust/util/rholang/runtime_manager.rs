@@ -70,6 +70,8 @@ pub struct RuntimeManager {
     pub block_index_cache_order: Arc<Mutex<VecDeque<BlockHash>>>,
     pub active_validators_cache: Arc<DashMap<StateHash, Vec<Validator>>>,
     pub active_validators_cache_order: Arc<Mutex<VecDeque<StateHash>>>,
+    pub bonds_cache: Arc<DashMap<StateHash, Vec<Bond>>>,
+    pub bonds_cache_order: Arc<Mutex<VecDeque<StateHash>>>,
     /// Cache for merged parent post-state computation keyed by parent-set snapshot context.
     pub parents_post_state_cache: Arc<DashMap<ParentsPostStateCacheKey, ParentsPostStateCacheVal>>,
     pub parents_post_state_cache_order: Arc<Mutex<VecDeque<ParentsPostStateCacheKey>>>,
@@ -91,9 +93,10 @@ pub struct ParentsPostStateCacheKey {
 pub type ParentsPostStateCacheVal = (StateHash, Vec<prost::bytes::Bytes>);
 
 impl RuntimeManager {
-    const MAX_BLOCK_INDEX_CACHE_ENTRIES: usize = 32;
+    const MAX_BLOCK_INDEX_CACHE_ENTRIES: usize = 128;
     const MAX_PARENTS_POST_STATE_CACHE_ENTRIES: usize = 64;
     const MAX_ACTIVE_VALIDATORS_CACHE_ENTRIES: usize = 256;
+    const MAX_BONDS_CACHE_ENTRIES: usize = 64;
     const MAX_REPLAY_CACHE_ENTRIES: usize = 192;
     const MAX_REPLAY_CACHE_EVENT_LOG_ENTRIES: usize = 1_536;
     const MAX_STATE_HASH_CACHE_ENTRIES: usize = 0;
@@ -199,6 +202,10 @@ impl RuntimeManager {
 
     fn max_active_validators_cache_entries() -> usize {
         Self::MAX_ACTIVE_VALIDATORS_CACHE_ENTRIES
+    }
+
+    fn max_bonds_cache_entries() -> usize {
+        Self::MAX_BONDS_CACHE_ENTRIES
     }
 
     fn max_replay_cache_entries() -> usize {
@@ -720,9 +727,22 @@ impl RuntimeManager {
     }
 
     pub async fn compute_bonds(&self, hash: &StateHash) -> Result<Vec<Bond>, CasperError> {
+        if let Some(cached) = self.bonds_cache.get(hash) {
+            Self::touch_cache_key(&self.bonds_cache_order, hash);
+            return Ok(cached.clone());
+        }
+
         let runtime = self.spawn_runtime().await;
         let mut runtime_ops = RuntimeOps::new(runtime);
         let computed = runtime_ops.compute_bonds(hash).await?;
+
+        let max_entries = Self::max_bonds_cache_entries();
+        if self.bonds_cache.len() >= max_entries {
+            Self::evict_fifo_entry(&self.bonds_cache, &self.bonds_cache_order);
+        }
+        self.bonds_cache.insert(hash.clone(), computed.clone());
+        Self::touch_cache_key(&self.bonds_cache_order, hash);
+
         Ok(computed)
     }
 
@@ -1050,6 +1070,8 @@ impl RuntimeManager {
             block_index_cache_order: Arc::new(Mutex::new(VecDeque::new())),
             active_validators_cache: Arc::new(DashMap::new()),
             active_validators_cache_order: Arc::new(Mutex::new(VecDeque::new())),
+            bonds_cache: Arc::new(DashMap::new()),
+            bonds_cache_order: Arc::new(Mutex::new(VecDeque::new())),
             parents_post_state_cache: Arc::new(DashMap::new()),
             parents_post_state_cache_order: Arc::new(Mutex::new(VecDeque::new())),
             replay_cache: (replay_cache_size > 0)

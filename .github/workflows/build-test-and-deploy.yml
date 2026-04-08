@@ -279,7 +279,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: F1R3FLY-io/system-integration
-          ref: c049bb58c2563fac332b4244f6367511eb260c08
+          ref: feat/integration-test-improvements  # TODO: revert to main after PR #49 merges
           path: system-integration
 
       - uses: actions/setup-python@v5
@@ -351,7 +351,8 @@ jobs:
             integration-tests/test/test_dag_correctness.py \
             integration-tests/test/test_finalization.py \
             integration-tests/test/test_propose.py \
-            integration-tests/test/test_replay_determinism.py \
+            integration-tests/test/test_replay_correctness.py \
+            integration-tests/test/test_convergence.py \
             integration-tests/test/test_bridge_admin.py \
             integration-tests/test/test_shard_degradation.py \
             integration-tests/test/test_consensus_health.py \
@@ -361,8 +362,7 @@ jobs:
             integration-tests/test/test_trim_state.py \
             -v --tb=short --log-cli-level=WARNING \
             -n 3 --dist=loadgroup \
-            --startup-timeout=600 --command-timeout=300 --timeout=600 $SCALE_FLAG \
-            --deselect=integration-tests/test/test_replay_determinism.py::test_network_recovers_from_slow_deploy  # TODO: re-enable once LFB convergence after phlo-exhausting deploys is fixed
+            --startup-timeout=600 --command-timeout=300 --timeout=1200 $SCALE_FLAG
 
       - name: Upload Integration Test Logs
         if: always()
