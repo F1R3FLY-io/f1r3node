@@ -107,19 +107,32 @@ pub fn merge<
     use rspace_plus_plus::rspace::merger::merging_logic::compute_related_sets;
     let (branches, branches_time) =
         measure_time(|| compute_related_sets(&merge_set, |a, b| depends(a, b)));
+    metrics::histogram!(
+        crate::rust::metrics_constants::DAG_MERGE_BRANCHES_TIME_METRIC,
+        "source" => crate::rust::metrics_constants::MERGING_METRICS_SOURCE
+    ).record(branches_time.as_secs_f64());
 
     // Compute relation map for conflicting branches with timing
     use rspace_plus_plus::rspace::merger::merging_logic::compute_relation_map;
     let branches_set = HashableSet(branches.0.iter().cloned().collect());
     let (conflict_map, conflicts_map_time) =
         measure_time(|| compute_relation_map(&branches_set, |a, b| conflicts(a, b)));
+    metrics::histogram!(
+        crate::rust::metrics_constants::DAG_MERGE_CONFLICTS_MAP_TIME_METRIC,
+        "source" => crate::rust::metrics_constants::MERGING_METRICS_SOURCE
+    ).record(conflicts_map_time.as_secs_f64());
 
     // Compute rejection options that leave only non-conflicting branches with timing
     use rspace_plus_plus::rspace::merger::merging_logic::compute_rejection_options;
     let (rejection_options, rejection_options_time) =
         measure_time(|| compute_rejection_options(&conflict_map));
+    metrics::histogram!(
+        crate::rust::metrics_constants::DAG_MERGE_REJECTION_OPTIONS_TIME_METRIC,
+        "source" => crate::rust::metrics_constants::MERGING_METRICS_SOURCE
+    ).record(rejection_options_time.as_secs_f64());
 
     // Get base mergeable channel results
+    let channel_reads_start = Instant::now();
     // Sort keys for deterministic ordering across instances
     let mut all_channel_keys_set: std::collections::HashSet<Blake2b256Hash> =
         std::collections::HashSet::new();
@@ -153,6 +166,11 @@ pub fn merge<
             }
         }
     }
+
+    metrics::histogram!(
+        "dag.merge.channel-reads.time",
+        "source" => crate::rust::metrics_constants::MERGING_METRICS_SOURCE
+    ).record(channel_reads_start.elapsed().as_secs_f64());
 
     // Get merged result rejection options
     let rejection_options_with_overflow = get_merged_result_rejection(
@@ -239,6 +257,11 @@ pub fn merge<
             }
             Ok(combined)
         })?;
+
+    metrics::histogram!(
+        "dag.merge.combine-changes.time",
+        "source" => crate::rust::metrics_constants::MERGING_METRICS_SOURCE
+    ).record(combine_all_changes_time.as_secs_f64());
 
     // Combine all mergeable channels (in sorted order)
     let mut all_mergeable_channels = NumberChannelsDiff::new();

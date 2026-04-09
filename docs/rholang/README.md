@@ -247,4 +247,6 @@ Test suites in `tests/`: `interpreter_spec.rs`, `reduce_spec.rs`, `substitute_te
 
 The `non_deterministic_processes_spec.rs` suite contains 9 replay consistency tests using the `evaluate_and_replay()` helper, which follows a play-checkpoint-rig-replay-verify cycle: evaluate the Rholang term, create a soft checkpoint, configure mock services to fail, replay from the checkpoint, and verify the replay trace matches the original. Tests cover GPT-4, DALL-E 3, TTS, and gRPC tell for both success and error cases.
 
-[← Back to overview](./README.md)
+**See also:** [rholang/ crate README](../../rholang/README.md) | [Rholang Tutorial](./rholangtut.md) | [Pattern Matching](./rholangmatchingtut.md) | [Ollama Integration](./ollama.md)
+
+[← Back to docs index](../README.md)

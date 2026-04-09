@@ -1,54 +1,23 @@
 # Models
 
-Common data model types common for the RChain blockchain.
+Protobuf-generated types, domain structs (blocks, deploys, validators), Rholang AST, and sorted collections for the F1r3fly blockchain.
 
-### Prerequisites
+## Building
 
-* [sbt](http://www.scala-sbt.org/download.html)
-
-### Building
-
-```
-sbt compile
+```bash
+cargo build --release -p models
+cargo build --profile dev -p models   # debug mode
 ```
 
-### Testing
+## Testing
 
-```
-sbt test
-```
-
-Testing with coverage:
-
-```
-sbt clean coverage test
+```bash
+cargo test -p models
+cargo test --release -p models
+cargo test --test <test_file_name>               # specific test file
+cargo test --test <folder>::<test_file_name>      # specific test in folder
 ```
 
-Generating a coverage report:
+## Documentation
 
-```
-sbt coverageReport
-```
-
-The HTML version of the generated report is located at:
-
- `./target/scala-<version>/scoverage-report/index.html`
- 
- ## Rust
-
-Parts of this directory are ported to Rust.
-
-### Building
-
-To build the `models` Rust library, run `cargo build --release -p models`
-  - `cargo build --profile dev -p models` will build the library in debug mode
-
-### Testing
-
-To run all tests: `cargo test`
-
-Run all tests in release mode: `cargo test --release`
-
-To run specific test file: `cargo test --test <test_file_name>`
-
-To run specific test in specific folder: `cargo test --test <test_folder_name>::<test_file_name>`
+- [Models Module Overview](../docs/models/README.md) — Protobuf types, Rholang AST, sorted collections

@@ -132,6 +132,13 @@ impl ProposeResult {
             propose_status: ProposeStatus::Failure(status),
         }
     }
+
+    pub fn is_no_new_deploys(&self) -> bool {
+        matches!(
+            self.propose_status,
+            ProposeStatus::Failure(ProposeFailure::NoNewDeploys)
+        )
+    }
 }
 
 impl BlockCreatorResult {
@@ -149,7 +156,7 @@ impl fmt::Display for ProposeStatus {
         match self {
             ProposeStatus::Success(r) => write!(f, "Propose succeed: {:?}", r.result),
             ProposeStatus::Failure(failure) => match failure {
-                ProposeFailure::NoNewDeploys => write!(f, "Proposal failed: NoNewDeploys"),
+                ProposeFailure::NoNewDeploys => write!(f, "Proposal failed: NoNewDeploys. No unprocessed deploys in pool. If you just deployed, the deploy may have already been included by the auto-proposer."),
                 ProposeFailure::InternalDeployError => {
                     write!(f, "Proposal failed: internal deploy error")
                 }

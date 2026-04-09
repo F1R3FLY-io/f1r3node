@@ -146,7 +146,7 @@ async fn exploratory_deploy_should_get_data_from_read_only_node() {
 
     // Verify result
     match result {
-        Ok((pars, last_finalized_block)) => {
+        Ok((pars, last_finalized_block, _cost)) => {
             // Verify we got the stored data back
             assert!(!pars.is_empty(), "Exploratory deploy should return data");
 

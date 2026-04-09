@@ -472,3 +472,7 @@ Organizations migrating from Scala to Rust gain:
 ---
 
 *The Rust implementation represents a significant evolution of F1r3fly's communication architecture, maintaining full backward compatibility while providing enterprise-grade improvements in safety, performance, and concurrency.*
+
+## Documentation
+
+- [Comm Module Overview](../docs/comm/README.md) — Architecture, transport layer, connection management

@@ -862,7 +862,7 @@ impl RuntimeOps {
         &mut self,
         term: String,
         hash: &StateHash,
-    ) -> Result<Vec<Par>, CasperError> {
+    ) -> Result<(Vec<Par>, u64), CasperError> {
         let deploy_result = (|| async {
             let deploy = construct_deploy::source_deploy(
                 term,
@@ -891,9 +891,8 @@ impl RuntimeOps {
         match deploy_result.await {
             Ok(result) => Ok(result),
             Err(err) => {
-                println!("Error in play_exploratory_deploy: {:?}", err);
                 tracing::error!("Error in play_exploratory_deploy: {:?}", err);
-                Ok(Vec::new())
+                Ok((Vec::new(), 0))
             }
         }
     }
@@ -1013,8 +1012,10 @@ impl RuntimeOps {
             })),
         }]);
 
-        self.capture_results_with_name(start, deploy, &return_name)
-            .await
+        let (data, _cost) = self
+            .capture_results_with_name(start, deploy, &return_name)
+            .await?;
+        Ok(data)
     }
 
     pub async fn capture_results_with_name(
@@ -1022,7 +1023,7 @@ impl RuntimeOps {
         start: &StateHash,
         deploy: &Signed<DeployData>,
         name: &Par,
-    ) -> Result<Vec<Par>, CasperError> {
+    ) -> Result<(Vec<Par>, u64), CasperError> {
         match self.capture_results_with_errors(start, deploy, name).await {
             Ok(result) => Ok(result),
             Err(err) => Err(CasperError::InterpreterError(
@@ -1039,7 +1040,7 @@ impl RuntimeOps {
         start: &StateHash,
         deploy: &Signed<DeployData>,
         name: &Par,
-    ) -> Result<Vec<Par>, CasperError> {
+    ) -> Result<(Vec<Par>, u64), CasperError> {
         self.runtime
             .reset(&Blake2b256Hash::from_bytes_prost(start))?;
 
@@ -1048,7 +1049,8 @@ impl RuntimeOps {
             return Err(CasperError::InterpreterError(eval_res.errors[0].clone()));
         }
 
-        Ok(self.get_data_par(name))
+        let cost = eval_res.cost.value.max(0) as u64;
+        Ok((self.get_data_par(name), cost))
     }
 
     /* Evaluates Rholang source code */

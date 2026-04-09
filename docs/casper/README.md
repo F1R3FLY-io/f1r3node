@@ -172,4 +172,6 @@ If the visible block count exceeds `MAX_PARENT_MERGE_SCOPE_BLOCKS` (512) or the 
 
 Feature-gated `test_utils` module (`#[cfg(feature = "test-utils")]`) provides test infrastructure: `helper/` (test_node, block_generator, block_dag_storage_fixture, block_util, bonding_util, no_ops_casper_effect) and `util/` (genesis_builder, test_mocks, rholang/resources, comm/transport_layer_test_impl). Integration tests for block_report_api and reporting_casper.
 
-[← Back to overview](./README.md)
+**See also:** [casper/ crate README](../../casper/README.md) | [Consensus Protocol](./CONSENSUS_PROTOCOL.md) | [Byzantine Fault Tolerance](./BYZANTINE_FAULT_TOLERANCE.md) | [Synchrony Constraint](./SYNC_CONSTRAINT.md)
+
+[← Back to docs index](../README.md)
