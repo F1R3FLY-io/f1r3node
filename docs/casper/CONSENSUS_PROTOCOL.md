@@ -427,7 +427,7 @@ See [F1R3FLY-io/f1r3node issues](https://github.com/F1R3FLY-io/f1r3node/issues) 
 | File | Role |
 |------|------|
 | `casper/src/rust/blocks/proposer/proposer.rs` | Proposal orchestration, constraint checks |
-| `casper/src/rust/blocks/proposer/block_creator.rs` | Deploy selection, block assembly, adaptive cap |
+| `casper/src/rust/blocks/proposer/block_creator.rs` | Deploy selection, block assembly |
 | `casper/src/rust/blocks/block_processor.rs` | 8-step validation pipeline, casper buffer |
 | `casper/src/rust/validate.rs` | Individual validation rules |
 

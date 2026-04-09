@@ -1,7 +1,6 @@
 // See casper/src/main/scala/coop/rchain/casper/blocks/proposer/BlockCreator.scala
 
 use prost::bytes::Bytes;
-use std::sync::OnceLock;
 use std::sync::{Arc, Mutex};
 use std::{collections::HashSet, time::SystemTime};
 use tracing;
@@ -180,21 +179,8 @@ async fn prepare_user_deploys(
         deploy_storage_guard.remove(expired_list)?;
     }
 
-    let pending_unique_count = valid_unique.len();
     let max_deploys = casper_snapshot.on_chain_state.shard_conf.max_user_deploys_per_block as usize;
-    if should_bypass_adaptive_cap_for_small_batch(
-        pending_unique_count,
-        max_deploys,
-        adaptive_small_batch_bypass_threshold(),
-    ) {
-        return Ok(PreparedUserDeploys {
-            deploys: valid_unique,
-            effective_cap: pending_unique_count,
-            cap_hit: false,
-        });
-    }
-
-    let max_user_deploys = effective_user_deploys_per_block_cap(pending_unique_count, max_deploys);
+    let max_user_deploys = max_deploys;
     if valid_unique.len() <= max_user_deploys {
         return Ok(PreparedUserDeploys {
             deploys: valid_unique,
@@ -262,230 +248,6 @@ async fn prepare_user_deploys(
         effective_cap: max_user_deploys,
         cap_hit: true,
     })
-}
-
-
-#[derive(Debug)]
-struct AdaptiveDeployCapState {
-    current_cap: usize,
-    ema_create_block_ms: Option<f64>,
-}
-
-fn adaptive_user_deploy_cap_enabled() -> bool {
-    true
-}
-
-fn adaptive_user_deploy_target_ms() -> u64 {
-    1_000
-}
-
-fn adaptive_user_deploy_min_cap(max_cap: usize) -> usize {
-    1_usize.clamp(1, max_cap)
-}
-
-fn adaptive_small_batch_bypass_threshold() -> usize {
-    3
-}
-
-fn should_bypass_adaptive_cap_for_small_batch(
-    pending_count: usize,
-    max_cap: usize,
-    bypass_threshold: usize,
-) -> bool {
-    if pending_count == 0 {
-        return false;
-    }
-
-    let effective_threshold = bypass_threshold.min(max_cap);
-    pending_count <= effective_threshold
-}
-
-fn adaptive_user_deploy_cap_state(
-    max_cap: usize,
-    min_cap: usize,
-) -> &'static Mutex<AdaptiveDeployCapState> {
-    static VALUE: OnceLock<Mutex<AdaptiveDeployCapState>> = OnceLock::new();
-    VALUE.get_or_init(|| {
-        Mutex::new(AdaptiveDeployCapState {
-            current_cap: max_cap.clamp(min_cap, max_cap),
-            ema_create_block_ms: None,
-        })
-    })
-}
-
-fn adaptive_backlog_floor_enabled() -> bool {
-    true
-}
-
-fn adaptive_backlog_floor_trigger() -> usize {
-    2
-}
-
-fn adaptive_backlog_floor_divisor() -> usize {
-    2
-}
-
-fn adaptive_backlog_floor_min(max_cap: usize) -> usize {
-    2_usize.clamp(1, max_cap)
-}
-
-fn adaptive_backlog_floor_max(max_cap: usize) -> usize {
-    8_usize.clamp(1, max_cap)
-}
-
-fn backlog_floor_for_pending(
-    pending_count: usize,
-    max_cap: usize,
-    trigger: usize,
-    divisor: usize,
-    min_floor: usize,
-    max_floor: usize,
-) -> usize {
-    if pending_count < trigger {
-        return 1;
-    }
-
-    let divisor = divisor.max(1);
-    let ceil_div = pending_count.saturating_add(divisor - 1) / divisor;
-    ceil_div
-        .clamp(min_floor.max(1), max_floor.max(min_floor))
-        .clamp(1, max_cap)
-}
-
-fn adaptive_backlog_floor(max_cap: usize, pending_count: usize) -> usize {
-    if !adaptive_backlog_floor_enabled() {
-        return 1;
-    }
-
-    let trigger = adaptive_backlog_floor_trigger();
-    let divisor = adaptive_backlog_floor_divisor();
-    let min_floor = adaptive_backlog_floor_min(max_cap);
-    let max_floor = adaptive_backlog_floor_max(max_cap);
-
-    backlog_floor_for_pending(
-        pending_count,
-        max_cap,
-        trigger,
-        divisor,
-        min_floor,
-        max_floor,
-    )
-}
-
-fn effective_user_deploys_per_block_cap(pending_count: usize, max_cap: usize) -> usize {
-    if !adaptive_user_deploy_cap_enabled() {
-        return max_cap;
-    }
-
-    let min_cap = adaptive_user_deploy_min_cap(max_cap);
-    let backlog_floor = adaptive_backlog_floor(max_cap, pending_count);
-    let state = adaptive_user_deploy_cap_state(max_cap, min_cap);
-    match state.lock() {
-        Ok(mut guard) => {
-            guard.current_cap = guard.current_cap.clamp(min_cap, max_cap);
-            std::cmp::max(guard.current_cap, backlog_floor)
-        }
-        Err(err) => {
-            tracing::warn!(
-                "Adaptive deploy cap lock poisoned while reading current cap: {}",
-                err
-            );
-            max_cap
-        }
-    }
-}
-
-fn next_adaptive_cap(
-    current_cap: usize,
-    min_cap: usize,
-    max_cap: usize,
-    target_ms: f64,
-    ema_ms: f64,
-    cap_hit: bool,
-) -> usize {
-    if min_cap >= max_cap {
-        return max_cap;
-    }
-
-    let current_cap = current_cap.clamp(min_cap, max_cap);
-    if !(target_ms.is_finite() && target_ms > 0.0 && ema_ms.is_finite() && ema_ms > 0.0) {
-        return current_cap;
-    }
-
-    if ema_ms > target_ms {
-        // Reduce cap proportionally when observed block creation time exceeds the target.
-        let ratio = (target_ms / ema_ms).clamp(0.1, 0.99);
-        let scaled = ((current_cap as f64) * ratio).floor() as usize;
-        let max_step_down = current_cap.saturating_sub(1).max(min_cap);
-        return scaled.clamp(min_cap, max_step_down);
-    }
-
-    const INCREASE_THRESHOLD_RATIO: f64 = 0.75;
-    if cap_hit && ema_ms < target_ms * INCREASE_THRESHOLD_RATIO {
-        // Increase only when we saturated the cap and have enough latency headroom.
-        let ratio = (target_ms / ema_ms).clamp(1.0, 1.5);
-        let scaled = ((current_cap as f64) * ratio).ceil() as usize;
-        let min_step_up = current_cap.saturating_add(1).min(max_cap);
-        return scaled.max(min_step_up).min(max_cap);
-    }
-
-    current_cap
-}
-
-fn update_adaptive_user_deploy_cap(
-    observed_create_block_ms: u128,
-    selected_user_deploys: usize,
-    cap_hit: bool,
-    max_deploys: usize,
-) {
-    if !adaptive_user_deploy_cap_enabled() || selected_user_deploys == 0 {
-        return;
-    }
-
-    let max_cap = max_deploys;
-    let min_cap = adaptive_user_deploy_min_cap(max_cap);
-    if min_cap >= max_cap {
-        return;
-    }
-
-    let target_ms = adaptive_user_deploy_target_ms() as f64;
-    let sample_ms = observed_create_block_ms as f64;
-    let state = adaptive_user_deploy_cap_state(max_cap, min_cap);
-
-    let mut guard = match state.lock() {
-        Ok(guard) => guard,
-        Err(err) => {
-            tracing::warn!(
-                "Adaptive deploy cap lock poisoned while updating cap: {}",
-                err
-            );
-            return;
-        }
-    };
-
-    guard.current_cap = guard.current_cap.clamp(min_cap, max_cap);
-
-    const EMA_ALPHA: f64 = 0.35;
-    let prev_ema = guard.ema_create_block_ms.unwrap_or(target_ms);
-    let ema_ms = prev_ema + EMA_ALPHA * (sample_ms - prev_ema);
-    guard.ema_create_block_ms = Some(ema_ms);
-
-    let prev_cap = guard.current_cap;
-    let next_cap = next_adaptive_cap(prev_cap, min_cap, max_cap, target_ms, ema_ms, cap_hit);
-
-    if next_cap != prev_cap {
-        guard.current_cap = next_cap;
-        tracing::info!(
-            "Adaptive deploy cap update: prev_cap={}, next_cap={}, sample_create_block_ms={}, ema_create_block_ms={:.2}, target_ms={}, selected_user_deploys={}, cap_hit={}",
-            prev_cap,
-            next_cap,
-            observed_create_block_ms,
-            ema_ms,
-            target_ms as u64,
-            selected_user_deploys,
-            cap_hit
-        );
-    }
 }
 
 fn collect_self_chain_deploy_sigs(
@@ -669,7 +431,7 @@ pub async fn create(
     let shard_id = casper_snapshot.on_chain_state.shard_conf.shard_name.clone();
 
     // Prepare deploys
-    let (user_deploys, selected_user_deploy_cap, selected_user_deploy_cap_hit) = {
+    let (user_deploys, _, _) = {
         let t = std::time::Instant::now();
         let prepared = prepare_user_deploys(
             casper_snapshot,
@@ -724,8 +486,6 @@ pub async fn create(
         );
         v
     };
-
-    let selected_user_deploy_count = user_deploys.len();
 
     // Combine all deploys. prepare_user_deploys already removed deploys in scope.
     let mut all_deploys: HashSet<Signed<DeployData>> = user_deploys;
@@ -864,13 +624,6 @@ pub async fn create(
         total_create_block_ms
     );
 
-    update_adaptive_user_deploy_cap(
-        total_create_block_ms,
-        selected_user_deploy_count,
-        selected_user_deploy_cap_hit && selected_user_deploy_count >= selected_user_deploy_cap,
-        casper_snapshot.on_chain_state.shard_conf.max_user_deploys_per_block as usize,
-    );
-
     RuntimeManager::trim_allocator();
 
     Ok(BlockCreatorResult::Created(
@@ -937,74 +690,3 @@ fn not_future_deploy(current_block_number: i64, deploy_data: &DeployData) -> boo
     deploy_data.valid_after_block_number < current_block_number
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{
-        backlog_floor_for_pending, next_adaptive_cap, should_bypass_adaptive_cap_for_small_batch,
-    };
-
-    #[test]
-    fn adaptive_cap_reduces_when_latency_exceeds_target() {
-        let next = next_adaptive_cap(32, 1, 32, 1000.0, 2500.0, true);
-        assert_eq!(next, 12);
-    }
-
-    #[test]
-    fn adaptive_cap_increases_when_capped_and_headroom_exists() {
-        let next = next_adaptive_cap(4, 1, 32, 1000.0, 400.0, true);
-        assert_eq!(next, 6);
-    }
-
-    #[test]
-    fn adaptive_cap_does_not_increase_when_not_capped() {
-        let next = next_adaptive_cap(8, 1, 32, 1000.0, 300.0, false);
-        assert_eq!(next, 8);
-    }
-
-    #[test]
-    fn adaptive_cap_respects_min_and_max_bounds() {
-        let down = next_adaptive_cap(3, 2, 4, 1000.0, 5000.0, true);
-        let up = next_adaptive_cap(3, 2, 4, 1000.0, 250.0, true);
-        assert_eq!(down, 2);
-        assert_eq!(up, 4);
-    }
-
-    #[test]
-    fn backlog_floor_disabled_below_trigger() {
-        let floor = backlog_floor_for_pending(7, 32, 8, 4, 2, 16);
-        assert_eq!(floor, 1);
-    }
-
-    #[test]
-    fn backlog_floor_scales_with_pending_pool() {
-        let floor = backlog_floor_for_pending(35, 32, 8, 4, 2, 16);
-        assert_eq!(floor, 9);
-    }
-
-    #[test]
-    fn backlog_floor_respects_bounds() {
-        let floor = backlog_floor_for_pending(512, 32, 8, 4, 2, 16);
-        assert_eq!(floor, 16);
-
-        let floor_small_cap = backlog_floor_for_pending(64, 6, 8, 4, 2, 16);
-        assert_eq!(floor_small_cap, 6);
-    }
-
-    #[test]
-    fn small_batch_bypass_applies_when_pending_within_threshold() {
-        assert!(should_bypass_adaptive_cap_for_small_batch(3, 32, 3));
-        assert!(should_bypass_adaptive_cap_for_small_batch(2, 32, 3));
-    }
-
-    #[test]
-    fn small_batch_bypass_does_not_apply_for_zero_or_large_pending() {
-        assert!(!should_bypass_adaptive_cap_for_small_batch(0, 32, 3));
-        assert!(!should_bypass_adaptive_cap_for_small_batch(4, 32, 3));
-    }
-
-    #[test]
-    fn small_batch_bypass_respects_max_cap_bound() {
-        assert!(should_bypass_adaptive_cap_for_small_batch(6, 6, 16));
-        assert!(!should_bypass_adaptive_cap_for_small_batch(7, 6, 16));
-    }
-}
