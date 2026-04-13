@@ -1635,7 +1635,7 @@ impl SystemProcesses {
         &self,
         contract_args: (Vec<ListParWithRandom>, bool, Vec<Par>),
     ) -> Result<Vec<Par>, InterpreterError> {
-        let Some((produce, is_replay, previous_output, args)) =
+        let Some((produce, _, _, args)) =
             self.is_contract_call().unapply(contract_args)
         else {
             return Err(illegal_argument_error("chroma_create_collection"));
@@ -1709,7 +1709,7 @@ impl SystemProcesses {
         &self,
         contract_args: (Vec<ListParWithRandom>, bool, Vec<Par>),
     ) -> Result<Vec<Par>, InterpreterError> {
-        let Some((produce, is_replay, previous_output, args)) =
+        let Some((produce, _, _, args)) =
             self.is_contract_call().unapply(contract_args)
         else {
             return Err(illegal_argument_error("chroma_upsert_entries"));
@@ -1782,7 +1782,7 @@ impl SystemProcesses {
         &self,
         contract_args: (Vec<ListParWithRandom>, bool, Vec<Par>),
     ) -> Result<Vec<Par>, InterpreterError> {
-        let Some((produce, is_replay, previous_output, args)) =
+        let Some((produce, _, _, args)) =
             self.is_contract_call().unapply(contract_args)
         else {
             return Err(illegal_argument_error("chroma_delete_documents"));
