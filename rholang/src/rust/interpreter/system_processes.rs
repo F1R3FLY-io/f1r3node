@@ -265,6 +265,7 @@ pub fn non_deterministic_ops() -> HashSet<i64> {
         BodyRefs::OLLAMA_GENERATE,
         BodyRefs::OLLAMA_MODELS,
         BodyRefs::GRPC_TELL,
+        BodyRefs::CHROMA_QUERY,
     ])
 }
 
@@ -1659,12 +1660,6 @@ impl SystemProcesses {
             return Err(illegal_argument_error("chroma_create_collection"));
         };
 
-        // Common piece of code.
-        if is_replay {
-            produce(&previous_output, ack).await?;
-            return Ok(previous_output);
-        }
-
         self.chromadb_service
             .create_collection(&collection_name, ignore_or_update_if_exists, metadata)
             .await?;
@@ -1729,12 +1724,6 @@ impl SystemProcesses {
         ) else {
             return Err(illegal_argument_error("chroma_upsert_entries"));
         };
-
-        // Common piece of code.
-        if is_replay {
-            produce(&previous_output, ack).await?;
-            return Ok(previous_output);
-        }
 
         self.chromadb_service
             .upsert_entries(&collection_name, entries)
@@ -1808,12 +1797,6 @@ impl SystemProcesses {
         ) else {
             return Err(illegal_argument_error("chroma_delete_documents"));
         };
-
-        // Common piece of code.
-        if is_replay {
-            produce(&previous_output, ack).await?;
-            return Ok(previous_output);
-        }
 
         self.chromadb_service
             .delete_documents(&collection_name, doc_ids)
