@@ -43,7 +43,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::{
     collections::HashSet,
-    sync::{Arc, Mutex, OnceLock},
+    sync::{Arc, Mutex},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -334,18 +334,10 @@ pub struct Running<T: TransportLayer + Send + Sync> {
     block_retriever: BlockRetriever<T>,
 }
 
-const MAX_BLOCKS_IN_PROCESSING_DEFAULT: usize = 512;
-const MAX_BLOCKS_IN_PROCESSING_ENV: &str = "F1R3_MAX_BLOCKS_IN_PROCESSING";
-static MAX_BLOCKS_IN_PROCESSING: OnceLock<usize> = OnceLock::new();
+const MAX_BLOCKS_IN_PROCESSING: usize = 2_048;
 
 fn max_blocks_in_processing() -> usize {
-    *MAX_BLOCKS_IN_PROCESSING.get_or_init(|| {
-        std::env::var(MAX_BLOCKS_IN_PROCESSING_ENV)
-            .ok()
-            .and_then(|v| v.parse::<usize>().ok())
-            .filter(|v| *v > 0)
-            .unwrap_or(MAX_BLOCKS_IN_PROCESSING_DEFAULT)
-    })
+    MAX_BLOCKS_IN_PROCESSING
 }
 
 impl<T: TransportLayer + Send + Sync> Running<T> {

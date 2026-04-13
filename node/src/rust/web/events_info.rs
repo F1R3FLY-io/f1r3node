@@ -11,7 +11,6 @@ use futures::StreamExt;
 use serde_json::{json, Value};
 
 use shared::rust::shared::{f1r3fly_event::F1r3flyEvent, f1r3fly_events::EventStream};
-use tracing::error;
 
 use crate::rust::web::shared_handlers::AppState;
 
@@ -37,7 +36,8 @@ impl EventsInfo {
 
         while let Some(event) = event_stream.next().await {
             if let Err(e) = Self::send_event_to_websocket(&mut socket, &event).await {
-                error!("Failed to send event to WebSocket: {}", e);
+                tracing::debug!("WebSocket client disconnected: {}", e);
+                break;
             }
         }
     }

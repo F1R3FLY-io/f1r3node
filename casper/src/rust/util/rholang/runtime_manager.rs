@@ -5,7 +5,7 @@ use dashmap::DashMap;
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::hash::Hash;
 use std::sync::Arc;
-use std::sync::{Mutex, OnceLock};
+use std::sync::Mutex;
 
 use crypto::rust::hash::blake2b256::Blake2b256;
 use crypto::rust::signatures::signed::Signed;
@@ -70,6 +70,8 @@ pub struct RuntimeManager {
     pub block_index_cache_order: Arc<Mutex<VecDeque<BlockHash>>>,
     pub active_validators_cache: Arc<DashMap<StateHash, Vec<Validator>>>,
     pub active_validators_cache_order: Arc<Mutex<VecDeque<StateHash>>>,
+    pub bonds_cache: Arc<DashMap<StateHash, Vec<Bond>>>,
+    pub bonds_cache_order: Arc<Mutex<VecDeque<StateHash>>>,
     /// Cache for merged parent post-state computation keyed by parent-set snapshot context.
     pub parents_post_state_cache: Arc<DashMap<ParentsPostStateCacheKey, ParentsPostStateCacheVal>>,
     pub parents_post_state_cache_order: Arc<Mutex<VecDeque<ParentsPostStateCacheKey>>>,
@@ -91,20 +93,13 @@ pub struct ParentsPostStateCacheKey {
 pub type ParentsPostStateCacheVal = (StateHash, Vec<prost::bytes::Bytes>);
 
 impl RuntimeManager {
-    const MAX_BLOCK_INDEX_CACHE_ENTRIES: usize = 64;
-    const MAX_BLOCK_INDEX_CACHE_ENTRIES_ENV: &str = "F1R3_BLOCK_INDEX_CACHE_MAX_ENTRIES";
-    const MAX_PARENTS_POST_STATE_CACHE_ENTRIES: usize = 128;
-    const MAX_PARENTS_POST_STATE_CACHE_ENTRIES_ENV: &str =
-        "F1R3_PARENTS_POST_STATE_CACHE_MAX_ENTRIES";
+    const MAX_BLOCK_INDEX_CACHE_ENTRIES: usize = 128;
+    const MAX_PARENTS_POST_STATE_CACHE_ENTRIES: usize = 64;
     const MAX_ACTIVE_VALIDATORS_CACHE_ENTRIES: usize = 256;
-    const MAX_ACTIVE_VALIDATORS_CACHE_ENTRIES_ENV: &str =
-        "F1R3_ACTIVE_VALIDATORS_CACHE_MAX_ENTRIES";
-    const MAX_REPLAY_CACHE_ENTRIES: usize = 256;
-    const MAX_REPLAY_CACHE_ENTRIES_ENV: &str = "F1R3_REPLAY_CACHE_MAX_ENTRIES";
-    const MAX_REPLAY_CACHE_EVENT_LOG_ENTRIES: usize = 2048;
-    const MAX_REPLAY_CACHE_EVENT_LOG_ENTRIES_ENV: &str = "F1R3_REPLAY_CACHE_MAX_EVENT_LOG_ENTRIES";
+    const MAX_BONDS_CACHE_ENTRIES: usize = 64;
+    const MAX_REPLAY_CACHE_ENTRIES: usize = 192;
+    const MAX_REPLAY_CACHE_EVENT_LOG_ENTRIES: usize = 1_536;
     const MAX_STATE_HASH_CACHE_ENTRIES: usize = 0;
-    const MAX_STATE_HASH_CACHE_ENTRIES_ENV: &str = "F1R3_STATE_HASH_CACHE_MAX_ENTRIES";
 
     fn collect_replay_logs(
         usr_processed: &[ProcessedDeploy],
@@ -198,80 +193,34 @@ impl RuntimeManager {
     }
 
     fn max_block_index_cache_entries() -> usize {
-        static VALUE: OnceLock<usize> = OnceLock::new();
-        *VALUE.get_or_init(|| {
-            std::env::var(Self::MAX_BLOCK_INDEX_CACHE_ENTRIES_ENV)
-                .ok()
-                .and_then(|v| v.parse::<usize>().ok())
-                .filter(|v| *v > 0)
-                .unwrap_or(Self::MAX_BLOCK_INDEX_CACHE_ENTRIES)
-        })
+        Self::MAX_BLOCK_INDEX_CACHE_ENTRIES
     }
 
     fn max_parents_post_state_cache_entries() -> usize {
-        static VALUE: OnceLock<usize> = OnceLock::new();
-        *VALUE.get_or_init(|| {
-            std::env::var(Self::MAX_PARENTS_POST_STATE_CACHE_ENTRIES_ENV)
-                .ok()
-                .and_then(|v| v.parse::<usize>().ok())
-                .filter(|v| *v > 0)
-                .unwrap_or(Self::MAX_PARENTS_POST_STATE_CACHE_ENTRIES)
-        })
+        Self::MAX_PARENTS_POST_STATE_CACHE_ENTRIES
     }
 
     fn max_active_validators_cache_entries() -> usize {
-        static VALUE: OnceLock<usize> = OnceLock::new();
-        *VALUE.get_or_init(|| {
-            std::env::var(Self::MAX_ACTIVE_VALIDATORS_CACHE_ENTRIES_ENV)
-                .ok()
-                .and_then(|v| v.parse::<usize>().ok())
-                .filter(|v| *v > 0)
-                .unwrap_or(Self::MAX_ACTIVE_VALIDATORS_CACHE_ENTRIES)
-        })
+        Self::MAX_ACTIVE_VALIDATORS_CACHE_ENTRIES
+    }
+
+    fn max_bonds_cache_entries() -> usize {
+        Self::MAX_BONDS_CACHE_ENTRIES
     }
 
     fn max_replay_cache_entries() -> usize {
-        static VALUE: OnceLock<usize> = OnceLock::new();
-        *VALUE.get_or_init(|| {
-            std::env::var(Self::MAX_REPLAY_CACHE_ENTRIES_ENV)
-                .ok()
-                .and_then(|v| v.parse::<usize>().ok())
-                .unwrap_or(Self::MAX_REPLAY_CACHE_ENTRIES)
-        })
+        Self::MAX_REPLAY_CACHE_ENTRIES
     }
 
     fn max_replay_cache_event_log_entries() -> usize {
-        static VALUE: OnceLock<usize> = OnceLock::new();
-        *VALUE.get_or_init(|| {
-            std::env::var(Self::MAX_REPLAY_CACHE_EVENT_LOG_ENTRIES_ENV)
-                .ok()
-                .and_then(|v| v.parse::<usize>().ok())
-                .unwrap_or(Self::MAX_REPLAY_CACHE_EVENT_LOG_ENTRIES)
-        })
+        Self::MAX_REPLAY_CACHE_EVENT_LOG_ENTRIES
     }
 
     fn max_state_hash_cache_entries() -> usize {
-        static VALUE: OnceLock<usize> = OnceLock::new();
-        *VALUE.get_or_init(|| {
-            std::env::var(Self::MAX_STATE_HASH_CACHE_ENTRIES_ENV)
-                .ok()
-                .and_then(|v| v.parse::<usize>().ok())
-                .unwrap_or(Self::MAX_STATE_HASH_CACHE_ENTRIES)
-        })
+        Self::MAX_STATE_HASH_CACHE_ENTRIES
     }
 
-    fn maybe_trim_allocator() {
-        let enabled = std::env::var("F1R3_RUNTIME_MALLOC_TRIM")
-            .ok()
-            .map(|v| {
-                let normalized = v.trim().to_ascii_lowercase();
-                normalized == "1" || normalized == "true" || normalized == "yes"
-            })
-            .unwrap_or(true);
-        if !enabled {
-            return;
-        }
-
+    pub fn trim_allocator() {
         #[cfg(target_os = "linux")]
         unsafe {
             unsafe extern "C" {
@@ -279,10 +228,6 @@ impl RuntimeManager {
             }
             let _ = malloc_trim(0);
         }
-    }
-
-    pub fn trim_allocator() {
-        Self::maybe_trim_allocator();
     }
 
     fn touch_cache_key<K>(order: &Mutex<VecDeque<K>>, key: &K)
@@ -782,9 +727,22 @@ impl RuntimeManager {
     }
 
     pub async fn compute_bonds(&self, hash: &StateHash) -> Result<Vec<Bond>, CasperError> {
+        if let Some(cached) = self.bonds_cache.get(hash) {
+            Self::touch_cache_key(&self.bonds_cache_order, hash);
+            return Ok(cached.clone());
+        }
+
         let runtime = self.spawn_runtime().await;
         let mut runtime_ops = RuntimeOps::new(runtime);
         let computed = runtime_ops.compute_bonds(hash).await?;
+
+        let max_entries = Self::max_bonds_cache_entries();
+        if self.bonds_cache.len() >= max_entries {
+            Self::evict_fifo_entry(&self.bonds_cache, &self.bonds_cache_order);
+        }
+        self.bonds_cache.insert(hash.clone(), computed.clone());
+        Self::touch_cache_key(&self.bonds_cache_order, hash);
+
         Ok(computed)
     }
 
@@ -793,11 +751,10 @@ impl RuntimeManager {
         &self,
         term: String,
         hash: &StateHash,
-    ) -> Result<Vec<Par>, CasperError> {
+    ) -> Result<(Vec<Par>, u64), CasperError> {
         let runtime = self.spawn_runtime().await;
         let mut runtime_ops = RuntimeOps::new(runtime);
-        let computed = runtime_ops.play_exploratory_deploy(term, hash).await?;
-        Ok(computed)
+        runtime_ops.play_exploratory_deploy(term, hash).await
     }
 
     pub async fn get_data(&self, hash: StateHash, channel: &Par) -> Result<Vec<Par>, CasperError> {
@@ -1086,7 +1043,7 @@ impl RuntimeManager {
      * the time. For some situations, we can just use the value directly for better performance.
      */
     pub fn empty_state_hash_fixed() -> StateHash {
-        hex::decode("8baa451071791021dcc8461478b960cffc78372e0d1479988daa852fa3685083")
+        hex::decode("6fd88addb9708fdbd89156e23e305763d643f437079cef10a8ab00095c60a345")
             .unwrap()
             .into()
     }
@@ -1112,6 +1069,8 @@ impl RuntimeManager {
             block_index_cache_order: Arc::new(Mutex::new(VecDeque::new())),
             active_validators_cache: Arc::new(DashMap::new()),
             active_validators_cache_order: Arc::new(Mutex::new(VecDeque::new())),
+            bonds_cache: Arc::new(DashMap::new()),
+            bonds_cache_order: Arc::new(Mutex::new(VecDeque::new())),
             parents_post_state_cache: Arc::new(DashMap::new()),
             parents_post_state_cache_order: Arc::new(Mutex::new(VecDeque::new())),
             replay_cache: (replay_cache_size > 0)

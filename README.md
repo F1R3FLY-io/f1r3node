@@ -20,7 +20,7 @@
   - [Smoke Test](#smoke-test)
   - [F1r3flyFS](#f1r3flyfs)
 - [Configuration](#configuration-file)
-- [Rust Codebase Documentation](#rust-codebase-documentation)
+- [Documentation](#documentation)
 - [Troubleshooting](#troubleshooting)
 - [Support & Community](#support--community)
 - [Known Issues & Reporting](#caveats-and-filing-issues)
@@ -83,7 +83,7 @@ docker compose -f docker/shard.yml up
 
 Data persists in named Docker volumes. Fresh start: `docker compose -f docker/standalone.yml down -v`
 
-Docker Compose loads `docker/.env` automatically — it contains node credentials and optional tuning. See [docker/.env.example](docker/.env.example) for all available variables.
+Docker Compose loads `docker/.env` automatically — it contains node credentials and AI service configuration. See [docker/.env.example](docker/.env.example) for all available variables.
 
 See [docker/README.md](docker/README.md) for shard setup, validator bonding, and network configuration.
 
@@ -180,9 +180,8 @@ docker compose -f docker/standalone.yml down
 ```bash
 docker compose -f docker/shard.yml up -d
 
-# Wait for genesis (~2-3 min)
+# Wait for genesis (~2-3 min), then check all nodes reached Running state
 docker compose -f docker/shard.yml logs 2>&1 | grep "Making a transition to Running state"
-# Ctrl+C once all validators report Running
 
 docker compose -f docker/shard.yml logs -f         # Follow logs
 docker compose -f docker/shard.yml down             # Stop
@@ -316,7 +315,19 @@ F1r3fly nodes expose AI capabilities as Rholang system processes. These are avai
 | `rho:ai:ollama:generate` | Ollama (local) | Text generation via local Ollama |
 | `rho:ai:ollama:models` | Ollama (local) | List available local models |
 
-AI services are disabled by default. Enable via environment variables (Docker) or HOCON config (local). See [docker/.env.example](docker/.env.example) for all available env vars and [defaults.conf](node/src/main/resources/defaults.conf) for HOCON config reference.
+AI services are disabled by default. Enable via environment variables (Docker) or HOCON config (local). The node reads these env vars:
+
+| Variable | Description |
+|---|---|
+| `RUST_LOG` | Log level filtering (e.g. `info`, `debug`, `info,f1r3fly.compute_parents_post_state.timing=debug`) |
+| `OPENAI_ENABLED` | Enable OpenAI AI services (`true`/`false`) |
+| `OPENAI_API_KEY` | OpenAI API key (required when `OPENAI_ENABLED=true`) |
+| `OLLAMA_ENABLED` | Enable local Ollama AI services (`true`/`false`) |
+| `OLLAMA_BASE_URL` | Ollama server URL (default: `http://localhost:11434`) |
+| `OLLAMA_MODEL` | Ollama model name (default: `llama3.2`) |
+| `OLLAMA_TIMEOUT_SEC` | Ollama request timeout in seconds (default: `120`) |
+
+All other node configuration is in HOCON config files. See [docker/.env.example](docker/.env.example) for Docker defaults and [defaults.conf](node/src/main/resources/defaults.conf) for HOCON config reference.
 
 When AI is disabled, contracts using `rho:ai:*` processes will fail at deploy time.
 
@@ -326,30 +337,42 @@ When AI is disabled, contracts using `rho:ai:*` processes will fail at deploy ti
 - **Custom location**: `--config-file <path>`
 - **Format**: [HOCON](https://github.com/lightbend/config/blob/master/HOCON.md)
 
+The node ships with a built-in [defaults.conf](node/src/main/resources/defaults.conf) containing every available option and its default value. Operator config files are **minimal overrides** -- you only specify the values you want to change (typically ~40 lines for network, ports, and consensus tuning). HOCON's fallback semantics merge your overrides on top of the built-in defaults automatically.
+
 Reference configs:
-- [defaults.conf](node/src/main/resources/defaults.conf) - All available options
-- [docker/conf/standalone-dev.conf](docker/conf/standalone-dev.conf) - Standalone development config
-- [docker/conf/default.conf](docker/conf/default.conf) - Shard config
+- [defaults.conf](node/src/main/resources/defaults.conf) - Built-in defaults with all available options
+- [docker/conf/standalone-dev.conf](docker/conf/standalone-dev.conf) - Minimal standalone override (~20 lines)
+- [docker/conf/default.conf](docker/conf/default.conf) - Minimal shard override
 - [Consensus Configuration Guide](https://github.com/F1R3FLY-io/system-integration/blob/main/docs/consensus-configuration.md) - FTT, synchrony threshold semantics, finalization formula, recommended values
 
-## Rust Codebase Documentation
+## Documentation
 
-Detailed architecture and API documentation for each Rust crate is available in [docs/rust/](docs/rust/README.md):
+Detailed architecture and API documentation for each crate is available in [docs/](docs/README.md):
 
 | Module | Description |
 |--------|-------------|
-| [shared](docs/rust/shared.md) | Foundation types, KV store abstraction, LMDB bindings |
-| [crypto](docs/rust/crypto.md) | Hashing, signing, certificates |
-| [models](docs/rust/models.md) | Protobuf types, Rholang AST, sorted collections |
-| [rspace](docs/rust/rspace.md) | Tuple space engine, produce/consume matching, trie history |
-| [rholang](docs/rust/rholang.md) | Interpreter, reducer, cost accounting, system processes |
-| [casper](docs/rust/casper.md) | CBC Casper consensus, block creation/validation, finalization |
-| [block-storage](docs/rust/block-storage.md) | Block persistence, DAG storage, deploy index |
-| [comm](docs/rust/comm.md) | P2P networking, Kademlia DHT, TLS transport |
-| [node](docs/rust/node.md) | Binary entry point, gRPC/HTTP servers, CLI, diagnostics |
-| [graphz](docs/rust/graphz.md) | Graphviz DOT generation |
+| [shared](docs/shared/) | Foundation types, KV store abstraction, LMDB bindings |
+| [crypto](docs/crypto/) | Hashing, signing, certificates |
+| [models](docs/models/) | Protobuf types, Rholang AST, sorted collections |
+| [rspace](docs/rspace/) | Tuple space engine, produce/consume matching, trie history |
+| [rholang](docs/rholang/) | Interpreter, reducer, cost accounting, system processes |
+| [casper](docs/casper/) | CBC Casper consensus, block creation/validation, finalization |
+| [block-storage](docs/block-storage/) | Block persistence, DAG storage, deploy index |
+| [comm](docs/comm/) | P2P networking, Kademlia DHT, TLS transport |
+| [node](docs/node/) | Binary entry point, gRPC/HTTP servers, CLI, diagnostics |
+| [graphz](docs/graphz/) | Graphviz DOT generation |
 
-See also: [Data Flows](docs/rust/data-flows.md) | [Patterns & Conventions](docs/rust/patterns.md)
+**Cross-cutting:** [Data Flows](docs/data-flows/) | [Patterns & Conventions](docs/patterns/)
+
+**Rholang Language:**
+- [Rholang Evaluator](rholang/README.md) — Language overview, CLI usage, known issues
+- [Rholang Tutorial](docs/rholang/rholangtut.md) — Language tutorial
+- [Pattern Matching](docs/rholang/rholangmatchingtut.md) — Pattern matching guide
+- [Reference Documentation](rholang/reference_doc/README.md) — Language reference by topic
+
+**Consensus:**
+- [Byzantine Fault Tolerance](docs/casper/BYZANTINE_FAULT_TOLERANCE.md) — BFT architecture, clique oracle, slashing
+- [Synchrony Constraint](docs/casper/SYNC_CONSTRAINT.md) — Synchrony constraint mechanism and configuration
 
 ## Troubleshooting
 

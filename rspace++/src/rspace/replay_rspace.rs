@@ -12,8 +12,6 @@ use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use dashmap::DashMap;
-use rand::seq::SliceRandom;
-use rand::thread_rng;
 use serde::Serialize;
 use tracing::{Level, event};
 
@@ -603,8 +601,14 @@ where
         let map = DashMap::with_capacity(channels.len());
         for c in channels {
             let data = self.store.get_data(c);
-            let shuffled_data = self.shuffle_with_index(data);
-            map.insert(c.clone(), shuffled_data);
+            // No shuffle during replay — use sequential enumeration to ensure
+            // deterministic datum selection during block validation.
+            let indexed_data: Vec<(Datum<A>, i32)> = data
+                .into_iter()
+                .enumerate()
+                .map(|(i, d)| (d, i as i32))
+                .collect();
+            map.insert(c.clone(), indexed_data);
         }
         map
     }
@@ -1276,14 +1280,4 @@ where
         }
     }
 
-    fn shuffle_with_index<D>(&self, t: Vec<D>) -> Vec<(D, i32)> {
-        let mut rng = thread_rng();
-        let mut indexed_vec = t
-            .into_iter()
-            .enumerate()
-            .map(|(i, d)| (d, i as i32))
-            .collect::<Vec<_>>();
-        indexed_vec.shuffle(&mut rng);
-        indexed_vec
-    }
 }

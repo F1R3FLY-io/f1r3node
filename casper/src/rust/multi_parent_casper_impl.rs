@@ -5,7 +5,7 @@ use rspace_plus_plus::rspace::state::rspace_exporter::RSpaceExporter;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    Arc, Mutex, OnceLock,
+    Arc, Mutex,
 };
 
 use block_storage::rust::{
@@ -74,21 +74,8 @@ use crate::rust::{
 
 const FINALIZER_BLOCKING_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 const MAX_ACTIVE_VALIDATORS_CACHE_ENTRIES: usize = 4096;
-const DEPLOY_HEARTBEAT_WAKE_ENV: &str = "F1R3_DEPLOY_HEARTBEAT_WAKE";
-
 fn deploy_heartbeat_wake_enabled() -> bool {
-    static VALUE: OnceLock<bool> = OnceLock::new();
-    *VALUE.get_or_init(|| {
-        std::env::var(DEPLOY_HEARTBEAT_WAKE_ENV)
-            .ok()
-            .map(|value| {
-                matches!(
-                    value.trim().to_ascii_lowercase().as_str(),
-                    "1" | "true" | "yes" | "on"
-                )
-            })
-            .unwrap_or(false)
-    })
+    false
 }
 
 /// RAII guard that ensures the finalization flag is reset on drop.
@@ -191,11 +178,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
             .map(|b| b.body.state.block_number as i64)
             .max()
             .unwrap_or(0);
-        let near_tip_tolerance_blocks = std::env::var("F1R3_MAIN_PARENT_NEAR_TIP_TOLERANCE")
-            .ok()
-            .and_then(|v| v.parse::<i64>().ok())
-            .filter(|v| *v >= 0)
-            .unwrap_or(2);
+        let near_tip_tolerance_blocks: i64 = 0;
         sorted_parents_list.sort_by(|a, b| {
             let a_num = a.body.state.block_number as i64;
             let b_num = b.body.state.block_number as i64;
@@ -1265,6 +1248,7 @@ async fn run_queued_finalizer(
     finalizer_task_queued: Arc<AtomicBool>,
     enable_mergeable_channel_gc: bool,
     fault_tolerance_threshold: f32,
+    finalizer_conf: crate::rust::casper_conf::FinalizerConf,
 ) {
     let _task_guard = FinalizationGuard(finalizer_task_in_progress.as_ref());
     tracing::info!(target: "f1r3fly.casper", "finalizer-run-started");
@@ -1281,6 +1265,7 @@ async fn run_queued_finalizer(
                 finalization_in_progress.clone(),
                 enable_mergeable_channel_gc,
                 fault_tolerance_threshold,
+                &finalizer_conf,
             ),
         )
         .await
@@ -1388,6 +1373,7 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasper for MultiParentCasperImp
             self.finalization_in_progress.clone(),
             self.casper_shard_conf.enable_mergeable_channel_gc,
             self.casper_shard_conf.fault_tolerance_threshold,
+            &self.casper_shard_conf.finalizer_conf,
         )
         .await
     }
@@ -1484,6 +1470,7 @@ async fn compute_last_finalized_block(
     finalization_in_progress: Arc<AtomicBool>,
     enable_mergeable_channel_gc: bool,
     fault_tolerance_threshold: f32,
+    finalizer_conf: &crate::rust::casper_conf::FinalizerConf,
 ) -> Result<BlockMessage, CasperError> {
     let lfb_lookup_started = std::time::Instant::now();
     // Get current LFB hash and height
@@ -1606,6 +1593,7 @@ async fn compute_last_finalized_block(
         fault_tolerance_threshold,
         last_finalized_block_height,
         new_lfb_found_effect,
+        finalizer_conf,
     )
     .await
     .map_err(|e| CasperError::KvStoreError(e))?;
@@ -1672,6 +1660,7 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasperImpl<T> {
             let finalizer_task_queued = self.finalizer_task_queued.clone();
             let enable_mergeable_channel_gc = self.casper_shard_conf.enable_mergeable_channel_gc;
             let fault_tolerance_threshold = self.casper_shard_conf.fault_tolerance_threshold;
+            let finalizer_conf = self.casper_shard_conf.finalizer_conf.clone();
 
             tokio::spawn(async move {
                 run_queued_finalizer(
@@ -1685,6 +1674,7 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasperImpl<T> {
                     finalizer_task_queued,
                     enable_mergeable_channel_gc,
                     fault_tolerance_threshold,
+                    finalizer_conf,
                 )
                 .await;
             });
@@ -1766,13 +1756,14 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasperImpl<T> {
         let deploy_info = PrettyPrinter::build_string_signed_deploy_data(&deploy);
         tracing::info!("Received {}", deploy_info);
 
-        // Deploy API already triggers propose asynchronously. Keep heartbeat wake opt-in to
-        // avoid duplicate propose races that inflate inclusion latency.
+        // Wake the heartbeat immediately so it picks up the new deploy without
+        // waiting for the next timer tick (up to check_interval seconds).
+        // ProposerInstance's Semaphore(1) prevents concurrent proposals even if
+        // both the heartbeat and autopropose (when enabled) try to propose.
         if deploy_heartbeat_wake_enabled() {
             if let Some(signal) = self.heartbeat_signal_ref.get() {
                 tracing::debug!(
-                    "Triggering heartbeat wake for immediate block proposal via {}",
-                    DEPLOY_HEARTBEAT_WAKE_ENV
+                    "Triggering heartbeat wake for immediate block proposal"
                 );
                 signal.trigger_wake();
             } else {

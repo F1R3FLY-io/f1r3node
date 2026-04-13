@@ -1020,6 +1020,7 @@ impl TestNode {
             disable_validator_progress_check: false,
             enable_mergeable_channel_gc: false, // Keep mergeable data unless GC is explicitly enabled
             mergeable_channels_gc_depth_buffer: 10,
+            ..CasperShardConf::new()
         };
 
         let casper_impl = MultiParentCasperImpl {

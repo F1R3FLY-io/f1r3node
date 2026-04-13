@@ -86,6 +86,28 @@ impl DeployChainIndex {
             hash_code,
         })
     }
+
+    /// Construct a DeployChainIndex directly from its parts (for testing).
+    pub fn from_parts(
+        deploys_with_cost: HashableSet<DeployIdWithCost>,
+        pre_state_hash: Blake2b256Hash,
+        post_state_hash: Blake2b256Hash,
+        event_log_index: EventLogIndex,
+        state_changes: StateChange,
+    ) -> Self {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        deploys_with_cost.hash(&mut hasher);
+        let hash_code = hasher.finish() as i32;
+        DeployChainIndex {
+            deploys_with_cost,
+            pre_state_hash,
+            post_state_hash,
+            event_log_index,
+            state_changes,
+            hash_code,
+        }
+    }
 }
 
 impl PartialEq for DeployChainIndex {

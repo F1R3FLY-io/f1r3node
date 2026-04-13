@@ -7,7 +7,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt::Debug;
 use std::hash::Hash;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use dashmap::DashMap;
@@ -59,19 +59,6 @@ pub struct RSpace<C, P, A, K> {
     matcher: Arc<Box<dyn Match<P, A>>>,
 }
 
-fn block_creator_phase_substep_profile_enabled() -> bool {
-    static VALUE: OnceLock<bool> = OnceLock::new();
-    *VALUE.get_or_init(|| {
-        std::env::var("F1R3_BLOCK_CREATOR_PHASE_SUBSTEP_PROFILE")
-            .ok()
-            .map(|v| {
-                let normalized = v.trim().to_ascii_lowercase();
-                matches!(normalized.as_str(), "1" | "true" | "yes" | "on")
-            })
-            .unwrap_or(false)
-    })
-}
-
 impl<C, P, A, K> SpaceMatcher<C, P, A, K> for RSpace<C, P, A, K>
 where
     C: Clone + Debug + Default + Serialize + std::hash::Hash + Ord + Eq + 'static + Sync + Send,
@@ -93,37 +80,6 @@ where
         // async
         let _span = tracing::info_span!(target: "f1r3fly.rspace", "create-checkpoint").entered();
         event!(Level::DEBUG, mark = "started-create-checkpoint", "create_checkpoint");
-        let mem_profile_enabled = block_creator_phase_substep_profile_enabled();
-        let read_rss_kb = || -> Option<u64> {
-            let status = std::fs::read_to_string("/proc/self/status").ok()?;
-            let line = status.lines().find(|l| l.starts_with("VmRSS:"))?;
-            let mut parts = line.split_whitespace();
-            let _ = parts.next();
-            parts.next()?.parse::<u64>().ok()
-        };
-        let mut mem_prev_kb = if mem_profile_enabled {
-            read_rss_kb()
-        } else {
-            None
-        };
-        let mem_base_kb = mem_prev_kb;
-        let mut log_mem_step = |step: &str| {
-            if !mem_profile_enabled {
-                return;
-            }
-            if let Some(curr_kb) = read_rss_kb() {
-                let prev_kb = mem_prev_kb.unwrap_or(curr_kb);
-                let base_kb = mem_base_kb.unwrap_or(curr_kb);
-                let delta_prev_kb = curr_kb as i64 - prev_kb as i64;
-                let delta_total_kb = curr_kb as i64 - base_kb as i64;
-                eprintln!(
-                    "create_checkpoint.mem step={} rss_kb={} delta_prev_kb={} delta_total_kb={}",
-                    step, curr_kb, delta_prev_kb, delta_total_kb
-                );
-                mem_prev_kb = Some(curr_kb);
-            }
-        };
-        log_mem_step("start");
 
         // Get changes with span
         let changes = {
@@ -131,7 +87,6 @@ where
                 tracing::info_span!(target: "f1r3fly.rspace", CHANGES_SPAN).entered();
             self.store.changes()
         };
-        log_mem_step("after_store_changes");
 
         // Create history checkpoint with span
         let next_history = {
@@ -139,28 +94,20 @@ where
                 tracing::info_span!(target: "f1r3fly.rspace", HISTORY_CHECKPOINT_SPAN).entered();
             self.history_repository.checkpoint(changes)
         };
-        log_mem_step("after_history_checkpoint");
         self.history_repository = Arc::new(next_history);
-        log_mem_step("after_set_history_repository");
 
         let log = std::mem::take(&mut self.event_log);
-        log_mem_step("after_take_event_log");
         let _ = std::mem::take(&mut self.produce_counter);
-        log_mem_step("after_take_produce_counter");
 
         let history_reader = self
             .history_repository
             .get_history_reader(&self.history_repository.root())?;
-        log_mem_step("after_get_history_reader");
 
         self.create_new_hot_store(history_reader);
-        log_mem_step("after_create_new_hot_store");
         self.restore_installs();
-        log_mem_step("after_restore_installs");
 
         // Mark the completion of create-checkpoint
         event!(Level::DEBUG, mark = "finished-create-checkpoint", "create_checkpoint");
-        log_mem_step("finish");
 
         Ok(Checkpoint {
             root: self.history_repository.root(),

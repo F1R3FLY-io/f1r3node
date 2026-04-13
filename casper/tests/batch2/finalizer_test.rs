@@ -5,6 +5,8 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::time::Instant;
 
+use casper::rust::casper_conf::FinalizerConf;
+
 use crate::helper::{
     block_dag_storage_fixture::with_storage,
     block_generator::{create_block, create_genesis_block},
@@ -197,7 +199,7 @@ async fn test_not_advance_finalization_if_no_new_lfb_found_advance_otherwise_inv
                     *lfb_store.borrow_mut() = m;
                     Ok(())
                 }
-            })
+            }, &FinalizerConf::default())
             .await
             .unwrap()
         };
@@ -258,7 +260,7 @@ async fn test_not_advance_finalization_if_no_new_lfb_found_advance_otherwise_inv
                     *lfb_effect_invoked.borrow_mut() = true;
                     Ok(())
                 }
-            })
+            }, &FinalizerConf::default())
             .await
             .unwrap()
         };
@@ -318,7 +320,7 @@ async fn test_not_advance_finalization_if_no_new_lfb_found_advance_otherwise_inv
                     finalised_store.borrow_mut().insert(m);
                     Ok(())
                 }
-            })
+            }, &FinalizerConf::default())
             .await
             .unwrap()
         };
@@ -397,7 +399,7 @@ async fn finalizer_growth_feedback_loop_stale_justification_chain() {
             if checkpoints.contains(&height) {
                 let dag = dag_store.get_representation();
                 let started = Instant::now();
-                let _ = Finalizer::run(&dag, -1.0, 0, |_m| async { Ok::<(), KvStoreError>(()) })
+                let _ = Finalizer::run(&dag, -1.0, 0, |_m| async { Ok::<(), KvStoreError>(()) }, &FinalizerConf::default())
                     .await
                     .expect("Finalizer run should succeed");
                 timing_samples.push((height, started.elapsed().as_millis()));

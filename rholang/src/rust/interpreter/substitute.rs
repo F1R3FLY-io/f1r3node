@@ -1280,20 +1280,10 @@ impl SubstituteTrait<Expr> for Substitute {
 }
 
 fn set_bits_until(bits: Vec<u8>, until: i32) -> Vec<u8> {
-    // println!("\nbits in set_bits_until: {:?}", bits);
-    // println!("\nuntil in set_bits_until: {:?}", until);
     if until <= 0 {
         return Vec::new();
     }
-    let until_usize = until as usize;
-
-    let result = bits
-        .iter()
-        .enumerate()
-        .filter(|&(i, &bit)| i < until_usize && bit == 1)
-        .map(|(_, &bit)| bit)
-        .collect();
-
-    // println!("\nresult bits in set_bits_until: {:?}", result);
-    result
+    // Truncate the bitvector at `until` positions, preserving bit positions.
+    // Matches Scala's BitSet.until(n).
+    bits.into_iter().take(until as usize).collect()
 }

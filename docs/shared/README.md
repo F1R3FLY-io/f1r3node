@@ -54,4 +54,6 @@ The KV store layer is the persistence backbone of the entire system.
 
 Unit tests in: `compression.rs`, `f1r3fly_events.rs`, `metrics_semaphore.rs`, `list_ops.rs`, `recent_hash_filter.rs`, `dag_ops.rs`, `grpc_server.rs`.
 
-[← Back to overview](./README.md)
+**See also:** [shared/ crate](../../shared/)
+
+[← Back to docs index](../README.md)

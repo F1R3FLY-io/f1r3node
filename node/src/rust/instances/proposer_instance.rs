@@ -2,7 +2,6 @@
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, oneshot, Semaphore};
 
@@ -22,8 +21,7 @@ use comm::rust::transport::transport_layer::TransportLayer;
 
 const PROPOSER_RESULT_QUEUE_CAPACITY: usize = 64;
 const PROPOSER_MAX_IMMEDIATE_RETRIES: u8 = 2;
-const DEFAULT_PROPOSER_MIN_INTERVAL_MS: u64 = 250;
-const PROPOSER_MIN_INTERVAL_MS_ENV: &str = "F1R3_PROPOSER_MIN_INTERVAL_MS";
+const PROPOSER_MIN_INTERVAL: Duration = Duration::from_millis(250);
 
 type ProposeQueueEntry = (
     Arc<dyn Casper + Send + Sync>,
@@ -38,14 +36,7 @@ fn should_retry_immediately_on_trigger(result: &ProposeResult, is_async: bool) -
 }
 
 fn proposer_min_interval() -> Duration {
-    static VALUE: OnceLock<Duration> = OnceLock::new();
-    *VALUE.get_or_init(|| {
-        let ms = std::env::var(PROPOSER_MIN_INTERVAL_MS_ENV)
-            .ok()
-            .and_then(|v| v.parse::<u64>().ok())
-            .unwrap_or(DEFAULT_PROPOSER_MIN_INTERVAL_MS);
-        Duration::from_millis(ms)
-    })
+    PROPOSER_MIN_INTERVAL
 }
 
 /// Proposer instance that processes propose requests from a queue
@@ -260,10 +251,17 @@ impl<T: TransportLayer + Send + Sync + 'static> ProposerInstance<T> {
                                     }
                                 }
                                 None => {
-                                    tracing::error!(
-                                        "Propose failed: {}",
-                                        propose_result.propose_status
-                                    )
+                                    if propose_result.is_no_new_deploys() {
+                                        tracing::info!(
+                                            "Propose: {}",
+                                            propose_result.propose_status
+                                        )
+                                    } else {
+                                        tracing::error!(
+                                            "Propose failed: {}",
+                                            propose_result.propose_status
+                                        )
+                                    }
                                 }
                             }
 

@@ -1,7 +1,7 @@
 // See rspace/src/main/scala/coop/rchain/rspace/history/RadixTree.scala
 
 use std::collections::BTreeMap;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use dashmap::DashMap;
 use itertools::Itertools;
@@ -68,19 +68,6 @@ const HEAD_SIZE: usize = 2;
 // Read cache bound to prevent unbounded memory growth during long reads.
 const READ_CACHE_MAX_ITEMS: usize = 4_096;
 const READ_CACHE_TRIM_TARGET: usize = 2_048;
-const BLOCK_CREATOR_PHASE_SUBSTEP_PROFILE_ENV: &str = "F1R3_BLOCK_CREATOR_PHASE_SUBSTEP_PROFILE";
-
-fn block_creator_phase_substep_profile_enabled() -> bool {
-    static VALUE: OnceLock<bool> = OnceLock::new();
-    *VALUE.get_or_init(|| {
-        std::env::var(BLOCK_CREATOR_PHASE_SUBSTEP_PROFILE_ENV)
-            .map(|value| {
-                let normalized = value.trim().to_ascii_lowercase();
-                normalized == "1" || normalized == "true" || normalized == "yes"
-            })
-            .unwrap_or(false)
-    })
-}
 
 /** Serialization [[Node]] to [[ByteVector]]
  */
@@ -1455,38 +1442,6 @@ impl RadixTreeImpl {
         curr_node: &Node,
         actions: Vec<HistoryAction>,
     ) -> Result<Option<Node>, RadixTreeError> {
-        let mem_profile_enabled = block_creator_phase_substep_profile_enabled();
-        let read_rss_kb = || -> Option<u64> {
-            let status = std::fs::read_to_string("/proc/self/status").ok()?;
-            let line = status.lines().find(|l| l.starts_with("VmRSS:"))?;
-            let mut parts = line.split_whitespace();
-            let _ = parts.next();
-            parts.next()?.parse::<u64>().ok()
-        };
-        let mut mem_prev_kb = if mem_profile_enabled {
-            read_rss_kb()
-        } else {
-            None
-        };
-        let mem_base_kb = mem_prev_kb;
-        let mut log_mem_step = |step: &str| {
-            if !mem_profile_enabled {
-                return;
-            }
-            if let Some(curr_kb) = read_rss_kb() {
-                let prev_kb = mem_prev_kb.unwrap_or(curr_kb);
-                let base_kb = mem_base_kb.unwrap_or(curr_kb);
-                let delta_prev_kb = curr_kb as i64 - prev_kb as i64;
-                let delta_total_kb = curr_kb as i64 - base_kb as i64;
-                eprintln!(
-                    "radix_tree.make_actions.mem step={} rss_kb={} delta_prev_kb={} \
-                     delta_total_kb={}",
-                    step, curr_kb, delta_prev_kb, delta_total_kb
-                );
-                mem_prev_kb = Some(curr_kb);
-            }
-        };
-        log_mem_step("start");
 
         // If we have 1 action in group.
         // We can't parallel next and we should use sequential traversing with help
@@ -1653,31 +1608,24 @@ impl RadixTreeImpl {
         }
 
         // Group the actions by the first byte of the prefix.
-        log_mem_step("before_grouping");
         let grouped_actions = grouping(actions)?;
-        log_mem_step("after_grouping");
 
         // println!("\ngrouped_actions: {:?}", grouped_actions);
         // println!("\ncurr_node: {:?}", curr_node);
 
         // Process actions within each group.
         // TODO: Update to handle parallel execution. See Scala side
-        log_mem_step("before_process_grouped_actions");
         let new_group_items_results = process_grouped_actions(grouped_actions, curr_node);
-        log_mem_step("after_process_grouped_actions");
 
-        log_mem_step("before_collect_group_results");
         let mut new_group_items = Vec::with_capacity(new_group_items_results.len());
         for result in new_group_items_results {
             let value = result?;
             new_group_items.push(value);
         }
-        log_mem_step("after_collect_group_results");
 
         // println!("\nnew_group_items: {:?}", new_group_items);
 
         // Update all changed items in current node.
-        log_mem_step("before_update_current_node");
         let mut new_cur_node = curr_node.clone();
         for (index, new_item_opt) in new_group_items {
             new_cur_node = match new_item_opt {
@@ -1688,14 +1636,10 @@ impl RadixTreeImpl {
                 None => new_cur_node,
             };
         }
-        log_mem_step("after_update_current_node");
-
         // If current node changing return new node, otherwise return none.
         if new_cur_node != *curr_node {
-            log_mem_step("changed_return_some");
             Ok(Some(new_cur_node))
         } else {
-            log_mem_step("unchanged_return_none");
             Ok(None)
         }
     }

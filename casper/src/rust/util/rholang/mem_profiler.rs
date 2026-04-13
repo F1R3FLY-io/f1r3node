@@ -1,16 +1,5 @@
-use std::sync::OnceLock;
-
-const MEM_PROFILE_ENV: &str = "F1R3_BLOCK_CREATOR_PHASE_SUBSTEP_PROFILE";
-
 pub fn mem_profile_enabled() -> bool {
-    static ENABLED: OnceLock<bool> = OnceLock::new();
-    *ENABLED.get_or_init(|| match std::env::var(MEM_PROFILE_ENV) {
-        Ok(v) => {
-            let normalized = v.trim().to_ascii_lowercase();
-            normalized == "1" || normalized == "true"
-        }
-        Err(_) => false,
-    })
+    false
 }
 
 #[cfg(target_os = "linux")]

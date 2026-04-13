@@ -1,6 +1,6 @@
 # Ollama Integration for F1R3FLY
 
-This document describes how to use the Ollama REST API integration with F1R3FLY's RChain blockchain platform.
+This document describes how to use the Ollama REST API integration with the F1R3FLY blockchain platform.
 
 ## Overview
 
@@ -25,7 +25,7 @@ ollama pull llama3.2
 
 ```bash
 # Build the project
-sbt stage
+cargo build --release
 ```
 
 ## Configuration
@@ -35,21 +35,19 @@ sbt stage
 ```bash
 # Enable Ollama integration
 export OLLAMA_ENABLED=true
-
-# Optional: Disable connection validation if needed
-export OLLAMA_VALIDATE_CONNECTION=false
 ```
+
+Connection validation happens automatically when Ollama is enabled.
 
 ### Configuration File
 
-Alternatively, you can configure via `application.conf`:
+Alternatively, you can configure via `defaults.conf`:
 
 ```hocon
 ollama {
   enabled = true
   base-url = "http://localhost:11434"
   default-model = "llama3.2"
-  validate-connection = true
   timeout-sec = 30
 }
 ```
@@ -139,7 +137,7 @@ The Ollama integration provides three system processes:
 Run the Ollama-specific tests:
 
 ```bash
-sbt "rholang/testOnly *OllamaServiceSpec"
+cargo test -p rholang -- ollama
 ```
 
 ### Integration Testing
@@ -157,7 +155,6 @@ If you see connection errors:
 
 1. Verify Ollama is running: `curl http://localhost:11434/api/tags`
 2. Check the model is available: `ollama list`
-3. Disable connection validation: `export OLLAMA_VALIDATE_CONNECTION=false`
 
 ### Configuration Issues
 

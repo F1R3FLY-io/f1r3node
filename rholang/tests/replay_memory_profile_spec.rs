@@ -8,13 +8,6 @@ use rspace_plus_plus::rspace::shared::{
     in_mem_store_manager::InMemoryStoreManager, key_value_store_manager::KeyValueStoreManager,
 };
 
-fn env_usize(name: &str, default: usize) -> usize {
-    std::env::var(name)
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok())
-        .unwrap_or(default)
-}
-
 fn vm_rss_kb() -> Option<usize> {
     let status = std::fs::read_to_string("/proc/self/status").ok()?;
     status
@@ -35,11 +28,9 @@ fn delta_kb_to_mib(delta_kb: isize) -> f64 {
 #[tokio::test]
 #[ignore = "manual memory profiling; run with --ignored --nocapture"]
 async fn profile_debruijn_interpreter_replay_memory_usage() {
-    let iterations = env_usize("F1R3_DEBRUIJN_REPLAY_PROFILE_ITERS", 80);
-    let sample_every = env_usize("F1R3_DEBRUIJN_REPLAY_PROFILE_SAMPLE_EVERY", 8).max(1);
-    let growth_limit_kb = std::env::var("F1R3_DEBRUIJN_REPLAY_PROFILE_MAX_GROWTH_KB")
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok());
+    let iterations: usize = 80;
+    let sample_every: usize = 8;
+    let growth_limit_kb: Option<usize> = None;
 
     let mut kvm = InMemoryStoreManager::new();
     let store = kvm

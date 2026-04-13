@@ -4,6 +4,32 @@ All notable changes to the Rust implementation of F1r3node will be documented in
 This changelog is automatically generated from conventional commits.
 
 
+## [v0.4.11] - 2026-04-09
+
+### Bug Fixes
+
+- node API improvements, deploy cost estimation (#472) ([#472](https://github.com/F1R3FLY-io/f1r3node/pull/472))
+
+### CI
+
+- add rust/staging to CI triggers
+
+### Documentation
+
+- refactor docs structure, add consensus protocol walkthrough (#471) ([#471](https://github.com/F1R3FLY-io/f1r3node/pull/471))
+
+### Performance
+
+- remove adaptive deploy cap, bonds cache, deploy wake (#473) ([#473](https://github.com/F1R3FLY-io/f1r3node/pull/473))
+
+
+## [v0.4.10] - 2026-04-06
+
+### Bug Fixes
+
+- v0.4.9 eval order, observer stability, and client-reported issues (#468) ([#468](https://github.com/F1R3FLY-io/f1r3node/pull/468))
+
+
 ## [v0.4.9] - 2026-04-01
 
 ### Bug Fixes
