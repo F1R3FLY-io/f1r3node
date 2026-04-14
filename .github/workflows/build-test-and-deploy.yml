@@ -281,7 +281,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: F1R3FLY-io/system-integration
-          ref: 953582825cfe1b6238eb57ea1a8b98417df6e880
+          ref: 1f553d9237f368926a15439bdb29e4482983e117
           path: system-integration
 
       - uses: actions/setup-python@v5
