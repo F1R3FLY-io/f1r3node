@@ -18,7 +18,7 @@ use rspace_plus_plus::rspace::{
     },
 };
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn empty_state_hash_should_be_the_same_as_hard_coded_cached_value() {
     let mut kvm = InMemoryStoreManager::new();
     let store = kvm.r_space_stores().await.unwrap();
@@ -42,7 +42,7 @@ async fn empty_state_hash_should_be_the_same_as_hard_coded_cached_value() {
     assert_eq!(empty_hash_hard_coded, empty_hash);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn state_hash_after_fixed_rholang_term_execution_should_be_hash_fixed_without_hard_fork() {
     let mut kvm = InMemoryStoreManager::new();
     let store = kvm.r_space_stores().await.unwrap();

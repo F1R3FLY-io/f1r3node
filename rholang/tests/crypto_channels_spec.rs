@@ -86,7 +86,7 @@ mod tests {
         runtime
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn sha256hash_channel_should_hash_input_data_and_send_result_on_ack_channel() {
         let runtime = create_runtime().await;
 
@@ -120,7 +120,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn keccak256hash_channel_should_hash_input_data_and_send_result_on_ack_channel() {
         let runtime = create_runtime().await;
 
@@ -154,7 +154,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn blake2b256hash_channel_should_hash_input_data_and_send_result_on_ack_channel() {
         let runtime = create_runtime().await;
 
@@ -188,7 +188,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn secp256k1verify_channel_should_verify_integrity_of_the_data_and_send_result_on_ack_channel(
     ) {
         let runtime = create_runtime().await;
@@ -244,7 +244,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn ed25519verify_channel_should_verify_integrity_of_the_data_and_send_result_on_ack_channel(
     ) {
         let runtime = create_runtime().await;

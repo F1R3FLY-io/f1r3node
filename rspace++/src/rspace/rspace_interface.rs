@@ -51,7 +51,7 @@ pub trait ISpace<C: Eq + std::hash::Hash, P: Clone, A: Clone, K: Clone> {
      *
      * @return A [[Checkpoint]]
      */
-    fn create_checkpoint(&mut self) -> Result<Checkpoint, RSpaceError>;
+    fn create_checkpoint(&self) -> Result<Checkpoint, RSpaceError>;
 
     fn get_data(&self, channel: &C) -> Vec<Datum<A>>;
 
@@ -61,7 +61,7 @@ pub trait ISpace<C: Eq + std::hash::Hash, P: Clone, A: Clone, K: Clone> {
 
     /** Clears the store.  Does not affect the history trie.
      */
-    fn clear(&mut self) -> Result<(), RSpaceError>;
+    fn clear(&self) -> Result<(), RSpaceError>;
 
     /// Return current history root hash without creating a checkpoint.
     fn get_root(&self) -> Blake2b256Hash;
@@ -70,10 +70,10 @@ pub trait ISpace<C: Eq + std::hash::Hash, P: Clone, A: Clone, K: Clone> {
      *
      * @param root A BLAKE2b256 Hash representing the checkpoint
      */
-    fn reset(&mut self, root: &Blake2b256Hash) -> Result<(), RSpaceError>;
+    fn reset(&self, root: &Blake2b256Hash) -> Result<(), RSpaceError>;
 
     fn consume_result(
-        &mut self,
+        &self,
         channel: Vec<C>,
         pattern: Vec<P>,
     ) -> Result<Option<(K, Vec<A>)>, RSpaceError>;
@@ -86,18 +86,18 @@ pub trait ISpace<C: Eq + std::hash::Hash, P: Clone, A: Clone, K: Clone> {
     This operation is significantly faster than {@link #createCheckpoint()} because the computationally
     expensive operation of creating the history trie is avoided.
     */
-    fn create_soft_checkpoint(&mut self) -> SoftCheckpoint<C, P, A, K>;
+    fn create_soft_checkpoint(&self) -> SoftCheckpoint<C, P, A, K>;
 
     /// Drain and return the in-memory event log without cloning the hot-store
     /// snapshot. This is a lightweight alternative when only logs are
     /// needed.
-    fn take_event_log(&mut self) -> Log;
+    fn take_event_log(&self) -> Log;
 
     /**
     Reverts the ISpace to the state checkpointed using {@link #createSoftCheckpoint()}
     */
     fn revert_to_soft_checkpoint(
-        &mut self,
+        &self,
         checkpoint: SoftCheckpoint<C, P, A, K>,
     ) -> Result<(), RSpaceError>;
 
@@ -131,7 +131,7 @@ pub trait ISpace<C: Eq + std::hash::Hash, P: Clone, A: Clone, K: Clone> {
      * @param persist Whether or not to attempt to persist the data
      */
     fn consume(
-        &mut self,
+        &self,
         channels: Vec<C>,
         patterns: Vec<P>,
         continuation: K,
@@ -166,14 +166,14 @@ pub trait ISpace<C: Eq + std::hash::Hash, P: Clone, A: Clone, K: Clone> {
      * @param persist Whether or not to attempt to persist the data
      */
     fn produce(
-        &mut self,
+        &self,
         channel: C,
         data: A,
         persist: bool,
     ) -> Result<MaybeProduceResult<C, P, A, K>, RSpaceError>;
 
     fn install(
-        &mut self,
+        &self,
         channels: Vec<C>,
         patterns: Vec<P>,
         continuation: K,
@@ -181,7 +181,7 @@ pub trait ISpace<C: Eq + std::hash::Hash, P: Clone, A: Clone, K: Clone> {
 
     /* REPLAY */
 
-    fn rig_and_reset(&mut self, start_root: Blake2b256Hash, log: Log) -> Result<(), RSpaceError>;
+    fn rig_and_reset(&self, start_root: Blake2b256Hash, log: Log) -> Result<(), RSpaceError>;
 
     fn rig(&self, log: Log) -> Result<(), RSpaceError>;
 
@@ -189,5 +189,5 @@ pub trait ISpace<C: Eq + std::hash::Hash, P: Clone, A: Clone, K: Clone> {
 
     fn is_replay(&self) -> bool;
 
-    fn update_produce(&mut self, produce: Produce) -> ();
+    fn update_produce(&self, produce: Produce) -> ();
 }

@@ -91,8 +91,8 @@ pub extern "C" fn space_new_replay(rspace: *mut Space) -> *mut ReplaySpace {
     let rspace = unsafe { (*rspace).rspace.lock().unwrap() };
 
     let replay_space = ReplayRSpace::apply(
-        rspace.history_repository.clone(),
-        rspace.store.clone(),
+        rspace.get_history_repository(),
+        rspace.get_store(),
         Arc::new(Box::new(Matcher)),
     );
 
@@ -103,7 +103,7 @@ pub extern "C" fn space_new_replay(rspace: *mut Space) -> *mut ReplaySpace {
 
 #[no_mangle]
 pub extern "C" fn space_print(rspace: *mut Space) -> () {
-    unsafe { (*rspace).rspace.lock().unwrap().store.print() }
+    unsafe { (*rspace).rspace.lock().unwrap().get_store().print() }
 }
 
 #[no_mangle]
@@ -463,7 +463,7 @@ pub extern "C" fn reset_rspace(
     let root_slice = unsafe { std::slice::from_raw_parts(root_pointer, root_bytes_len) };
     let root = Blake2b256Hash::from_bytes(root_slice.to_vec());
 
-    let mut rs = match unsafe { (*rspace).rspace.lock() } {
+    let rs = match unsafe { (*rspace).rspace.lock() } {
         Ok(guard) => guard,
         Err(poisoned) => {
             eprintln!("ERROR: failed to lock rspace in reset: poisoned");
@@ -604,7 +604,7 @@ pub extern "C" fn reset_rspace(
 
 #[no_mangle]
 pub extern "C" fn to_map(rspace: *mut Space) -> *const u8 {
-    let hot_store_mapped = unsafe { (*rspace).rspace.lock().unwrap().store.to_map() };
+    let hot_store_mapped = unsafe { (*rspace).rspace.lock().unwrap().get_store().to_map() };
 
     let mut map_entries: Vec<StoreToMapEntry> = Vec::new();
 
@@ -1197,7 +1197,7 @@ pub extern "C" fn spawn(rspace: *mut Space) -> *mut Space {
 
 #[no_mangle]
 pub extern "C" fn history_repo_root(rspace: *mut Space) -> *const u8 {
-    let root = unsafe { (*rspace).rspace.lock().unwrap().history_repository.root() };
+    let root = unsafe { (*rspace).rspace.lock().unwrap().get_history_repository().root() };
 
     let hash = hash(&root);
     let hash_proto = HashProto { hash: hash.bytes() };
@@ -1305,7 +1305,7 @@ pub extern "C" fn get_history_items(
             .rspace
             .lock()
             .unwrap()
-            .history_repository
+            .get_history_repository()
             .exporter()
             .get_history_items(keys)
             .unwrap()
@@ -1352,7 +1352,7 @@ pub extern "C" fn get_data_items(
             .rspace
             .lock()
             .unwrap()
-            .history_repository
+            .get_history_repository()
             .exporter()
             .get_data_items(keys)
             .unwrap()
@@ -1408,7 +1408,7 @@ pub extern "C" fn get_history_and_data(
             .rspace
             .lock()
             .unwrap()
-            .history_repository
+            .get_history_repository()
             .exporter()
     };
 
@@ -1496,7 +1496,7 @@ pub extern "C" fn get_exporter_root(rspace: *mut Space) -> *const u8 {
             .rspace
             .lock()
             .unwrap()
-            .history_repository
+            .get_history_repository()
             .exporter()
             .get_root()
             .unwrap()
@@ -1627,7 +1627,7 @@ pub extern "C" fn validate_state_items(
             .rspace
             .lock()
             .unwrap()
-            .history_repository
+            .get_history_repository()
             .importer()
     };
 
@@ -1663,7 +1663,7 @@ pub extern "C" fn set_history_items(
 
     let _ = unsafe {
         let space = (*rspace).rspace.lock().unwrap();
-        space.history_repository.importer().set_history_items(data)
+        space.get_history_repository().importer().set_history_items(data)
     };
 }
 
@@ -1689,7 +1689,7 @@ pub extern "C" fn set_data_items(
 
     let _ = unsafe {
         let space = (*rspace).rspace.lock().unwrap();
-        space.history_repository.importer().set_data_items(data)
+        space.get_history_repository().importer().set_data_items(data)
     };
 }
 
@@ -1707,7 +1707,7 @@ pub extern "C" fn set_root(
             .rspace
             .lock()
             .unwrap()
-            .history_repository
+            .get_history_repository()
             .importer()
             .set_root(&root)
     }
@@ -1727,7 +1727,7 @@ pub extern "C" fn get_history_item(
             .rspace
             .lock()
             .unwrap()
-            .history_repository
+            .get_history_repository()
             .importer()
             .get_history_item(hash)
     };
@@ -1767,7 +1767,7 @@ pub extern "C" fn history_reader_root(
             .rspace
             .lock()
             .unwrap()
-            .history_repository
+            .get_history_repository()
             .get_history_reader(&state_hash)
             .unwrap()
             .root()
@@ -1805,7 +1805,7 @@ pub extern "C" fn get_history_data(
     let datums = unsafe {
         let space = (*rspace).rspace.lock().unwrap();
         space
-            .history_repository
+            .get_history_repository()
             .get_history_reader(&state_hash)
             .unwrap()
             .get_data(&key)
@@ -1860,7 +1860,7 @@ pub extern "C" fn get_history_waiting_continuations(
     let wks = unsafe {
         let space = (*rspace).rspace.lock().unwrap();
         space
-            .history_repository
+            .get_history_repository()
             .get_history_reader(&state_hash)
             .unwrap()
             .get_continuations(&key)
@@ -1926,7 +1926,7 @@ pub extern "C" fn get_history_joins(
     let joins = unsafe {
         let space = (*rspace).rspace.lock().unwrap();
         space
-            .history_repository
+            .get_history_repository()
             .get_history_reader(&state_hash)
             .unwrap()
             .get_joins(&key)

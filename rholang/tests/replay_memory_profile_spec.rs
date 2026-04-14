@@ -25,7 +25,7 @@ fn delta_kb_to_mib(delta_kb: isize) -> f64 {
     delta_kb as f64 / 1024.0
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "manual memory profiling; run with --ignored --nocapture"]
 async fn profile_debruijn_interpreter_replay_memory_usage() {
     let iterations: usize = 80;

@@ -178,7 +178,7 @@ where
         Ok(self.soft_report.lock().unwrap().clone())
     }
 
-    pub fn create_checkpoint(&mut self) -> Result<Checkpoint, RSpaceError> {
+    pub fn create_checkpoint(&self) -> Result<Checkpoint, RSpaceError> {
         let checkpoint = self.replay_rspace.create_checkpoint()?;
 
         self.soft_report.lock().unwrap().clear();
@@ -187,13 +187,13 @@ where
         Ok(checkpoint)
     }
 
-    pub fn create_soft_checkpoint(&mut self) -> Result<SoftCheckpoint<C, P, A, K>, RSpaceError> {
+    pub fn create_soft_checkpoint(&self) -> Result<SoftCheckpoint<C, P, A, K>, RSpaceError> {
         self.collect_report()?;
         Ok(self.replay_rspace.create_soft_checkpoint())
     }
 
     pub fn rig_and_reset(
-        &mut self,
+        &self,
         start_root: Blake2b256Hash,
         log: super::trace::Log,
     ) -> Result<(), RSpaceError> {
@@ -201,7 +201,7 @@ where
     }
 
     pub fn consume(
-        &mut self,
+        &self,
         channels: Vec<C>,
         patterns: Vec<P>,
         continuation: K,
@@ -213,7 +213,7 @@ where
     }
 
     pub fn produce(
-        &mut self,
+        &self,
         channel: C,
         data: A,
         persist: bool,
@@ -242,7 +242,7 @@ where
     A: Clone + Debug + Default + Send + Sync + Serialize + for<'a> Deserialize<'a> + 'static,
     K: Clone + Debug + Default + Send + Sync + Serialize + for<'a> Deserialize<'a> + 'static,
 {
-    fn create_checkpoint(&mut self) -> Result<Checkpoint, RSpaceError> {
+    fn create_checkpoint(&self) -> Result<Checkpoint, RSpaceError> {
         // Use ReportingRspace's own create_checkpoint which clears reports
         ReportingRspace::create_checkpoint(self)
     }
@@ -255,16 +255,16 @@ where
 
     fn get_joins(&self, channel: C) -> Vec<Vec<C>> { self.replay_rspace.get_joins(channel) }
 
-    fn clear(&mut self) -> Result<(), RSpaceError> { self.replay_rspace.clear() }
+    fn clear(&self) -> Result<(), RSpaceError> { self.replay_rspace.clear() }
 
     fn get_root(&self) -> Blake2b256Hash { self.replay_rspace.get_root() }
 
-    fn reset(&mut self, root: &Blake2b256Hash) -> Result<(), RSpaceError> {
+    fn reset(&self, root: &Blake2b256Hash) -> Result<(), RSpaceError> {
         self.replay_rspace.reset(root)
     }
 
     fn consume_result(
-        &mut self,
+        &self,
         channel: Vec<C>,
         pattern: Vec<P>,
     ) -> Result<Option<(K, Vec<A>)>, RSpaceError> {
@@ -273,22 +273,22 @@ where
 
     fn to_map(&self) -> HashMap<Vec<C>, Row<P, A, K>> { self.replay_rspace.to_map() }
 
-    fn create_soft_checkpoint(&mut self) -> SoftCheckpoint<C, P, A, K> {
+    fn create_soft_checkpoint(&self) -> SoftCheckpoint<C, P, A, K> {
         // Use ReportingRspace's own create_soft_checkpoint which collects reports
         ReportingRspace::create_soft_checkpoint(self).unwrap()
     }
 
-    fn take_event_log(&mut self) -> Log { self.replay_rspace.take_event_log() }
+    fn take_event_log(&self) -> Log { self.replay_rspace.take_event_log() }
 
     fn revert_to_soft_checkpoint(
-        &mut self,
+        &self,
         checkpoint: SoftCheckpoint<C, P, A, K>,
     ) -> Result<(), RSpaceError> {
         self.replay_rspace.revert_to_soft_checkpoint(checkpoint)
     }
 
     fn consume(
-        &mut self,
+        &self,
         channels: Vec<C>,
         patterns: Vec<P>,
         continuation: K,
@@ -299,7 +299,7 @@ where
     }
 
     fn produce(
-        &mut self,
+        &self,
         channel: C,
         data: A,
         persist: bool,
@@ -308,7 +308,7 @@ where
     }
 
     fn install(
-        &mut self,
+        &self,
         channels: Vec<C>,
         patterns: Vec<P>,
         continuation: K,
@@ -316,7 +316,7 @@ where
         self.replay_rspace.install(channels, patterns, continuation)
     }
 
-    fn rig_and_reset(&mut self, start_root: Blake2b256Hash, log: Log) -> Result<(), RSpaceError> {
+    fn rig_and_reset(&self, start_root: Blake2b256Hash, log: Log) -> Result<(), RSpaceError> {
         ReportingRspace::rig_and_reset(self, start_root, log)
     }
 
@@ -328,7 +328,7 @@ where
 
     fn is_replay(&self) -> bool { self.replay_rspace.is_replay() }
 
-    fn update_produce(&mut self, produce: Produce) -> () {
+    fn update_produce(&self, produce: Produce) -> () {
         self.replay_rspace.update_produce(produce)
     }
 }
@@ -353,7 +353,7 @@ where
     K: Clone + Debug + Send,
 {
     fn log_comm(
-        &mut self,
+        &self,
         data_candidates: &Vec<ConsumeCandidate<C, A>>,
         channels: &Vec<C>,
         wk: WaitingContinuation<P, K>,
@@ -388,7 +388,7 @@ where
     }
 
     fn log_consume(
-        &mut self,
+        &self,
         consume_ref: Consume,
         channels: &Vec<C>,
         patterns: &Vec<P>,
@@ -411,7 +411,7 @@ where
     }
 
     fn log_produce(
-        &mut self,
+        &self,
         produce_ref: Produce,
         channel: &C,
         data: &A,

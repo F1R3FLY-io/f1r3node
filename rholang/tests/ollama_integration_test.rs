@@ -65,7 +65,7 @@ async fn execute(runtime: &mut RhoRuntimeImpl, term: &str) -> Result<(), Interpr
     Ok(())
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn ollama_chat_should_return_mock_response() {
     let mock_response = "Echo: What is 2+2?";
     let mock_service = OllamaService::new_mock(mock_response.to_string(), "".to_string(), vec![]);
@@ -90,7 +90,7 @@ async fn ollama_chat_should_return_mock_response() {
     .await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn ollama_generate_should_return_mock_response() {
     let mock_response = "Generated Poem";
     let mock_service = OllamaService::new_mock("".to_string(), mock_response.to_string(), vec![]);
@@ -110,7 +110,7 @@ async fn ollama_generate_should_return_mock_response() {
     .await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn ollama_models_should_return_list() {
     let mock_models = vec!["model1".to_string(), "model2".to_string()];
     let mock_service = OllamaService::new_mock("".to_string(), "".to_string(), mock_models.clone());

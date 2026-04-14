@@ -1,6 +1,5 @@
 // See casper/src/test/scala/coop/rchain/casper/merging/MergeNumberChannelSpec.scala
 
-use futures::future::join_all;
 use std::collections::HashMap;
 
 use casper::rust::{
@@ -137,32 +136,27 @@ async fn test_case(
             .reset(&pre_state)
             .expect("Failed to reset runtime to pre-state");
 
-        let futures = terms
-            .iter()
-            .map(|deploy| {
-                let term = deploy.term.clone();
-                let mut runtime = runtime.clone();
-                async move {
-                    let runtime_ops = RuntimeOps::new(runtime.clone());
-                    let eval_result = runtime.evaluate_with_term(&term).await.unwrap();
-                    assert!(
-                        eval_result.errors.is_empty(),
-                        "{:?}\n{}",
-                        eval_result.errors,
-                        term
-                    );
+        // Evaluate deploys sequentially (matching Scala's traverse, not parTraverse).
+        // Deploys within a block share a single RSpace — concurrent evaluation would
+        // interleave events across deploys, corrupting per-deploy soft checkpoints.
+        let mut eval_results = Vec::with_capacity(terms.len());
+        for deploy in terms.iter() {
+            let runtime_ops = RuntimeOps::new(runtime.clone());
+            let eval_result = runtime.evaluate_with_term(&deploy.term).await.unwrap();
+            assert!(
+                eval_result.errors.is_empty(),
+                "{:?}\n{}",
+                eval_result.errors,
+                deploy.term
+            );
 
-                    let num_chan_final = runtime_ops
-                        .get_number_channels_data(&eval_result.mergeable)
-                        .unwrap();
+            let num_chan_final = runtime_ops
+                .get_number_channels_data(&eval_result.mergeable)
+                .unwrap();
 
-                    let soft_point = runtime.create_soft_checkpoint();
-                    (soft_point, num_chan_final)
-                }
-            })
-            .collect::<Vec<_>>();
-
-        let eval_results = join_all(futures).await;
+            let soft_point = runtime.create_soft_checkpoint();
+            eval_results.push((soft_point, num_chan_final));
+        }
         let end_checkpoint = runtime.create_checkpoint();
         let (log_vec, num_chan_abs) = eval_results.into_iter().unzip::<_, _, Vec<_>, Vec<_>>();
         let num_chan_diffs = rm
@@ -205,30 +199,20 @@ async fn test_case(
 
     let history_repo = rm.get_history_repo();
 
-    let futures = base_terms
-        .iter()
-        .enumerate()
-        .map(|(i, term)| {
-            let term = term.clone();
-            let runtime_clone = runtime.clone();
+    // Evaluate base terms sequentially (matching Scala's traverse)
+    for (i, term) in base_terms.iter().enumerate() {
+        let base_res = runtime
+            .evaluate(term, Cost::unsafe_max(), HashMap::new(), base_rho_seed())
+            .await
+            .unwrap();
 
-            async move {
-                let base_res = runtime_clone
-                    .evaluate(&term, Cost::unsafe_max(), HashMap::new(), base_rho_seed())
-                    .await
-                    .unwrap();
-
-                assert!(
-                    base_res.errors.is_empty(),
-                    "BASE {} {:?}",
-                    i,
-                    base_res.errors
-                );
-            }
-        })
-        .collect::<Vec<_>>();
-
-    join_all(futures).await;
+        assert!(
+            base_res.errors.is_empty(),
+            "BASE {} {:?}",
+            i,
+            base_res.errors
+        );
+    }
     let base_cp = runtime.create_checkpoint();
 
     let (left_ev_indices, left_post_state) =
@@ -279,6 +263,7 @@ async fn test_case(
 
     println!("LEFT DEPLOY CHAINS: {:?}", left_deploy_chains.len());
     println!("RIGHT DEPLOY CHAINS: {:?}", right_deploy_chains.len());
+
 
     let branches_are_conflicting =
         |a: &HashableSet<DeployChainIndex>, b: &HashableSet<DeployChainIndex>| {
@@ -377,7 +362,7 @@ async fn test_case(
     assert_eq!(RhoNumber::unapply(&res[0]).unwrap(), expected_final_result);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn multiple_branches_should_reject_deploy_when_mergeable_number_channels_got_negative_number()
 {
     test_case(
@@ -398,7 +383,7 @@ async fn multiple_branches_should_reject_deploy_when_mergeable_number_channels_g
     .await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn multiple_branches_should_reject_deploy_when_mergeable_number_channels_got_overflow() {
     test_case(
         vec![RHO_ST.to_owned(), rho_change(10)],
@@ -418,7 +403,7 @@ async fn multiple_branches_should_reject_deploy_when_mergeable_number_channels_g
     .await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn multiple_branches_with_normal_rejection_should_choose_from_normal_reject_options() {
     test_case(
         vec![RHO_ST.to_owned(), rho_change(100)],
@@ -452,7 +437,7 @@ async fn multiple_branches_with_normal_rejection_should_choose_from_normal_rejec
     .await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn multiple_branches_should_merge_number_channels() {
     test_case(
         vec![RHO_ST.to_owned()],

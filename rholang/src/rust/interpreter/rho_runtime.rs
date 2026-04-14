@@ -260,7 +260,7 @@ pub struct RhoRuntimeImpl {
     pub block_data_ref: Arc<tokio::sync::RwLock<BlockData>>,
     pub invalid_blocks_param: InvalidBlocks,
     pub deploy_data_ref: Arc<tokio::sync::RwLock<DeployData>>,
-    pub merge_chs: Arc<std::sync::RwLock<HashSet<Par>>>,
+    pub merge_chs: Arc<tokio::sync::RwLock<HashSet<Par>>>,
 }
 
 impl RhoRuntimeImpl {
@@ -270,7 +270,7 @@ impl RhoRuntimeImpl {
         block_data_ref: Arc<tokio::sync::RwLock<BlockData>>,
         invalid_blocks_param: InvalidBlocks,
         deploy_data_ref: Arc<tokio::sync::RwLock<DeployData>>,
-        merge_chs: Arc<std::sync::RwLock<HashSet<Par>>>,
+        merge_chs: Arc<tokio::sync::RwLock<HashSet<Par>>>,
     ) -> RhoRuntimeImpl {
         RhoRuntimeImpl {
             reducer,
@@ -316,17 +316,7 @@ impl RhoRuntime for RhoRuntimeImpl {
         _env: Env<Par>,
         rand: Blake2b512Random,
     ) -> Result<(), InterpreterError> {
-        // println!(
-        //     "\nspace hot store size before in inj: {:?}",
-        //     self.get_hot_changes().len()
-        // );
-        // println!("\nenv in inj: {:?}", _env);
-        // println!("\npar in inj: {:?}", par);
         let res = self.reducer.inj(par, rand).await;
-        // println!(
-        //     "space hot store size after in inj: {:?}",
-        //     self.get_hot_changes().len()
-        // );
         res
     }
 
@@ -340,8 +330,6 @@ impl RhoRuntime for RhoRuntimeImpl {
         let checkpoint = self
             .reducer
             .space
-            .try_lock()
-            .unwrap()
             .create_soft_checkpoint();
         metrics::histogram!(CREATE_SOFT_CHECKPOINT_TIME_METRIC, "source" => RUNTIME_METRICS_SOURCE)
             .record(start.elapsed().as_secs_f64());
@@ -351,7 +339,7 @@ impl RhoRuntime for RhoRuntimeImpl {
     }
 
     fn take_event_log(&mut self) -> Log {
-        let log = self.reducer.space.try_lock().unwrap().take_event_log();
+        let log = self.reducer.space.take_event_log();
         let log_len = log.len() as u64;
         metrics::counter!(RUNTIME_TAKE_EVENT_LOG_TOTAL_METRIC, "source" => RUNTIME_METRICS_SOURCE)
             .increment(1);
@@ -369,7 +357,7 @@ impl RhoRuntime for RhoRuntimeImpl {
     }
 
     fn get_root(&self) -> Blake2b256Hash {
-        self.reducer.space.try_lock().unwrap().get_root()
+        self.reducer.space.get_root()
     }
 
     fn revert_to_soft_checkpoint(
@@ -383,8 +371,6 @@ impl RhoRuntime for RhoRuntimeImpl {
         .increment(1);
         self.reducer
             .space
-            .try_lock()
-            .unwrap()
             .revert_to_soft_checkpoint(soft_checkpoint)
             .unwrap()
     }
@@ -396,8 +382,6 @@ impl RhoRuntime for RhoRuntimeImpl {
         let checkpoint = self
             .reducer
             .space
-            .try_lock()
-            .unwrap()
             .create_checkpoint()
             .unwrap();
         metrics::histogram!(CREATE_CHECKPOINT_TIME_METRIC, "source" => RUNTIME_METRICS_SOURCE)
@@ -408,10 +392,7 @@ impl RhoRuntime for RhoRuntimeImpl {
     }
 
     fn reset(&mut self, root: &Blake2b256Hash) -> Result<(), InterpreterError> {
-        let mut space_lock = self.reducer.space.try_lock().map_err(|_| {
-            InterpreterError::ReduceError("RhoRuntime reset: failed to lock reducer.space".into())
-        })?;
-        space_lock.reset(root)?;
+        self.reducer.space.reset(root)?;
         Ok(())
     }
 
@@ -423,17 +404,15 @@ impl RhoRuntime for RhoRuntimeImpl {
         Ok(self
             .reducer
             .space
-            .try_lock()
-            .unwrap()
             .consume_result(channel, pattern)?)
     }
 
     fn get_data(&self, channel: &Par) -> Vec<Datum<ListParWithRandom>> {
-        self.reducer.space.try_lock().unwrap().get_data(channel)
+        self.reducer.space.get_data(channel)
     }
 
     fn get_joins(&self, channel: Par) -> Vec<Vec<Par>> {
-        self.reducer.space.try_lock().unwrap().get_joins(channel)
+        self.reducer.space.get_joins(channel)
     }
 
     fn get_continuations(
@@ -442,8 +421,6 @@ impl RhoRuntime for RhoRuntimeImpl {
     ) -> Vec<WaitingContinuation<BindPattern, TaggedContinuation>> {
         self.reducer
             .space
-            .try_lock()
-            .unwrap()
             .get_waiting_continuations(channels)
     }
 
@@ -484,16 +461,16 @@ impl RhoRuntime for RhoRuntimeImpl {
     fn get_hot_changes(
         &self,
     ) -> HashMap<Vec<Par>, Row<BindPattern, ListParWithRandom, TaggedContinuation>> {
-        self.reducer.space.try_lock().unwrap().to_map()
+        self.reducer.space.to_map()
     }
 
     fn rig(&self, log: Log) -> Result<(), InterpreterError> {
-        self.reducer.space.try_lock().unwrap().rig(log)?;
+        self.reducer.space.rig(log)?;
         Ok(())
     }
 
     fn check_replay_data(&self) -> Result<(), InterpreterError> {
-        self.reducer.space.try_lock().unwrap().check_replay_data()?;
+        self.reducer.space.check_replay_data()?;
         Ok(())
     }
 }
@@ -505,24 +482,18 @@ impl HasCost for RhoRuntimeImpl {
 }
 
 pub type RhoTuplespace = Arc<
-    tokio::sync::Mutex<
-        Box<dyn Tuplespace<Par, BindPattern, ListParWithRandom, TaggedContinuation> + Send + Sync>,
-    >,
+    Box<dyn Tuplespace<Par, BindPattern, ListParWithRandom, TaggedContinuation> + Send + Sync>,
 >;
 
 pub type RhoISpace = Arc<
-    tokio::sync::Mutex<
-        Box<dyn ISpace<Par, BindPattern, ListParWithRandom, TaggedContinuation> + Send + Sync>,
-    >,
+    Box<dyn ISpace<Par, BindPattern, ListParWithRandom, TaggedContinuation> + Send + Sync>,
 >;
 
 pub type RhoReplayISpace = Arc<
-    tokio::sync::Mutex<
-        Box<
-            dyn IReplayRSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>
-                + Send
-                + Sync,
-        >,
+    Box<
+        dyn IReplayRSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>
+            + Send
+            + Sync,
     >,
 >;
 
@@ -1012,15 +983,13 @@ async fn setup_reducer(
     deploy_data_ref: Arc<tokio::sync::RwLock<DeployData>>,
     extra_system_processes: &mut Vec<Definition>,
     urn_map: HashMap<String, Par>,
-    merge_chs: Arc<std::sync::RwLock<HashSet<Par>>>,
+    merge_chs: Arc<tokio::sync::RwLock<HashSet<Par>>>,
     mergeable_tag_name: Par,
     openai_service: SharedOpenAIService,
     ollama_service: SharedOllamaService,
     grpc_client_service: GrpcClientService,
     cost: _cost,
 ) -> Arc<DebruijnInterpreter> {
-    // println!("\nsetup_reducer");
-
     let reducer_cell = Arc::new(std::sync::OnceLock::new());
 
     let temp_dispatcher = Arc::new(RholangAndScalaDispatcher {
@@ -1109,7 +1078,7 @@ fn setup_maps_and_refs(
 
 pub async fn create_rho_env<T>(
     mut rspace: T,
-    merge_chs: Arc<std::sync::RwLock<HashSet<Par>>>,
+    merge_chs: Arc<tokio::sync::RwLock<HashSet<Par>>>,
     mergeable_tag_name: Par,
     extra_system_processes: &mut Vec<Definition>,
     cost: _cost,
@@ -1132,9 +1101,9 @@ where
     let res = introduce_system_process(vec![&mut rspace], proc_defs);
     assert!(res.iter().all(|s| s.is_none()));
 
-    let charging_rspace: RhoISpace = Arc::new(tokio::sync::Mutex::new(Box::new(
+    let charging_rspace: RhoISpace = Arc::new(Box::new(
         ChargingRSpace::charging_rspace(rspace, cost.clone()),
-    )));
+    ));
 
     // Use services from ExternalServices
     let openai_service = external_services.openai.clone();
@@ -1161,30 +1130,18 @@ where
 
 // This is from Nassim Taleb's "Skin in the Game"
 fn bootstrap_rand() -> Blake2b512Random {
-    // println!("\nhit bootstrap_rand");
     Blake2b512Random::create_from_bytes("Decentralization is based on the simple notion that it is easier to macrobull***t than microbull***t. \
          Decentralization reduces large structural asymmetries."
          .as_bytes())
 }
 
 pub async fn bootstrap_registry(runtime: &RhoRuntimeImpl) -> () {
-    // println!("\ncalling bootstrap_registry");
     let rand = bootstrap_rand();
-    // rand.debug_str();
     let cost = runtime.cost().get();
     let _ = runtime
         .cost()
         .set(Cost::create(i64::MAX, "bootstrap registry".to_string()));
-    // println!("\nast: {:?}", ast());
-    // println!(
-    //     "\nruntime space before inject, {:?}",
-    //     runtime_lock.get_hot_changes().len()
-    // );
     runtime.inj(ast(), Env::new(), rand).await.unwrap();
-    // println!(
-    //     "\nruntime space after inject, {:?}",
-    //     runtime_lock.get_hot_changes().len()
-    // );
     let _ = runtime.cost().set(Cost::create_from_cost(cost));
 }
 
@@ -1202,9 +1159,8 @@ where
         + Sync
         + 'static,
 {
-    // println!("\nrust create_runtime");
     let cost = CostAccounting::empty_cost();
-    let merge_chs = Arc::new(std::sync::RwLock::new({
+    let merge_chs = Arc::new(tokio::sync::RwLock::new({
         let mut set = HashSet::new();
         set.insert(Par::default());
         set
@@ -1231,7 +1187,6 @@ where
     );
 
     if init_registry {
-        // println!("\ninit_registry");
         bootstrap_registry(&runtime).await;
         runtime.create_checkpoint();
     }

@@ -1113,7 +1113,7 @@ impl RuntimeManager {
             RSpace::create_with_replay(store, Arc::new(Box::new(Matcher)))
                 .expect("Failed to create RSpaceWithReplay");
 
-        let history_repo = rspace.history_repository.clone();
+        let history_repo = rspace.get_history_repository();
 
         let runtime_manager = RuntimeManager::create_with_space(
             rspace,

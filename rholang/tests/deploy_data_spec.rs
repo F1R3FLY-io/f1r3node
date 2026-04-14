@@ -19,7 +19,7 @@ use rspace_plus_plus::rspace::{
 };
 use std::sync::Arc;
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn rho_deploy_data_system_channel_should_return_timestamp_deployer_id_and_deploy_id() {
     let contract = r#"
         new deployData(`rho:deploy:data`) in {

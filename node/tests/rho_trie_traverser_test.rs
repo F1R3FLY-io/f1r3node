@@ -15,7 +15,7 @@ use rspace_plus_plus::rspace::hashing::blake2b256_hash::Blake2b256Hash;
 const _SHARD_ID: &str = "root-shard";
 
 /// 1:1 port of RhoTrieTraverserTest.scala - "traverse the TreeHashMap" should "work"
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn traverse_the_tree_hash_map_should_work() {
     let total = 1;
     let trie_depth = 2;

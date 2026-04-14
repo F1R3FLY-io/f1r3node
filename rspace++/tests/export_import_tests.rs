@@ -46,7 +46,7 @@ impl Match<Pattern, String> for StringMatch {
 // TODO: Don't works for MergingHistory
 #[tokio::test]
 async fn export_and_import_of_one_page_should_works_correctly() {
-    let (mut space1, exporter1, importer1, mut space2, _, importer2) = test_setup().await;
+    let (space1, exporter1, importer1, space2, _, importer2) = test_setup().await;
 
     let page_size = 1000;
     let data_size = 10;
@@ -114,7 +114,7 @@ async fn export_and_import_of_one_page_should_works_correctly() {
 
 #[tokio::test]
 async fn multipage_export_should_work_correctly() {
-    let (mut space1, exporter1, importer1, mut space2, _, importer2) = test_setup().await;
+    let (space1, exporter1, importer1, space2, _, importer2) = test_setup().await;
 
     let page_size = 10;
     let data_size = 1000;
@@ -229,7 +229,7 @@ async fn multipage_export_should_work_correctly() {
 // nodes.
 #[tokio::test]
 async fn multipage_export_with_skip_should_work_correctly() {
-    let (mut space1, exporter1, importer1, mut space2, _, importer2) = test_setup().await;
+    let (space1, exporter1, importer1, space2, _, importer2) = test_setup().await;
 
     let page_size = 10;
     let data_size = 1000;

@@ -6,7 +6,7 @@ use super::trace::event::{COMM, Consume, Produce};
 /// Core logging operations that can be overridden by different RSpace loggers
 pub trait RSpaceLogger<C, P: Clone, A: Clone, K: Clone>: Send + Sync {
     fn log_comm(
-        &mut self,
+        &self,
         _data_candidates: &Vec<ConsumeCandidate<C, A>>,
         _channels: &Vec<C>,
         _wk: WaitingContinuation<P, K>,
@@ -17,7 +17,7 @@ pub trait RSpaceLogger<C, P: Clone, A: Clone, K: Clone>: Send + Sync {
     }
 
     fn log_consume(
-        &mut self,
+        &self,
         consume_ref: Consume,
         _channels: &Vec<C>,
         _patterns: &Vec<P>,
@@ -29,7 +29,7 @@ pub trait RSpaceLogger<C, P: Clone, A: Clone, K: Clone>: Send + Sync {
     }
 
     fn log_produce(
-        &mut self,
+        &self,
         produce_ref: Produce,
         _channel: &C,
         _data: &A,

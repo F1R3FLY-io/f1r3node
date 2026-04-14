@@ -78,7 +78,7 @@ fn has_par_with_string(data: &HashSet<Par>, expected: &str) -> bool {
 
 // --- Example file tests ---
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn numeric_types_example_evaluates_without_errors() {
     with_runtime("numeric-types-example-", |mut runtime| async move {
         let source = include_str!("../examples/numeric-types.rho");
@@ -89,7 +89,7 @@ async fn numeric_types_example_evaluates_without_errors() {
 
 // --- Float end-to-end ---
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn float_arithmetic_produces_correct_values() {
     with_runtime("float-arith-", |mut runtime| async move {
         eval_ok(
@@ -110,7 +110,7 @@ async fn float_arithmetic_produces_correct_values() {
     .await
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn float_comparisons_produce_correct_booleans() {
     with_runtime("float-cmp-", |mut runtime| async move {
         eval_ok(
@@ -127,7 +127,7 @@ async fn float_comparisons_produce_correct_booleans() {
     .await
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn float_division_by_zero_produces_ieee754_values() {
     with_runtime("float-divz-", |mut runtime| async move {
         eval_ok(&mut runtime, r#"@0!(1.0f64 / 0.0f64)"#).await;
@@ -154,7 +154,7 @@ async fn float_division_by_zero_produces_ieee754_values() {
     .await
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn float_nan_equality_follows_ieee754() {
     with_runtime("float-nan-", |mut runtime| async move {
         eval_ok(
@@ -177,7 +177,7 @@ async fn float_nan_equality_follows_ieee754() {
     .await
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn float_nan_nested_in_list_follows_ieee754() {
     with_runtime("float-nan-nested-", |mut runtime| async move {
         eval_ok(
@@ -200,7 +200,7 @@ async fn float_nan_nested_in_list_follows_ieee754() {
     .await
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn float_nan_comparisons_return_false() {
     with_runtime("float-nan-cmp-", |mut runtime| async move {
         eval_ok(
@@ -230,7 +230,7 @@ async fn float_nan_comparisons_return_false() {
     .await
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn float_modulo_by_zero_is_error() {
     with_runtime("float-modz-", |mut runtime| async move {
         eval_err(&mut runtime, r#"@0!(1.0f64 % 0.0f64)"#).await;
@@ -240,7 +240,7 @@ async fn float_modulo_by_zero_is_error() {
 
 // --- BigInt end-to-end ---
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn bigint_arithmetic_produces_correct_values() {
     with_runtime("bigint-arith-", |mut runtime| async move {
         eval_ok(
@@ -259,7 +259,7 @@ async fn bigint_arithmetic_produces_correct_values() {
     .await
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn bigint_division_by_zero_is_error() {
     with_runtime("bigint-divz-", |mut runtime| async move {
         eval_err(&mut runtime, r#"@0!(1n / 0n)"#).await;
@@ -268,7 +268,7 @@ async fn bigint_division_by_zero_is_error() {
     .await
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn bigint_comparisons_produce_correct_booleans() {
     with_runtime("bigint-cmp-", |mut runtime| async move {
         eval_ok(
@@ -291,7 +291,7 @@ async fn bigint_comparisons_produce_correct_booleans() {
 
 // --- BigRat end-to-end ---
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn bigrat_arithmetic_produces_correct_values() {
     with_runtime("bigrat-arith-", |mut runtime| async move {
         eval_ok(
@@ -308,7 +308,7 @@ async fn bigrat_arithmetic_produces_correct_values() {
     .await
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn bigrat_division_by_zero_is_error() {
     with_runtime("bigrat-divz-", |mut runtime| async move {
         eval_err(&mut runtime, r#"@0!(1r / 0r)"#).await;
@@ -316,7 +316,7 @@ async fn bigrat_division_by_zero_is_error() {
     .await
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn bigrat_modulo_returns_zero() {
     with_runtime("bigrat-mod-", |mut runtime| async move {
         eval_ok(&mut runtime, r#"@0!(7r % 3r)"#).await;
@@ -328,7 +328,7 @@ async fn bigrat_modulo_returns_zero() {
 
 // --- FixedPoint end-to-end ---
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn fixedpoint_arithmetic_produces_correct_values() {
     with_runtime("fp-arith-", |mut runtime| async move {
         eval_ok(
@@ -345,7 +345,7 @@ async fn fixedpoint_arithmetic_produces_correct_values() {
     .await
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn fixedpoint_modulo_regression() {
     with_runtime("fp-mod-", |mut runtime| async move {
         eval_ok(
@@ -361,7 +361,7 @@ async fn fixedpoint_modulo_regression() {
     .await
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn fixedpoint_scale_mismatch_is_error() {
     with_runtime("fp-scale-", |mut runtime| async move {
         eval_err(&mut runtime, r#"@0!(1.5p1 + 2.50p2)"#).await;
@@ -374,7 +374,7 @@ async fn fixedpoint_scale_mismatch_is_error() {
     .await
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn fixedpoint_division_by_zero_is_error() {
     with_runtime("fp-divz-", |mut runtime| async move {
         eval_err(&mut runtime, r#"@0!(1.5p1 / 0.0p1)"#).await;
@@ -383,7 +383,7 @@ async fn fixedpoint_division_by_zero_is_error() {
     .await
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn fixedpoint_comparisons_produce_correct_booleans() {
     with_runtime("fp-cmp-", |mut runtime| async move {
         eval_ok(
@@ -402,7 +402,7 @@ async fn fixedpoint_comparisons_produce_correct_booleans() {
 
 // --- Cross-type errors ---
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn cross_type_operations_are_errors() {
     with_runtime("cross-type-", |mut runtime| async move {
         eval_err(&mut runtime, r#"@0!(1n + 1r)"#).await;
@@ -415,7 +415,7 @@ async fn cross_type_operations_are_errors() {
 
 // --- Channel-based numeric data flow ---
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn numeric_values_survive_channel_round_trip() {
     with_runtime("channel-rt-", |mut runtime| async move {
         eval_ok(
@@ -437,7 +437,7 @@ async fn numeric_values_survive_channel_round_trip() {
     .await
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn numeric_values_in_lists_and_tuples() {
     with_runtime("list-tuple-", |mut runtime| async move {
         eval_ok(
@@ -457,7 +457,7 @@ async fn numeric_values_in_lists_and_tuples() {
 
 // --- Pattern matching with numeric types ---
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn pattern_match_on_numeric_values() {
     with_runtime("pattern-match-", |mut runtime| async move {
         eval_ok(

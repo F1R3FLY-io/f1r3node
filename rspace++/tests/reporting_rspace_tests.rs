@@ -88,7 +88,7 @@ async fn reporting_rspace_should_capture_comm_event_in_soft_report() {
     };
 
     // base space to generate a valid trace log
-    let mut space = RSpace::apply(history_repo.clone(), hot_store, Arc::new(Box::new(StringMatch)));
+    let space = RSpace::apply(history_repo.clone(), hot_store, Arc::new(Box::new(StringMatch)));
 
     let empty_point = space.create_checkpoint().unwrap();
 
@@ -113,7 +113,7 @@ async fn reporting_rspace_should_capture_comm_event_in_soft_report() {
         let hr = history_reader.base();
         HotStoreInstances::create_from_hr(hr)
     };
-    let mut reporting = ReportingRspace::apply(
+    let reporting = ReportingRspace::apply(
         history_repo,
         Arc::new(reporting_store),
         Arc::new(Box::new(StringMatch)),
@@ -144,7 +144,7 @@ async fn reporting_rspace_should_capture_comm_event_in_soft_report() {
 async fn reporting_rspace_should_capture_consume_event_only() {
     // Verifies that calling consume alone produces a ReportingConsume entry and
     // does not require a matching produce to appear in the report.
-    let (_space, mut reporting) = build_reporting_rspace();
+    let (_space, reporting) = build_reporting_rspace();
 
     let _ = reporting.consume(
         vec!["ch1".to_string()],
@@ -166,7 +166,7 @@ async fn reporting_rspace_should_capture_consume_event_only() {
 async fn reporting_rspace_should_capture_produce_event_only() {
     // Verifies that calling produce alone produces a ReportingProduce entry and
     // is captured by the reporting logger.
-    let (_space, mut reporting) = build_reporting_rspace();
+    let (_space, reporting) = build_reporting_rspace();
 
     let _ = reporting.produce("ch1".to_string(), "d".to_string(), false);
 
@@ -182,7 +182,7 @@ async fn reporting_rspace_should_capture_produce_event_only() {
 async fn reporting_rspace_should_capture_peeks_in_comm_event() {
     // Verifies that peek semantics are preserved: when a COMM is formed with peeks,
     // the resulting ReportingComm.consume.peeks contains the peeked indices.
-    let (mut space, mut reporting) = build_reporting_rspace();
+    let (space, reporting) = build_reporting_rspace();
     let empty_point = space.create_checkpoint().unwrap();
 
     let channels = vec!["ch1".to_string()];

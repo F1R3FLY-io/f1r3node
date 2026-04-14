@@ -81,7 +81,7 @@ async fn create_runtimes_with_cost_log(
 
     let (space, replay) = hrstores;
 
-    let history_repository = space.history_repository.clone();
+    let history_repository = space.get_history_repository();
 
     let rho_runtime = create_rho_runtime(
         space.clone(),
@@ -263,12 +263,16 @@ where
     let repetitions = 20;
     let (first_result, first_log) = block().await;
 
-    // Execute sequentially for now (could be parallel with join_all later)
-    for _ in 1..repetitions {
+    for i in 1..repetitions {
         let (subsequent_result, subsequent_log) = block().await;
         let expected = first_result.cost.value;
         let actual = subsequent_result.cost.value;
         if expected != actual {
+            eprintln!("Cost mismatch at iteration {}: expected={}, got={}", i, expected, actual);
+            eprintln!("First log ({} entries): {:?}", first_log.len(),
+                first_log.iter().map(|c| c.value).collect::<Vec<_>>());
+            eprintln!("Subsequent log ({} entries): {:?}", subsequent_log.len(),
+                subsequent_log.iter().map(|c| c.value).collect::<Vec<_>>());
             assert_eq!(
                 subsequent_log, first_log,
                 "CostLog should be the same for deterministic cost"
@@ -329,7 +333,7 @@ async fn check_phlo_limit_exceeded(
     true
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn total_cost_of_evaluation_should_be_equal_to_the_sum_of_all_costs_in_the_log() {
     for (contract, expected_total_cost) in contracts() {
         let initial_phlo = 10000i64;
@@ -346,19 +350,27 @@ async fn total_cost_of_evaluation_should_be_equal_to_the_sum_of_all_costs_in_the
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn cost_should_be_deterministic() {
-    for (contract, _) in contracts() {
-        check_deterministic_cost(|| async {
+    for (contract, expected_cost) in contracts() {
+        let contract_preview = if contract.len() > 60 {
+            format!("{}...", &contract[..60])
+        } else {
+            contract.clone()
+        };
+        let result = check_deterministic_cost(|| async {
             let (result, _log) = evaluate_with_cost_log(i32::MAX as i64, contract.clone()).await;
-            assert!(result.errors.is_empty());
+            assert!(result.errors.is_empty(), "Contract errored: {}", contract_preview);
             (result, _log)
         })
         .await;
+        if result {
+            eprintln!("  PASS: cost={} contract={}", expected_cost, contract_preview);
+        }
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore] // TODO: Remove ignore when bug RCHAIN-3917 is fixed (13.05.2025 I can't find this ticket), RCHAIN-4032 - which is indicated in the Scala side error is also unknown.
 async fn cost_should_be_repeatable_when_generated() {
     // Try contract fromLong(1716417707L) = @2!!(0) | @0!!(0) | for (_ <<- @2) { 0 } | @2!(0)
@@ -413,7 +425,7 @@ async fn cost_should_be_repeatable_when_generated() {
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn running_out_of_phlogistons_should_stop_evaluation_upon_cost_depletion_in_a_single_execution_branch(
 ) {
     let parsing_cost = 6;
@@ -426,14 +438,14 @@ async fn running_out_of_phlogistons_should_stop_evaluation_upon_cost_depletion_i
     .await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn should_not_attempt_reduction_when_there_was_not_enough_phlo_for_parsing() {
     let parsing_cost = 6;
 
     check_phlo_limit_exceeded("@1!(1)".to_string(), parsing_cost - 1, vec![]).await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn should_stop_the_evaluation_of_all_execution_branches_when_one_of_them_runs_out_of_phlo() {
     let parsing_cost = 24;
     let first_step_cost = 11;
@@ -448,7 +460,7 @@ async fn should_stop_the_evaluation_of_all_execution_branches_when_one_of_them_r
     .await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn should_stop_the_evaluation_of_all_execution_branches_when_one_of_them_runs_out_of_phlo_with_a_more_sophisticated_contract(
 ) {
     let mut rng = rand::thread_rng();

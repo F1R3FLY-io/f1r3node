@@ -105,7 +105,7 @@ async fn replay_compute_state(
         .await
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn comput_state_should_charge_for_deploys() {
     with_runtime_manager(
         |mut runtime_manager, genesis_context, genesis_block| async move {
@@ -281,7 +281,7 @@ async fn exec_replay_system_deploy<S: SystemDeployTrait>(
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn pre_charge_deploy_should_reduce_user_account_balance_by_correct_amount() {
     with_runtime_manager(
         |mut runtime_manager, genesis_context, genesis_block| async move {
@@ -361,7 +361,7 @@ async fn pre_charge_deploy_should_reduce_user_account_balance_by_correct_amount(
     .unwrap()
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn close_block_should_make_epoch_change_and_reward_validator() {
     with_runtime_manager(
         |mut runtime_manager, genesis_context, genesis_block| async move {
@@ -385,7 +385,7 @@ async fn close_block_should_make_epoch_change_and_reward_validator() {
     .unwrap()
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn close_block_replay_should_fail_with_different_random_seed() {
     with_runtime_manager(
         |mut runtime_manager, genesis_context, genesis_block| async move {
@@ -410,7 +410,7 @@ async fn close_block_replay_should_fail_with_different_random_seed() {
     .unwrap();
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn balance_deploy_should_compute_rev_balances() {
     with_runtime_manager(
         |mut runtime_manager, genesis_context, genesis_block| async move {
@@ -437,7 +437,7 @@ async fn balance_deploy_should_compute_rev_balances() {
     .unwrap();
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn compute_state_should_capture_rholang_errors() {
     with_runtime_manager(
         |mut runtime_manager, genesis_context, genesis_block| async move {
@@ -470,7 +470,7 @@ async fn compute_state_should_capture_rholang_errors() {
 
 // TODO: Remove ignore once we have a fix for this test
 // This test is producing non-deterministic results - it's not clear why - sometimes it passes, sometimes it doesn't
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore]
 async fn compute_state_then_compute_bonds_should_be_replayable_after_all() {
     with_runtime_manager(
@@ -638,7 +638,7 @@ async fn compute_state_then_compute_bonds_should_be_replayable_after_all() {
     .unwrap();
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn compute_state_should_capture_rholang_parsing_errors_and_charge_for_parsing() {
     with_runtime_manager(
         |mut runtime_manager, genesis_context, genesis_block| async move {
@@ -670,7 +670,7 @@ async fn compute_state_should_capture_rholang_parsing_errors_and_charge_for_pars
     .unwrap();
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn compute_state_should_charge_for_parsing_and_execution() {
     with_runtime_manager(
         |mut runtime_manager, genesis_context, genesis_block| async move {
@@ -712,7 +712,7 @@ async fn compute_state_should_charge_for_parsing_and_execution() {
     .unwrap();
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn capture_result_should_return_the_value_at_the_specified_channel_after_a_rholang_computation(
 ) {
     with_runtime_manager(
@@ -770,7 +770,7 @@ async fn capture_result_should_return_the_value_at_the_specified_channel_after_a
     .unwrap();
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn capture_result_should_handle_multiple_results_and_no_results_appropriately() {
     with_runtime_manager(|runtime_manager, _, _| async move {
         let n = 8;
@@ -803,7 +803,7 @@ async fn capture_result_should_handle_multiple_results_and_no_results_appropriat
     .unwrap();
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn capture_result_should_throw_error_if_execution_fails() {
     with_runtime_manager(|runtime_manager, _, _| async move {
         let deploy = construct_deploy::source_deploy(
@@ -827,7 +827,7 @@ async fn capture_result_should_throw_error_if_execution_fails() {
     .unwrap();
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn empty_state_hash_should_not_remember_previous_hot_store_state() {
     with_runtime_manager(
         |mut runtime_manager, genesis_context, genesis_block| async move {
@@ -859,7 +859,7 @@ async fn empty_state_hash_should_not_remember_previous_hot_store_state() {
     .unwrap();
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn compute_state_should_be_replayed_by_replay_compute_state() {
     with_runtime_manager(
         |mut runtime_manager, genesis_context, genesis_block| async move {
@@ -946,7 +946,7 @@ async fn compute_state_should_be_replayed_by_replay_compute_state() {
     .unwrap();
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn compute_state_should_charge_deploys_separately() {
     with_runtime_manager(
         |mut runtime_manager, genesis_context, genesis_block| async move {
@@ -1105,7 +1105,7 @@ async fn compute_state_should_charge_deploys_separately() {
     .unwrap();
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn compute_state_should_just_work() {
     with_runtime_manager(|mut runtime_manager, genesis_context, genesis_block| async move {
       let gen_post_state = genesis_block.body.state.post_state_hash;
@@ -1271,7 +1271,7 @@ async fn invalid_replay(source: String) -> Result<StateHash, CasperError> {
     .await?
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn replaycomputestate_should_catch_discrepancies_in_initial_and_replay_cost_when_no_errors_are_thrown(
 ) {
     let result = invalid_replay("@0!(0) | for(@0 <- @0){ Nil }".to_string()).await;
@@ -1287,7 +1287,7 @@ async fn replaycomputestate_should_catch_discrepancies_in_initial_and_replay_cos
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn replaycomputestate_should_not_catch_discrepancies_in_initial_and_replay_cost_when_user_errors_are_thrown(
 ) {
     let result = invalid_replay("@0!(0) | for(@x <- @0){ x.undefined() }".to_string()).await;
@@ -1305,7 +1305,7 @@ async fn replaycomputestate_should_not_catch_discrepancies_in_initial_and_replay
 
 // This is additional test for sorting with joins and channels inside joins.
 // - after reverted PR https://github.com/rchain/rchain/pull/2436
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn joins_should_be_replayed_correctly() {
     with_runtime_manager(
         |mut runtime_manager, genesis_context, genesis_block| async move {
@@ -1380,7 +1380,7 @@ async fn joins_should_be_replayed_correctly() {
 /// The first plays the deploy (hot store populated from execution).
 /// The second replays with a fresh hot store (loads from history).
 /// This simulates the block creator vs replayer divergence.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn replay_on_independent_runtime_should_match_play_cost_for_duplicate_sends() {
     use crate::util::rholang::resources::{
         mk_runtime_manager_with_history_at, mk_test_rnode_store_manager_from_genesis,
@@ -1465,7 +1465,7 @@ async fn replay_on_independent_runtime_should_match_play_cost_for_duplicate_send
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn cross_deploy_bridge_full_admin_flow() {
     use crate::util::rholang::resources::{
         mk_runtime_manager_with_history_at, mk_test_rnode_store_manager_from_genesis,
@@ -1668,4 +1668,121 @@ in {{
         "Bridge admin API failures:\n{}",
         failures.join("\n")
     );
+}
+
+/// Reproduces the replay determinism issue seen with tokio::spawn.
+/// Deploys a contract with parallel composition, plays it, then replays it.
+/// If tokio::spawn introduces non-deterministic evaluation order, the replay
+/// cost will differ from the play cost, causing ReplayCostMismatch.
+///
+/// Run: cargo test -p casper --test mod --release parallel_replay_determinism -- --nocapture
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn parallel_replay_determinism() {
+    with_runtime_manager(
+        |mut runtime_manager, genesis_context, genesis_block| async move {
+            let gps = genesis_block.body.state.post_state_hash;
+
+            // Registry lookup — system process with internal parallel composition
+            let parallel_contract = r#"
+                new rl(`rho:registry:lookup`), ch in {
+                    rl!(`rho:vault:system`, *ch)
+                }
+            "#;
+
+            let deploy = construct_deploy::source_deploy_now_full(
+                parallel_contract.to_string(),
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+
+            let time = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_millis() as i64;
+
+            let block_data = BlockData {
+                time_stamp: time,
+                block_number: 0,
+                sender: genesis_context.validator_pks()[0].clone(),
+                seq_num: 0,
+            };
+
+            // Play the deploy with CloseBlockDeploy system deploy
+            let (play_state, processed_deploys, processed_sys_deploys) = runtime_manager
+                .compute_state(
+                    &gps,
+                    vec![deploy],
+                    vec![
+                        casper::rust::util::rholang::system_deploy_enum::SystemDeployEnum::Close(
+                            CloseBlockDeploy {
+                                initial_rand:
+                                    system_deploy_util::generate_close_deploy_random_seed_from_pk(
+                                        block_data.sender.clone(),
+                                        block_data.seq_num,
+                                    ),
+                            },
+                        ),
+                    ],
+                    block_data.clone(),
+                    None,
+                )
+                .await
+                .unwrap();
+
+            let play_cost = processed_deploys[0].cost.cost;
+            let play_failed = processed_deploys[0].is_failed;
+            let play_event_count = processed_deploys[0].deploy_log.len();
+            let sys_deploy_count = processed_sys_deploys.len();
+
+            // Hash the event log for comparison
+            use std::collections::hash_map::DefaultHasher;
+            use std::hash::{Hash, Hasher};
+            let mut hasher = DefaultHasher::new();
+            for ev in &processed_deploys[0].deploy_log {
+                format!("{:?}", ev).hash(&mut hasher);
+            }
+            let event_log_hash = hasher.finish();
+
+            println!("Play: cost={}, failed={}, events={}, sys_deploys={}, event_hash={:016x}, state={:?}",
+                play_cost, play_failed, play_event_count, sys_deploy_count, event_log_hash, &play_state[..8]);
+
+            // Replay the same deploy — must produce identical state and cost
+            let replay_state = runtime_manager
+                .replay_compute_state(
+                    &gps,
+                    processed_deploys,
+                    processed_sys_deploys,
+                    &block_data,
+                    None,
+                    false,
+                )
+                .await;
+
+            match replay_state {
+                Ok(state) => {
+                    println!("Replay succeeded, state match: {}", state == play_state);
+                    assert_eq!(state, play_state, "Play and replay produced different state hashes");
+                }
+                Err(CasperError::ReplayFailure(ReplayFailure::ReplayCostMismatch {
+                    initial_cost,
+                    replay_cost,
+                })) => {
+                    panic!(
+                        "REPLAY DETERMINISM FAILURE: play cost={} but replay cost={}. \
+                         This indicates non-deterministic evaluation order in parallel composition.",
+                        initial_cost, replay_cost
+                    );
+                }
+                Err(e) => {
+                    panic!("Replay failed: {:?}", e);
+                }
+            }
+        },
+    )
+    .await
+    .unwrap();
 }

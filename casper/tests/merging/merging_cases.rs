@@ -19,7 +19,7 @@ use crate::util::rholang::resources::with_runtime_manager;
  * So this should be dependent over produce that puts new value into PVV balance in the first deploy.
  * TODO adjust this once/if there is a solution to make deploys touching the same PVV non dependent
  */
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn two_deploys_executed_inside_single_state_transition_should_be_dependent() {
     with_runtime_manager(|mut runtime_manager, genesis_context, _| async move {
         let base_state = genesis_context.genesis_block.body.state.post_state_hash;

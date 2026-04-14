@@ -5,7 +5,6 @@
 ///
 /// Run with: cargo test -p casper --test mod cost_accounting_perf -- --nocapture
 /// Release:  cargo test -p casper --test mod --release cost_accounting_perf -- --nocapture
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
 use std::time::Instant;
 
@@ -38,6 +37,24 @@ fn get_snapshotter() -> &'static Snapshotter {
     })
 }
 
+fn get_histogram_stats(snapshotter: &Snapshotter, metric_name: &str) -> (usize, f64) {
+    let snapshot = snapshotter.snapshot();
+    let metrics = snapshot.into_hashmap();
+    let mut count = 0usize;
+    let mut sum = 0.0f64;
+    for (key, (_, _, value)) in metrics.iter() {
+        if key.key().name() == metric_name {
+            if let metrics_util::debugging::DebugValue::Histogram(samples) = value {
+                for sample in samples {
+                    count += 1;
+                    sum += sample.into_inner();
+                }
+            }
+        }
+    }
+    (count, sum)
+}
+
 fn get_counter_value(snapshotter: &Snapshotter, metric_name: &str) -> u64 {
     let snapshot = snapshotter.snapshot();
     let metrics = snapshot.into_hashmap();
@@ -51,28 +68,6 @@ fn get_counter_value(snapshotter: &Snapshotter, metric_name: &str) -> u64 {
         }
     }
     total
-}
-
-fn dump_all_metrics(snapshotter: &Snapshotter) {
-    let snapshot = snapshotter.snapshot();
-    let metrics = snapshot.into_hashmap();
-    println!("\n--- All registered metrics ---");
-    for (key, (_, _, value)) in metrics.iter() {
-        let name = key.key().name();
-        let labels: Vec<String> = key.key().labels().map(|l| format!("{}={}", l.key(), l.value())).collect();
-        let count = match value {
-            metrics_util::debugging::DebugValue::Histogram(s) => s.len(),
-            metrics_util::debugging::DebugValue::Counter(c) => *c as usize,
-            metrics_util::debugging::DebugValue::Gauge(_) => 0,
-        };
-        let kind = match value {
-            metrics_util::debugging::DebugValue::Histogram(_) => "histogram",
-            metrics_util::debugging::DebugValue::Counter(_) => "counter",
-            metrics_util::debugging::DebugValue::Gauge(_) => "gauge",
-        };
-        println!("  {} [{}] labels=[{}] count={}", name, kind, labels.join(","), count);
-    }
-    println!("--- End metrics ---\n");
 }
 
 struct RSpaceCallCounts {
@@ -138,7 +133,7 @@ async fn play_system_deploy_timed<S: SystemDeployTrait>(
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn measure_precharge_and_refund_cost() {
     const ITERATIONS: usize = 5;
 
@@ -391,6 +386,56 @@ async fn measure_precharge_and_refund_cost() {
                     store_cont as f64 / 1_000_000.0,
                     store_cont as f64 / total_ns.max(1) as f64 * 100.0);
             }
+
+            // Lock acquisition and spawn overhead
+            let (produce_lock_count, produce_lock_total) = get_histogram_stats(snapshotter, "rspace.produce.lock_acquire_seconds");
+            let (consume_lock_count, consume_lock_total) = get_histogram_stats(snapshotter, "rspace.consume.lock_acquire_seconds");
+            let (spawn_count, spawn_total) = get_histogram_stats(snapshotter, "reducer.eval_par.spawn_seconds");
+            let (join_count, join_total) = get_histogram_stats(snapshotter, "reducer.eval_par.join_seconds");
+            let (eval_par_count, _) = get_histogram_stats(snapshotter, "reducer.eval_par.term_count");
+            let eval_par_calls = get_counter_value(snapshotter, "reducer.eval_par.calls");
+
+            // Debug: list all histogram metrics
+            {
+                let snapshot = snapshotter.snapshot();
+                let metrics = snapshot.into_hashmap();
+                let mut hist_names: Vec<String> = Vec::new();
+                for (key, (_, _, value)) in metrics.iter() {
+                    if let metrics_util::debugging::DebugValue::Histogram(samples) = value {
+                        if !samples.is_empty() {
+                            hist_names.push(format!("  {} ({} samples)", key.key().name(), samples.len()));
+                        }
+                    }
+                }
+                hist_names.sort();
+                println!("\n--- All Histogram Metrics ({} with data) ---", hist_names.len());
+                for name in &hist_names {
+                    println!("{}", name);
+                }
+            }
+
+            let produce_lock_ns = get_counter_value(snapshotter, "rspace.produce.lock_acquire_ns");
+            let consume_lock_ns = get_counter_value(snapshotter, "rspace.consume.lock_acquire_ns");
+            let spawn_ns = get_counter_value(snapshotter, "reducer.eval_par.spawn_ns");
+            let join_ns = get_counter_value(snapshotter, "reducer.eval_par.join_ns");
+            let eval_par_calls = get_counter_value(snapshotter, "reducer.eval_par.calls");
+            let eval_par_terms = get_counter_value(snapshotter, "reducer.eval_par.term_count");
+            let total_lock_ms = (produce_lock_ns + consume_lock_ns) as f64 / 1_000_000.0;
+
+            println!("\n--- Lock & Spawn Overhead ---");
+            println!("  Produce lock acquire: {:.1}ms total ({:.3}ms avg over {} calls)",
+                produce_lock_ns as f64 / 1_000_000.0,
+                if produce_calls > 0 { produce_lock_ns as f64 / 1_000_000.0 / produce_calls as f64 } else { 0.0 },
+                produce_calls);
+            println!("  Consume lock acquire: {:.1}ms total ({:.3}ms avg over {} calls)",
+                consume_lock_ns as f64 / 1_000_000.0,
+                if consume_calls > 0 { consume_lock_ns as f64 / 1_000_000.0 / consume_calls as f64 } else { 0.0 },
+                consume_calls);
+            println!("  Total lock overhead:  {:.1}ms ({:.1}% of {:.1}ms total)",
+                total_lock_ms, total_lock_ms / total_ms * 100.0, total_ms);
+            println!("  eval(Par) calls: {}, terms: {}, spawn: {:.1}ms, join: {:.1}ms",
+                eval_par_calls, eval_par_terms,
+                spawn_ns as f64 / 1_000_000.0, join_ns as f64 / 1_000_000.0);
         },
     )
     .await

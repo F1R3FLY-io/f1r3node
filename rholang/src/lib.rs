@@ -39,7 +39,7 @@ use models::{
 use prost::Message;
 use rspace_plus_plus::rspace::checkpoint::SoftCheckpoint;
 use rspace_plus_plus::rspace::hashing::blake2b256_hash::Blake2b256Hash;
-use rspace_plus_plus::rspace::hot_store::{new_dashmap, HotStoreState};
+use rspace_plus_plus::rspace::hot_store::{new_hashmap, HotStoreState};
 use rspace_plus_plus::rspace::internal::{Datum, WaitingContinuation};
 use rspace_plus_plus::rspace::replay_rspace::ReplayRSpace;
 use rspace_plus_plus::rspace::trace::event::{Consume, Produce, COMM};
@@ -488,7 +488,7 @@ extern "C" fn revert_to_soft_checkpoint(
     let soft_checkpoint_proto = SoftCheckpointProto::decode(payload_slice).unwrap();
     let cache_snapshot_proto = soft_checkpoint_proto.cache_snapshot.unwrap();
 
-    let conts_map = new_dashmap();
+    let mut conts_map = new_hashmap();
     for map_entry in cache_snapshot_proto.continuations {
         let key = map_entry.key;
         let value = map_entry
@@ -521,7 +521,7 @@ extern "C" fn revert_to_soft_checkpoint(
         conts_map.insert(key, value);
     }
 
-    let installed_conts_map = new_dashmap();
+    let mut installed_conts_map = new_hashmap();
     for map_entry in cache_snapshot_proto.installed_continuations {
         let key = map_entry.key;
         let wk_proto = map_entry.value.unwrap();
@@ -547,7 +547,7 @@ extern "C" fn revert_to_soft_checkpoint(
         installed_conts_map.insert(key, value);
     }
 
-    let datums_map = new_dashmap();
+    let mut datums_map = new_hashmap();
     for map_entry in cache_snapshot_proto.data {
         let key = map_entry.key.unwrap();
         let value = map_entry
@@ -573,7 +573,7 @@ extern "C" fn revert_to_soft_checkpoint(
         datums_map.insert(key, value);
     }
 
-    let joins_map = new_dashmap();
+    let mut joins_map = new_hashmap();
     for map_entry in cache_snapshot_proto.joins {
         let key = map_entry.key.unwrap();
         let value = map_entry
@@ -585,7 +585,7 @@ extern "C" fn revert_to_soft_checkpoint(
         joins_map.insert(key, value);
     }
 
-    let installed_joins_map = new_dashmap();
+    let mut installed_joins_map = new_hashmap();
     for map_entry in cache_snapshot_proto.installed_joins {
         let key = map_entry.key.unwrap();
         let value = map_entry
@@ -910,15 +910,7 @@ extern "C" fn reset(
     // Access underlying space directly to capture Result and map to error code
     let runtime = unsafe { &mut (*runtime_ptr).runtime };
 
-    let mut space_lock = match runtime.reducer.space.try_lock() {
-        Ok(lock) => lock,
-        Err(e) => {
-            eprintln!("ERROR: failed to lock reducer.space in reset: {:?}", e);
-            return 2; // lock error
-        }
-    };
-
-    match space_lock.reset(&root) {
+    match runtime.reducer.space.reset(&root) {
         Ok(_) => 0,
         Err(e) => {
             eprintln!("ERROR: reset failed: {:?}", e);

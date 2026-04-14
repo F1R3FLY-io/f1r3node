@@ -143,24 +143,24 @@ fn check_same_elements<T: Hash + Eq>(vec1: Vec<T>, vec2: Vec<T>) -> bool {
 
 #[tokio::test]
 async fn reset_to_a_checkpoint_from_a_different_branch_should_work() {
-    let (mut space, mut replay_space) = fixture().await;
+    let (space, replay_space) = fixture().await;
 
     let root0 = replay_space.create_checkpoint().unwrap().root;
-    assert!(replay_space.store.is_empty());
+    assert!(replay_space.get_store().is_empty());
 
     let _ = space.produce("ch1".to_string(), "datum".to_string(), false);
     let root1 = space.create_checkpoint().unwrap().root;
 
     let _ = replay_space.reset(&root1);
-    assert!(replay_space.store.is_empty());
+    assert!(replay_space.get_store().is_empty());
 
     let _ = space.reset(&root0);
-    assert!(space.store.is_empty());
+    assert!(space.get_store().is_empty());
 }
 
 #[tokio::test]
 async fn creating_a_comm_event_should_replay_correctly() {
-    let (mut space, mut replay_space) = fixture().await;
+    let (space, replay_space) = fixture().await;
 
     let channels = vec!["ch1".to_string()];
     let patterns = vec![Pattern::Wildcard];
@@ -220,12 +220,12 @@ async fn creating_a_comm_event_should_replay_correctly() {
     );
     assert_eq!(replay_result_produce.unwrap().unwrap().1, result_produce.unwrap().unwrap().1);
     assert_eq!(final_point.root, rig_point.root);
-    assert!(replay_space.replay_data.is_empty());
+    assert!(replay_space.replay_data.lock().expect("replay data lock").is_empty());
 }
 
 #[tokio::test]
 async fn creating_a_comm_event_with_peek_consume_first_should_replay_correctly() {
-    let (mut space, mut replay_space) = fixture().await;
+    let (space, replay_space) = fixture().await;
 
     let channels = vec!["ch1".to_string()];
     let patterns = vec![Pattern::Wildcard];
@@ -277,12 +277,12 @@ async fn creating_a_comm_event_with_peek_consume_first_should_replay_correctly()
         result_produce.clone().unwrap().unwrap().0
     );
     assert_eq!(final_point.root, rig_point.root);
-    assert!(replay_space.replay_data.is_empty());
+    assert!(replay_space.replay_data.lock().expect("replay data lock").is_empty());
 }
 
 #[tokio::test]
 async fn creating_a_comm_event_with_peek_produce_first_should_replay_correctly() {
-    let (mut space, mut replay_space) = fixture().await;
+    let (space, replay_space) = fixture().await;
 
     let channels = vec!["ch1".to_string()];
     let patterns = vec![Pattern::Wildcard];
@@ -323,12 +323,12 @@ async fn creating_a_comm_event_with_peek_produce_first_should_replay_correctly()
         result_consume.clone().unwrap().unwrap().0
     );
     assert_eq!(final_point.root, rig_point.root);
-    assert!(replay_space.replay_data.is_empty());
+    assert!(replay_space.replay_data.lock().expect("replay data lock").is_empty());
 }
 
 #[tokio::test]
 async fn creating_comm_events_on_many_channels_with_peek_should_replay_correctly() {
-    let (mut space, mut replay_space) = fixture().await;
+    let (space, replay_space) = fixture().await;
 
     let channels = vec!["ch1".to_string(), "ch2".to_string()];
     let patterns = vec![Pattern::Wildcard, Pattern::Wildcard];
@@ -428,12 +428,12 @@ async fn creating_comm_events_on_many_channels_with_peek_should_replay_correctly
     let final_point = replay_space.create_checkpoint().unwrap();
 
     assert_eq!(final_point.root, rig_point.root);
-    assert!(replay_space.replay_data.is_empty());
+    assert!(replay_space.replay_data.lock().expect("replay data lock").is_empty());
 }
 
 #[tokio::test]
 async fn creating_multiple_comm_events_with_peeking_a_produce_should_replay_correctly() {
-    let (mut space, mut replay_space) = fixture().await;
+    let (space, replay_space) = fixture().await;
 
     let channels = vec!["ch1".to_string()];
     let patterns = vec![Pattern::Wildcard];
@@ -582,19 +582,19 @@ async fn creating_multiple_comm_events_with_peeking_a_produce_should_replay_corr
     assert_eq!(replay_result_produce4, result_produce4);
     assert_eq!(replay_result_produce5, result_produce5);
     assert_eq!(final_point.root, rig_point.root);
-    assert!(replay_space.replay_data.is_empty());
+    assert!(replay_space.replay_data.lock().expect("replay data lock").is_empty());
 }
 
 #[tokio::test]
 async fn picking_n_datums_from_m_waiting_datums_should_replay_correctly() {
-    let (mut space, mut replay_space) = fixture().await;
+    let (space, replay_space) = fixture().await;
 
     let n = 5;
     let m = 10;
     let range: Vec<i32> = (n..m).collect();
 
     fn consume_many<F, G>(
-        space: &mut impl ISpace<String, Pattern, String, String>,
+        space: &impl ISpace<String, Pattern, String, String>,
         range: Vec<i32>,
         channels_creator: F,
         patterns: &Vec<Pattern>,
@@ -626,7 +626,7 @@ async fn picking_n_datums_from_m_waiting_datums_should_replay_correctly() {
     }
 
     fn produce_many<F, A>(
-        space: &mut impl ISpace<String, Pattern, String, String>,
+        space: &impl ISpace<String, Pattern, String, String>,
         range: Vec<i32>,
         channel_creator: F,
         datum_creator: A,
@@ -652,7 +652,7 @@ async fn picking_n_datums_from_m_waiting_datums_should_replay_correctly() {
     }
 
     fn replay_consume_many<F, G>(
-        space: &mut impl ISpace<String, Pattern, String, String>,
+        space: &impl ISpace<String, Pattern, String, String>,
         range: Vec<i32>,
         channels_creator: F,
         patterns: &Vec<Pattern>,
@@ -684,7 +684,7 @@ async fn picking_n_datums_from_m_waiting_datums_should_replay_correctly() {
     }
 
     fn replay_produce_many<F, A>(
-        space: &mut impl ISpace<String, Pattern, String, String>,
+        space: &impl ISpace<String, Pattern, String, String>,
         range: Vec<i32>,
         channel_creator: F,
         datum_creator: A,
@@ -718,9 +718,9 @@ async fn picking_n_datums_from_m_waiting_datums_should_replay_correctly() {
     fn continuation_creator(i: i32) -> String { format!("continuation{}", i) }
 
     let empty_point = space.create_checkpoint().unwrap();
-    let _ = produce_many(&mut space, range.clone(), kp("ch1".to_string()), datum_creator, true);
+    let _ = produce_many(&space, range.clone(), kp("ch1".to_string()), datum_creator, true);
     let results = consume_many(
-        &mut space,
+        &space,
         range.clone(),
         kp(vec!["ch1".to_string()]),
         &vec![Pattern::Wildcard],
@@ -733,7 +733,7 @@ async fn picking_n_datums_from_m_waiting_datums_should_replay_correctly() {
     let _ = replay_space.rig_and_reset(empty_point.root, rig_point.log);
 
     let _ = replay_produce_many(
-        &mut replay_space,
+        &replay_space,
         range.clone(),
         kp("ch1".to_string()),
         datum_creator,
@@ -741,7 +741,7 @@ async fn picking_n_datums_from_m_waiting_datums_should_replay_correctly() {
     );
 
     let replay_results = replay_consume_many(
-        &mut replay_space,
+        &replay_space,
         range,
         kp(vec!["ch1".to_string()]),
         &vec![Pattern::Wildcard],
@@ -753,13 +753,13 @@ async fn picking_n_datums_from_m_waiting_datums_should_replay_correctly() {
 
     assert!(check_same_elements(replay_results, results));
     assert_eq!(final_point.root, rig_point.root);
-    assert!(replay_space.replay_data.is_empty());
+    assert!(replay_space.replay_data.lock().expect("replay data lock").is_empty());
 }
 
 #[tokio::test]
 async fn a_matched_continuation_defined_for_multiple_channels_some_peeked_should_replay_correctly()
 {
-    let (mut space, mut replay_space) = fixture().await;
+    let (space, replay_space) = fixture().await;
     let mut rng = thread_rng();
 
     let amount_of_channels = 10;
@@ -775,7 +775,7 @@ async fn a_matched_continuation_defined_for_multiple_channels_some_peeked_should
     produces.shuffle(&mut rng);
 
     fn consume_and_produce(
-        space: &mut impl ISpace<String, Pattern, String, String>,
+        space: &impl ISpace<String, Pattern, String, String>,
         channels: &Vec<String>,
         patterns: &Vec<Pattern>,
         continuation: &String,
@@ -802,12 +802,12 @@ async fn a_matched_continuation_defined_for_multiple_channels_some_peeked_should
 
     let empty_point = space.create_checkpoint().unwrap();
     let rs =
-        consume_and_produce(&mut space, &channels, &patterns, &continuation, &peeks, &produces);
+        consume_and_produce(&space, &channels, &patterns, &continuation, &peeks, &produces);
     assert_eq!(rs.iter().flatten().count(), 1);
 
     for i in 0..amount_of_channels {
         let ch = format!("channel{}", i);
-        let data = space.store.get_data(&ch);
+        let data = space.get_store().get_data(&ch);
         if !peeks.contains(&i) {
             assert_eq!(data.len(), 0);
         }
@@ -818,7 +818,7 @@ async fn a_matched_continuation_defined_for_multiple_channels_some_peeked_should
     let _ = replay_space.rig_and_reset(empty_point.root, rig_point.log);
 
     let rrs = consume_and_produce(
-        &mut replay_space,
+        &replay_space,
         &channels,
         &patterns,
         &continuation,
@@ -829,12 +829,12 @@ async fn a_matched_continuation_defined_for_multiple_channels_some_peeked_should
 
     assert_eq!(rs, rrs);
     assert_eq!(final_point.root, rig_point.root);
-    assert!(replay_space.replay_data.is_empty());
+    assert!(replay_space.replay_data.lock().expect("replay data lock").is_empty());
 }
 
 #[tokio::test]
 async fn picking_n_datums_from_m_persistent_waiting_datums_should_replay_correctly() {
-    let (mut space, mut replay_space) = fixture().await;
+    let (space, replay_space) = fixture().await;
 
     let empty_point = space.create_checkpoint().unwrap();
 
@@ -879,12 +879,12 @@ async fn picking_n_datums_from_m_persistent_waiting_datums_should_replay_correct
 
     assert_eq!(replay_results, results);
     assert_eq!(final_point.root, rig_point.root);
-    assert!(replay_space.replay_data.is_empty());
+    assert!(replay_space.replay_data.lock().expect("replay data lock").is_empty());
 }
 
 #[tokio::test]
 async fn picking_n_continuations_from_m_waiting_continuations_should_replay_correctly() {
-    let (mut space, mut replay_space) = fixture().await;
+    let (space, replay_space) = fixture().await;
 
     let empty_point = space.create_checkpoint().unwrap();
     let range = (1..10).collect::<Vec<_>>();
@@ -928,12 +928,12 @@ async fn picking_n_continuations_from_m_waiting_continuations_should_replay_corr
 
     assert_eq!(replay_results, results);
     assert_eq!(final_point.root, rig_point.root);
-    assert!(replay_space.replay_data.is_empty());
+    assert!(replay_space.replay_data.lock().expect("replay data lock").is_empty());
 }
 
 #[tokio::test]
 async fn picking_n_continuations_from_m_persistent_waiting_continuations_should_replay_correctly() {
-    let (mut space, mut replay_space) = fixture().await;
+    let (space, replay_space) = fixture().await;
 
     let empty_point = space.create_checkpoint().unwrap();
 
@@ -978,13 +978,13 @@ async fn picking_n_continuations_from_m_persistent_waiting_continuations_should_
 
     assert_eq!(replay_results, results);
     assert_eq!(final_point.root, rig_point.root);
-    assert!(replay_space.replay_data.is_empty());
+    assert!(replay_space.replay_data.lock().expect("replay data lock").is_empty());
 }
 
 #[tokio::test]
 async fn pick_n_continuations_from_m_waiting_continuations_stored_at_two_channels_should_replay_correctly()
  {
-    let (mut space, mut replay_space) = fixture().await;
+    let (space, replay_space) = fixture().await;
 
     let empty_point = space.create_checkpoint().unwrap();
 
@@ -1037,13 +1037,13 @@ async fn pick_n_continuations_from_m_waiting_continuations_stored_at_two_channel
 
     assert_eq!(replay_results, results);
     assert_eq!(final_point.root, rig_point.root);
-    assert!(replay_space.replay_data.is_empty());
+    assert!(replay_space.replay_data.lock().expect("replay data lock").is_empty());
 }
 
 #[tokio::test]
 async fn picking_n_datums_from_m_waiting_datums_while_doing_a_bunch_of_other_junk_should_replay_correctly()
  {
-    let (mut space, mut replay_space) = fixture().await;
+    let (space, replay_space) = fixture().await;
 
     let empty_point = space.create_checkpoint().unwrap();
 
@@ -1116,13 +1116,13 @@ async fn picking_n_datums_from_m_waiting_datums_while_doing_a_bunch_of_other_jun
 
     assert_eq!(replay_results, results);
     assert_eq!(final_point.root, rig_point.root);
-    assert!(replay_space.replay_data.is_empty());
+    assert!(replay_space.replay_data.lock().expect("replay data lock").is_empty());
 }
 
 #[tokio::test]
 async fn picking_n_continuations_from_m_persistent_waiting_continuations_while_doing_a_bunch_of_other_junk_should_replay_correctly()
  {
-    let (mut space, mut replay_space) = fixture().await;
+    let (space, replay_space) = fixture().await;
 
     let empty_point = space.create_checkpoint().unwrap();
 
@@ -1195,12 +1195,12 @@ async fn picking_n_continuations_from_m_persistent_waiting_continuations_while_d
 
     assert_eq!(replay_results, results);
     assert_eq!(final_point.root, rig_point.root);
-    assert!(replay_space.replay_data.is_empty());
+    assert!(replay_space.replay_data.lock().expect("replay data lock").is_empty());
 }
 
 #[tokio::test]
 async fn peeking_data_stored_at_two_channels_in_100_continuations_should_replay_correctly() {
-    let (mut space, mut replay_space) = fixture().await;
+    let (space, replay_space) = fixture().await;
 
     let empty_point = space.create_checkpoint().unwrap();
 
@@ -1256,12 +1256,12 @@ async fn peeking_data_stored_at_two_channels_in_100_continuations_should_replay_
 
     assert_eq!(replay_results, results);
     assert_eq!(final_point.root, rig_point.root);
-    assert!(replay_space.replay_data.is_empty());
+    assert!(replay_space.replay_data.lock().expect("replay data lock").is_empty());
 }
 
 #[tokio::test]
 async fn replay_rspace_should_correctly_remove_things_from_replay_data() {
-    let (mut space, mut replay_space) = fixture().await;
+    let (space, replay_space) = fixture().await;
 
     let channels = vec!["ch1".to_string()];
     let patterns = vec![Pattern::Wildcard];
@@ -1297,21 +1297,19 @@ async fn replay_rspace_should_correctly_remove_things_from_replay_data() {
 
     let _ = replay_space.rig_and_reset(empty_point.root, rig_point.log);
 
-    assert_eq!(
-        replay_space
-            .replay_data
-            .map
-            .get(&IOEvent::Consume(cr_1.clone()))
-            .map(|counter| counter.iter().map(|(_, c)| *c).sum::<usize>())
-            .unwrap_or(0) +
-            replay_space
-                .replay_data
-                .map
-                .get(&IOEvent::Consume(cr_2.clone()))
-                .map(|counter| counter.iter().map(|(_, c)| *c).sum::<usize>())
-                .unwrap_or(0),
-        2
-    );
+    let count_cr1 = replay_space
+        .replay_data.lock().expect("replay data lock")
+        .map
+        .get(&IOEvent::Consume(cr_1.clone()))
+        .map(|counter| counter.iter().map(|(_, c)| *c).sum::<usize>())
+        .unwrap_or(0);
+    let count_cr2 = replay_space
+        .replay_data.lock().expect("replay data lock")
+        .map
+        .get(&IOEvent::Consume(cr_2.clone()))
+        .map(|counter| counter.iter().map(|(_, c)| *c).sum::<usize>())
+        .unwrap_or(0);
+    assert_eq!(count_cr1 + count_cr2, 2);
 
     let _ = replay_space.consume(
         channels.clone(),
@@ -1330,45 +1328,41 @@ async fn replay_rspace_should_correctly_remove_things_from_replay_data() {
 
     let _ = replay_space.produce(channels[0].clone(), datum.clone(), false);
 
-    assert_eq!(
-        replay_space
-            .replay_data
-            .map
-            .get(&IOEvent::Consume(cr_1.clone()))
-            .map(|counter| counter.iter().map(|(_, c)| *c).sum::<usize>())
-            .unwrap_or(0) +
-            replay_space
-                .replay_data
-                .map
-                .get(&IOEvent::Consume(cr_2.clone()))
-                .map(|counter| counter.iter().map(|(_, c)| *c).sum::<usize>())
-                .unwrap_or(0),
-        1
-    );
+    let count_cr1 = replay_space
+        .replay_data.lock().expect("replay data lock")
+        .map
+        .get(&IOEvent::Consume(cr_1.clone()))
+        .map(|counter| counter.iter().map(|(_, c)| *c).sum::<usize>())
+        .unwrap_or(0);
+    let count_cr2 = replay_space
+        .replay_data.lock().expect("replay data lock")
+        .map
+        .get(&IOEvent::Consume(cr_2.clone()))
+        .map(|counter| counter.iter().map(|(_, c)| *c).sum::<usize>())
+        .unwrap_or(0);
+    assert_eq!(count_cr1 + count_cr2, 1);
 
     let _ = replay_space.produce(channels[0].clone(), datum.clone(), false);
 
-    assert_eq!(
-        replay_space
-            .replay_data
-            .map
-            .get(&IOEvent::Consume(cr_1))
-            .map(|counter| counter.iter().map(|(_, c)| *c).sum::<usize>())
-            .unwrap_or(0) +
-            replay_space
-                .replay_data
-                .map
-                .get(&IOEvent::Consume(cr_2))
-                .map(|counter| counter.iter().map(|(_, c)| *c).sum::<usize>())
-                .unwrap_or(0),
-        0
-    );
+    let count_cr1 = replay_space
+        .replay_data.lock().expect("replay data lock")
+        .map
+        .get(&IOEvent::Consume(cr_1))
+        .map(|counter| counter.iter().map(|(_, c)| *c).sum::<usize>())
+        .unwrap_or(0);
+    let count_cr2 = replay_space
+        .replay_data.lock().expect("replay data lock")
+        .map
+        .get(&IOEvent::Consume(cr_2))
+        .map(|counter| counter.iter().map(|(_, c)| *c).sum::<usize>())
+        .unwrap_or(0);
+    assert_eq!(count_cr1 + count_cr2, 0);
 }
 
 #[tokio::test]
 async fn producing_should_return_same_stable_checkpoint_root_hashes() {
     async fn process(indices: Vec<i32>) -> Blake2b256Hash {
-        let (mut space, _) = fixture().await;
+        let (space, _) = fixture().await;
 
         for i in indices {
             let _ = space.produce("ch1".to_string(), format!("datum{}", i), false);
@@ -1385,7 +1379,7 @@ async fn producing_should_return_same_stable_checkpoint_root_hashes() {
 
 #[tokio::test]
 async fn an_install_should_be_available_after_resetting_to_a_checkpoint() {
-    let (mut space, mut replay_space) = fixture().await;
+    let (space, replay_space) = fixture().await;
 
     let channel = "ch1".to_string();
     let datum = "datum1".to_string();
@@ -1410,7 +1404,7 @@ async fn an_install_should_be_available_after_resetting_to_a_checkpoint() {
 #[tokio::test]
 async fn reset_should_empty_the_replay_store_and_reset_the_replay_trie_updates_log_and_reset_the_replay_data()
  {
-    let (mut space, mut replay_space) = fixture().await;
+    let (space, replay_space) = fixture().await;
 
     let channels = vec!["ch1".to_string()];
     let patterns = vec![Pattern::Wildcard];
@@ -1440,10 +1434,10 @@ async fn reset_should_empty_the_replay_store_and_reset_the_replay_trie_updates_l
     );
     assert!(consume2.unwrap().is_none());
 
-    assert!(!replay_space.store.is_empty());
+    assert!(!replay_space.get_store().is_empty());
     assert_eq!(
         replay_space
-            .store
+            .get_store()
             .changes()
             .into_iter()
             .filter_map(|ht_action| {
@@ -1458,8 +1452,8 @@ async fn reset_should_empty_the_replay_store_and_reset_the_replay_trie_updates_l
     );
 
     let _ = replay_space.reset(&empty_point.root);
-    assert!(replay_space.store.is_empty());
-    assert!(replay_space.replay_data.is_empty());
+    assert!(replay_space.get_store().is_empty());
+    assert!(replay_space.replay_data.lock().expect("replay data lock").is_empty());
 
     let checkpoint1 = replay_space.create_checkpoint().unwrap();
     assert!(checkpoint1.log.is_empty());
@@ -1468,7 +1462,7 @@ async fn reset_should_empty_the_replay_store_and_reset_the_replay_trie_updates_l
 #[tokio::test]
 async fn clear_should_empty_the_replay_store_reset_the_replay_event_log_reset_the_replay_trie_updates_log_and_reset_the_replay_data()
  {
-    let (mut space, mut replay_space) = fixture().await;
+    let (space, replay_space) = fixture().await;
 
     let channels = vec!["ch1".to_string()];
     let patterns = vec![Pattern::Wildcard];
@@ -1494,10 +1488,10 @@ async fn clear_should_empty_the_replay_store_reset_the_replay_event_log_reset_th
         BTreeSet::new(),
     );
     assert!(consume2.unwrap().is_none());
-    assert!(!replay_space.store.is_empty());
+    assert!(!replay_space.get_store().is_empty());
     assert_eq!(
         replay_space
-            .store
+            .get_store()
             .changes()
             .into_iter()
             .filter_map(|action| {
@@ -1520,8 +1514,8 @@ async fn clear_should_empty_the_replay_store_reset_the_replay_event_log_reset_th
     assert!(checkpoint0.log.is_empty()); // we don't record trace logs in ReplayRspace
 
     let _ = replay_space.clear();
-    assert!(replay_space.store.is_empty());
-    assert!(replay_space.replay_data.is_empty());
+    assert!(replay_space.get_store().is_empty());
+    assert!(replay_space.replay_data.lock().expect("replay data lock").is_empty());
 
     let checkpoint1 = replay_space.create_checkpoint().unwrap();
     assert!(checkpoint1.log.is_empty());
@@ -1529,7 +1523,7 @@ async fn clear_should_empty_the_replay_store_reset_the_replay_event_log_reset_th
 
 #[tokio::test]
 async fn replay_should_not_allow_for_ambiguous_executions() {
-    let (mut space, mut replay_space) = fixture().await;
+    let (space, replay_space) = fixture().await;
 
     let channel1 = "ch1".to_string();
     let channel2 = "ch2".to_string();
@@ -1631,7 +1625,7 @@ async fn replay_should_not_allow_for_ambiguous_executions() {
             .is_none()
     );
 
-    assert!(replay_space.replay_data.is_empty());
+    assert!(replay_space.replay_data.lock().expect("replay data lock").is_empty());
 }
 
 #[tokio::test]
@@ -1643,7 +1637,7 @@ async fn check_replay_data_should_proceed_if_replay_data_is_empty() {
 
 #[tokio::test]
 async fn check_replay_data_should_throw_error_if_replay_data_contains_elements() {
-    let (mut space, mut replay_space) = fixture().await;
+    let (space, replay_space) = fixture().await;
     let channels = vec!["ch1".to_string()];
     let patterns = vec![Pattern::Wildcard];
     let continuation = "continuation".to_string();
