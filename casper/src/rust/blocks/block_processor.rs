@@ -16,6 +16,21 @@ use std::sync::Mutex;
 use std::time::Instant;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::rust::block_status::BlockError;
+use crate::rust::engine::block_retriever::{AdmitHashReason, BlockRetriever};
+use crate::rust::metrics_constants::{
+    BLOCK_PROCESSING_STORAGE_TIME_METRIC, BLOCK_PROCESSING_VALIDATION_SETUP_TIME_METRIC,
+    BLOCK_PROCESSOR_METRICS_SOURCE, BLOCK_SIZE_METRIC, BLOCK_VALIDATION_FAILED_METRIC,
+    BLOCK_VALIDATION_SUCCESS_METRIC, BLOCK_VALIDATION_TIME_METRIC,
+};
+use crate::rust::{
+    block_status::InvalidBlock,
+    casper::{Casper, CasperSnapshot},
+    errors::CasperError,
+    util::proto_util,
+    validate::Validate,
+    ValidBlockProcessing,
+};
 use block_storage::rust::dag::block_dag_key_value_storage::BlockDagKeyValueStorage;
 use block_storage::rust::{
     casperbuffer::casper_buffer_key_value_storage::CasperBufferKeyValueStorage,
@@ -33,22 +48,6 @@ use models::rust::{
 };
 use prost::Message;
 use rspace_plus_plus::rspace::history::Either;
-use crate::rust::block_status::BlockError;
-use crate::rust::engine::block_retriever::{AdmitHashReason, BlockRetriever};
-use crate::rust::metrics_constants::{
-    BLOCK_PROCESSING_STORAGE_TIME_METRIC,
-    BLOCK_PROCESSING_VALIDATION_SETUP_TIME_METRIC, BLOCK_PROCESSOR_METRICS_SOURCE,
-    BLOCK_SIZE_METRIC, BLOCK_VALIDATION_FAILED_METRIC, BLOCK_VALIDATION_SUCCESS_METRIC,
-    BLOCK_VALIDATION_TIME_METRIC,
-};
-use crate::rust::{
-    block_status::InvalidBlock,
-    casper::{Casper, CasperSnapshot},
-    errors::CasperError,
-    util::proto_util,
-    validate::Validate,
-    ValidBlockProcessing,
-};
 
 /// Logic for processing incoming blocks
 /// Blocks created by node itself are not held here, but in Proposer.
@@ -87,6 +86,7 @@ fn maybe_trim_allocator_after_block() {
 
     #[cfg(all(target_os = "linux", target_env = "gnu"))]
     {
+        use crate::rust::metrics_constants::ALLOCATOR_TRIM_TOTAL_METRIC;
         // Best-effort return of free heap pages to OS to limit RSS ratcheting.
         unsafe {
             let _ = malloc_trim(0);
@@ -95,7 +95,6 @@ fn maybe_trim_allocator_after_block() {
             .increment(1);
     }
 }
-
 
 impl<T: TransportLayer + Send + Sync> BlockProcessor<T> {
     pub fn new(dependencies: BlockProcessorDependencies<T>) -> Self {
@@ -300,9 +299,7 @@ impl<T: TransportLayer + Send + Sync> BlockProcessor<T> {
                             )
                             .await
                     }
-                    _ => {
-                        Ok(snapshot.dag.clone())
-                    }
+                    _ => Ok(snapshot.dag.clone()),
                 }
             }
         }?;

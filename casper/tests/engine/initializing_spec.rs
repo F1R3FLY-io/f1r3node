@@ -10,6 +10,11 @@ use std::sync::{
 };
 use tokio::sync::mpsc;
 
+use crate::engine::setup::TestFixture;
+use casper::rust::engine::engine::transition_to_initializing;
+use casper::rust::engine::engine_cell::EngineCell;
+use casper::rust::engine::initializing::Initializing;
+use casper::rust::engine::lfs_tuple_space_requester;
 use crypto::rust::{
     hash::blake2b256::Blake2b256,
     signatures::{secp256k1::Secp256k1, signatures_alg::SignaturesAlg},
@@ -22,11 +27,6 @@ use models::rust::casper::protocol::casper_message::{
 };
 use prost::bytes::Bytes;
 use prost::Message;
-use crate::engine::setup::TestFixture;
-use casper::rust::engine::engine::transition_to_initializing;
-use casper::rust::engine::engine_cell::EngineCell;
-use casper::rust::engine::initializing::Initializing;
-use casper::rust::engine::lfs_tuple_space_requester;
 
 use casper::rust::errors::CasperError;
 use comm::rust::rp::protocol_helper::packet_with_content;

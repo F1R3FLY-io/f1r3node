@@ -73,7 +73,10 @@ impl EventsInfo {
         }
 
         if !buffered.is_empty() {
-            tracing::debug!("Replayed {} startup events to WebSocket client", buffered.len());
+            tracing::debug!(
+                "Replayed {} startup events to WebSocket client",
+                buffered.len()
+            );
         }
 
         // Live stream — skip events that were already replayed.

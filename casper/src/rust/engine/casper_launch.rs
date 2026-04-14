@@ -167,7 +167,8 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
             synchrony_recovery_cooldown: conf.synchrony_recovery_cooldown,
             synchrony_recovery_max_bypasses: conf.synchrony_recovery_max_bypasses,
             synchrony_finalized_baseline_enabled: conf.synchrony_finalized_baseline_enabled,
-            synchrony_finalized_baseline_max_distance: conf.synchrony_finalized_baseline_max_distance,
+            synchrony_finalized_baseline_max_distance: conf
+                .synchrony_finalized_baseline_max_distance,
             max_user_deploys_per_block: conf.max_user_deploys_per_block,
         };
 
