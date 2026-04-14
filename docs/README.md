@@ -117,6 +117,7 @@ The Cargo workspace contains 11 crates:
 
 | Document | Description |
 |----------|-------------|
+| [WebSocket Events](./node/websocket-events.md) | `/ws/events` endpoint: 9 event types, startup replay, payload schemas |
 | [Docker Setup](../docker/README.md) | Docker compose for shard, standalone, monitoring |
 | [RNode API](./rnode-api/) | Protocol Buffer API documentation |
 | [LFS Requester Architecture](./plans/lfs_tuple_space_requester_concurrency_architecture.md) | LFS tuple space concurrency design |

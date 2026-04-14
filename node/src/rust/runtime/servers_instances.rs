@@ -109,6 +109,7 @@ impl ServersInstances {
     /// * `node_discovery` - Node discovery service (needed for AppState)
     /// * `block_report_api` - Block report API (needed for AppState)
     /// * `event_stream` - Event stream (needed for AppState)
+    /// * `startup_events` - Startup event buffer for WebSocket replay
     /// * `kademlia_store` - Kademlia store (needed for Kademlia server)
     pub async fn build<T: KademliaRPC + Send + Sync + 'static>(
         api_servers: APIServers,
@@ -124,6 +125,7 @@ impl ServersInstances {
         node_discovery: Arc<dyn NodeDiscovery + Send + Sync>,
         block_report_api: Arc<casper::rust::api::block_report_api::BlockReportAPI>,
         event_stream: EventStream,
+        startup_events: shared::rust::shared::f1r3fly_events::StartupBuffer,
         kademlia_store: Arc<KademliaStore<T>>,
     ) -> eyre::Result<Self> {
         // Read current RPConf
@@ -257,6 +259,7 @@ impl ServersInstances {
             Arc::new(rp_connections),
             node_discovery.clone(),
             Arc::new(event_stream.new_subscribe()),
+            startup_events,
         );
 
         // Create HTTP server router

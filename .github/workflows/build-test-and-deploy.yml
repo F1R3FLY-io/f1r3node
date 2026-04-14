@@ -281,7 +281,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: F1R3FLY-io/system-integration
-          ref: 41bb7cbc315294f1a0e9828cf5cbb19136841701
+          ref: 953582825cfe1b6238eb57ea1a8b98417df6e880
           path: system-integration
 
       - uses: actions/setup-python@v5
@@ -357,6 +357,7 @@ jobs:
             integration-tests/test/test_bridge_admin.py \
             integration-tests/test/test_shard_degradation.py \
             integration-tests/test/test_consensus_health.py \
+            integration-tests/test/test_websocket.py \
             integration-tests/test/test_synchrony_constraint.py \
             integration-tests/test/test_asymmetric_bonds.py \
             integration-tests/test/test_bonding_validators.py \

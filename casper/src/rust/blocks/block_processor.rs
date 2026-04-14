@@ -36,7 +36,7 @@ use rspace_plus_plus::rspace::history::Either;
 use crate::rust::block_status::BlockError;
 use crate::rust::engine::block_retriever::{AdmitHashReason, BlockRetriever};
 use crate::rust::metrics_constants::{
-    ALLOCATOR_TRIM_TOTAL_METRIC, BLOCK_PROCESSING_STORAGE_TIME_METRIC,
+    BLOCK_PROCESSING_STORAGE_TIME_METRIC,
     BLOCK_PROCESSING_VALIDATION_SETUP_TIME_METRIC, BLOCK_PROCESSOR_METRICS_SOURCE,
     BLOCK_SIZE_METRIC, BLOCK_VALIDATION_FAILED_METRIC, BLOCK_VALIDATION_SUCCESS_METRIC,
     BLOCK_VALIDATION_TIME_METRIC,

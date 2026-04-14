@@ -22,8 +22,6 @@ use models::rust::casper::protocol::casper_message::{
 };
 use prost::bytes::Bytes;
 use prost::Message;
-use shared::rust::shared::f1r3fly_events::{EventPublisher, EventPublisherFactory};
-
 use crate::engine::setup::TestFixture;
 use casper::rust::engine::engine::transition_to_initializing;
 use casper::rust::engine::engine_cell::EngineCell;
@@ -41,10 +39,6 @@ use shared::rust::ByteVector;
 struct InitializingSpec;
 
 impl InitializingSpec {
-    fn event_bus() -> Box<dyn EventPublisher> {
-        EventPublisherFactory::noop()
-    }
-
     fn before_each(fixture: &TestFixture) {
         fixture
             .transport_layer
@@ -55,7 +49,7 @@ impl InitializingSpec {
         fixture.transport_layer.reset();
     }
     async fn make_transition_to_running_once_approved_block_received() {
-        let _event_bus = Self::event_bus();
+        let _event_bus = shared::rust::shared::f1r3fly_events::F1r3flyEvents::new();
 
         let fixture = TestFixture::new().await;
 
