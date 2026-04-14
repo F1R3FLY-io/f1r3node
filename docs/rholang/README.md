@@ -1,252 +1,84 @@
-> Last updated: 2026-03-23
+# Rholang Developer Reference
 
-# Crate: rholang (Interpreter/Reducer)
+Verified against the f1r3node-rust implementation (Rust shard).
 
-**Path**: `rholang/`
+## Reading Order
 
-The Rholang language interpreter: parsing, normalization, evaluation, cost accounting, and system processes.
+### Fundamentals
+1. [Language Overview](01-language-overview.md) -- Process calculus, names vs processes, core model
+2. [Syntax Reference](02-syntax-reference.md) -- Complete syntax for all language constructs
+3. [Data Types](03-data-types.md) -- Primitives, strings, byte arrays, URIs, booleans
+4. [Operators](04-operators.md) -- Arithmetic, comparison, logical, string, interpolation
 
-## Compilation Pipeline
+### Types and Collections
+5. [Pattern Matching](05-pattern-matching.md) -- Patterns, connectives, destructuring, type guards
+6. [Collections](06-collections.md) -- Lists, tuples, sets, maps with all methods
+7. [PathMaps and Zippers](07-pathmaps-and-zippers.md) -- Hierarchical trie structures and navigation
+8. [Numeric Types](15-numeric-types.md) -- Float, BigInt, BigRat, FixedPoint
 
-```
-Rholang Source Code
-    |
-    | rholang_parser::RholangParser::parse()
-    v
-Vec<AnnProc> (Annotated AST)
-    |
-    | normalize_ann_proc()
-    v
-Par (Normalized, sorted canonical form)
-    |
-    | ParSortMatcher::sort_match()
-    v
-Par (Deterministic ordering for consensus)
-```
+### Concurrency and State
+9. [Channels and Concurrency](08-channels-and-concurrency.md) -- Send, receive, persistent, peek, join, parallel
+10. [Contracts and State](09-contracts-and-state.md) -- Contract patterns, mutable cells, CRUD
 
-**Compiler entry**: `Compiler::source_to_adt(source)` or `source_to_adt_with_normalizer_env(source, env)`
+### Platform
+11. [System Channels](10-system-channels.md) -- All `rho:*` URIs: I/O, crypto, registry, vaults, AI
+12. [Registry](11-registry.md) -- Registry operations, TreeHashMap, URI generation
+13. [Vaults and Tokens](12-vaults-and-tokens.md) -- SystemVault, MakeMint, transfers, auth keys
+14. [Cost Model](13-cost-model.md) -- Phlogiston accounting, cost functions, gas scaling
 
-## Normalization
+### Patterns and Practice
+15. [Design Patterns](14-design-patterns.md) -- Security, capabilities, common idioms
+16. [Rhox Macros](16-rhox-macros.md) -- `.rhox` template format
+17. [Testing with RhoSpec](17-testing-with-rhospec.md) -- Test framework, writing contract tests
+18. [Deployment Workflow](18-deployment-workflow.md) -- Deploy, propose, finalize, exploratory deploy
+19. [Real-World Applications](19-real-world-applications.md) -- Embers template system, production patterns
 
-Transforms parsed AST into canonical `Par` form with De Bruijn indices.
+### Internal Reference
+- [Crate Overview](crate-overview.md) -- Interpreter crate architecture, compilation pipeline, system processes
+- [Language Analysis](rholang-language-analysis.md) -- Analysis of 88 .rho files: patterns, complexity levels, compiler implications
 
-**Process normalizers** (each handles one Rholang construct):
+### Legacy Tutorials (from RChain era -- core concepts still valid)
+- [Rholang Tutorial](rholangtut.md) -- Foundational language tutorial
+- [Pattern Matching Tutorial](rholangmatchingtut.md) -- Deep dive into matching semantics
+- [Ollama Integration](ollama.md) -- Local LLM integration guide
 
-| Normalizer | Rholang Syntax | Output |
-|-----------|---------------|--------|
-| `normalize_p_send` | `chan!(data)` | `Send { chan, data, persistent }` |
-| `normalize_p_input` | `for(x <- chan) { body }` | `Receive { binds, body }` |
-| `normalize_p_par` | `p \| q` | `Par { processes }` |
-| `normalize_p_new` | `new x in { body }` | `New { bindings, body }` |
-| `normalize_p_eval` | `*chan` | `Expr { EVar }` |
-| `normalize_p_match` | `match expr { case ... }` | `Match { cases }` |
-| `normalize_p_bundle` | `bundle+{ ... }` | `Bundle { body, flags }` |
-| `normalize_p_contr` | `contract ch(x) = body` | Contract extraction |
-| `normalize_p_let` | `let x = val in body` | Inline substitution |
-| `normalize_p_if` | `if(cond) { ... } else { ... }` | Conditional Par |
-| `normalize_p_ground` | `"str"`, `42`, `true` | `Expr { GString/GInt/GBool }` |
-| `normalize_p_conjunction` | `/\` | `Connective { AND }` |
-| `normalize_p_disjunction` | `\/` | `Connective { OR }` |
-| `normalize_p_negation` | `~` | `Connective { NOT }` |
-| `normalize_p_method` | `.method(args)` | `Expr { EMethod }` |
-| `normalize_p_send_sync` | `chan!!(data)` | Synchronous send |
-| `normalize_p_matches` | `matches` | Matches expression |
-| `normalize_p_collect` | `collect` | Collection expression |
-| `normalize_p_simple_type` | type literals | Simple type |
-| `normalize_p_var` | `x` | Variable reference |
-| `normalize_p_var_ref` | `=x` | Variable reference (explicit) |
+## Examples
 
-**Binding management**: `BoundMapChain` tracks nested variable scopes; `FreeMap` detects unbound variables. Validation rejects top-level free variables, wildcards, or connectives.
+Working examples are in [`rholang/examples/`](../../rholang/examples/):
 
-## Evaluation (Reducer)
+| File | Topic |
+|------|-------|
+| `tut-hello.rho` | Contracts, channels, ack pattern |
+| `tut-lists-methods.rho` | List operations |
+| `tut-maps-methods.rho` | Map operations |
+| `tut-sets-methods.rho` | Set operations |
+| `tut-strings-methods.rho` | String operations |
+| `tut-pathmap-all-methods.rho` | PathMap operations |
+| `tut-pathmap-zippers.rho` | Zipper navigation (18 examples) |
+| `tut-hash-functions.rho` | SHA256, Blake2b, Keccak256 |
+| `tut-registry.rho` | Registry insert/lookup |
+| `tut-philosophers.rho` | Dining philosophers (concurrency) |
+| `numeric-types.rho` | BigInt, BigRat, Float, FixedPoint |
+| `user-crud-example.rho` | Full CRUD with mutable state |
+| `vault_demo/` | Vault address, balance, transfer |
 
-**`DebruijnInterpreter::eval(par, env, rand)`** is the core evaluator:
+## System Contracts
 
-```
-eval_inner():
-  1. Group par terms: Sends, Receives, News, Matches, Bundles, Exprs
-  2. For each term type:
-     - Send  -> space.produce(channel, data, persistent)
-     - Receive -> space.consume(channels, patterns, continuation, persistent, peeks)
-     - New -> create unforgeable names via Blake2b512Random, eval body
-     - Match -> evaluate target, try each case pattern
-     - Bundle -> evaluate in restricted scope
-     - Expr -> evaluate arithmetic/logic/collection operations
-  3. If produce/consume returns a match -> dispatch continuation
-```
+Production contracts are in [`casper/src/main/resources/`](../../casper/src/main/resources/):
 
-**Stack safety**: `StackGrowingFuture` wraps recursive calls with `stacker::maybe_grow()` to dynamically expand the thread stack (1MB red zone).
+| File | Purpose |
+|------|---------|
+| `Registry.rho` | Registry + TreeHashMap implementation |
+| `SystemVault.rho` | Fund management and transfers |
+| `MakeMint.rho` | Token/currency factory |
+| `ListOps.rho` | Functional list operations library |
+| `Either.rho` | Either monad (success/failure) |
+| `Stack.rho` | LIFO stack data structure |
+| `NonNegativeNumber.rho` | Constrained non-negative integers |
+| `AuthKey.rho` | Authentication key management |
+| `MultiSigSystemVault.rho` | Multi-signature vault |
+| `PoS.rhox` | Proof-of-Stake validator contract (macro) |
 
-**Variable substitution**: `Substitute` trait replaces De Bruijn-indexed variables. Each substitution is charged `O(term.encoded_len())` phlogiston.
+## Test Suites
 
-**Arithmetic overflow safety**: Division and negation operations guard against i64 overflow. `i64::MIN / -1` and `i64::MIN.neg()` return `InterpreterError::ReduceError("Arithmetic overflow in ...")` as soft deploy failures rather than panics.
-
-## Cost Accounting (Phlogiston)
-
-Every operation is metered to prevent resource exhaustion:
-
-```rust
-pub struct CostManager {
-    state: Arc<Mutex<Cost>>,
-    semaphore: Arc<MetricsSemaphore>,
-    log: Arc<Mutex<Vec<Cost>>>,
-}
-```
-
-- `charge(cost)` -- Subtract from remaining budget; returns `OutOfPhlogistonsError` if exhausted
-- `set(cost)` -- Reset balance
-- `get()` -- Query remaining
-
-**Cost table** (representative values):
-
-| Operation | Cost |
-|-----------|------|
-| Arithmetic (add, sub, mul, div, mod) | 3-9 phlos |
-| Boolean AND/OR | 2 phlos |
-| Comparison | 3 phlos |
-| Collection lookup/add/remove | 3 phlos each |
-| `hex_to_bytes` | O(string_length) |
-| `produce` | O(channel_size + data_size) |
-| `consume` | O(channels * patterns * continuation) |
-| Parsing | O(source_code_length) |
-| Substitution | O(result_term_size) |
-
-## System Processes (Built-in Channels)
-
-Rholang operations implemented in Rust, accessible via fixed unforgeable channel names:
-
-| Channel | Byte ID | Purpose |
-|---------|---------|---------|
-| `stdout` | 0 | Standard output |
-| `stderr` | 2 | Error output |
-| `ed25519_verify` | 4 | Ed25519 signature verification |
-| `sha256_hash` | 5 | SHA-256 hashing |
-| `keccak256_hash` | 6 | Keccak-256 hashing |
-| `blake2b256_hash` | 7 | Blake2b-256 hashing |
-| `secp256k1_verify` | 8 | Secp256k1 signature verification |
-| `get_block_data` | 10 | Read current block info |
-| `get_invalid_blocks` | 11 | Invalid block list |
-| `vault_address` | 12 | Vault address derivation |
-| `deployer_id_ops` | 13 | Deployer identity operations |
-| `reg_lookup` | 14 | Registry lookup |
-| `reg_insert_random` | 15 | Registry insert (random URI) |
-| `reg_insert_signed` | 16 | Registry insert (signed) |
-| `gpt4` | 20 | OpenAI GPT-4 (non-deterministic) |
-| `dalle3` | 21 | OpenAI DALL-E 3 (non-deterministic) |
-| `text_to_audio` | 22 | OpenAI TTS (non-deterministic) |
-| `grpc_tell` | 25 | External gRPC client |
-| `dev_null` | 26 | Discard output |
-| `abort` | 27 | Abort computation |
-| `ollama_chat` | 28 | Ollama chat (non-deterministic) |
-| `ollama_generate` | 29 | Ollama text generation (non-deterministic) |
-| `ollama_models` | 30 | Ollama model list |
-| `deploy_data` | 31 | Deploy data access |
-
-Non-deterministic processes (OpenAI, Ollama) are specially marked for replay handling during consensus.
-
-### TTS System Process
-
-The `text_to_audio` channel (byte ID 22) invokes OpenAI text-to-speech via `create_audio_speech`:
-
-```rust
-pub async fn create_audio_speech(
-    &self,
-    input: &str,
-    output_path: &str,
-) -> Result<Vec<u8>, InterpreterError>
-```
-
-The implementation writes audio to a UUID-based temp filename (`audio_{uuid}.mp3`) to prevent race conditions when multiple TTS calls run concurrently. It reads the file back with `tokio::fs::read` (async, non-blocking) and cleans up the temp file with `tokio::fs::remove_file` after reading. The caller wraps the returned bytes as `RhoByteArray::create_par(bytes)`, produces the output on the ack channel, and returns it.
-
-### NonDeterministicProcessFailure Error Pattern
-
-All 6 non-deterministic processes (GPT-4, DALL-E 3, TTS, Ollama chat, Ollama generate, Ollama models) follow a uniform two-stage error pattern that preserves output for replay:
-
-**Stage 1 -- Service call failure**: The external service call itself fails (network error, API error, etc.). No output has been produced yet, so there is nothing to preserve:
-
-```rust
-Err(InterpreterError::NonDeterministicProcessFailure {
-    cause: Box::new(e),
-    output_not_produced: vec![],
-})
-```
-
-**Stage 2 -- Produce call failure**: The service call succeeded and output was generated, but the subsequent `produce` into RSpace fails. The output is serialized so it can be replayed:
-
-```rust
-Err(InterpreterError::NonDeterministicProcessFailure {
-    cause: Box::new(e),
-    output_not_produced: output.iter().map(|p| p.encode_to_vec()).collect(),
-})
-```
-
-During replay, `DispatchType::FailedNonDeterministicCall` triggers `Produce::with_error()` to mark the produce event as failed, ensuring the replay matches the original execution trace.
-
-## Dispatch
-
-**`RholangAndScalaDispatcher`** routes continuations:
-- `DeterministicCall` -- Standard Rholang evaluation
-- `NonDeterministicCall(Vec<Vec<u8>>)` -- External service with cached output
-- `FailedNonDeterministicCall(err)` -- Failed external call
-- `Skip` -- No-op
-
-## ChargingRSpace
-
-Wraps any `ISpace` to add cost metering:
-```rust
-pub fn charging_rspace<T: ISpace>(space: T, cost: _cost) -> impl ISpace
-```
-Charges `storage_cost_produce` or `storage_cost_consume` before each operation.
-
-## RhoRuntime
-
-```rust
-pub trait RhoRuntime: Send + Sync {
-    async fn evaluate(&mut self, term: &str, cost: Cost, env: HashMap<String, Par>,
-                      rand: Blake2b512Random) -> Result<EvaluateResult, InterpreterError>;
-    async fn inj(&mut self, par: Par, env: &Env<Par>, rand: Blake2b512Random)
-        -> Result<(), InterpreterError>;
-    // ... checkpoint operations
-}
-```
-
-`RhoRuntimeImpl` is the concrete implementation connecting the interpreter to RSpace.
-
-## Pattern Matching
-
-**`Matcher`** implements `Match<BindPattern, ListParWithRandom>` for RSpace.
-
-**`SpatialMatcherContext`** performs spatial matching on `Par` terms:
-- Variable bindings (unification)
-- Logical connectives (AND, OR, NOT patterns)
-- Structural patterns with remainder
-- Uses `maximum_bipartite_match` for optimal matching of unordered sets
-
-## Registry
-
-`registry.rs` -- URI-based name registry using base32 encoding with CRC14 checksum.
-`registry_bootstrap.rs` -- Built-in registry contracts installed at genesis.
-
-**Legacy URI aliases**: For backward compatibility with older clients (e.g., rust-client), the following `rho:rchain:*` URIs are aliased to their canonical `rho:system:*` equivalents:
-- `rho:rchain:pos` -> `rho:system:pos` (PoS contract)
-- `rho:rchain:revVault` -> `rho:vault:system` (SystemVault)
-- `rho:rchain:deployId` -> `rho:system:deployId` (deploy context)
-- `rho:rchain:deployerId` -> `rho:system:deployerId` (deploy context)
-
-Aliases are resolved at the registry and normalizer level. Usage is logged at debug level (`f1r3fly.legacy-uri`).
-
-## FFI (lib.rs)
-
-C interface for Scala JNA interop:
-- `create_rho_runtime()`, `evaluate()`, `inj()`, `create_soft_checkpoint()`, `revert_to_soft_checkpoint()`
-- Memory management: `rholang_get_allocated_bytes()`, `rholang_deallocate_memory()`
-
-## Tests
-
-Test suites in `tests/`: `interpreter_spec.rs`, `reduce_spec.rs`, `substitute_test.rs`, `crypto_channels_spec.rs`, `abort_spec.rs`, `deploy_data_spec.rs`, `demo_verification.rs`, `getsubtrie_spec.rs`, `setsubtrie_spec.rs`, `replay_memory_profile_spec.rs`, `ollama_integration_test.rs`, `openai_service_spec.rs`, `zipper_*_spec.rs` (3 files), `accounting/cost_accounting_spec.rs`, `accounting/non_deterministic_processes_spec.rs`, `matcher/match_test.rs`.
-
-The `non_deterministic_processes_spec.rs` suite contains 9 replay consistency tests using the `evaluate_and_replay()` helper, which follows a play-checkpoint-rig-replay-verify cycle: evaluate the Rholang term, create a soft checkpoint, configure mock services to fail, replay from the checkpoint, and verify the replay trace matches the original. Tests cover GPT-4, DALL-E 3, TTS, and gRPC tell for both success and error cases.
-
-**See also:** [rholang/ crate README](../../rholang/README.md) | [Rholang Tutorial](./rholangtut.md) | [Pattern Matching](./rholangmatchingtut.md) | [Ollama Integration](./ollama.md)
-
-[← Back to docs index](../README.md)
+Sophisticated contract tests in [`casper/src/test/resources/`](../../casper/src/test/resources/) using the RhoSpec framework. See [Testing with RhoSpec](17-testing-with-rhospec.md).
