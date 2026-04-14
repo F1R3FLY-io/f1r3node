@@ -1060,7 +1060,7 @@ impl TestNode {
         let clique_oracle = CliqueOracleImpl;
         let estimator = Estimator::apply(max_number_of_parents, max_parent_depth);
         let rp_conf = create_rp_conf_ask(current_peer_node.clone(), None, None);
-        let event_publisher = F1r3flyEvents::new(None);
+        let event_publisher = F1r3flyEvents::new();
         // Scala: implicit val requestedBlocks: RequestedBlocks[F] = Ref.unsafe[F, Map[BlockHash, RequestState]](Map.empty)
         let requested_blocks = Arc::new(Mutex::new(HashMap::<BlockHash, RequestState>::new()));
         // Scala: implicit val blockRetriever: BlockRetriever[F] = BlockRetriever.of[F]
