@@ -13,15 +13,16 @@ pub use super::f1r3fly_event::F1r3flyEvent;
 
 /// Shared startup event buffer type.
 /// `Some(vec)` during startup — events accumulate.
-/// `None` after `seal_startup()` — no more buffering.
+/// `Some(vec)` after `seal_startup()` — frozen for replay, no new appends.
 pub type StartupBuffer = Arc<Mutex<Option<Vec<F1r3flyEvent>>>>;
 
 /// Structure to publish and consume F1r3flyEvents.
 ///
 /// During startup, published events are buffered so that WebSocket clients
 /// connecting after startup can receive a replay of events they missed.
-/// Call `seal_startup()` once the node reaches Running state to stop
-/// buffering and free the memory.
+/// Call `seal_startup()` once the node reaches Running state to freeze
+/// the buffer. Events remain available for replay but no new events are
+/// appended.
 #[derive(Clone)]
 pub struct F1r3flyEvents {
     sender: broadcast::Sender<F1r3flyEvent>,
@@ -57,8 +58,9 @@ impl F1r3flyEvents {
         Ok(())
     }
 
-    /// Seal the startup buffer. After this call, no more events are
-    /// buffered and `publish()` skips the lock entirely.
+    /// Seal the startup buffer. After this call, no new events are
+    /// appended — `publish()` skips the lock entirely via the atomic flag.
+    /// Buffered events remain available for replay to late-connecting clients.
     /// Called once when the node transitions to Running state.
     pub fn seal_startup(&self) {
         self.startup_sealed.store(true, Ordering::Release);
