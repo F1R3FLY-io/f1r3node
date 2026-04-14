@@ -1,6 +1,6 @@
 // See rspace/src/main/scala/coop/rchain/rspace/SpaceMatcher.scala
 
-use dashmap::DashMap;
+use std::collections::HashMap;
 
 use super::r#match::Match;
 use super::rspace_interface::ISpace;
@@ -15,124 +15,107 @@ where
     A: Clone,
     K: Clone,
 {
-    /** Searches through data, looking for a match with a given pattern.
-     *
-     * If there is a match, we return the matching [[ConsumeCandidate]],
-     * along with the remaining unmatched data. If an illegal state is
-     * reached during searching for a match we short circuit and return
-     * the state.
-     */
     fn find_matching_data_candidate(
         &self,
         matcher: &Box<dyn Match<P, A>>,
         channel: C,
-        data: Vec<(Datum<A>, i32)>,
-        pattern: P,
-        prefix: Vec<(Datum<A>, i32)>,
+        data: &[(Datum<A>, i32)],
+        pattern: &P,
     ) -> Option<MatchingDataCandidate<C, A>> {
-        match data.split_first() {
-            Some((
-                (
-                    datum @ Datum {
-                        a: match_candidate,
-                        persist,
-                        source: produce_ref,
-                    },
-                    data_index,
-                ),
-                remaining,
-            )) => match matcher.get(pattern.clone(), match_candidate.clone()) {
-                Some(mat) => {
-                    let indexed_datums = if *persist {
-                        data.clone()
-                    } else {
-                        let mut new_prefix = prefix;
-                        new_prefix.extend_from_slice(remaining);
-                        new_prefix
-                    };
-                    Some((
-                        ConsumeCandidate {
-                            channel,
-                            datum: Datum {
-                                a: mat,
-                                persist: *persist,
-                                source: produce_ref.clone(),
-                            },
-                            removed_datum: match_candidate.clone(),
-                            datum_index: *data_index,
-                        },
-                        indexed_datums,
-                    ))
-                }
-                None => {
-                    let mut new_prefix = prefix;
-                    new_prefix.push((datum.clone(), *data_index));
-                    self.find_matching_data_candidate(
-                        matcher,
+        for (idx, (datum, data_index)) in data.iter().enumerate() {
+            metrics::counter!("rspace.matcher.get_calls", "source" => "rspace").increment(1);
+            let t_clone = std::time::Instant::now();
+            let pattern_cloned = pattern.clone();
+            let data_cloned = datum.a.clone();
+            metrics::counter!("rspace.matcher.clone_ns", "source" => "rspace")
+                .increment(t_clone.elapsed().as_nanos() as u64);
+            let t_match = std::time::Instant::now();
+            let match_result = matcher.get(pattern_cloned, data_cloned);
+            metrics::counter!("rspace.matcher.fold_match_ns", "source" => "rspace")
+                .increment(t_match.elapsed().as_nanos() as u64);
+
+            if let Some(mat) = match_result {
+                let indexed_datums = if datum.persist {
+                    data.to_vec()
+                } else {
+                    let mut remaining = Vec::with_capacity(data.len() - 1);
+                    remaining.extend_from_slice(&data[..idx]);
+                    remaining.extend_from_slice(&data[idx + 1..]);
+                    remaining
+                };
+                return Some((
+                    ConsumeCandidate {
                         channel,
-                        remaining.to_vec(),
-                        pattern,
-                        new_prefix,
-                    )
-                }
-            },
-            None => None,
+                        datum: Datum {
+                            a: mat,
+                            persist: datum.persist,
+                            source: datum.source.clone(),
+                        },
+                        removed_datum: datum.a.clone(),
+                        datum_index: *data_index,
+                    },
+                    indexed_datums,
+                ));
+            }
         }
+        None
     }
 
-    /** Iterates through (channel, pattern) pairs looking for matching data.
-     *
-     * Potential match candidates are supplied by the `channelToIndexedData`
-     * cache.
-     *
-     * After a match is found, we remove the matching datum from the
-     * candidate cache for remaining matches. If an illegal state is
-     * reached when searching a matching candidate we treat it as if no
-     * match was found and append the illegal state to result list.
-     */
+    /// Attempts to match all channel-pattern pairs against the data map.
+    /// Records mutations in `rollback` so the caller can undo them on failure.
+    fn extract_data_candidates_rollback(
+        &self,
+        matcher: &Box<dyn Match<P, A>>,
+        channel_pattern_pairs: &[(C, P)],
+        channel_to_indexed_data: &mut HashMap<C, Vec<(Datum<A>, i32)>>,
+        rollback: &mut Vec<(C, Vec<(Datum<A>, i32)>)>,
+    ) -> Vec<Option<ConsumeCandidate<C, A>>> {
+        let mut acc = Vec::with_capacity(channel_pattern_pairs.len());
+
+        for (channel, pattern) in channel_pattern_pairs {
+            let maybe_tuple: Option<MatchingDataCandidate<C, A>> =
+                match channel_to_indexed_data.get(channel) {
+                    Some(indexed_data) => self.find_matching_data_candidate(
+                        matcher,
+                        channel.clone(),
+                        indexed_data,
+                        pattern,
+                    ),
+                    None => None,
+                };
+
+            match maybe_tuple {
+                Some((cand, rem)) => {
+                    acc.push(Some(cand));
+                    // Save the original before mutating
+                    if let Some(original) = channel_to_indexed_data.get(channel) {
+                        rollback.push((channel.clone(), original.clone()));
+                    }
+                    channel_to_indexed_data.insert(channel.clone(), rem);
+                }
+                None => {
+                    acc.push(None);
+                }
+            }
+        }
+
+        acc
+    }
+
+    /// Non-rollback version for consume path (no speculative matching).
     fn extract_data_candidates(
         &self,
         matcher: &Box<dyn Match<P, A>>,
-        channel_pattern_pairs: Vec<(C, P)>,
-        channel_to_indexed_data: DashMap<C, Vec<(Datum<A>, i32)>>,
-        acc: Vec<Option<ConsumeCandidate<C, A>>>,
+        channel_pattern_pairs: &[(C, P)],
+        channel_to_indexed_data: &mut HashMap<C, Vec<(Datum<A>, i32)>>,
     ) -> Vec<Option<ConsumeCandidate<C, A>>> {
-        match channel_pattern_pairs.split_first() {
-            Some(((channel, pattern), tail)) => {
-                let maybe_tuple: Option<MatchingDataCandidate<C, A>> =
-                    match channel_to_indexed_data.get(channel) {
-                        Some(indexed_data) => self.find_matching_data_candidate(
-                            &matcher,
-                            channel.clone(),
-                            indexed_data.clone(),
-                            pattern.clone(),
-                            Vec::new(),
-                        ),
-                        None => None,
-                    };
-
-                match maybe_tuple {
-                    Some((cand, rem)) => {
-                        let mut new_acc = acc;
-                        new_acc.push(Some(cand));
-                        let new_data = channel_to_indexed_data;
-                        new_data.insert(channel.clone(), rem);
-                        self.extract_data_candidates(matcher, tail.to_vec(), new_data, new_acc)
-                    }
-                    None => {
-                        let mut new_acc = acc;
-                        new_acc.push(None);
-                        self.extract_data_candidates(
-                            matcher,
-                            tail.to_vec(),
-                            channel_to_indexed_data,
-                            new_acc,
-                        )
-                    }
-                }
-            }
-            None => acc,
-        }
+        let mut rollback = Vec::new();
+        self.extract_data_candidates_rollback(
+            matcher,
+            channel_pattern_pairs,
+            channel_to_indexed_data,
+            &mut rollback,
+        )
     }
 
     fn extract_first_match(
@@ -140,39 +123,37 @@ where
         matcher: &Box<dyn Match<P, A>>,
         channels: Vec<C>,
         match_candidates: Vec<(WaitingContinuation<P, K>, i32)>,
-        channel_to_index_data: DashMap<C, Vec<(Datum<A>, i32)>>,
+        mut channel_to_index_data: HashMap<C, Vec<(Datum<A>, i32)>>,
     ) -> Option<ProduceCandidate<C, P, A, K>> {
-        match match_candidates.split_first() {
-            Some(((cont @ WaitingContinuation { patterns, .. }, index), remaining)) => {
-                let maybe_data_candidates: Option<Vec<ConsumeCandidate<C, A>>> = {
-                    let data_candidates = self.extract_data_candidates(
-                        matcher,
-                        channels.clone().into_iter().zip(patterns.clone()).collect(),
-                        channel_to_index_data.clone(),
-                        Vec::new(),
-                    );
-                    if data_candidates.iter().all(|x| x.is_some()) {
-                        Some(data_candidates.into_iter().filter_map(|x| x).collect())
-                    } else {
-                        None
-                    }
-                };
-                match maybe_data_candidates {
-                    Some(data_candidates) => Some(ProduceCandidate {
-                        channels,
-                        continuation: cont.clone(),
-                        continuation_index: *index,
-                        data_candidates,
-                    }),
-                    None => self.extract_first_match(
-                        matcher,
-                        channels,
-                        remaining.to_vec(),
-                        channel_to_index_data,
-                    ),
-                }
+        for (cont, index) in &match_candidates {
+            let channel_pattern_pairs: Vec<(C, P)> = channels
+                .iter()
+                .cloned()
+                .zip(cont.patterns.iter().cloned())
+                .collect();
+
+            let mut rollback = Vec::new();
+            let data_candidates = self.extract_data_candidates_rollback(
+                matcher,
+                &channel_pattern_pairs,
+                &mut channel_to_index_data,
+                &mut rollback,
+            );
+
+            if data_candidates.iter().all(|x| x.is_some()) {
+                return Some(ProduceCandidate {
+                    channels,
+                    continuation: cont.clone(),
+                    continuation_index: *index,
+                    data_candidates: data_candidates.into_iter().filter_map(|x| x).collect(),
+                });
             }
-            None => None,
+
+            // Restore only the channels that were actually mutated
+            for (ch, original) in rollback {
+                channel_to_index_data.insert(ch, original);
+            }
         }
+        None
     }
 }

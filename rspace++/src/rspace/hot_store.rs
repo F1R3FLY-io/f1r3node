@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use dashmap::DashMap;
@@ -147,8 +147,8 @@ where
     P: Clone + Sync + Send,
     K: Clone + Sync + Send,
 {
-    hot_store_state: Arc<Mutex<HotStoreState<C, P, A, K>>>,
-    history_store_cache: Arc<Mutex<HistoryStoreCache<C, P, A, K>>>,
+    state: Arc<HotStoreState<C, P, A, K>>,
+    history_cache: Arc<HistoryStoreCache<C, P, A, K>>,
     history_reader_base: Box<dyn HistoryReaderBase<C, P, A, K>>,
 }
 
@@ -161,29 +161,20 @@ where
     K: Clone + Debug + Send + Sync,
 {
     fn snapshot(&self) -> HotStoreState<C, P, A, K> {
-        let hot_store_state_lock = self.hot_store_state.lock().unwrap();
         HotStoreState {
-            continuations: hot_store_state_lock.continuations.clone(),
-            installed_continuations: hot_store_state_lock.installed_continuations.clone(),
-            data: hot_store_state_lock.data.clone(),
-            joins: hot_store_state_lock.joins.clone(),
-            installed_joins: hot_store_state_lock.installed_joins.clone(),
+            continuations: self.state.continuations.clone(),
+            installed_continuations: self.state.installed_continuations.clone(),
+            data: self.state.data.clone(),
+            joins: self.state.joins.clone(),
+            installed_joins: self.state.installed_joins.clone(),
         }
     }
 
     // Continuations
 
     fn get_continuations(&self, channels: &[C]) -> Vec<WaitingContinuation<P, K>> {
-        let (continuations, installed) = {
-            let state = self.hot_store_state.lock().unwrap();
-            (
-                state.continuations.get(channels).map(|c| c.clone()),
-                state
-                    .installed_continuations
-                    .get(channels)
-                    .map(|c| c.clone()),
-            )
-        };
+        let continuations = self.state.continuations.get(channels).map(|c| c.clone());
+        let installed = self.state.installed_continuations.get(channels).map(|c| c.clone());
 
         let result = match (continuations, installed) {
             (Some(conts), Some(inst)) => {
@@ -195,48 +186,30 @@ where
             (Some(conts), None) => conts,
             (None, Some(inst)) => {
                 let from_history_store = self.get_cont_from_history_store(channels);
-                self.hot_store_state
-                    .lock()
-                    .unwrap()
-                    .continuations
-                    .insert(channels.to_vec(), from_history_store.clone());
                 let mut result = Vec::with_capacity(from_history_store.len() + 1);
                 result.push(inst);
                 result.extend(from_history_store);
                 result
             }
             (None, None) => {
-                let from_history_store = self.get_cont_from_history_store(channels);
-                self.hot_store_state
-                    .lock()
-                    .unwrap()
-                    .continuations
-                    .insert(channels.to_vec(), from_history_store.clone());
-                from_history_store
+                self.get_cont_from_history_store(channels)
             }
         };
-        let state = self.hot_store_state.lock().unwrap();
-        Self::update_hot_store_state_metrics(&state);
+        Self::update_hot_store_state_metrics(&self.state);
         result
     }
 
     fn put_continuation(&self, channels: &[C], wc: WaitingContinuation<P, K>) -> Option<bool> {
-        // println!("\nHit put_continuation");
         let mut inserted = false;
-        let has_existing = {
-            let state = self.hot_store_state.lock().unwrap();
-            let has = state.continuations.get(channels).is_some();
-            has
-        };
+        let has_existing = self.state.continuations.get(channels).is_some();
         let from_history_store = if has_existing {
             None
         } else {
             Some(self.get_cont_from_history_store(channels))
         };
 
-        let state = self.hot_store_state.lock().unwrap();
         let wc_identity = Self::continuation_identity(&wc);
-        match state.continuations.entry(channels.to_vec()) {
+        match self.state.continuations.entry(channels.to_vec()) {
             Entry::Occupied(mut occupied) => {
                 if !occupied
                     .get()
@@ -259,25 +232,18 @@ where
                 vacant.insert(new_continuations);
             }
         }
-        Self::update_hot_store_state_metrics(&state);
+        Self::update_hot_store_state_metrics(&self.state);
         Some(inserted)
     }
 
     fn install_continuation(&self, channels: &[C], wc: WaitingContinuation<P, K>) -> Option<()> {
-        // println!("hit install_continuation");
-        let state = self.hot_store_state.lock().unwrap();
-        let _ = state.installed_continuations.insert(channels.to_vec(), wc);
-        Self::update_hot_store_state_metrics(&state);
-
-        // println!("installed_continuation result: {:?}", result);
-        // println!("to_map: {:?}\n", self.print());
-
+        let _ = self.state.installed_continuations.insert(channels.to_vec(), wc);
+        Self::update_hot_store_state_metrics(&self.state);
         Some(())
     }
 
     fn remove_continuation(&self, channels: &[C], index: i32) -> Option<()> {
-        let state = self.hot_store_state.lock().unwrap();
-        let is_installed = state.installed_continuations.get(channels).is_some();
+        let is_installed = self.state.installed_continuations.get(channels).is_some();
         let removing_installed = is_installed && index == 0;
         let removed_index = if is_installed { index - 1 } else { index };
 
@@ -285,7 +251,7 @@ where
             warn!("Attempted to remove an installed continuation");
             None
         } else {
-            match state.continuations.entry(channels.to_vec()) {
+            match self.state.continuations.entry(channels.to_vec()) {
                 Entry::Occupied(mut occupied) => {
                     let len = occupied.get().len();
                     let out_of_bounds = removed_index < 0 || removed_index as usize >= len;
@@ -313,35 +279,21 @@ where
                 }
             }
         };
-        Self::update_hot_store_state_metrics(&state);
+        Self::update_hot_store_state_metrics(&self.state);
         result
     }
 
     // Data
 
     fn get_data(&self, channel: &C) -> Vec<Datum<A>> {
-        let maybe_data = {
-            self.hot_store_state
-                .lock()
-                .unwrap()
-                .data
-                .get(channel)
-                .map(|data| data.clone())
-        };
+        let maybe_data = self.state.data.get(channel).map(|data| data.clone());
 
         let result = if let Some(data) = maybe_data {
             data
         } else {
-            let data = self.get_data_from_history_store(channel);
-            self.hot_store_state
-                .lock()
-                .unwrap()
-                .data
-                .insert(channel.clone(), data.clone());
-            data
+            self.get_data_from_history_store(channel)
         };
-        let state = self.hot_store_state.lock().unwrap();
-        Self::update_hot_store_state_metrics(&state);
+        Self::update_hot_store_state_metrics(&self.state);
         result
     }
 
@@ -349,7 +301,7 @@ where
         // println!("\nHit put_datum, channel: {:?}, data: {:?}", channel, d);
         // println!("\nHit put_datum, data: {:?}", d);
         let has_existing = {
-            let state = self.hot_store_state.lock().unwrap();
+            let state = &self.state;
             let has = state.data.get(channel).is_some();
             has
         };
@@ -359,7 +311,7 @@ where
             Some(self.get_data_from_history_store(channel))
         };
 
-        let state = self.hot_store_state.lock().unwrap();
+        let state = &self.state;
         match state.data.entry(channel.clone()) {
             Entry::Occupied(mut occupied) => {
                 occupied.get_mut().insert(0, d);
@@ -374,7 +326,7 @@ where
     }
 
     fn remove_datum(&self, channel: &C, index: i32) -> Result<(), RSpaceError> {
-        let state = self.hot_store_state.lock().unwrap();
+        let state = &self.state;
         let result = match state.data.entry(channel.clone()) {
             Entry::Occupied(mut occupied) => {
                 let out_of_bounds = index < 0 || index as usize >= occupied.get().len();
@@ -416,7 +368,7 @@ where
         // println!("\nHit get_joins");
 
         let (joins, installed_joins) = {
-            let state = self.hot_store_state.lock().unwrap();
+            let state = &self.state;
             (
                 state.joins.get(channel).map(|j| j.clone()),
                 state.installed_joins.get(channel).map(|j| j.clone()),
@@ -435,11 +387,6 @@ where
             }
             None => {
                 let from_history_store = self.get_joins_from_history_store(channel);
-                self.hot_store_state
-                    .lock()
-                    .unwrap()
-                    .joins
-                    .insert(channel.clone(), from_history_store.clone());
                 // println!("No joins found in store");
                 // println!("Inserted into store. Returning from history");
 
@@ -451,14 +398,14 @@ where
                 result
             }
         };
-        let state = self.hot_store_state.lock().unwrap();
+        let state = &self.state;
         Self::update_hot_store_state_metrics(&state);
         result
     }
 
     fn put_join(&self, channel: &C, join: &[C]) -> Option<()> {
         let has_existing = {
-            let state = self.hot_store_state.lock().unwrap();
+            let state = &self.state;
             let has = state.joins.get(channel).is_some();
             has
         };
@@ -468,7 +415,7 @@ where
             Some(self.get_joins_from_history_store(channel))
         };
 
-        let state = self.hot_store_state.lock().unwrap();
+        let state = &self.state;
         match state.joins.entry(channel.clone()) {
             Entry::Occupied(mut occupied) => {
                 if !occupied.get().iter().any(|j| j.as_slice() == join) {
@@ -489,7 +436,7 @@ where
 
     fn install_join(&self, channel: &C, join: &[C]) -> Option<()> {
         // println!("hit install_join");
-        let state = self.hot_store_state.lock().unwrap();
+        let state = &self.state;
         match state.installed_joins.entry(channel.clone()) {
             Entry::Occupied(mut occupied) => {
                 if !occupied.get().iter().any(|j| j.as_slice() == join) {
@@ -505,7 +452,7 @@ where
     }
 
     fn remove_join(&self, channel: &C, join: &[C]) -> Option<()> {
-        let state = self.hot_store_state.lock().unwrap();
+        let state = &self.state;
         let has_join_in_state = state.joins.get(channel).is_some();
         let current_continuations = {
             let mut conts = state
@@ -563,7 +510,7 @@ where
     }
 
     fn changes(&self) -> Vec<HotStoreAction<C, P, A, K>> {
-        let cache = self.hot_store_state.lock().unwrap();
+        let cache = &self.state;
         let continuations: Vec<HotStoreAction<C, P, A, K>> = cache
             .continuations
             .iter()
@@ -622,7 +569,7 @@ where
     }
 
     fn to_map(&self) -> HashMap<Vec<C>, Row<P, A, K>> {
-        let state = self.hot_store_state.lock().unwrap();
+        let state = &self.state;
         let data = state
             .data
             .iter()
@@ -665,7 +612,7 @@ where
     }
 
     fn print(&self) {
-        let hot_store_state = self.hot_store_state.lock().unwrap();
+        let hot_store_state = &self.state;
         println!("\nHot Store");
 
         println!("Continuations:");
@@ -698,7 +645,7 @@ where
             println!("Key: {:?}, Value: {:?}", key, value);
         }
 
-        let history_cache_state = self.history_store_cache.lock().unwrap();
+        let history_cache_state = &self.history_cache;
         println!("\nHistory Cache");
 
         println!("Continuations:");
@@ -725,15 +672,13 @@ where
     }
 
     fn clear(&self) {
-        let mut state = self.hot_store_state.lock().unwrap();
-        state.continuations = DashMap::new();
-        state.installed_continuations = DashMap::new();
-        state.data = DashMap::new();
-        state.joins = DashMap::new();
-        state.installed_joins = DashMap::new();
-        drop(state);
+        self.state.continuations.clear();
+        self.state.installed_continuations.clear();
+        self.state.data.clear();
+        self.state.joins.clear();
+        self.state.installed_joins.clear();
 
-        let history_cache = self.history_store_cache.lock().unwrap();
+        let history_cache = &self.history_cache;
         history_cache.continuations.clear();
         history_cache.datums.clear();
         history_cache.joins.clear();
@@ -758,7 +703,7 @@ where
         metrics::gauge!(HOT_STORE_STATE_INSTALLED_JOINS_ITEMS_METRIC, "source" => RSPACE_METRICS_SOURCE)
             .set(0.0);
 
-        let state = self.hot_store_state.lock().unwrap();
+        let state = &self.state;
         Self::update_hot_store_state_metrics(&state);
     }
 
@@ -922,7 +867,7 @@ where
     }
 
     fn get_cont_from_history_store(&self, channels: &[C]) -> Vec<WaitingContinuation<P, K>> {
-        let cache = self.history_store_cache.lock().unwrap();
+        let cache = &self.history_cache;
         Self::enforce_history_cache_bounds(&cache);
         let channels_vec = channels.to_vec();
         let entry = cache.continuations.entry(channels_vec.clone());
@@ -939,7 +884,7 @@ where
     }
 
     fn get_data_from_history_store(&self, channel: &C) -> Vec<Datum<A>> {
-        let cache = self.history_store_cache.lock().unwrap();
+        let cache = &self.history_cache;
         Self::enforce_history_cache_bounds(&cache);
         let entry = cache.datums.entry(channel.clone());
         let result = match entry {
@@ -956,7 +901,7 @@ where
     }
 
     fn get_joins_from_history_store(&self, channel: &C) -> Vec<Vec<C>> {
-        let cache = self.history_store_cache.lock().unwrap();
+        let cache = &self.history_cache;
         Self::enforce_history_cache_bounds(&cache);
         let entry = cache.joins.entry(channel.clone());
         let result = match entry {
@@ -976,7 +921,7 @@ pub struct HotStoreInstances;
 
 impl HotStoreInstances {
     pub fn create_from_mhs_and_hr<C, P, A, K>(
-        hot_store_state_ref: Arc<Mutex<HotStoreState<C, P, A, K>>>,
+        hot_store_state_ref: Arc<HotStoreState<C, P, A, K>>,
         history_reader_base: Box<dyn HistoryReaderBase<C, P, A, K>>,
     ) -> Box<dyn HotStore<C, P, A, K>>
     where
@@ -986,8 +931,8 @@ impl HotStoreInstances {
         K: Default + Clone + Debug + Send + Sync + 'static,
     {
         Box::new(InMemHotStore {
-            hot_store_state: hot_store_state_ref,
-            history_store_cache: Arc::new(Mutex::new(HistoryStoreCache::default())),
+            state: hot_store_state_ref,
+            history_cache: Arc::new(HistoryStoreCache::default()),
             history_reader_base,
         })
     }
@@ -1002,7 +947,7 @@ impl HotStoreInstances {
         A: Default + Clone + Debug + Send + Sync + 'static,
         K: Default + Clone + Debug + Send + Sync + 'static,
     {
-        let cache = Arc::new(Mutex::new(cache));
+        let cache = Arc::new(cache);
         let store = HotStoreInstances::create_from_mhs_and_hr(cache, history_reader);
         store
     }

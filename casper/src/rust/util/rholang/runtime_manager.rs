@@ -40,6 +40,7 @@ use crate::rust::errors::CasperError;
 use crate::rust::merging::block_index::BlockIndex;
 use crate::rust::metrics_constants::{
     BLOCK_INDEX_CACHE_SIZE_METRIC, CASPER_METRICS_SOURCE, PARENTS_POST_STATE_CACHE_SIZE_METRIC,
+    RUNTIME_SPAWN_TIME_METRIC, RUNTIME_SPAWN_REPLAY_TIME_METRIC,
 };
 use crate::rust::rholang::replay_runtime::ReplayRuntimeOps;
 use crate::rust::rholang::runtime::RuntimeOps;
@@ -259,6 +260,7 @@ impl RuntimeManager {
     }
 
     pub async fn spawn_runtime(&self) -> RhoRuntimeImpl {
+        let start = std::time::Instant::now();
         let new_space = self.space.spawn().expect("Failed to spawn RSpace");
         let runtime = rho_runtime::create_rho_runtime(
             new_space,
@@ -268,11 +270,14 @@ impl RuntimeManager {
             self.external_services.clone(),
         )
         .await;
+        metrics::histogram!(RUNTIME_SPAWN_TIME_METRIC, "source" => CASPER_METRICS_SOURCE)
+            .record(start.elapsed().as_secs_f64());
 
         runtime
     }
 
     pub async fn spawn_replay_runtime(&self) -> RhoRuntimeImpl {
+        let start = std::time::Instant::now();
         let new_replay_space = self
             .replay_space
             .spawn()
@@ -286,6 +291,8 @@ impl RuntimeManager {
             self.external_services.clone(),
         )
         .await;
+        metrics::histogram!(RUNTIME_SPAWN_REPLAY_TIME_METRIC, "source" => CASPER_METRICS_SOURCE)
+            .record(start.elapsed().as_secs_f64());
 
         runtime
     }

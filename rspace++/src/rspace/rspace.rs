@@ -184,7 +184,7 @@ where
         let history = &self.history_repository;
         let history_reader = history.get_history_reader(&history.root())?;
         let hot_store = HotStoreInstances::create_from_mhs_and_hr(
-            Arc::new(Mutex::new(checkpoint.cache_snapshot)),
+            Arc::new(checkpoint.cache_snapshot),
             history_reader.base(),
         );
 
@@ -214,6 +214,7 @@ where
         } else {
             let consume_ref = Consume::create(&channels, &patterns, &continuation, persist);
 
+            metrics::counter!("rspace.consume.calls", "source" => RSPACE_METRICS_SOURCE).increment(1);
             let start = Instant::now();
             let result = self.locked_consume(
                 &channels,
@@ -244,6 +245,7 @@ where
         // println!("\n\nHit produce, channel: {:?}", channel);
 
         let produce_ref = Produce::create(&channel, &data, persist);
+        metrics::counter!("rspace.produce.calls", "source" => RSPACE_METRICS_SOURCE).increment(1);
         let start = Instant::now();
         let result = self.locked_produce(channel, data, persist, &produce_ref);
         let duration = start.elapsed();
@@ -260,6 +262,7 @@ where
         patterns: Vec<P>,
         continuation: K,
     ) -> Result<Option<(K, Vec<A>)>, RSpaceError> {
+        metrics::counter!("rspace.install.calls", "source" => RSPACE_METRICS_SOURCE).increment(1);
         let start = Instant::now();
         let result = self.locked_install_internal(channels, patterns, continuation, true);
         let duration = start.elapsed();
@@ -483,27 +486,28 @@ where
         let _span = tracing::info_span!(target: "f1r3fly.rspace", LOCKED_CONSUME_SPAN).entered();
         event!(Level::DEBUG, mark = "started-locked-consume", "locked_consume");
 
-        // println!("\nHit locked_consume");
-        // println!(
-        //     "consume: searching for data matching <patterns: {:?}> at <channels:
-        // {:?}>",     patterns, channels
-        // );
-
+        let t0 = Instant::now();
         self.log_consume(consume_ref, channels, patterns, continuation, persist, peeks);
+        metrics::counter!("rspace.consume.log_ns", "source" => RSPACE_METRICS_SOURCE)
+            .increment(t0.elapsed().as_nanos() as u64);
 
-        let channel_to_indexed_data = self.fetch_channel_to_index_data(channels);
-        // println!("\nchannel_to_indexed_data: {:?}", channel_to_indexed_data);
+        let t1 = Instant::now();
+        let mut channel_to_indexed_data = self.fetch_channel_to_index_data(channels);
+        metrics::counter!("rspace.consume.fetch_data_ns", "source" => RSPACE_METRICS_SOURCE)
+            .increment(t1.elapsed().as_nanos() as u64);
+
+        let t2 = Instant::now();
         let zipped: Vec<(C, P)> = channels
             .iter()
             .cloned()
             .zip(patterns.iter().cloned())
             .collect();
         let options: Option<Vec<ConsumeCandidate<C, A>>> = self
-            .extract_data_candidates(&self.matcher, zipped, channel_to_indexed_data, Vec::new())
+            .extract_data_candidates(&self.matcher, &zipped, &mut channel_to_indexed_data)
             .into_iter()
             .collect();
-
-        // println!("options: {:?}", options);
+        metrics::counter!("rspace.consume.match_ns", "source" => RSPACE_METRICS_SOURCE)
+            .increment(t2.elapsed().as_nanos() as u64);
 
         let wk = WaitingContinuation {
             patterns: patterns.to_vec(),
@@ -515,6 +519,7 @@ where
 
         match options {
             Some(data_candidates) => {
+                let t3 = Instant::now();
                 let produce_counters_closure =
                     |produces: &[Produce]| self.produce_counters(produces);
 
@@ -530,16 +535,17 @@ where
                     "comm.consume",
                 );
                 self.store_persistent_data(&data_candidates, peeks);
-                // println!(
-                //     "consume: data found for <patterns: {:?}> at <channels: {:?}>",
-                //     patterns, channels
-                // );
+                metrics::counter!("rspace.consume.process_match_ns", "source" => RSPACE_METRICS_SOURCE)
+                    .increment(t3.elapsed().as_nanos() as u64);
                 event!(Level::DEBUG, mark = "finished-locked-consume", "locked_consume");
                 Ok(self.wrap_result(channels, &wk, consume_ref, &data_candidates))
             }
             None => {
-                event!(Level::DEBUG, mark = "finished-locked-consume", "locked_consume");
+                let t3 = Instant::now();
                 self.store_waiting_continuation(channels.to_vec(), wk);
+                metrics::counter!("rspace.consume.store_continuation_ns", "source" => RSPACE_METRICS_SOURCE)
+                    .increment(t3.elapsed().as_nanos() as u64);
+                event!(Level::DEBUG, mark = "finished-locked-consume", "locked_consume");
                 Ok(None)
             }
         }
@@ -554,8 +560,8 @@ where
      * Put another way, this allows us to speculatively remove matching data
      * without affecting the actual store contents.
      */
-    fn fetch_channel_to_index_data(&self, channels: &[C]) -> DashMap<C, Vec<(Datum<A>, i32)>> {
-        let map = DashMap::with_capacity(channels.len());
+    fn fetch_channel_to_index_data(&self, channels: &[C]) -> HashMap<C, Vec<(Datum<A>, i32)>> {
+        let mut map = HashMap::with_capacity(channels.len());
         for c in channels {
             let data = self.store.get_data(c);
             let shuffled_data = self.shuffle_with_index(data);
@@ -575,34 +581,42 @@ where
         let _span = tracing::info_span!(target: "f1r3fly.rspace", LOCKED_PRODUCE_SPAN).entered();
         event!(Level::DEBUG, mark = "started-locked-produce", "locked_produce");
 
-        // println!("\nHit locked_produce");
+        let t0 = Instant::now();
         let grouped_channels = self.store.get_joins(&channel);
-        // println!("\ngrouped_channels: {:?}", grouped_channels);
-        // println!(
-        //     "produce: searching for matching continuations at <grouped_channels:
-        // {:?}>",     grouped_channels
-        // );
+        metrics::counter!("rspace.produce.get_joins_ns", "source" => RSPACE_METRICS_SOURCE)
+            .increment(t0.elapsed().as_nanos() as u64);
+
         self.log_produce(produce_ref, &channel, &data, persist);
+
+        let t1 = Instant::now();
         let extracted = self.extract_produce_candidate(grouped_channels, channel.clone(), Datum {
             a: data.clone(),
             persist,
             source: produce_ref.clone(),
         });
-
-        // println!("extracted in lockedProduce: {:?}", extracted);
+        metrics::counter!("rspace.produce.extract_candidate_ns", "source" => RSPACE_METRICS_SOURCE)
+            .increment(t1.elapsed().as_nanos() as u64);
 
         match extracted {
             Some(produce_candidate) => {
-                event!(Level::DEBUG, mark = "finished-locked-produce", "locked_produce");
-                Ok(self
+                let t2 = Instant::now();
+                let result = Ok(self
                     .process_match_found(produce_candidate)
                     .map(|consume_result| {
                         (consume_result.0, consume_result.1, produce_ref.clone())
-                    }))
+                    }));
+                metrics::counter!("rspace.produce.process_match_ns", "source" => RSPACE_METRICS_SOURCE)
+                    .increment(t2.elapsed().as_nanos() as u64);
+                event!(Level::DEBUG, mark = "finished-locked-produce", "locked_produce");
+                result
             }
             None => {
+                let t2 = Instant::now();
+                let result = Ok(self.store_data(channel, data, persist, produce_ref.clone()));
+                metrics::counter!("rspace.produce.store_data_ns", "source" => RSPACE_METRICS_SOURCE)
+                    .increment(t2.elapsed().as_nanos() as u64);
                 event!(Level::DEBUG, mark = "finished-locked-produce", "locked_produce");
-                Ok(self.store_data(channel, data, persist, produce_ref.clone()))
+                result
             }
         }
     }
@@ -882,14 +896,14 @@ where
             panic!("RUST ERROR: channels.length must equal patterns.length");
         } else {
             let consume_ref = Consume::create(&channels, &patterns, &continuation, true);
-            let channel_to_indexed_data = self.fetch_channel_to_index_data(&channels);
+            let mut channel_to_indexed_data = self.fetch_channel_to_index_data(&channels);
             let zipped: Vec<(C, P)> = channels
                 .iter()
                 .cloned()
                 .zip(patterns.iter().cloned())
                 .collect();
             let options: Option<Vec<ConsumeCandidate<C, A>>> = self
-                .extract_data_candidates(&self.matcher, zipped, channel_to_indexed_data, Vec::new())
+                .extract_data_candidates(&self.matcher, &zipped, &mut channel_to_indexed_data)
                 .into_iter()
                 .collect();
 
@@ -1011,23 +1025,30 @@ where
         loop {
             match remaining.split_first() {
                 Some((channels, rest)) => {
+                    let t_cont = Instant::now();
                     let match_candidates = fetch_matching_continuations(channels.to_vec());
-                    // println!("match_candidates: {:?}", match_candidates);
-                    let fetch_data: Vec<_> = channels
+                    metrics::counter!("rspace.matcher.fetch_continuations_ns", "source" => RSPACE_METRICS_SOURCE)
+                        .increment(t_cont.elapsed().as_nanos() as u64);
+                    metrics::counter!("rspace.matcher.continuations_returned", "source" => RSPACE_METRICS_SOURCE)
+                        .increment(match_candidates.len() as u64);
+
+                    let t_data = Instant::now();
+                    let channel_to_indexed_data: HashMap<C, Vec<(Datum<A>, i32)>> = channels
                         .iter()
                         .map(|c| fetch_matching_data(c.clone()))
                         .collect();
+                    metrics::counter!("rspace.matcher.fetch_data_ns", "source" => RSPACE_METRICS_SOURCE)
+                        .increment(t_data.elapsed().as_nanos() as u64);
 
-                    let channel_to_indexed_data_list: Vec<(C, Vec<(Datum<A>, i32)>)> =
-                        fetch_data.into_iter().filter_map(|x| Some(x)).collect();
-                    // println!("channel_to_indexed_data_list: {:?}", channel_to_indexed_data_list);
-
+                    let t_match = Instant::now();
                     let first_match = self.extract_first_match(
                         &self.matcher,
                         channels.to_vec(),
                         match_candidates,
-                        channel_to_indexed_data_list.into_iter().collect(),
+                        channel_to_indexed_data,
                     );
+                    metrics::counter!("rspace.matcher.extract_first_match_ns", "source" => RSPACE_METRICS_SOURCE)
+                        .increment(t_match.elapsed().as_nanos() as u64);
 
                     // println!("first_match in run_matcher_for_channels: {:?}", first_match);
 

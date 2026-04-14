@@ -973,7 +973,7 @@ impl<C: Eq + Hash, P: Clone, A: Clone, K: Clone> TestHistory<C, P, A, K> {
 }
 
 type StateSetup = (
-    Arc<Mutex<HotStoreState<String, Pattern, String, StringsCaptor>>>,
+    Arc<HotStoreState<String, Pattern, String, StringsCaptor>>,
     TestHistory<String, Pattern, String, StringsCaptor>,
     Box<dyn HotStore<String, Pattern, String, StringsCaptor>>,
 );
@@ -981,14 +981,14 @@ type StateSetup = (
 #[fixture]
 pub fn fixture() -> StateSetup {
     let history_state =
-        Arc::new(Mutex::new(HotStoreState::<String, Pattern, String, StringsCaptor>::default()));
+        Arc::new(HotStoreState::<String, Pattern, String, StringsCaptor>::default());
 
     let history = TestHistory {
         state: history_state.clone(),
     };
 
     let cache =
-        Arc::new(Mutex::new(HotStoreState::<String, Pattern, String, StringsCaptor>::default()));
+        Arc::new(HotStoreState::<String, Pattern, String, StringsCaptor>::default());
 
     let hot_store =
         HotStoreInstances::create_from_mhs_and_hr(cache.clone(), Box::new(history.clone()));
@@ -999,13 +999,13 @@ pub fn fixture_with_cache(
     cache: HotStoreState<String, Pattern, String, StringsCaptor>,
 ) -> StateSetup {
     let history_state =
-        Arc::new(Mutex::new(HotStoreState::<String, Pattern, String, StringsCaptor>::default()));
+        Arc::new(HotStoreState::<String, Pattern, String, StringsCaptor>::default());
 
     let history = TestHistory {
         state: history_state.clone(),
     };
 
-    let cache = Arc::new(Mutex::new(cache));
+    let cache = Arc::new(cache);
 
     let hot_store =
         HotStoreInstances::create_from_mhs_and_hr(cache.clone(), Box::new(history.clone()));

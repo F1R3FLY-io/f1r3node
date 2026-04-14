@@ -9,6 +9,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::sync::atomic::{AtomicI64, Ordering};
+use std::time::Instant;
 use std::sync::{Arc, Mutex};
 
 use dashmap::DashMap;
@@ -168,7 +169,7 @@ where
         let history = &self.history_repository;
         let history_reader = history.get_history_reader(&history.root())?;
         let hot_store = HotStoreInstances::create_from_mhs_and_hr(
-            Arc::new(Mutex::new(checkpoint.cache_snapshot)),
+            Arc::new(checkpoint.cache_snapshot),
             history_reader.base(),
         );
 
@@ -196,9 +197,12 @@ where
         } else {
             let consume_ref = Consume::create(&channels, &patterns, &continuation, persist);
 
+            metrics::counter!("replay_rspace.consume.calls", "source" => "rspace").increment(1);
+            let start = Instant::now();
             let result =
                 self.locked_consume(channels, patterns, continuation, persist, peeks, consume_ref);
-            // println!("\nlocked_consume result: {:?}", result);
+            metrics::histogram!("replay_consume_time_seconds", "source" => "rspace")
+                .record(start.elapsed().as_secs_f64());
             result
         }
     }
@@ -215,8 +219,11 @@ where
         // println!("\n\nHit produce, channel: {:?}", channel);
 
         let produce_ref = Produce::create(&channel, &data, persist);
+        metrics::counter!("replay_rspace.produce.calls", "source" => "rspace").increment(1);
+        let start = Instant::now();
         let result = self.locked_produce(channel, data, persist, produce_ref);
-        // println!("\nlocked_produce result: {:?}", result);
+        metrics::histogram!("replay_produce_time_seconds", "source" => "rspace")
+            .record(start.elapsed().as_secs_f64());
         result
     }
 
@@ -597,12 +604,10 @@ where
      * Put another way, this allows us to speculatively remove matching data
      * without affecting the actual store contents.
      */
-    fn fetch_channel_to_index_data(&self, channels: &[C]) -> DashMap<C, Vec<(Datum<A>, i32)>> {
-        let map = DashMap::with_capacity(channels.len());
+    fn fetch_channel_to_index_data(&self, channels: &[C]) -> HashMap<C, Vec<(Datum<A>, i32)>> {
+        let mut map = HashMap::with_capacity(channels.len());
         for c in channels {
             let data = self.store.get_data(c);
-            // No shuffle during replay — use sequential enumeration to ensure
-            // deterministic datum selection during block validation.
             let indexed_data: Vec<(Datum<A>, i32)> = data
                 .into_iter()
                 .enumerate()
@@ -647,15 +652,15 @@ where
 
         // println!("\nchannelToIndexedDataList: {:#?}", channel_to_indexed_data_list);
 
-        let channel_to_indexed_data_map: DashMap<C, Vec<(Datum<A>, i32)>> =
+        let mut channel_to_indexed_data_map: HashMap<C, Vec<(Datum<A>, i32)>> =
             channel_to_indexed_data_list.into_iter().collect();
 
+        let pairs: Vec<(C, P)> = channels.into_iter().zip(patterns.into_iter()).collect();
         let result = self
             .extract_data_candidates(
                 &self.matcher,
-                channels.into_iter().zip(patterns.into_iter()).collect(),
-                channel_to_indexed_data_map,
-                vec![],
+                &pairs,
+                &mut channel_to_indexed_data_map,
             )
             .into_iter()
             .collect::<Option<Vec<_>>>();
@@ -1113,14 +1118,14 @@ where
             ))
         } else {
             let consume_ref = Consume::create(&channels, &patterns, &continuation, true);
-            let channel_to_indexed_data = self.fetch_channel_to_index_data(&channels);
+            let mut channel_to_indexed_data = self.fetch_channel_to_index_data(&channels);
             let zipped: Vec<(C, P)> = channels
                 .iter()
                 .cloned()
                 .zip(patterns.iter().cloned())
                 .collect();
             let options: Option<Vec<ConsumeCandidate<C, A>>> = self
-                .extract_data_candidates(&self.matcher, zipped, channel_to_indexed_data, Vec::new())
+                .extract_data_candidates(&self.matcher, &zipped, &mut channel_to_indexed_data)
                 .into_iter()
                 .collect();
 
@@ -1249,20 +1254,16 @@ where
                 Some((channels, rest)) => {
                     let match_candidates = fetch_matching_continuations(channels.to_vec());
                     // println!("match_candidates: {:?}", match_candidates);
-                    let fetch_data: Vec<_> = channels
+                    let channel_to_indexed_data: HashMap<C, Vec<(Datum<A>, i32)>> = channels
                         .iter()
                         .map(|c| fetch_matching_data(c.clone()))
                         .collect();
-
-                    let channel_to_indexed_data_list: Vec<(C, Vec<(Datum<A>, i32)>)> =
-                        fetch_data.into_iter().filter_map(|x| Some(x)).collect();
-                    // println!("channel_to_indexed_data_list: {:?}", channel_to_indexed_data_list);
 
                     let first_match = self.extract_first_match(
                         &self.matcher,
                         channels.to_vec(),
                         match_candidates,
-                        channel_to_indexed_data_list.into_iter().collect(),
+                        channel_to_indexed_data,
                     );
 
                     // println!("first_match in run_matcher_for_channels: {:?}", first_match);
