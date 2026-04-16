@@ -175,8 +175,26 @@ Results are logged to `logs/smoke_test_*.log` with pass/fail counters.
 
 ## Genesis Configuration
 
+### Native Token
+
+The native token's identity is configured in `defaults.conf` (or via CLI flags) and baked into the `TokenMetadata` Rholang contract at genesis. These values are **immutable after genesis** — they cannot be changed without creating a new network.
+
+| Config Field | CLI Flag | Default | Description |
+|---|---|---|---|
+| `native-token-name` | `--native-token-name` | `F1R3CAP` | Full display name |
+| `native-token-symbol` | `--native-token-symbol` | `F1R3` | Ticker symbol |
+| `native-token-decimals` | `--native-token-decimals` | `8` | Decimal places (1 token = 10^decimals dust) |
+
+Override per-node via environment variables in the compose files (e.g. `NATIVE_TOKEN_NAME=MyToken`), or per-validator via `VALIDATOR1_NATIVE_TOKEN_NAME=MyToken`.
+
+After genesis, the values are queryable:
+- **API**: `GET /api/status` → `nativeTokenName`, `nativeTokenSymbol`, `nativeTokenDecimals`
+- **On-chain**: `rho:system:tokenMetadata` contract with methods `name`, `symbol`, `decimals`, `all`
+
+Joiners verify their config matches the on-chain values at startup. A mismatch causes the node to exit with a clear error.
+
 ### Wallets (genesis/wallets.txt)
-- **Bootstrap Node** - Initial REV balance for network operations
+- **Bootstrap Node** - Initial balance for network operations
 - **Validator 1-3** - Funded for transaction fees and operations
 
 ### Bonds (genesis/bonds.txt)

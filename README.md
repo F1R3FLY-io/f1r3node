@@ -345,6 +345,18 @@ Reference configs:
 - [docker/conf/default.conf](docker/conf/default.conf) - Minimal shard override
 - [Consensus Configuration Guide](https://github.com/F1R3FLY-io/system-integration/blob/main/docs/consensus-configuration.md) - FTT, synchrony threshold semantics, finalization formula, recommended values
 
+### Native Token
+
+Each chain's native token identity is configured before genesis and baked into the on-chain `TokenMetadata` contract. These values are **immutable after genesis**.
+
+| Config Field | CLI Flag | Default |
+|---|---|---|
+| `native-token-name` | `--native-token-name` | `F1R3CAP` |
+| `native-token-symbol` | `--native-token-symbol` | `F1R3` |
+| `native-token-decimals` | `--native-token-decimals` | `8` |
+
+After genesis, queryable via `/api/status` or on-chain at `rho:system:tokenMetadata`. Joiners verify their config matches the on-chain values at startup.
+
 ## Documentation
 
 Detailed architecture and API documentation for each crate is available in [docs/](docs/README.md):

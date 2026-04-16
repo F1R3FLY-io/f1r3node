@@ -33,6 +33,11 @@ pub const POS_GENERATOR_PK: &str =
 pub const VAULTS_GENERATOR_PK: &str =
     "a06959868e39bb3a8502846686a23119716ecd001700baf9e2ecfa0dbf1a3247";
 pub const STACK_PK: &str = "c94e647de6876c954ebb7b64c40a220227770f9be003635edfe3336a1a2c8605";
+// Private key, timestamp, pubkey, signature, and URI for TokenMetadata were generated
+// via RegistrySigGen. See casper/tests/util/rholang/token_metadata_sig_gen.rs for the
+// one-off generator and the derivation table at the top of TokenMetadata.rhox.
+pub const TOKEN_METADATA_PK: &str =
+    "8f9a1c3b2d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a";
 
 // Timestamps for each deploy
 pub const REGISTRY_TIMESTAMP: i64 = 1559156071321;
@@ -45,6 +50,7 @@ pub const SYSTEM_VAULT_TIMESTAMP: i64 = 1559156183943;
 pub const MULTI_SIG_SYSTEM_VAULT_TIMESTAMP: i64 = 1571408470880;
 pub const POS_GENERATOR_TIMESTAMP: i64 = 1559156420651;
 pub const STACK_TIMESTAMP: i64 = 1751539590099;
+pub const TOKEN_METADATA_TIMESTAMP: i64 = 1737500000000;
 
 lazy_static! {
     pub static ref REGISTRY_PUB_KEY: PublicKey = to_public(REGISTRY_PK);
@@ -58,6 +64,7 @@ lazy_static! {
     pub static ref POS_GENERATOR_PUB_KEY: PublicKey = to_public(POS_GENERATOR_PK);
     pub static ref VAULTS_GENERATOR_PUB_KEY: PublicKey = to_public(VAULTS_GENERATOR_PK);
     pub static ref STACK_PUB_KEY: PublicKey = to_public(STACK_PK);
+    pub static ref TOKEN_METADATA_PUB_KEY: PublicKey = to_public(TOKEN_METADATA_PK);
 }
 
 pub fn system_public_keys() -> Vec<&'static PublicKey> {
@@ -73,6 +80,7 @@ pub fn system_public_keys() -> Vec<&'static PublicKey> {
         &POS_GENERATOR_PUB_KEY,
         &VAULTS_GENERATOR_PUB_KEY,
         &STACK_PUB_KEY,
+        &TOKEN_METADATA_PUB_KEY,
     ]
 }
 
@@ -178,6 +186,32 @@ pub fn stack(shard_id: &str) -> Signed<DeployData> {
         CompiledRholangSource::apply("Stack.rho").expect("Failed to compile Stack.rho"),
         STACK_PK,
         STACK_TIMESTAMP,
+        shard_id,
+    )
+}
+
+/// Deploys the `TokenMetadata` contract that stores the native token's
+/// name, symbol, and decimals. Values are substituted into the Rholang
+/// source at genesis time and registered at `rho:system:tokenMetadata`.
+pub fn token_metadata(
+    native_token_name: &str,
+    native_token_symbol: &str,
+    native_token_decimals: u32,
+    shard_id: &str,
+) -> Signed<DeployData> {
+    let decimals_str = native_token_decimals.to_string();
+    to_deploy(
+        CompiledRholangTemplate::new(
+            "TokenMetadata.rhox",
+            HashMap::new(),
+            &[
+                ("nativeTokenName", native_token_name),
+                ("nativeTokenSymbol", native_token_symbol),
+                ("nativeTokenDecimals", &decimals_str),
+            ],
+        ),
+        TOKEN_METADATA_PK,
+        TOKEN_METADATA_TIMESTAMP,
         shard_id,
     )
 }

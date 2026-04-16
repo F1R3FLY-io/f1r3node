@@ -74,14 +74,17 @@ The expected result should be like
 {
   "version": {
     "api": "1",
-    "node": "RChain Node 1.0.0-SNAPSHOT (29aa391c6948c2c1df533b4cd35794d65eab04b5)"
+    "node": "F1r3node Rust 0.4.10 ()"
   },
   "address": "rnode://c93bc07f3d141459356791f9eaaa05f4cec49c0b@f1r3fly0-0.f1r3fly0?protocol=40400&discovery=40404",
-  "networkId": "f1r3fly",
+  "networkId": "testnet",
   "shardId": "root",
   "peers": 1,
   "nodes": 3,
-  "minPhloPrice": 1
+  "minPhloPrice": 1,
+  "nativeTokenName": "F1R3CAP",
+  "nativeTokenSymbol": "F1R3",
+  "nativeTokenDecimals": 8
 }
 ```
 

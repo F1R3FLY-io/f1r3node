@@ -393,7 +393,13 @@ All consensus parameters are defined in HOCON configuration files:
 
 Operator config files are minimal overrides — HOCON's fallback semantics merge them on top of the built-in defaults automatically.
 
-**Genesis-locked parameters** (cannot change after network creation): `fault-tolerance-threshold` and `synchrony-constraint-threshold` are written into the genesis block's on-chain state. Changing them requires a new genesis.
+**Genesis-locked parameters** (cannot change after network creation):
+- `fault-tolerance-threshold` and `synchrony-constraint-threshold` — written into the genesis block's on-chain state
+- `native-token-name`, `native-token-symbol`, `native-token-decimals` — baked into the `TokenMetadata` Rholang contract at `rho:system:tokenMetadata` with nonce `i64::MAX`, making them immutable via the registry's `insertSigned` protocol
+
+Changing any of these requires a new genesis (new network).
+
+**Native token metadata** is exposed via `/api/status` (`nativeTokenName`, `nativeTokenSymbol`, `nativeTokenDecimals`) and queryable on-chain by any Rholang contract. Joiners verify their config matches the on-chain values at startup; a mismatch causes the node to exit with a structured error event (`native_token_metadata_mismatch`).
 
 See also: [Consensus Configuration Guide](https://github.com/F1R3FLY-io/system-integration/blob/main/docs/consensus-configuration.md) — FTT and synchrony threshold semantics, finalization formula, recommended values per validator set size.
 

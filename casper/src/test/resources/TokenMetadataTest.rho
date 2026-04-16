@@ -1,0 +1,37 @@
+// Exercises the TokenMetadata contract deployed at genesis.
+// All four methods must return the values baked into the contract at
+// genesis via the `native-token-*` config fields.
+
+new
+  rl(`rho:registry:lookup`),
+  stdout(`rho:io:stdout`),
+  tokenMetadataCh,
+  nameCh,
+  symbolCh,
+  decimalsCh,
+  allCh,
+  test
+in {
+  rl!(`rho:system:tokenMetadata`, *tokenMetadataCh) |
+  for (@(_, TokenMetadata) <- tokenMetadataCh) {
+    @TokenMetadata!("name", *nameCh) |
+    @TokenMetadata!("symbol", *symbolCh) |
+    @TokenMetadata!("decimals", *decimalsCh) |
+    @TokenMetadata!("all", *allCh) |
+
+    for (
+      @name <- nameCh &
+      @symbol <- symbolCh &
+      @decimals <- decimalsCh &
+      @(allName, allSymbol, allDecimals) <- allCh
+    ) {
+      stdout!(("TokenMetadata.name", name)) |
+      stdout!(("TokenMetadata.symbol", symbol)) |
+      stdout!(("TokenMetadata.decimals", decimals)) |
+      stdout!(("TokenMetadata.all", (allName, allSymbol, allDecimals))) |
+
+      // Consistency: tuple returned by "all" must match the individual getters.
+      test!((name == allName, symbol == allSymbol, decimals == allDecimals))
+    }
+  }
+}

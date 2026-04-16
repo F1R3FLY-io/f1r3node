@@ -8,4 +8,5 @@ pub mod mergeable_channels_gc;
 pub mod proto_util;
 pub mod rholang;
 pub mod rspace_util;
+pub mod token_metadata_check;
 pub mod vault_parser;

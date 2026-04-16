@@ -380,6 +380,25 @@ pub struct RunOptions {
     #[arg(long = "number-of-active-validators")]
     pub number_of_active_validators: Option<u32>,
 
+    /// Full display name of the native token. Baked into the TokenMetadata
+    /// Rholang contract at genesis and exposed via /api/status. Must be
+    /// non-empty, non-whitespace. Immutable after genesis.
+    #[arg(long = "native-token-name")]
+    pub native_token_name: Option<String>,
+
+    /// Ticker symbol of the native token (e.g. "F1R3"). Same immutability
+    /// rules as `--native-token-name`. Must be non-empty, non-whitespace.
+    #[arg(long = "native-token-symbol")]
+    pub native_token_symbol: Option<String>,
+
+    /// Number of decimal places used to display the native token
+    /// (1 token = 10^decimals dust). Accepts 0-18; values above 18 are
+    /// rejected because they exceed IEEE-754 double safe-integer range
+    /// (breaks JavaScript-based clients) and are not used by any major
+    /// blockchain in practice (ETH=18, BTC=8, SOL=9, ATOM=6, DOT=10).
+    #[arg(long = "native-token-decimals", value_parser = clap::value_parser!(u32).range(0..=18))]
+    pub native_token_decimals: Option<u32>,
+
     /// Number of signatures from bonded validators required for Ceremony Master to approve the genesis block
     #[arg(long = "required-signatures")]
     pub required_signatures: Option<i32>,
