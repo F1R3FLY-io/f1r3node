@@ -55,8 +55,8 @@ mod tests {
         Env::new()
     }
 
-    fn assert_store_contains(runtime: RhoRuntimeImpl, ack_channel: Par, data: ListParWithRandom) {
-        let space_map = runtime.get_hot_changes();
+    async fn assert_store_contains(runtime: RhoRuntimeImpl, ack_channel: Par, data: ListParWithRandom) {
+        let space_map = runtime.get_hot_changes().await;
         // println!("space_map: {:?}", space_map.len());
         let datum = space_map
             .get(&vec![ack_channel])
@@ -117,7 +117,7 @@ mod tests {
                 pars: vec![expected],
                 random_state: rand().to_bytes(),
             },
-        );
+        ).await;
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -151,7 +151,7 @@ mod tests {
                 pars: vec![expected],
                 random_state: rand().to_bytes(),
             },
-        );
+        ).await;
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -185,7 +185,7 @@ mod tests {
                 pars: vec![expected],
                 random_state: rand().to_bytes(),
             },
-        );
+        ).await;
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -241,7 +241,7 @@ mod tests {
                 pars: vec![new_gbool_par(true, Vec::new(), false)],
                 random_state: rand().to_bytes(),
             },
-        );
+        ).await;
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -291,6 +291,6 @@ mod tests {
                 pars: vec![new_gbool_par(true, Vec::new(), false)],
                 random_state: rand().to_bytes(),
             },
-        );
+        ).await;
     }
 }

@@ -53,8 +53,8 @@ where
     f(runtime).await;
 }
 
-fn storage_contents(runtime: &RhoRuntimeImpl) -> String {
-    storage_printer::pretty_print(runtime)
+async fn storage_contents(runtime: &RhoRuntimeImpl) -> String {
+    storage_printer::pretty_print(runtime).await
 }
 
 async fn execute(runtime: &mut RhoRuntimeImpl, term: &str) -> Result<(), InterpreterError> {
@@ -79,7 +79,7 @@ async fn ollama_chat_should_return_mock_response() {
 
         execute(&mut runtime, term).await.expect("Execution failed");
 
-        let storage = storage_contents(&runtime);
+        let storage = storage_contents(&runtime).await;
         println!("Storage: {}", storage);
 
         assert!(
@@ -104,7 +104,7 @@ async fn ollama_generate_should_return_mock_response() {
 
         execute(&mut runtime, term).await.expect("Execution failed");
 
-        let storage = storage_contents(&runtime);
+        let storage = storage_contents(&runtime).await;
         assert!(storage.contains(mock_response));
     })
     .await;
@@ -124,7 +124,7 @@ async fn ollama_models_should_return_list() {
 
         execute(&mut runtime, term).await.expect("Execution failed");
 
-        let storage = storage_contents(&runtime);
+        let storage = storage_contents(&runtime).await;
         println!("Storage Models: {}", storage);
         assert!(storage.contains("model1"));
         assert!(storage.contains("model2"));

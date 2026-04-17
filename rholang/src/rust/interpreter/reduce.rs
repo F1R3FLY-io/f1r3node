@@ -38,7 +38,8 @@ use std::task::{Context, Poll};
 use crate::rust::interpreter::accounting::costs::{
     add_cost, bytes_to_hex_cost, diff_cost, hex_to_bytes_cost, interpolate_cost, keys_method_cost,
     length_method_cost, lookup_cost, match_eval_cost, nth_method_call_cost, remove_cost,
-    size_method_cost, slice_cost, take_cost, to_byte_array_cost, to_list_cost, union_cost,
+    size_method_cost, slice_cost, take_cost,
+    to_byte_array_cost, to_list_cost, union_cost,
 };
 use crate::rust::interpreter::matcher::spatial_matcher::SpatialMatcherContext;
 use crate::rust::interpreter::rho_type::RhoTuple2;
@@ -317,8 +318,8 @@ impl DebruijnInterpreter {
     ) -> Result<DispatchType, InterpreterError> {
         self.update_mergeable_channels(&chan).await;
         let space_locked = &self.space;
-        let produce_result = space_locked.produce(chan.clone(), data.clone(), persistent)?;
-        let is_replay = space_locked.is_replay();
+        let produce_result = space_locked.produce(chan.clone(), data.clone(), persistent).await?;
+        let is_replay = space_locked.is_replay().await;
 
         match produce_result {
             Some((c, s, produce_event)) => {
@@ -338,7 +339,7 @@ impl DebruijnInterpreter {
                     DispatchType::NonDeterministicCall(ref output) => {
                         let produce1 = produce_event.mark_as_non_deterministic(output.clone());
                         let space_locked = &self.space;
-                        space_locked.update_produce(produce1);
+                        space_locked.update_produce(produce1).await;
                                         Ok(dispatch_type)
                     }
 
@@ -346,7 +347,7 @@ impl DebruijnInterpreter {
                         // Mark the produce as failed for replay safety
                         let failed_produce = produce_event.with_error();
                         let space_locked = &self.space;
-                        space_locked.update_produce(failed_produce);
+                        space_locked.update_produce(failed_produce).await;
                                         // Re-raise known error types as-is to preserve output_not_produced;
                         // wrap unknown errors in NonDeterministicProcessFailure.
                         match error {
@@ -413,8 +414,8 @@ impl DebruijnInterpreter {
             } else {
                 BTreeSet::new()
             },
-        )?;
-        let is_replay = space_locked.is_replay();
+        ).await?;
+        let is_replay = space_locked.is_replay().await;
 
         self.continue_consume_process(
             unpack_option_with_peek(consume_result),

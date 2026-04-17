@@ -130,14 +130,15 @@ async fn evaluate_and_replay(initial_phlo: Cost, term: String) -> (EvaluateResul
     };
 
     let replay_result = {
-        let checkpoint = runtime.create_checkpoint();
+        let checkpoint = runtime.create_checkpoint().await;
         let root = checkpoint.root;
         let log = checkpoint.log;
 
         replay_runtime
             .reset(&root)
+            .await
             .expect("Failed to reset replay runtime");
-        replay_runtime.rig(log).expect("Rig failed");
+        replay_runtime.rig(log).await.expect("Rig failed");
 
         let result = replay_runtime
             .evaluate(&term, initial_phlo, HashMap::new(), rand)
@@ -146,6 +147,7 @@ async fn evaluate_and_replay(initial_phlo: Cost, term: String) -> (EvaluateResul
 
         replay_runtime
             .check_replay_data()
+            .await
             .expect("Replay data check failed");
 
         result

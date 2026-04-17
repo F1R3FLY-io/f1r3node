@@ -454,7 +454,7 @@ async fn eval_of_bundle_should_evaluate_contents_of_bundle() {
         ),
     );
     let expected_result = map_data(expected_elements);
-    assert_eq!(space.to_map(), expected_result);
+    assert_eq!(space.to_map().await, expected_result);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -484,8 +484,7 @@ async fn eval_of_bundle_should_throw_an_error_if_names_are_used_against_their_po
     let env: Env<Par> = Env::new();
     let result = reducer
         .eval(receive, &env, rand())
-        .await
-        .map(|_| space.to_map());
+        .await;
     assert!(result.is_err());
     if let Err(e) = result {
         assert_eq!(
@@ -517,8 +516,7 @@ async fn eval_of_bundle_should_throw_an_error_if_names_are_used_against_their_po
     let env: Env<Par> = Env::new();
     let result = reducer
         .eval(send, &env, rand())
-        .await
-        .map(|_| space.to_map());
+        .await;
     assert!(result.is_err());
     if let Err(e) = result {
         assert_eq!(
@@ -549,12 +547,12 @@ async fn eval_of_send_should_place_something_in_the_tuplespace() {
     }]);
 
     let env: Env<Par> = Env::new();
-    let result = reducer
+    reducer
         .eval(send, &env, split_rand.clone())
         .await
-        .map(|_| space.to_map());
+        .unwrap();
 
-    assert!(result.is_ok());
+    let result = space.to_map().await;
     let mut expected_elements = HashMap::new();
     expected_elements.insert(
         channel,
@@ -568,7 +566,7 @@ async fn eval_of_send_should_place_something_in_the_tuplespace() {
         ),
     );
     let expected_result = map_data(expected_elements);
-    assert_eq!(result.unwrap(), expected_result);
+    assert_eq!(result, expected_result);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -591,19 +589,19 @@ async fn eval_of_send_should_verify_that_bundle_is_writeable_before_sending_on_b
     }]);
 
     let env: Env<Par> = Env::new();
-    let result = reducer
+    reducer
         .eval(send, &env, split_rand.clone())
         .await
-        .map(|_| space.to_map());
+        .unwrap();
 
-    assert!(result.is_ok());
+    let result = space.to_map().await;
     let mut expected_elements = HashMap::new();
     expected_elements.insert(
         channel,
         (vec![new_gint_par(7, Vec::new(), false)], split_rand),
     );
     let expected_result = map_data(expected_elements);
-    assert_eq!(result.unwrap(), expected_result);
+    assert_eq!(result, expected_result);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -634,12 +632,12 @@ async fn eval_of_single_channel_receive_should_place_something_in_the_tuplespace
     }]);
 
     let env: Env<Par> = Env::new();
-    let result = reducer
+    reducer
         .eval(receive, &env, split_rand.clone())
         .await
-        .map(|_| space.to_map());
+        .unwrap();
 
-    assert!(result.is_ok());
+    let result = space.to_map().await;
     let bind_pattern = BindPattern {
         patterns: vec![
             new_freevar_par(0, Vec::new()),
@@ -651,7 +649,7 @@ async fn eval_of_single_channel_receive_should_place_something_in_the_tuplespace
     };
 
     assert!(check_continuation(
-        result.unwrap(),
+        result,
         vec![channel],
         vec![bind_pattern],
         ParWithRandom {
@@ -689,14 +687,14 @@ async fn eval_of_single_channel_receive_should_verify_that_bundle_is_readable_if
     }]);
 
     let env: Env<Par> = Env::new();
-    let result = reducer
+    reducer
         .eval(receive, &env, split_rand.clone())
         .await
-        .map(|_| space.to_map());
+        .unwrap();
 
-    assert!(result.is_ok());
+    let result = space.to_map().await;
     assert!(check_continuation(
-        result.unwrap(),
+        result,
         vec![y],
         vec![BindPattern {
             patterns: vec![Par::default()],
@@ -766,7 +764,7 @@ async fn eval_of_send_pipe_receive_should_meet_in_the_tuple_space_and_proceed() 
         .await
         .is_ok());
 
-    let send_result = space.to_map();
+    let send_result = space.to_map().await;
     let mut expected_elements = HashMap::new();
     expected_elements.insert(
         new_gstring_par(String::from("result"), Vec::new(), false),
@@ -786,7 +784,7 @@ async fn eval_of_send_pipe_receive_should_meet_in_the_tuple_space_and_proceed() 
         .is_ok());
     assert!(reducer.eval(send, &env, split_rand0.clone()).await.is_ok());
 
-    let receive_result = space.to_map();
+    let receive_result = space.to_map().await;
     assert_eq!(receive_result, map_data(expected_elements));
 }
 
@@ -870,7 +868,7 @@ async fn eval_of_send_pipe_receive_with_peek_should_meet_in_the_tuple_space_and_
         .await
         .is_ok());
 
-    let send_result = space.to_map();
+    let send_result = space.to_map().await;
     assert_eq!(send_result, map_data(expected_elements.clone()));
 
     let (space, reducer) =
@@ -882,7 +880,7 @@ async fn eval_of_send_pipe_receive_with_peek_should_meet_in_the_tuple_space_and_
         .is_ok());
     assert!(reducer.eval(send, &env, split_rand0.clone()).await.is_ok());
 
-    let receive_result = space.to_map();
+    let receive_result = space.to_map().await;
     assert_eq!(receive_result, map_data(expected_elements));
 }
 
@@ -957,7 +955,7 @@ async fn eval_of_send_pipe_receive_when_whole_list_is_bound_to_list_remainder_sh
         .await
         .is_ok());
 
-    let send_result = space.to_map();
+    let send_result = space.to_map().await;
 
     let mut expected_elements = HashMap::new();
     expected_elements.insert(
@@ -978,7 +976,7 @@ async fn eval_of_send_pipe_receive_when_whole_list_is_bound_to_list_remainder_sh
         .is_ok());
     assert!(reducer.eval(send, &env, split_rand0.clone()).await.is_ok());
 
-    let receive_result = space.to_map();
+    let receive_result = space.to_map().await;
     assert_eq!(receive_result, map_data(expected_elements));
 }
 
@@ -1040,7 +1038,7 @@ async fn eval_of_send_on_seven_plus_eight_pipe_receive_on_fifteen_should_meet_in
         .await
         .is_ok());
 
-    let send_result = space.to_map();
+    let send_result = space.to_map().await;
 
     let mut expected_elements = HashMap::new();
     expected_elements.insert(
@@ -1061,7 +1059,7 @@ async fn eval_of_send_on_seven_plus_eight_pipe_receive_on_fifteen_should_meet_in
         .is_ok());
     assert!(reducer.eval(send, &env, split_rand0.clone()).await.is_ok());
 
-    let receive_result = space.to_map();
+    let receive_result = space.to_map().await;
     assert_eq!(receive_result, map_data(expected_elements));
 }
 
@@ -1124,7 +1122,7 @@ async fn eval_of_send_of_receive_pipe_receive_should_meet_in_the_tuple_space_and
         .await
         .is_ok());
 
-    let send_result = space.to_map();
+    let send_result = space.to_map().await;
     let channels = vec![new_gint_par(2, Vec::new(), false)];
     // Because they are evaluated separately, nothing is split.
     assert!(check_continuation(
@@ -1150,7 +1148,7 @@ async fn eval_of_send_of_receive_pipe_receive_should_meet_in_the_tuple_space_and
         .is_ok());
     assert!(reducer.eval(send, &env, split_rand0.clone()).await.is_ok());
 
-    let receive_result = space.to_map();
+    let receive_result = space.to_map().await;
     assert!(check_continuation(
         receive_result,
         channels.clone(),
@@ -1191,7 +1189,7 @@ async fn eval_of_send_of_receive_pipe_receive_should_meet_in_the_tuple_space_and
     }]);
     assert!(reducer.eval(par_param, &env, base_rand).await.is_ok());
 
-    let both_result = space.to_map();
+    let both_result = space.to_map().await;
     assert!(check_continuation(
         both_result,
         channels,
@@ -1265,7 +1263,7 @@ async fn simple_match_should_capture_and_add_to_the_environment() {
         .await
         .is_ok());
 
-    let match_result = space.to_map();
+    let match_result = space.to_map().await;
     let mut expected_elements = HashMap::new();
     expected_elements.insert(
         new_gstring_par("result".to_string(), Vec::new(), false),
@@ -1369,7 +1367,7 @@ async fn eval_of_send_pipe_send_pipe_receive_join_should_meet_in_tuplespace_and_
         .await
         .is_ok());
 
-    let send_result = space.to_map();
+    let send_result = space.to_map().await;
     let mut expected_elements = HashMap::new();
     expected_elements.insert(
         new_gstring_par("result".to_string(), Vec::new(), false),
@@ -1396,7 +1394,7 @@ async fn eval_of_send_pipe_send_pipe_receive_join_should_meet_in_tuplespace_and_
         .await
         .is_ok());
 
-    let receive_result = space.to_map();
+    let receive_result = space.to_map().await;
     assert_eq!(receive_result, map_data(expected_elements.clone()));
 
     let (space, reducer) =
@@ -1415,7 +1413,7 @@ async fn eval_of_send_pipe_send_pipe_receive_join_should_meet_in_tuplespace_and_
         .await
         .is_ok());
 
-    let inter_leaved_result = space.to_map();
+    let inter_leaved_result = space.to_map().await;
     assert_eq!(inter_leaved_result, map_data(expected_elements));
 }
 
@@ -1472,7 +1470,7 @@ async fn eval_of_send_with_remainder_receive_should_capture_the_remainder() {
         .await
         .is_ok());
 
-    let result = space.to_map();
+    let result = space.to_map().await;
     let mut expected_elements = HashMap::new();
     expected_elements.insert(
         new_gstring_par("result".to_string(), Vec::new(), false),
@@ -1563,7 +1561,7 @@ async fn eval_of_nth_method_should_pick_out_the_nth_item_from_a_list() {
         .await
         .is_ok());
 
-    let indirect_result = space.to_map();
+    let indirect_result = space.to_map().await;
     let mut expected_elements = HashMap::new();
     expected_elements.insert(
         new_gstring_par("result".to_string(), Vec::new(), false),
@@ -1675,7 +1673,7 @@ async fn eval_of_new_should_use_deterministic_names_and_provide_urn_based_resour
     cost.set(Cost::unsafe_max());
     let env = Env::new();
     assert!(reducer.eval(new, &env, split_rand).await.is_ok());
-    let result = space.to_map();
+    let result = space.to_map().await;
 
     let channel0 = new_gstring_par("result0".to_string(), Vec::new(), false);
     let channel1 = new_gstring_par("result1".to_string(), Vec::new(), false);
@@ -1765,7 +1763,7 @@ async fn eval_of_nth_method_in_send_position_should_change_what_is_sent() {
 
     let env = Env::new();
     assert!(reducer.eval(send, &env, split_rand.clone()).await.is_ok());
-    let result = space.to_map();
+    let result = space.to_map().await;
 
     let channel = new_gstring_par("result".to_string(), Vec::new(), false);
     let mut expected_result = HashMap::new();
@@ -1858,7 +1856,7 @@ async fn eval_of_to_byte_array_method_on_any_process_should_return_that_process_
         .eval(to_byte_array_call, &env, split_rand.clone())
         .await
         .is_ok());
-    let result = space.to_map();
+    let result = space.to_map().await;
     let mut expected_result = HashMap::new();
     expected_result.insert(
         new_gstring_par("result".to_string(), Vec::new(), false),
@@ -1923,7 +1921,7 @@ async fn eval_of_to_byte_array_method_on_any_process_should_substitute_before_se
         .eval(to_byte_array_call, &env, split_rand.clone())
         .await
         .is_ok());
-    let result = space.to_map();
+    let result = space.to_map().await;
     let mut expected_result = HashMap::new();
     expected_result.insert(
         new_gstring_par("result".to_string(), Vec::new(), false),
@@ -1973,7 +1971,7 @@ async fn eval_of_to_string_method_on_deploy_id_return_that_id_serialized() {
         .await
         .is_ok());
 
-    let result = space.to_map();
+    let result = space.to_map().await;
     let mut expected_result = HashMap::new();
     expected_result.insert(
         new_gstring_par("result".to_string(), Vec::new(), false),
@@ -2049,7 +2047,7 @@ async fn eval_of_hex_to_bytes_should_transform_encoded_string_to_byte_array_not_
         .eval(to_byte_array_call, &env, split_rand.clone())
         .await
         .is_ok());
-    let result = space.to_map();
+    let result = space.to_map().await;
     let mut expected_result = HashMap::new();
     expected_result.insert(
         new_gstring_par("result".to_string(), Vec::new(), false),
@@ -2097,7 +2095,7 @@ async fn eval_of_bytes_to_hex_should_transform_byte_array_to_hex_string_not_the_
         .eval(to_string_call, &env, split_rand.clone())
         .await
         .is_ok());
-    let result = space.to_map();
+    let result = space.to_map().await;
     let mut expected_result = HashMap::new();
     expected_result.insert(
         new_gstring_par("result".to_string(), Vec::new(), false),
@@ -2140,7 +2138,7 @@ async fn eval_of_to_utf8_bytes_should_transform_string_to_utf8_byte_array_not_th
         .eval(to_utf8_bytes_call, &env, split_rand.clone())
         .await
         .is_ok());
-    let result = space.to_map();
+    let result = space.to_map().await;
     let mut expected_result = HashMap::new();
     expected_result.insert(
         new_gstring_par("result".to_string(), Vec::new(), false),
@@ -2272,7 +2270,7 @@ async fn variable_references_should_be_substituted_before_being_used() {
         .await;
     assert!(res.is_ok());
 
-    let result = space.to_map();
+    let result = space.to_map().await;
     let mut expected_elements = HashMap::new();
     expected_elements.insert(
         new_gstring_par("result".to_string(), Vec::new(), false),
@@ -2327,7 +2325,7 @@ async fn variable_references_should_be_substituted_before_being_used_in_a_match(
         .await;
     assert!(res.is_ok());
 
-    let result = space.to_map();
+    let result = space.to_map().await;
     let mut expected_elements = HashMap::new();
     expected_elements.insert(
         new_gstring_par("result".to_string(), Vec::new(), false),
@@ -2394,7 +2392,7 @@ async fn variable_references_should_reference_a_variable_that_comes_from_a_match
     let res = reducer.eval(proc.clone(), &env, base_rand.clone()).await;
     assert!(res.is_ok());
 
-    let result = space.to_map();
+    let result = space.to_map().await;
     let mut expected_elements = HashMap::new();
     expected_elements.insert(
         new_gstring_par("result".to_string(), Vec::new(), false),

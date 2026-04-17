@@ -253,21 +253,22 @@ async fn exec_replay_system_deploy<S: SystemDeployTrait>(
         _ => None,
     };
 
-    replay_runtime_ops.rig_system_deploy(processed_system_deploy)?;
+    replay_runtime_ops.rig_system_deploy(processed_system_deploy).await?;
     replay_runtime_ops
         .runtime_ops
         .runtime
-        .reset(&Blake2b256Hash::from_bytes_prost(state_hash))?;
+        .reset(&Blake2b256Hash::from_bytes_prost(state_hash))
+        .await?;
 
     let (value, eval_res) = replay_runtime_ops
         .replay_system_deploy_internal(system_deploy, &expected_failure)
         .await?;
 
-    replay_runtime_ops.check_replay_data_with_fix(eval_res.errors.is_empty())?;
+    replay_runtime_ops.check_replay_data_with_fix(eval_res.errors.is_empty()).await?;
 
     match (value, eval_res) {
         (Either::Right(result), _) => {
-            let checkpoint = replay_runtime_ops.runtime_ops.runtime.create_checkpoint();
+            let checkpoint = replay_runtime_ops.runtime_ops.runtime.create_checkpoint().await;
 
             Ok(SystemDeployReplayResult::ReplaySucceeded {
                 state_hash: checkpoint.root.to_bytes_prost(),

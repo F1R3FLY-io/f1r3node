@@ -45,21 +45,18 @@ impl CostManager {
     }
 
     pub fn charge(&self, amount: Cost) -> Result<(), InterpreterError> {
-        // Single lock scope — the semaphore (count=1) was redundant with the Mutex.
-        // Under concurrent Par evaluation (tokio::spawn), try_acquire/try_lock
-        // would fail when another task holds the permit. Blocking lock is correct.
         let mut current_cost = self
             .state
             .lock()
             .map_err(|_| InterpreterError::SetupError("Failed to lock cost state".to_string()))?;
 
-        // Scala check #1: if (c.value < 0) error.raiseError
         if current_cost.value < 0 {
             return Err(InterpreterError::OutOfPhlogistonsError);
         }
 
-        // Scala: cost.set(c - amount)
-        current_cost.value -= amount.value;
+        // Use saturating arithmetic to prevent overflow when credits (negative
+        // charges) are applied to balances near i64::MAX (e.g., genesis deploys).
+        current_cost.value = current_cost.value.saturating_sub(amount.value);
         if self.max_log_entries > 0 {
             let mut log = self.log.lock().unwrap();
             if log.len() >= self.max_log_entries {
@@ -68,8 +65,6 @@ impl CostManager {
             log.push_back(amount);
         }
 
-        // Scala check #2: error.ensure(cost.get)(...)(_.value >= 0)
-        // Catches: current=1, amount=3 → after=(-2) → OutOfPhlogistonsError
         if current_cost.value < 0 {
             return Err(InterpreterError::OutOfPhlogistonsError);
         }

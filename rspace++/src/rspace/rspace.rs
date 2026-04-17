@@ -7,9 +7,13 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt::Debug;
 use std::hash::Hash;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::time::Instant;
 
+pub static LOCK_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+use async_trait::async_trait;
 use dashmap::DashMap;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
@@ -53,12 +57,12 @@ pub struct RSpaceStore {
 pub struct RSpace<C, P, A, K> {
     pub history_repository: Arc<std::sync::RwLock<Arc<Box<dyn HistoryRepository<C, P, A, K> + Send + Sync + 'static>>>>,
     pub store: Arc<std::sync::RwLock<Arc<Box<dyn HotStore<C, P, A, K>>>>>,
-    installs: Arc<Mutex<HashMap<Vec<C>, Install<P, K>>>>,
-    event_log: Arc<Mutex<Log>>,
-    produce_counter: Arc<Mutex<BTreeMap<Produce, i32>>>,
+    installs: Arc<std::sync::Mutex<HashMap<Vec<C>, Install<P, K>>>>,
+    event_log: Arc<std::sync::Mutex<Log>>,
+    produce_counter: Arc<std::sync::Mutex<BTreeMap<Produce, i32>>>,
     matcher: Arc<Box<dyn Match<P, A>>>,
-    phase_a_locks: Arc<DashMap<u64, Arc<Mutex<()>>>>,
-    phase_b_locks: Arc<DashMap<u64, Arc<Mutex<()>>>>,
+    phase_a_locks: Arc<DashMap<u64, Arc<tokio::sync::Mutex<()>>>>,
+    phase_b_locks: Arc<DashMap<u64, Arc<tokio::sync::Mutex<()>>>>,
 }
 
 impl<C, P, A, K> RSpace<C, P, A, K>
@@ -79,37 +83,36 @@ where
         hasher.finish()
     }
 
-    fn acquire_locks(
-        lock_map: &DashMap<u64, Arc<Mutex<()>>>,
+    async fn acquire_locks(
+        lock_map: &DashMap<u64, Arc<tokio::sync::Mutex<()>>>,
         keys: &[u64],
     ) -> ChannelLockGuard {
         let mut sorted_keys: Vec<u64> = keys.to_vec();
         sorted_keys.sort();
         sorted_keys.dedup();
 
-        let held: Vec<HeldLock> = sorted_keys
-            .iter()
-            .map(|k| {
-                let lock = lock_map
-                    .entry(*k)
-                    .or_insert_with(|| Arc::new(Mutex::new(())))
-                    .clone();
-                HeldLock::acquire(lock)
-            })
-            .collect();
+        let mut held: Vec<HeldLock> = Vec::with_capacity(sorted_keys.len());
+        for k in &sorted_keys {
+            let lock = lock_map
+                .entry(*k)
+                .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+                .clone();
+            let guard = lock.lock_owned().await;
+            held.push(HeldLock { _guard: guard });
+        }
 
         ChannelLockGuard { _held: held }
     }
 
-    fn consume_lock(&self, channel_hashes: &[u64]) -> (ChannelLockGuard, ChannelLockGuard) {
-        let phase_a = Self::acquire_locks(&self.phase_a_locks, channel_hashes);
-        let phase_b = Self::acquire_locks(&self.phase_b_locks, channel_hashes);
+    async fn consume_lock(&self, channel_hashes: &[u64]) -> (ChannelLockGuard, ChannelLockGuard) {
+        let phase_a = Self::acquire_locks(&self.phase_a_locks, channel_hashes).await;
+        let phase_b = Self::acquire_locks(&self.phase_b_locks, channel_hashes).await;
         (phase_a, phase_b)
     }
 
-    fn produce_lock(&self, channel: &C) -> (ChannelLockGuard, ChannelLockGuard) {
+    async fn produce_lock(&self, channel: &C) -> (ChannelLockGuard, ChannelLockGuard) {
         let channel_hash = Self::channel_hash(channel);
-        let phase_a = Self::acquire_locks(&self.phase_a_locks, &[channel_hash]);
+        let phase_a = Self::acquire_locks(&self.phase_a_locks, &[channel_hash]).await;
 
         let store = self.get_store();
         let join_hashes: Vec<u64> = store
@@ -119,7 +122,7 @@ where
             .map(|ch| Self::channel_hash(&ch))
             .collect();
 
-        let phase_b = Self::acquire_locks(&self.phase_b_locks, &join_hashes);
+        let phase_b = Self::acquire_locks(&self.phase_b_locks, &join_hashes).await;
         (phase_a, phase_b)
     }
 
@@ -129,24 +132,8 @@ where
 
 }
 
-/// Holds a Mutex lock alongside its owning Arc, ensuring the Mutex stays alive.
 struct HeldLock {
-    _guard: std::sync::MutexGuard<'static, ()>,
-    _lock: Arc<Mutex<()>>,
-}
-
-impl HeldLock {
-    fn acquire(lock: Arc<Mutex<()>>) -> Self {
-        // SAFETY: The Arc is held in the struct alongside the guard,
-        // ensuring the Mutex lives as long as the guard. Fields drop
-        // in declaration order, so _guard drops before _lock.
-        let guard = lock.lock().expect("channel lock");
-        let guard: std::sync::MutexGuard<'static, ()> = unsafe { std::mem::transmute(guard) };
-        HeldLock {
-            _guard: guard,
-            _lock: lock,
-        }
-    }
+    _guard: tokio::sync::OwnedMutexGuard<()>,
 }
 
 struct ChannelLockGuard {
@@ -162,6 +149,7 @@ where
 {
 }
 
+#[async_trait]
 impl<C, P, A, K> ISpace<C, P, A, K> for RSpace<C, P, A, K>
 where
     C: Clone + Debug + Default + Serialize + std::hash::Hash + Ord + Eq + 'static + Sync + Send,
@@ -169,7 +157,7 @@ where
     A: Clone + Debug + Default + Serialize + 'static + Sync + Send,
     K: Clone + Debug + Default + Serialize + 'static + Sync + Send,
 {
-    fn create_checkpoint(&self) -> Result<Checkpoint, RSpaceError> {
+    async fn create_checkpoint(&self) -> Result<Checkpoint, RSpaceError> {
         // Span[F].withMarks("create-checkpoint") from Scala - works because this is NOT
         // async
         let _span = tracing::info_span!(target: "f1r3fly.rspace", "create-checkpoint").entered();
@@ -209,7 +197,7 @@ where
         })
     }
 
-    fn reset(&self, root: &Blake2b256Hash) -> Result<(), RSpaceError> {
+    async fn reset(&self, root: &Blake2b256Hash) -> Result<(), RSpaceError> {
         let _span = tracing::info_span!(target: "f1r3fly.rspace", RESET_SPAN).entered();
         let next_history = self.get_history_repository().reset(root)?;
         *self.history_repository.write().expect("history write lock") = Arc::new(next_history);
@@ -227,7 +215,7 @@ where
         Ok(())
     }
 
-    fn consume_result(
+    async fn consume_result(
         &self,
         _channel: Vec<C>,
         _pattern: Vec<P>,
@@ -235,23 +223,23 @@ where
         panic!("\nERROR: RSpace consume_result should not be called here");
     }
 
-    fn get_data(&self, channel: &C) -> Vec<Datum<A>> { self.get_store().get_data(channel) }
+    async fn get_data(&self, channel: &C) -> Vec<Datum<A>> { self.get_store().get_data(channel) }
 
-    fn get_waiting_continuations(&self, channels: Vec<C>) -> Vec<WaitingContinuation<P, K>> {
+    async fn get_waiting_continuations(&self, channels: Vec<C>) -> Vec<WaitingContinuation<P, K>> {
         self.get_store().get_continuations(&channels)
     }
 
-    fn get_joins(&self, channel: C) -> Vec<Vec<C>> { self.get_store().get_joins(&channel) }
+    async fn get_joins(&self, channel: C) -> Vec<Vec<C>> { self.get_store().get_joins(&channel) }
 
-    fn clear(&self) -> Result<(), RSpaceError> {
-        self.reset(&RadixHistory::empty_root_node_hash())
+    async fn clear(&self) -> Result<(), RSpaceError> {
+        self.reset(&RadixHistory::empty_root_node_hash()).await
     }
 
-    fn get_root(&self) -> Blake2b256Hash { self.get_history_repository().root() }
+    async fn get_root(&self) -> Blake2b256Hash { self.get_history_repository().root() }
 
-    fn to_map(&self) -> HashMap<Vec<C>, Row<P, A, K>> { self.get_store().to_map() }
+    async fn to_map(&self) -> HashMap<Vec<C>, Row<P, A, K>> { self.get_store().to_map() }
 
-    fn create_soft_checkpoint(&self) -> SoftCheckpoint<C, P, A, K> {
+    async fn create_soft_checkpoint(&self) -> SoftCheckpoint<C, P, A, K> {
         let cache_snapshot = self.get_store().snapshot();
         let curr_event_log = std::mem::take(&mut *self.event_log.lock().expect("event log lock"));
         let curr_produce_counter = std::mem::take(&mut *self.produce_counter.lock().expect("produce counter lock"));
@@ -263,13 +251,13 @@ where
         }
     }
 
-    fn take_event_log(&self) -> Log {
+    async fn take_event_log(&self) -> Log {
         let curr_event_log = std::mem::take(&mut *self.event_log.lock().expect("event log lock"));
         let _ = std::mem::take(&mut *self.produce_counter.lock().expect("produce counter lock"));
         curr_event_log
     }
 
-    fn revert_to_soft_checkpoint(
+    async fn revert_to_soft_checkpoint(
         &self,
         checkpoint: SoftCheckpoint<C, P, A, K>,
     ) -> Result<(), RSpaceError> {
@@ -289,7 +277,7 @@ where
         Ok(())
     }
 
-    fn consume(
+    async fn consume(
         &self,
         channels: Vec<C>,
         patterns: Vec<P>,
@@ -306,7 +294,9 @@ where
 
             let lock_start = Instant::now();
             let channel_hashes: Vec<u64> = channels.iter().map(|ch| Self::channel_hash(ch)).collect();
-            let _lock_guard = self.consume_lock(&channel_hashes);
+            let _lock_guard = self.consume_lock(&channel_hashes).await;
+            let seq = LOCK_SEQUENCE.fetch_add(1, AtomicOrdering::SeqCst);
+            tracing::trace!(target: "rspace.lock_order", seq = seq, op = "consume", hashes = ?channel_hashes, "lock acquired");
             metrics::counter!("rspace.consume.lock_acquire_ns", "source" => RSPACE_METRICS_SOURCE)
                 .increment(lock_start.elapsed().as_nanos() as u64);
 
@@ -327,7 +317,7 @@ where
         }
     }
 
-    fn produce(
+    async fn produce(
         &self,
         channel: C,
         data: A,
@@ -336,7 +326,9 @@ where
         let produce_ref = Produce::create(&channel, &data, persist);
 
         let lock_start = Instant::now();
-        let _lock_guard = self.produce_lock(&channel);
+        let _lock_guard = self.produce_lock(&channel).await;
+        let seq = LOCK_SEQUENCE.fetch_add(1, AtomicOrdering::SeqCst);
+        tracing::trace!(target: "rspace.lock_order", seq = seq, op = "produce", hash = Self::channel_hash(&channel), "lock acquired");
         metrics::counter!("rspace.produce.lock_acquire_ns", "source" => RSPACE_METRICS_SOURCE)
             .increment(lock_start.elapsed().as_nanos() as u64);
 
@@ -349,7 +341,7 @@ where
         result
     }
 
-    fn install(
+    async fn install(
         &self,
         channels: Vec<C>,
         patterns: Vec<P>,
@@ -364,21 +356,21 @@ where
         result
     }
 
-    fn rig_and_reset(&self, _start_root: Blake2b256Hash, _log: Log) -> Result<(), RSpaceError> {
+    async fn rig_and_reset(&self, _start_root: Blake2b256Hash, _log: Log) -> Result<(), RSpaceError> {
         panic!("\nERROR: RSpace rig_and_reset should not be called here");
     }
 
-    fn rig(&self, _log: Log) -> Result<(), RSpaceError> {
+    async fn rig(&self, _log: Log) -> Result<(), RSpaceError> {
         panic!("\nERROR: RSpace rig should not be called here");
     }
 
-    fn check_replay_data(&self) -> Result<(), RSpaceError> {
+    async fn check_replay_data(&self) -> Result<(), RSpaceError> {
         panic!("\nERROR: RSpace check_replay_data should not be called here");
     }
 
-    fn is_replay(&self) -> bool { false }
+    async fn is_replay(&self) -> bool { false }
 
-    fn update_produce(&self, produce_ref: Produce) -> () {
+    async fn update_produce(&self, produce_ref: Produce) -> () {
         for event in self.event_log.lock().expect("event log lock").iter_mut() {
             match event {
                 Event::IoEvent(IOEvent::Produce(produce)) => {
@@ -452,9 +444,9 @@ where
             history_repository: Arc::new(std::sync::RwLock::new(history_repository)),
             store: Arc::new(std::sync::RwLock::new(Arc::new(store))),
             matcher,
-            installs: Arc::new(Mutex::new(HashMap::new())),
-            event_log: Arc::new(Mutex::new(Vec::new())),
-            produce_counter: Arc::new(Mutex::new(BTreeMap::new())),
+            installs: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            event_log: Arc::new(std::sync::Mutex::new(Vec::new())),
+            produce_counter: Arc::new(std::sync::Mutex::new(BTreeMap::new())),
             phase_a_locks: Arc::new(DashMap::new()),
             phase_b_locks: Arc::new(DashMap::new()),
         }

@@ -72,9 +72,9 @@ impl ContractCall {
                             random_state: rand,
                         },
                         false,
-                    )?;
+                    ).await?;
 
-                    let is_replay = space_lock.is_replay();
+                    let is_replay = space_lock.is_replay().await;
 
                     let dispatch_result = match produce_result {
                         Some((cont, channels, produce)) => {

@@ -90,7 +90,7 @@ async fn reporting_rspace_should_capture_comm_event_in_soft_report() {
     // base space to generate a valid trace log
     let space = RSpace::apply(history_repo.clone(), hot_store, Arc::new(Box::new(StringMatch)));
 
-    let empty_point = space.create_checkpoint().unwrap();
+    let empty_point = space.create_checkpoint().await.unwrap();
 
     // Create a COMM in plain space to obtain a valid trace log
     let channels = vec!["ch1".to_string()];
@@ -104,9 +104,9 @@ async fn reporting_rspace_should_capture_comm_event_in_soft_report() {
         continuation.clone(),
         false,
         BTreeSet::new(),
-    );
-    let _ = space.produce(channels[0].clone(), datum.clone(), false);
-    let rig_point = space.create_checkpoint().unwrap();
+    ).await;
+    let _ = space.produce(channels[0].clone(), datum.clone(), false).await;
+    let rig_point = space.create_checkpoint().await.unwrap();
 
     // Create ReportingRspace and run replay
     let reporting_store = {
@@ -119,7 +119,7 @@ async fn reporting_rspace_should_capture_comm_event_in_soft_report() {
         Arc::new(Box::new(StringMatch)),
     );
 
-    let _ = reporting.rig_and_reset(empty_point.root, rig_point.log);
+    let _ = reporting.rig_and_reset(empty_point.root, rig_point.log).await;
 
     let _ = reporting.consume(
         channels.clone(),
@@ -127,8 +127,8 @@ async fn reporting_rspace_should_capture_comm_event_in_soft_report() {
         continuation.clone(),
         false,
         BTreeSet::new(),
-    );
-    let _ = reporting.produce(channels[0].clone(), datum.clone(), false);
+    ).await;
+    let _ = reporting.produce(channels[0].clone(), datum.clone(), false).await;
 
     // Ensure soft_report contains ReportingComm
     let report = reporting.get_report().unwrap();
@@ -152,7 +152,7 @@ async fn reporting_rspace_should_capture_consume_event_only() {
         "k".to_string(),
         false,
         BTreeSet::new(),
-    );
+    ).await;
 
     let report = reporting.get_report().unwrap();
     let flat: Vec<_> = report.into_iter().flatten().collect();
@@ -168,7 +168,7 @@ async fn reporting_rspace_should_capture_produce_event_only() {
     // is captured by the reporting logger.
     let (_space, reporting) = build_reporting_rspace();
 
-    let _ = reporting.produce("ch1".to_string(), "d".to_string(), false);
+    let _ = reporting.produce("ch1".to_string(), "d".to_string(), false).await;
 
     let report = reporting.get_report().unwrap();
     let flat: Vec<_> = report.into_iter().flatten().collect();
@@ -183,7 +183,7 @@ async fn reporting_rspace_should_capture_peeks_in_comm_event() {
     // Verifies that peek semantics are preserved: when a COMM is formed with peeks,
     // the resulting ReportingComm.consume.peeks contains the peeked indices.
     let (space, reporting) = build_reporting_rspace();
-    let empty_point = space.create_checkpoint().unwrap();
+    let empty_point = space.create_checkpoint().await.unwrap();
 
     let channels = vec!["ch1".to_string()];
     let patterns = vec![Pattern::Wildcard];
@@ -196,11 +196,11 @@ async fn reporting_rspace_should_capture_peeks_in_comm_event() {
         continuation.clone(),
         false,
         BTreeSet::from([0]),
-    );
-    let _ = space.produce(channels[0].clone(), datum.clone(), false);
-    let rig_point = space.create_checkpoint().unwrap();
+    ).await;
+    let _ = space.produce(channels[0].clone(), datum.clone(), false).await;
+    let rig_point = space.create_checkpoint().await.unwrap();
 
-    let _ = reporting.rig_and_reset(empty_point.root, rig_point.log);
+    let _ = reporting.rig_and_reset(empty_point.root, rig_point.log).await;
 
     let _ = reporting.consume(
         channels.clone(),
@@ -208,8 +208,8 @@ async fn reporting_rspace_should_capture_peeks_in_comm_event() {
         continuation.clone(),
         false,
         BTreeSet::from([0]),
-    );
-    let _ = reporting.produce(channels[0].clone(), datum.clone(), false);
+    ).await;
+    let _ = reporting.produce(channels[0].clone(), datum.clone(), false).await;
 
     let report = reporting.get_report().unwrap();
     let flat: Vec<_> = report.into_iter().flatten().collect();

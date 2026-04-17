@@ -80,7 +80,7 @@ impl TestDeployDataFixture {
             expr_instance: Some(ExprInstance::GInt(0)),
         }]);
 
-        let data = runtime.get_data(&channel);
+        let data = runtime.get_data(&channel).await;
 
         let result: Vec<Par> = if !data.is_empty() {
             data.into_iter().flat_map(|datum| datum.a.pars).collect()

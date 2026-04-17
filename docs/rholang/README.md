@@ -1,4 +1,4 @@
-> Last updated: 2026-03-23
+> Last updated: 2026-04-14
 
 # Crate: rholang (Interpreter/Reducer)
 
@@ -65,15 +65,23 @@ Transforms parsed AST into canonical `Par` form with De Bruijn indices.
 ```
 eval_inner():
   1. Group par terms: Sends, Receives, News, Matches, Bundles, Exprs
-  2. For each term type:
-     - Send  -> space.produce(channel, data, persistent)
-     - Receive -> space.consume(channels, patterns, continuation, persistent, peeks)
+  2. tokio::spawn each term as an independent task (matching Scala's parTraverse)
+  3. For each term type:
+     - Send  -> space.produce(channel, data, persistent).await
+     - Receive -> space.consume(channels, patterns, continuation, persistent, peeks).await
      - New -> create unforgeable names via Blake2b512Random, eval body
      - Match -> evaluate target, try each case pattern
      - Bundle -> evaluate in restricted scope
      - Expr -> evaluate arithmetic/logic/collection operations
-  3. If produce/consume returns a match -> dispatch continuation
+  4. If produce/consume returns a match -> dispatch continuation
+  5. Await all spawned tasks, aggregate errors (parTraverseSafe pattern)
 ```
+
+**Parallel evaluation**: Par branches (`A | B | C`) are dispatched as independent
+tokio tasks via `tokio::spawn`, matching Scala's `parTraverse` for true parallel
+execution. Per-channel FIFO locks in RSpace (`tokio::sync::Mutex`) ensure
+deterministic COMM matching. The `ReplayRSpace` event log oracle forces the same
+COMMs during replay regardless of scheduling order.
 
 **Stack safety**: `StackGrowingFuture` wraps recursive calls with `stacker::maybe_grow()` to dynamically expand the thread stack (1MB red zone).
 
@@ -88,12 +96,12 @@ Every operation is metered to prevent resource exhaustion:
 ```rust
 pub struct CostManager {
     state: Arc<Mutex<Cost>>,
-    semaphore: Arc<MetricsSemaphore>,
-    log: Arc<Mutex<Vec<Cost>>>,
+    log: Arc<Mutex<VecDeque<Cost>>>,
+    max_log_entries: usize,
 }
 ```
 
-- `charge(cost)` -- Subtract from remaining budget; returns `OutOfPhlogistonsError` if exhausted
+- `charge(cost)` -- Subtract from remaining budget via `lock()` (blocking, thread-safe under concurrent `tokio::spawn` tasks); returns `OutOfPhlogistonsError` if exhausted. Uses saturating arithmetic to prevent overflow with `i64::MAX` budgets.
 - `set(cost)` -- Reset balance
 - `get()` -- Query remaining
 
@@ -198,6 +206,15 @@ pub fn charging_rspace<T: ISpace>(space: T, cost: _cost) -> impl ISpace
 ```
 Charges `storage_cost_produce` or `storage_cost_consume` before each operation.
 
+When a COMM fires, `handle_result` applies order-independent charging:
+1. Refund ALL pre-charged storage costs unconditionally (no `triggered_by` identity check)
+2. Charge unified `comm_event_storage_cost(N)` where N = consume's channel count
+3. Re-charge for persistent items that remain in the tuplespace
+
+This ensures the same COMM produces identical cost regardless of which operation
+(produce or consume) triggered it — required for deterministic cost under
+parallel `tokio::spawn` evaluation.
+
 ## RhoRuntime
 
 ```rust
@@ -206,11 +223,16 @@ pub trait RhoRuntime: Send + Sync {
                       rand: Blake2b512Random) -> Result<EvaluateResult, InterpreterError>;
     async fn inj(&mut self, par: Par, env: &Env<Par>, rand: Blake2b512Random)
         -> Result<(), InterpreterError>;
-    // ... checkpoint operations
+    async fn create_checkpoint(&mut self) -> Checkpoint;
+    async fn create_soft_checkpoint(&mut self) -> SoftCheckpoint<...>;
+    async fn reset(&mut self, root: &Blake2b256Hash) -> Result<(), InterpreterError>;
+    // ... other checkpoint/state operations (all async)
 }
 ```
 
 `RhoRuntimeImpl` is the concrete implementation connecting the interpreter to RSpace.
+The `RhoISpace` type is `Arc<Box<dyn ISpace<...> + Send + Sync>>` — no outer mutex,
+as the async ISpace provides its own interior mutability and per-channel locking.
 
 ## Pattern Matching
 

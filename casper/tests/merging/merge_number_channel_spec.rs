@@ -134,6 +134,7 @@ async fn test_case(
     ) -> (HashableSet<DeployIndex>, Blake2b256Hash) {
         runtime
             .reset(&pre_state)
+            .await
             .expect("Failed to reset runtime to pre-state");
 
         // Evaluate deploys sequentially (matching Scala's traverse, not parTraverse).
@@ -152,12 +153,13 @@ async fn test_case(
 
             let num_chan_final = runtime_ops
                 .get_number_channels_data(&eval_result.mergeable)
+                .await
                 .unwrap();
 
-            let soft_point = runtime.create_soft_checkpoint();
+            let soft_point = runtime.create_soft_checkpoint().await;
             eval_results.push((soft_point, num_chan_final));
         }
-        let end_checkpoint = runtime.create_checkpoint();
+        let end_checkpoint = runtime.create_checkpoint().await;
         let (log_vec, num_chan_abs) = eval_results.into_iter().unzip::<_, _, Vec<_>, Vec<_>>();
         let num_chan_diffs = rm
             .convert_number_channels_to_diff(num_chan_abs, &pre_state)
@@ -213,7 +215,7 @@ async fn test_case(
             base_res.errors
         );
     }
-    let base_cp = runtime.create_checkpoint();
+    let base_cp = runtime.create_checkpoint().await;
 
     let (left_ev_indices, left_post_state) =
         run_rholang(&mut runtime, &rm, left_terms, base_cp.root.clone()).await;

@@ -117,14 +117,16 @@ async fn evaluate_and_replay(
         .expect("Play evaluation failed");
 
     // Checkpoint: captures root hash and event log
-    let checkpoint = runtime.create_checkpoint();
+    let checkpoint = runtime.create_checkpoint().await;
 
     // Rig replay runtime with the event log from play
     replay_runtime
         .reset(&checkpoint.root)
+        .await
         .expect("Replay reset failed");
     replay_runtime
         .rig(checkpoint.log)
+        .await
         .expect("Replay rig failed");
 
     // Replay phase: same term, same phlo, same rand
@@ -136,6 +138,7 @@ async fn evaluate_and_replay(
     // Verify all replay events were consumed
     replay_runtime
         .check_replay_data()
+        .await
         .expect("Replay data check failed: unconsumed events remain");
 
     (play_result, replay_result)

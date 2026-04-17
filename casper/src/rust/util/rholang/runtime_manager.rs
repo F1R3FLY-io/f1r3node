@@ -654,7 +654,7 @@ impl RuntimeManager {
                     .iter()
                     .map(crate::rust::util::event_converter::to_rspace_event)
                     .collect();
-                replay_runtime.rig(rspace_events)?;
+                replay_runtime.rig(rspace_events).await?;
 
                 return Ok(entry.post_state);
             }
@@ -767,10 +767,10 @@ impl RuntimeManager {
     pub async fn get_data(&self, hash: StateHash, channel: &Par) -> Result<Vec<Par>, CasperError> {
         let mut runtime = self.spawn_runtime().await;
 
-        runtime.reset(&Blake2b256Hash::from_bytes_prost(&hash))?;
+        runtime.reset(&Blake2b256Hash::from_bytes_prost(&hash)).await?;
 
         let runtime_ops = RuntimeOps::new(runtime);
-        let computed = runtime_ops.get_data_par(channel);
+        let computed = runtime_ops.get_data_par(channel).await;
         Ok(computed)
     }
 
@@ -781,10 +781,10 @@ impl RuntimeManager {
     ) -> Result<Vec<(Vec<BindPattern>, Par)>, CasperError> {
         let mut runtime = self.spawn_runtime().await;
 
-        runtime.reset(&Blake2b256Hash::from_bytes_prost(&hash))?;
+        runtime.reset(&Blake2b256Hash::from_bytes_prost(&hash)).await?;
 
         let runtime_ops = RuntimeOps::new(runtime);
-        let computed = runtime_ops.get_continuation_par(channels);
+        let computed = runtime_ops.get_continuation_par(channels).await;
         Ok(computed)
     }
 

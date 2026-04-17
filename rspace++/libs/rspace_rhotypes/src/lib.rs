@@ -1,5 +1,12 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use tokio::runtime::Runtime;
+
+fn blocking_runtime() -> &'static Runtime {
+    static RT: std::sync::OnceLock<Runtime> = std::sync::OnceLock::new();
+    RT.get_or_init(|| Runtime::new().unwrap())
+}
+
 // Tracks total bytes currently allocated and leaked to JNA callers
 static ALLOCATED_BYTES: AtomicUsize = AtomicUsize::new(0);
 
@@ -108,14 +115,14 @@ pub extern "C" fn space_print(rspace: *mut Space) -> () {
 
 #[no_mangle]
 pub extern "C" fn space_clear(rspace: *mut Space) -> () {
-    unsafe {
-        (*rspace)
-            .rspace
-            .lock()
-            .unwrap()
-            .clear()
-            .expect("Rust RSpacePlusPlus Library: Failed to clear");
-    }
+    let mut space = unsafe { (*rspace).rspace.lock().unwrap() };
+    blocking_runtime()
+        .block_on(async {
+            space
+                .clear()
+                .await
+                .expect("Rust RSpacePlusPlus Library: Failed to clear")
+        });
 }
 
 #[no_mangle]
@@ -172,14 +179,10 @@ pub extern "C" fn produce(
     let channel = Par::decode(channel_slice).unwrap();
     let data = ListParWithRandom::decode(data_slice).unwrap();
 
-    let result_option = unsafe {
-        (*rspace)
-            .rspace
-            .lock()
-            .unwrap()
-            .produce(channel, data, persist)
-    }
-    .unwrap();
+    let mut space = unsafe { (*rspace).rspace.lock().unwrap() };
+    let result_option = blocking_runtime()
+        .block_on(async { space.produce(channel, data, persist).await })
+        .unwrap();
 
     match result_option {
         Some((cont_result, rspace_results, produce_event)) => {
@@ -251,14 +254,14 @@ pub extern "C" fn consume(
     let persist = consume_params.persist;
     let peeks = consume_params.peeks.into_iter().map(|e| e.value).collect();
 
-    let result_option = unsafe {
-        (*rspace)
-            .rspace
-            .lock()
-            .unwrap()
-            .consume(channels, patterns, continuation, persist, peeks)
-    }
-    .unwrap();
+    let mut space = unsafe { (*rspace).rspace.lock().unwrap() };
+    let result_option = blocking_runtime()
+        .block_on(async {
+            space
+                .consume(channels, patterns, continuation, persist, peeks)
+                .await
+        })
+        .unwrap();
 
     match result_option {
         Some((cont_result, rspace_results)) => {
@@ -319,14 +322,10 @@ pub extern "C" fn install(
     let patterns = consume_params.patterns;
     let continuation = consume_params.continuation.unwrap();
 
-    let result_option = unsafe {
-        (*rspace)
-            .rspace
-            .lock()
-            .unwrap()
-            .install(channels, patterns, continuation)
-    }
-    .unwrap();
+    let mut space = unsafe { (*rspace).rspace.lock().unwrap() };
+    let result_option = blocking_runtime()
+        .block_on(async { space.install(channels, patterns, continuation).await })
+        .unwrap();
 
     match result_option {
         None => std::ptr::null(),
@@ -463,7 +462,7 @@ pub extern "C" fn reset_rspace(
     let root_slice = unsafe { std::slice::from_raw_parts(root_pointer, root_bytes_len) };
     let root = Blake2b256Hash::from_bytes(root_slice.to_vec());
 
-    let rs = match unsafe { (*rspace).rspace.lock() } {
+    let mut rs = match unsafe { (*rspace).rspace.lock() } {
         Ok(guard) => guard,
         Err(poisoned) => {
             eprintln!("ERROR: failed to lock rspace in reset: poisoned");
@@ -471,7 +470,7 @@ pub extern "C" fn reset_rspace(
         }
     };
 
-    match rs.reset(&root) {
+    match blocking_runtime().block_on(async { rs.reset(&root).await }) {
         Ok(_) => 0,
         Err(e) => {
             eprintln!("ERROR: rspace reset failed: {:?}", e);
@@ -676,17 +675,13 @@ pub extern "C" fn to_map(rspace: *mut Space) -> *const u8 {
 
 #[no_mangle]
 pub extern "C" fn spawn(rspace: *mut Space) -> *mut Space {
-    let rspace = unsafe {
-        (*rspace)
-            .rspace
-            .lock()
-            .unwrap()
-            .spawn()
-            .expect("Rust RSpacePlusPlus Library: Failed to spawn")
-    };
+    let mut space = unsafe { (*rspace).rspace.lock().unwrap() };
+    let new_rspace = space
+        .spawn()
+        .expect("Rust RSpacePlusPlus Library: Failed to spawn");
 
     Box::into_raw(Box::new(Space {
-        rspace: Mutex::new(rspace),
+        rspace: Mutex::new(new_rspace),
     }))
 }
 
@@ -1966,14 +1961,10 @@ pub extern "C" fn replay_produce(
     let channel = Par::decode(channel_slice).unwrap();
     let data = ListParWithRandom::decode(data_slice).unwrap();
 
-    let result_option = unsafe {
-        (*rspace)
-            .rspace
-            .lock()
-            .unwrap()
-            .produce(channel, data, persist)
-    }
-    .unwrap();
+    let mut space = unsafe { (*rspace).rspace.lock().unwrap() };
+    let result_option = blocking_runtime()
+        .block_on(async { space.produce(channel, data, persist).await })
+        .unwrap();
 
     match result_option {
         Some((cont_result, rspace_results, produce_event)) => {
@@ -2045,14 +2036,14 @@ pub extern "C" fn replay_consume(
     let persist = consume_params.persist;
     let peeks = consume_params.peeks.into_iter().map(|e| e.value).collect();
 
-    let result_option = unsafe {
-        (*rspace)
-            .rspace
-            .lock()
-            .unwrap()
-            .consume(channels, patterns, continuation, persist, peeks)
-    }
-    .unwrap();
+    let mut space = unsafe { (*rspace).rspace.lock().unwrap() };
+    let result_option = blocking_runtime()
+        .block_on(async {
+            space
+                .consume(channels, patterns, continuation, persist, peeks)
+                .await
+        })
+        .unwrap();
 
     match result_option {
         Some((cont_result, rspace_results)) => {
@@ -2100,14 +2091,14 @@ pub extern "C" fn replay_consume(
 
 #[no_mangle]
 pub extern "C" fn replay_create_checkpoint(rspace: *mut Space) -> *const u8 {
-    let checkpoint = unsafe {
-        (*rspace)
-            .rspace
-            .lock()
-            .unwrap()
-            .create_checkpoint()
-            .expect("Rust RSpacePlusPlus Library: Failed to create checkpoint")
-    };
+    let mut space = unsafe { (*rspace).rspace.lock().unwrap() };
+    let checkpoint = blocking_runtime()
+        .block_on(async {
+            space
+                .create_checkpoint()
+                .await
+                .expect("Rust RSpacePlusPlus Library: Failed to create checkpoint")
+        });
 
     let log = checkpoint.log;
     let log_proto: Vec<EventProto> = log
@@ -2227,29 +2218,25 @@ pub extern "C" fn replay_create_checkpoint(rspace: *mut Space) -> *const u8 {
 
 #[no_mangle]
 pub extern "C" fn replay_clear(rspace: *mut Space) -> () {
-    unsafe {
-        (*rspace)
-            .rspace
-            .lock()
-            .unwrap()
-            .clear()
-            .expect("Rust RSpacePlusPlus Library: Failed to clear");
-    }
+    let mut space = unsafe { (*rspace).rspace.lock().unwrap() };
+    blocking_runtime()
+        .block_on(async {
+            space
+                .clear()
+                .await
+                .expect("Rust RSpacePlusPlus Library: Failed to clear")
+        });
 }
 
 #[no_mangle]
 pub extern "C" fn replay_spawn(replay_rspace_ptr: *mut ReplaySpace) -> *mut ReplaySpace {
-    let _replay_space = unsafe {
-        (*replay_rspace_ptr)
-            .replay_space
-            .lock()
-            .unwrap()
-            .spawn()
-            .expect("Rust RSpacePlusPlus Library: Failed to spawn")
-    };
+    let mut replay_space = unsafe { (*replay_rspace_ptr).replay_space.lock().unwrap() };
+    let new_replay_space = replay_space
+        .spawn()
+        .expect("Rust RSpacePlusPlus Library: Failed to spawn");
 
     Box::into_raw(Box::new(ReplaySpace {
-        replay_space: Mutex::new(_replay_space),
+        replay_space: Mutex::new(new_replay_space),
     }))
 }
 

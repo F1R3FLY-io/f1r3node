@@ -113,21 +113,21 @@ pub trait RhoRuntime: HasCost {
         normalizer_env: HashMap<String, Par>,
     ) -> Result<EvaluateResult, InterpreterError> {
         let rand = Blake2b512Random::create_from_length(128);
-        let checkpoint = self.create_soft_checkpoint();
+        let checkpoint = self.create_soft_checkpoint().await;
         match self
             .evaluate(term, initial_phlo, normalizer_env, rand)
             .await
         {
             Ok(eval_result) => {
                 if !eval_result.errors.is_empty() {
-                    self.revert_to_soft_checkpoint(checkpoint);
+                    self.revert_to_soft_checkpoint(checkpoint).await;
                     Ok(eval_result)
                 } else {
                     Ok(eval_result)
                 }
             }
             Err(err) => {
-                self.revert_to_soft_checkpoint(checkpoint);
+                self.revert_to_soft_checkpoint(checkpoint).await;
                 Err(err)
             }
         }
@@ -158,17 +158,17 @@ pub trait RhoRuntime: HasCost {
      * for the current state of the runtime. You can revert the changes by [[revertToSoftCheckpoint]]
      * @return
      */
-    fn create_soft_checkpoint(
+    async fn create_soft_checkpoint(
         &mut self,
     ) -> SoftCheckpoint<Par, BindPattern, ListParWithRandom, TaggedContinuation>;
 
     /// Drain and return runtime event log without cloning hot-store state.
-    fn take_event_log(&mut self) -> Log;
+    async fn take_event_log(&mut self) -> Log;
 
     /// Return current runtime root hash without creating a checkpoint.
-    fn get_root(&self) -> Blake2b256Hash;
+    async fn get_root(&self) -> Blake2b256Hash;
 
-    fn revert_to_soft_checkpoint(
+    async fn revert_to_soft_checkpoint(
         &mut self,
         soft_checkpoint: SoftCheckpoint<Par, BindPattern, ListParWithRandom, TaggedContinuation>,
     ) -> ();
@@ -178,14 +178,14 @@ pub trait RhoRuntime: HasCost {
      * and result in a new stateHash for the new state.
      * @return
      */
-    fn create_checkpoint(&mut self) -> Checkpoint;
+    async fn create_checkpoint(&mut self) -> Checkpoint;
 
     /**
      * Reset the runtime to the specific state. Then you can operate some execution on the state.
      * @param root the target state hash to reset
      * @return
      */
-    fn reset(&mut self, root: &Blake2b256Hash) -> Result<(), InterpreterError>;
+    async fn reset(&mut self, root: &Blake2b256Hash) -> Result<(), InterpreterError>;
 
     /**
      * Consume the result in the rspace.
@@ -195,7 +195,7 @@ pub trait RhoRuntime: HasCost {
      * @param pattern pattern for the consume
      * @return
      */
-    fn consume_result(
+    async fn consume_result(
         &mut self,
         channel: Vec<Par>,
         pattern: Vec<BindPattern>,
@@ -206,16 +206,16 @@ pub trait RhoRuntime: HasCost {
      *
      * This function would not change the state in the runtime
      */
-    fn get_data(&self, channel: &Par) -> Vec<Datum<ListParWithRandom>>;
+    async fn get_data(&self, channel: &Par) -> Vec<Datum<ListParWithRandom>>;
 
-    fn get_joins(&self, channel: Par) -> Vec<Vec<Par>>;
+    async fn get_joins(&self, channel: Par) -> Vec<Vec<Par>>;
 
     /**
      * get continuation directly from history repository
      *
      * This function would not change the state in the runtime
      */
-    fn get_continuations(
+    async fn get_continuations(
         &self,
         channels: Vec<Par>,
     ) -> Vec<WaitingContinuation<BindPattern, TaggedContinuation>>;
@@ -239,15 +239,15 @@ pub trait RhoRuntime: HasCost {
      * Get the hot changes after some executions for the runtime.
      * Currently this is only for debug info mostly.
      */
-    fn get_hot_changes(
+    async fn get_hot_changes(
         &self,
     ) -> HashMap<Vec<Par>, Row<BindPattern, ListParWithRandom, TaggedContinuation>>;
 
     /* Replay functions */
 
-    fn rig(&self, log: Log) -> Result<(), InterpreterError>;
+    async fn rig(&self, log: Log) -> Result<(), InterpreterError>;
 
-    fn check_replay_data(&self) -> Result<(), InterpreterError>;
+    async fn check_replay_data(&self) -> Result<(), InterpreterError>;
 }
 
 /*
@@ -320,17 +320,15 @@ impl RhoRuntime for RhoRuntimeImpl {
         res
     }
 
-    fn create_soft_checkpoint(
+    async fn create_soft_checkpoint(
         &mut self,
     ) -> SoftCheckpoint<Par, BindPattern, ListParWithRandom, TaggedContinuation> {
-        let _span =
-            tracing::info_span!(target: "f1r3fly.rholang.runtime", "create-soft-checkpoint")
-                .entered();
         let start = Instant::now();
         let checkpoint = self
             .reducer
             .space
-            .create_soft_checkpoint();
+            .create_soft_checkpoint()
+            .await;
         metrics::histogram!(CREATE_SOFT_CHECKPOINT_TIME_METRIC, "source" => RUNTIME_METRICS_SOURCE)
             .record(start.elapsed().as_secs_f64());
         metrics::counter!(RUNTIME_SOFT_CHECKPOINT_TOTAL_METRIC, "source" => RUNTIME_METRICS_SOURCE)
@@ -338,8 +336,8 @@ impl RhoRuntime for RhoRuntimeImpl {
         checkpoint
     }
 
-    fn take_event_log(&mut self) -> Log {
-        let log = self.reducer.space.take_event_log();
+    async fn take_event_log(&mut self) -> Log {
+        let log = self.reducer.space.take_event_log().await;
         let log_len = log.len() as u64;
         metrics::counter!(RUNTIME_TAKE_EVENT_LOG_TOTAL_METRIC, "source" => RUNTIME_METRICS_SOURCE)
             .increment(1);
@@ -356,11 +354,11 @@ impl RhoRuntime for RhoRuntimeImpl {
         log
     }
 
-    fn get_root(&self) -> Blake2b256Hash {
-        self.reducer.space.get_root()
+    async fn get_root(&self) -> Blake2b256Hash {
+        self.reducer.space.get_root().await
     }
 
-    fn revert_to_soft_checkpoint(
+    async fn revert_to_soft_checkpoint(
         &mut self,
         soft_checkpoint: SoftCheckpoint<Par, BindPattern, ListParWithRandom, TaggedContinuation>,
     ) -> () {
@@ -372,17 +370,17 @@ impl RhoRuntime for RhoRuntimeImpl {
         self.reducer
             .space
             .revert_to_soft_checkpoint(soft_checkpoint)
+            .await
             .unwrap()
     }
 
-    fn create_checkpoint(&mut self) -> Checkpoint {
-        let _span =
-            tracing::info_span!(target: "f1r3fly.rholang.runtime", "create-checkpoint").entered();
+    async fn create_checkpoint(&mut self) -> Checkpoint {
         let start = Instant::now();
         let checkpoint = self
             .reducer
             .space
             .create_checkpoint()
+            .await
             .unwrap();
         metrics::histogram!(CREATE_CHECKPOINT_TIME_METRIC, "source" => RUNTIME_METRICS_SOURCE)
             .record(start.elapsed().as_secs_f64());
@@ -391,12 +389,12 @@ impl RhoRuntime for RhoRuntimeImpl {
         checkpoint
     }
 
-    fn reset(&mut self, root: &Blake2b256Hash) -> Result<(), InterpreterError> {
-        self.reducer.space.reset(root)?;
+    async fn reset(&mut self, root: &Blake2b256Hash) -> Result<(), InterpreterError> {
+        self.reducer.space.reset(root).await?;
         Ok(())
     }
 
-    fn consume_result(
+    async fn consume_result(
         &mut self,
         channel: Vec<Par>,
         pattern: Vec<BindPattern>,
@@ -404,24 +402,26 @@ impl RhoRuntime for RhoRuntimeImpl {
         Ok(self
             .reducer
             .space
-            .consume_result(channel, pattern)?)
+            .consume_result(channel, pattern)
+            .await?)
     }
 
-    fn get_data(&self, channel: &Par) -> Vec<Datum<ListParWithRandom>> {
-        self.reducer.space.get_data(channel)
+    async fn get_data(&self, channel: &Par) -> Vec<Datum<ListParWithRandom>> {
+        self.reducer.space.get_data(channel).await
     }
 
-    fn get_joins(&self, channel: Par) -> Vec<Vec<Par>> {
-        self.reducer.space.get_joins(channel)
+    async fn get_joins(&self, channel: Par) -> Vec<Vec<Par>> {
+        self.reducer.space.get_joins(channel).await
     }
 
-    fn get_continuations(
+    async fn get_continuations(
         &self,
         channels: Vec<Par>,
     ) -> Vec<WaitingContinuation<BindPattern, TaggedContinuation>> {
         self.reducer
             .space
             .get_waiting_continuations(channels)
+            .await
     }
 
     async fn set_block_data(&self, block_data: BlockData) -> () {
@@ -458,19 +458,19 @@ impl RhoRuntime for RhoRuntimeImpl {
         self.invalid_blocks_param.set_params(invalid_blocks).await
     }
 
-    fn get_hot_changes(
+    async fn get_hot_changes(
         &self,
     ) -> HashMap<Vec<Par>, Row<BindPattern, ListParWithRandom, TaggedContinuation>> {
-        self.reducer.space.to_map()
+        self.reducer.space.to_map().await
     }
 
-    fn rig(&self, log: Log) -> Result<(), InterpreterError> {
-        self.reducer.space.rig(log)?;
+    async fn rig(&self, log: Log) -> Result<(), InterpreterError> {
+        self.reducer.space.rig(log).await?;
         Ok(())
     }
 
-    fn check_replay_data(&self) -> Result<(), InterpreterError> {
-        self.reducer.space.check_replay_data()?;
+    async fn check_replay_data(&self) -> Result<(), InterpreterError> {
+        self.reducer.space.check_replay_data().await?;
         Ok(())
     }
 }
@@ -508,7 +508,7 @@ pub type RhoHistoryRepository = Arc<
 
 pub type ISpaceAndReplay = (RhoISpace, RhoReplayISpace);
 
-fn introduce_system_process<T>(
+async fn introduce_system_process<T>(
     mut spaces: Vec<&mut T>,
     processes: Vec<(Name, Arity, Remainder, BodyRef)>,
 ) -> Vec<Option<(TaggedContinuation, Vec<ListParWithRandom>)>>
@@ -530,7 +530,7 @@ where
         };
 
         for space in &mut spaces {
-            let result = space.install(channels.clone(), patterns.clone(), continuation.clone());
+            let result = space.install(channels.clone(), patterns.clone(), continuation.clone()).await;
             results.push(result.map_err(|err| panic!("{}", err)).unwrap());
         }
     }
@@ -1098,7 +1098,7 @@ where
 {
     let maps_and_refs = setup_maps_and_refs(&extra_system_processes);
     let (block_data_ref, invalid_blocks, deploy_data_ref, urn_map, proc_defs) = maps_and_refs;
-    let res = introduce_system_process(vec![&mut rspace], proc_defs);
+    let res = introduce_system_process(vec![&mut rspace], proc_defs).await;
     assert!(res.iter().all(|s| s.is_none()));
 
     let charging_rspace: RhoISpace = Arc::new(Box::new(
@@ -1188,7 +1188,7 @@ where
 
     if init_registry {
         bootstrap_registry(&runtime).await;
-        runtime.create_checkpoint();
+        runtime.create_checkpoint().await;
     }
 
     runtime

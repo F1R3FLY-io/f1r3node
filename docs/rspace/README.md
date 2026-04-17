@@ -1,4 +1,4 @@
-> Last updated: 2026-03-23
+> Last updated: 2026-04-14
 
 # Crate: rspace++ (Tuple Space Storage)
 
@@ -15,38 +15,45 @@ Processes communicate by placing data on **channels** and waiting for data with 
 
 ## ISpace Trait (Core API)
 
+All methods are `async` via `#[async_trait]`, enabling cooperative concurrency with
+`tokio::sync::Mutex` per-channel locks (FIFO-ordered, matching Scala's `Semaphore`).
+
 ```rust
+#[async_trait]
 pub trait ISpace<C, P, A, K>: Send + Sync {
     // Tuple space operations
-    fn produce(&mut self, channel: C, data: A, persist: bool)
+    async fn produce(&self, channel: C, data: A, persist: bool)
         -> Result<MaybeProduceResult<C, P, A, K>, RSpaceError>;
-    fn consume(&mut self, channels: Vec<C>, patterns: Vec<P>,
+    async fn consume(&self, channels: Vec<C>, patterns: Vec<P>,
                continuation: K, persist: bool, peeks: BTreeSet<i32>)
         -> Result<MaybeConsumeResult<C, P, A, K>, RSpaceError>;
-    fn install(&mut self, channels: Vec<C>, patterns: Vec<P>, continuation: K)
+    async fn install(&self, channels: Vec<C>, patterns: Vec<P>, continuation: K)
         -> Result<Option<(K, Vec<A>)>, RSpaceError>;
 
     // Checkpointing
-    fn create_checkpoint(&mut self) -> Result<Checkpoint, RSpaceError>;
-    fn create_soft_checkpoint(&mut self) -> SoftCheckpoint<C, P, A, K>;
-    fn revert_to_soft_checkpoint(&mut self, cp: SoftCheckpoint<C, P, A, K>)
+    async fn create_checkpoint(&self) -> Result<Checkpoint, RSpaceError>;
+    async fn create_soft_checkpoint(&self) -> SoftCheckpoint<C, P, A, K>;
+    async fn revert_to_soft_checkpoint(&self, cp: SoftCheckpoint<C, P, A, K>)
         -> Result<(), RSpaceError>;
-    fn reset(&mut self, root: &Blake2b256Hash) -> Result<(), RSpaceError>;
+    async fn reset(&self, root: &Blake2b256Hash) -> Result<(), RSpaceError>;
 
     // State inspection
-    fn get_data(&self, channel: &C) -> Vec<Datum<A>>;
-    fn get_waiting_continuations(&self, channels: Vec<C>)
+    async fn get_data(&self, channel: &C) -> Vec<Datum<A>>;
+    async fn get_waiting_continuations(&self, channels: Vec<C>)
         -> Vec<WaitingContinuation<P, K>>;
-    fn get_joins(&self, channel: C) -> Vec<Vec<C>>;
-    fn to_map(&self) -> HashMap<Vec<C>, Row<P, A, K>>;
+    async fn get_joins(&self, channel: C) -> Vec<Vec<C>>;
+    async fn to_map(&self) -> HashMap<Vec<C>, Row<P, A, K>>;
 
     // Replay support
-    fn rig_and_reset(&mut self, start_root: Blake2b256Hash, log: Log)
+    async fn rig_and_reset(&self, start_root: Blake2b256Hash, log: Log)
         -> Result<(), RSpaceError>;
-    fn check_replay_data(&self) -> Result<(), RSpaceError>;
-    fn is_replay(&self) -> bool;
+    async fn check_replay_data(&self) -> Result<(), RSpaceError>;
+    async fn is_replay(&self) -> bool;
 }
 ```
+
+All methods take `&self` (interior mutability via `RwLock`/`Mutex`) instead of
+`&mut self`, enabling shared access from concurrent `tokio::spawn` tasks.
 
 ## Core Data Types
 
@@ -85,8 +92,8 @@ For Rholang, this implements spatial pattern matching on `Par` processes.
 
 | Struct | Purpose |
 |--------|---------|
-| `RSpace<C,P,A,K>` | Primary implementation for block execution. `is_replay()` returns `false`. |
-| `ReplayRSpace<C,P,A,K>` | Deterministic replay variant (tracks `replay_data: MultisetMultiMap<IOEvent, COMM>`). `is_replay()` returns `true`. |
+| `RSpace<C,P,A,K>` | Primary implementation for block execution. `is_replay()` returns `false`. Uses per-channel two-phase locks (`tokio::sync::Mutex`) matching Scala's `ConcurrentTwoStepLockF`. |
+| `ReplayRSpace<C,P,A,K>` | Deterministic replay variant (tracks `replay_data: MultisetMultiMap<IOEvent, COMM>`). `is_replay()` returns `true`. Also has per-channel two-phase locks matching Scala's `RSpaceOps`. |
 | `ReportingRspace<C,P,A,K>` | Debugging variant that records all COMM events separated by soft checkpoints. |
 
 The `is_replay()` distinction is critical for non-deterministic system processes (e.g., external API calls to OpenAI, Ollama, gRPC services). When `is_replay()` returns `true`, these processes use cached output from the original execution stored in `Produce::output_value` instead of re-executing the external call, ensuring deterministic block replay.
@@ -111,9 +118,9 @@ LMDB (3 databases per instance)       <- Durable persistence
 ```
 
 **Hot Store** (`InMemHotStore`):
-- `HotStoreState` contains 5 `DashMap`s: continuations, installed_continuations, data, joins, installed_joins
-- Lock-free concurrent access
-- Two caches: primary and history (lazy-loaded from cold store)
+- `HotStoreState` contains `HashMap`s (not DashMap): continuations, installed_continuations, data, joins, installed_joins
+- Interior mutability via `std::sync::RwLock<HotStoreState>` + separate `std::sync::RwLock<HistoryStoreCache>`
+- History reads cached back into hot store state for subsequent access
 
 **Cold Store** (LMDB):
 - `PersistedData` enum: `Data(DataLeaf)`, `Continuations(ContinuationsLeaf)`, `Joins(JoinsLeaf)`

@@ -2,6 +2,8 @@
 
 use std::collections::{BTreeSet, HashMap};
 
+use async_trait::async_trait;
+
 use crate::rust::interpreter::{
     accounting::{
         _cost,
@@ -68,10 +70,11 @@ impl ChargingRSpace {
             cost: _cost,
         }
 
+        #[async_trait]
         impl<T: ISpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>
             ISpace<Par, BindPattern, ListParWithRandom, TaggedContinuation> for ChargingRSpace<T>
         {
-            fn consume(
+            async fn consume(
                 &self,
                 channels: Vec<Par>,
                 patterns: Vec<BindPattern>,
@@ -94,7 +97,7 @@ impl ChargingRSpace {
                     continuation.clone(),
                     persist,
                     peeks,
-                )?;
+                ).await?;
 
                 let id = consume_id(continuation)?;
                 handle_result(
@@ -109,7 +112,7 @@ impl ChargingRSpace {
                 Ok(consume_res)
             }
 
-            fn produce(
+            async fn produce(
                 &self,
                 channel: Par,
                 data: ListParWithRandom,
@@ -120,7 +123,7 @@ impl ChargingRSpace {
             > {
                 self.cost
                     .charge(storage_cost_produce(channel.clone(), data.clone()))?;
-                let produce_res = self.space.produce(channel, data.clone(), persist)?;
+                let produce_res = self.space.produce(channel, data.clone(), persist).await?;
                 let common_result = produce_res
                     .clone()
                     .map(|(cont, data_list, _)| (cont, data_list));
@@ -136,48 +139,48 @@ impl ChargingRSpace {
                 Ok(produce_res)
             }
 
-            fn install(
+            async fn install(
                 &self,
                 channels: Vec<Par>,
                 patterns: Vec<BindPattern>,
                 continuation: TaggedContinuation,
             ) -> Result<Option<(TaggedContinuation, Vec<ListParWithRandom>)>, RSpaceError>
             {
-                self.space.install(channels, patterns, continuation)
+                self.space.install(channels, patterns, continuation).await
             }
 
-            fn create_checkpoint(&self) -> Result<Checkpoint, RSpaceError> {
-                self.space.create_checkpoint()
+            async fn create_checkpoint(&self) -> Result<Checkpoint, RSpaceError> {
+                self.space.create_checkpoint().await
             }
 
-            fn get_data(&self, channel: &Par) -> Vec<Datum<ListParWithRandom>> {
-                self.space.get_data(channel)
+            async fn get_data(&self, channel: &Par) -> Vec<Datum<ListParWithRandom>> {
+                self.space.get_data(channel).await
             }
 
-            fn get_waiting_continuations(
+            async fn get_waiting_continuations(
                 &self,
                 channels: Vec<Par>,
             ) -> Vec<WaitingContinuation<BindPattern, TaggedContinuation>> {
-                self.space.get_waiting_continuations(channels)
+                self.space.get_waiting_continuations(channels).await
             }
 
-            fn get_joins(&self, channel: Par) -> Vec<Vec<Par>> {
-                self.space.get_joins(channel)
+            async fn get_joins(&self, channel: Par) -> Vec<Vec<Par>> {
+                self.space.get_joins(channel).await
             }
 
-            fn clear(&self) -> Result<(), RSpaceError> {
-                self.space.clear()
+            async fn clear(&self) -> Result<(), RSpaceError> {
+                self.space.clear().await
             }
 
-            fn get_root(&self) -> Blake2b256Hash {
-                self.space.get_root()
+            async fn get_root(&self) -> Blake2b256Hash {
+                self.space.get_root().await
             }
 
-            fn reset(&self, root: &Blake2b256Hash) -> Result<(), RSpaceError> {
-                self.space.reset(root)
+            async fn reset(&self, root: &Blake2b256Hash) -> Result<(), RSpaceError> {
+                self.space.reset(root).await
             }
 
-            fn consume_result(
+            async fn consume_result(
                 &self,
                 channel: Vec<Par>,
                 pattern: Vec<BindPattern>,
@@ -189,57 +192,57 @@ impl ChargingRSpace {
                     TaggedContinuation::default(),
                     false,
                     BTreeSet::new(),
-                )?;
+                ).await?;
                 Ok(unpack_option(&consume_res))
             }
 
-            fn to_map(
+            async fn to_map(
                 &self,
             ) -> HashMap<Vec<Par>, Row<BindPattern, ListParWithRandom, TaggedContinuation>>
             {
-                self.space.to_map()
+                self.space.to_map().await
             }
 
-            fn create_soft_checkpoint(
+            async fn create_soft_checkpoint(
                 &self,
             ) -> SoftCheckpoint<Par, BindPattern, ListParWithRandom, TaggedContinuation>
             {
-                self.space.create_soft_checkpoint()
+                self.space.create_soft_checkpoint().await
             }
 
-            fn take_event_log(&self) -> Log {
-                self.space.take_event_log()
+            async fn take_event_log(&self) -> Log {
+                self.space.take_event_log().await
             }
 
-            fn revert_to_soft_checkpoint(
+            async fn revert_to_soft_checkpoint(
                 &self,
                 checkpoint: SoftCheckpoint<Par, BindPattern, ListParWithRandom, TaggedContinuation>,
             ) -> Result<(), RSpaceError> {
-                self.space.revert_to_soft_checkpoint(checkpoint)
+                self.space.revert_to_soft_checkpoint(checkpoint).await
             }
 
-            fn rig_and_reset(
+            async fn rig_and_reset(
                 &self,
                 start_root: Blake2b256Hash,
                 log: Log,
             ) -> Result<(), RSpaceError> {
-                self.space.rig_and_reset(start_root, log)
+                self.space.rig_and_reset(start_root, log).await
             }
 
-            fn rig(&self, log: Log) -> Result<(), RSpaceError> {
-                self.space.rig(log)
+            async fn rig(&self, log: Log) -> Result<(), RSpaceError> {
+                self.space.rig(log).await
             }
 
-            fn check_replay_data(&self) -> Result<(), RSpaceError> {
-                self.space.check_replay_data()
+            async fn check_replay_data(&self) -> Result<(), RSpaceError> {
+                self.space.check_replay_data().await
             }
 
-            fn is_replay(&self) -> bool {
-                self.space.is_replay()
+            async fn is_replay(&self) -> bool {
+                self.space.is_replay().await
             }
 
-            fn update_produce(&self, produce: Produce) -> () {
-                self.space.update_produce(produce)
+            async fn update_produce(&self, produce: Produce) -> () {
+                self.space.update_produce(produce).await
             }
         }
 

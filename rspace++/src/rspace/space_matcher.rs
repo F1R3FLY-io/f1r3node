@@ -10,10 +10,10 @@ type MatchingDataCandidate<C, A> = (ConsumeCandidate<C, A>, Vec<(Datum<A>, i32)>
 
 pub trait SpaceMatcher<C, P, A, K>: ISpace<C, P, A, K>
 where
-    C: Clone + std::hash::Hash + Eq,
-    P: Clone,
-    A: Clone,
-    K: Clone,
+    C: Clone + std::hash::Hash + Eq + Send + Sync,
+    P: Clone + Send + Sync,
+    A: Clone + Send + Sync,
+    K: Clone + Send + Sync,
 {
     fn find_matching_data_candidate(
         &self,
