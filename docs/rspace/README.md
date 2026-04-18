@@ -1,4 +1,4 @@
-> Last updated: 2026-04-14
+> Last updated: 2026-04-17
 
 # Crate: rspace++ (Tuple Space Storage)
 
@@ -101,7 +101,7 @@ The `is_replay()` distinction is critical for non-deterministic system processes
 ## Storage Architecture
 
 ```
-HotStore (in-memory, DashMap)         <- Fast working set
+HotStore (in-memory, HashMap)         <- Fast working set
     |
     | create_checkpoint()
     v
@@ -168,6 +168,7 @@ pub struct COMM {
     pub produces: Vec<Produce>,
     pub peeks: BTreeSet<i32>,
     pub times_repeated: BTreeMap<Produce, i32>,
+    pub triggered_by_produce: bool,  // Replay cost determinism metadata
 }
 ```
 
@@ -178,6 +179,15 @@ pub struct COMM {
 ### COMM Sort Order
 
 `COMM::new` sorts `produce_refs` by `(channel_hash, hash, persistent)` for COMM event identity, which intentionally differs from `Produce::Ord` (hash-only). Do not replace with `.sort()`.
+
+### COMM Trigger Direction
+
+`triggered_by_produce` records whether a produce or consume triggered the COMM during
+play. This field is excluded from `PartialEq` and `Hash` -- it does not affect COMM
+identity or replay_data matching. It is used by `ChargingRSpace` to ensure the
+cost model's identity-based refund logic produces consistent results between play
+and replay, where `tokio::spawn` scheduling may cause a different operation to
+trigger the same COMM.
 
 ## Merger (Consensus Support)
 
