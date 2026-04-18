@@ -8,7 +8,6 @@ on:
       - trying
       - rust/dev
       - rust/main
-      - rust/staging
     tags: "**"
   pull_request:
     branches:
