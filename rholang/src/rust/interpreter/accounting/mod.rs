@@ -27,7 +27,7 @@ impl CostManager {
         1024
     }
 
-    pub fn new(initial_value: Cost, _semaphore_count: usize) -> Self {
+    pub fn new(initial_value: Cost) -> Self {
         let max_log_entries = Self::resolve_max_log_entries();
         let initial_capacity = if max_log_entries == 0 {
             0

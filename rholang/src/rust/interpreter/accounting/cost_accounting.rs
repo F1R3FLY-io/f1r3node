@@ -13,6 +13,6 @@ impl CostAccounting {
     }
 
     pub fn empty_cost() -> _cost {
-        CostManager::new(Self::empty(), 1)
+        CostManager::new(Self::empty())
     }
 }
