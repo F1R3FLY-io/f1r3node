@@ -53,6 +53,9 @@ mod tests {
                 genesis_block_number: 0,
                 pos_multi_sig_public_keys: vec![],
                 pos_multi_sig_quorum: 0,
+                native_token_name: "F1R3CAP".to_string(),
+                native_token_symbol: "F1R3".to_string(),
+                native_token_decimals: 8,
             },
             genesis_ceremony: GenesisCeremony {
                 required_signatures: 0,

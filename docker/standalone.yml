@@ -23,6 +23,9 @@ services:
       - --host=${STANDALONE_HOST:-rnode.standalone}
       - --validator-private-key=${STANDALONE_PRIVATE_KEY:-5f668a7ee96d944a4494cc947e4005e172d7ab3461ee5538f1f2a45a835e9657}
       - --allow-private-addresses
+      - --native-token-name=${NATIVE_TOKEN_NAME:-F1R3CAP}
+      - --native-token-symbol=${NATIVE_TOKEN_SYMBOL:-F1R3}
+      - --native-token-decimals=${NATIVE_TOKEN_DECIMALS:-8}
     ports:
       - "40400:40400"
       - "40401:40401"

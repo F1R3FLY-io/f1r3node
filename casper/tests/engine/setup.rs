@@ -427,6 +427,9 @@ impl TestFixture {
                 .pos_multi_sig_public_keys
                 .clone(),
             genesis_params.proof_of_stake.pos_multi_sig_quorum,
+            genesis_params.native_token_name.clone(),
+            genesis_params.native_token_symbol.clone(),
+            genesis_params.native_token_decimals,
             transport_layer.clone(),
             Arc::new(rp_conf.clone()),
         )
