@@ -317,9 +317,8 @@ impl DebruijnInterpreter {
         persistent: bool,
     ) -> Result<DispatchType, InterpreterError> {
         self.update_mergeable_channels(&chan).await;
-        let space_locked = &self.space;
-        let produce_result = space_locked.produce(chan.clone(), data.clone(), persistent).await?;
-        let is_replay = space_locked.is_replay().await;
+        let produce_result = self.space.produce(chan.clone(), data.clone(), persistent).await?;
+        let is_replay = self.space.is_replay().await;
 
         match produce_result {
             Some((c, s, produce_event)) => {
@@ -338,16 +337,14 @@ impl DebruijnInterpreter {
                 match dispatch_type {
                     DispatchType::NonDeterministicCall(ref output) => {
                         let produce1 = produce_event.mark_as_non_deterministic(output.clone());
-                        let space_locked = &self.space;
-                        space_locked.update_produce(produce1).await;
+                        self.space.update_produce(produce1).await;
                                         Ok(dispatch_type)
                     }
 
                     DispatchType::FailedNonDeterministicCall(error) => {
                         // Mark the produce as failed for replay safety
                         let failed_produce = produce_event.with_error();
-                        let space_locked = &self.space;
-                        space_locked.update_produce(failed_produce).await;
+                        self.space.update_produce(failed_produce).await;
                                         // Re-raise known error types as-is to preserve output_not_produced;
                         // wrap unknown errors in NonDeterministicProcessFailure.
                         match error {
@@ -401,8 +398,7 @@ impl DebruijnInterpreter {
             self.update_mergeable_channels(source).await;
         }
 
-        let space_locked = &self.space;
-        let consume_result = space_locked.consume(
+        let consume_result = self.space.consume(
             sources.clone(),
             patterns.clone(),
             TaggedContinuation {
@@ -415,7 +411,7 @@ impl DebruijnInterpreter {
                 BTreeSet::new()
             },
         ).await?;
-        let is_replay = space_locked.is_replay().await;
+        let is_replay = self.space.is_replay().await;
 
         self.continue_consume_process(
             unpack_option_with_peek(consume_result),

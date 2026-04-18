@@ -64,8 +64,7 @@ impl ContractCall {
                 let values_vec: Vec<Par> = values.to_vec();
                 let ch_cloned: Par = ch.clone();
                 Box::pin(async move {
-                    let space_lock = &space;
-                    let produce_result = space_lock.produce(
+                    let produce_result = space.produce(
                         ch_cloned,
                         ListParWithRandom {
                             pars: values_vec,
@@ -74,7 +73,7 @@ impl ContractCall {
                         false,
                     ).await?;
 
-                    let is_replay = space_lock.is_replay().await;
+                    let is_replay = space.is_replay().await;
 
                     let dispatch_result = match produce_result {
                         Some((cont, channels, produce)) => {
