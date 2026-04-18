@@ -220,9 +220,16 @@ async fn measure_precharge_and_refund_cost() {
                 refund_times.iter().map(|d| d.as_secs_f64() * 1000.0).fold(f64::MAX, f64::min),
                 refund_times.iter().map(|d| d.as_secs_f64() * 1000.0).fold(0.0f64, f64::max),
             );
+            let total_per_deploy_ms = precharge_avg_ms + refund_avg_ms;
             println!(
                 "Total per deploy: avg={:.1}ms",
-                precharge_avg_ms + refund_avg_ms
+                total_per_deploy_ms
+            );
+
+            assert!(
+                total_per_deploy_ms < 300.0,
+                "Performance regression: {:.1}ms per deploy exceeds 300ms threshold",
+                total_per_deploy_ms
             );
 
             // Report RSpace operation counts
