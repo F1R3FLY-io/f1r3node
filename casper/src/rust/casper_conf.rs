@@ -200,9 +200,7 @@ pub struct GenesisBlockData {
 
     /// Full display name of the native token. Substituted into the
     /// TokenMetadata Rholang contract at genesis and registered at
-    /// `rho:system:tokenMetadata` with nonce `i64::MAX`, making it immutable
-    /// for the lifetime of the network. Operators MUST set this in config
-    /// before genesis; a missing value is a config error.
+    /// `rho:system:tokenMetadata`. Immutable after genesis.
     #[serde(rename = "native-token-name")]
     pub native_token_name: String,
 
