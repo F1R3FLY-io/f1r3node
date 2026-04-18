@@ -133,7 +133,9 @@ async fn play_system_deploy_timed<S: SystemDeployTrait>(
     }
 }
 
+// Run manually: cargo test -p casper --release --test mod cost_accounting_perf -- --nocapture --include-ignored
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
 async fn measure_precharge_and_refund_cost() {
     const ITERATIONS: usize = 5;
 
