@@ -215,35 +215,33 @@ fn from_long(index: i64) -> String {
     result.join(" | ")
 }
 
-fn contracts() -> Vec<String> {
+fn contracts() -> Vec<(String, i64)> {
     vec![
-      "@0!(2)".into(),
-      "@0!(2) | @1!(1)".into(),
-      "for(x <- @0){ Nil }".into(),
-      "for(x <- @0){ Nil } | @0!(2)".into(),
-      "@0!!(0) | for (_ <- @0) { 0 }".into(),
-      "@0!!(0) | for (x <- @0) { 0 }".into(),
-      "@0!!(0) | for (@0 <- @0) { 0 }".into(),
-      "@0!!(0) | @0!!(0) | for (_ <- @0) { 0 }".into(),
-      "@0!!(0) | @1!!(1) | for (_ <- @0 & _ <- @1) { 0 }".into(),
-      "@0!(0) | for (_ <- @0) { 0 }".into(),
-      "@0!(0) | for (x <- @0) { 0 }".into(),
-      "@0!(0) | for (@0 <- @0) { 0 }".into(),
-      "@0!(0) | for (_ <= @0) { 0 }".into(),
-      "@0!(0) | for (x <= @0) { 0 }".into(),
-      "@0!(0) | for (@0 <= @0) { 0 }".into(),
-      "@0!(0) | @0!(0) | for (_ <= @0) { 0 }".into(),
-      "@0!(0) | for (@0 <- @0) { 0 } | @0!(0) | for (_ <- @0) { 0 }".into(),
-      "@0!(0) | for (@0 <- @0) { 0 } | @0!(0) | for (@1 <- @0) { 0 }".into(),
-      "@0!(0) | for (_ <<- @0) { 0 }".into(),
-      "@0!!(0) | for (_ <<- @0) { 0 }".into(),
-      "@0!!(0) | @0!!(0) | for (_ <<- @0) { 0 }".into(),
-      // TODO: recursive contract - cost mismatch needs investigation
-      // "new loop in {\n  contract loop(@n) = {\n    match n {\n      0 => Nil\n      _ => loop!(n-1)\n    }\n  } |\n  loop!(10)\n}".into(),
-      "42 | @0!(2) | for (x <- @0) { Nil }".into(),
-      "@1!(1) |\n        for(x <- @1) { Nil } |\n        new x in { x!(10) | for(X <- x) { @2!(Set(X!(7)).add(*X).contains(10)) }} |\n        match 42 {\n          38 => Nil\n          42 =>\n@3!(42)\n        }\n     ".into(),
-      // TODO: system process (keccak256) - cost mismatch needs investigation
-      // "new ret, keccak256Hash(`rho:crypto:keccak256Hash`) in {\n  keccak256Hash!(\"TEST\".toByteArray(), *ret) |\n  for (_ <- ret) { Nil }\n}".into(),
+      (String::from("@0!(2)"), 97),
+      (String::from("@0!(2) | @1!(1)"), 197),
+      (String::from("for(x <- @0){ Nil }"), 128),
+      (String::from("for(x <- @0){ Nil } | @0!(2)"), 329),
+      (String::from("@0!!(0) | for (_ <- @0) { 0 }"), 342),
+      (String::from("@0!!(0) | for (x <- @0) { 0 }"), 342),
+      (String::from("@0!!(0) | for (@0 <- @0) { 0 }"), 336),
+      (String::from("@0!!(0) | @0!!(0) | for (_ <- @0) { 0 }"), 443),
+      (String::from("@0!!(0) | @1!!(1) | for (_ <- @0 & _ <- @1) { 0 }"), 596),
+      (String::from("@0!(0) | for (_ <- @0) { 0 }"), 333),
+      (String::from("@0!(0) | for (x <- @0) { 0 }"), 333),
+      (String::from("@0!(0) | for (@0 <- @0) { 0 }"), 327),
+      (String::from("@0!(0) | for (_ <= @0) { 0 }"), 354),
+      (String::from("@0!(0) | for (x <= @0) { 0 }"), 356),
+      (String::from("@0!(0) | for (@0 <= @0) { 0 }"), 341),
+      (String::from("@0!(0) | @0!(0) | for (_ <= @0) { 0 }"), 574),
+      (String::from("@0!(0) | for (@0 <- @0) { 0 } | @0!(0) | for (_ <- @0) { 0 }"), 663),
+      (String::from("@0!(0) | for (@0 <- @0) { 0 } | @0!(0) | for (@1 <- @0) { 0 }"), 551),
+      (String::from("@0!(0) | for (_ <<- @0) { 0 }"), 406),
+      (String::from("@0!!(0) | for (_ <<- @0) { 0 }"), 343),
+      (String::from("@0!!(0) | @0!!(0) | for (_ <<- @0) { 0 }"), 444),
+      (String::from("new loop in {\n  contract loop(@n) = {\n    match n {\n      0 => Nil\n      _ => loop!(n-1)\n    }\n  } |\n  loop!(10)\n}"), 3846),
+      (String::from("42 | @0!(2) | for (x <- @0) { Nil }"), 336),
+      (String::from("@1!(1) |\n        for(x <- @1) { Nil } |\n        new x in { x!(10) | for(X <- x) { @2!(Set(X!(7)).add(*X).contains(10)) }} |\n        match 42 {\n          38 => Nil\n          42 =>\n@3!(42)\n        }\n     "), 1264),
+      (String::from("new ret, keccak256Hash(`rho:crypto:keccak256Hash`) in {\n  keccak256Hash!(\"TEST\".toByteArray(), *ret) |\n  for (_ <- ret) { Nil }\n}"), 782),
     ]
 }
 
@@ -303,18 +301,40 @@ async fn check_phlo_limit_exceeded(
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn total_cost_of_evaluation_should_be_equal_to_the_sum_of_all_costs_in_the_log() {
-    for contract in contracts() {
+    for (contract, expected_cost) in contracts() {
         let initial_phlo = 10000i64;
         let (eval_result, cost_log) = evaluate_with_cost_log(initial_phlo, contract.clone()).await;
-        assert_eq!(eval_result.errors, Vec::new());
-        // Under parallel eval, the total cost is scheduling-dependent for contracts
-        // with persistent operations. But the cost log sum must always equal the
-        // evaluated cost — this is the internal consistency invariant.
+        assert_eq!(eval_result.errors, Vec::new(), "Contract errored: {}", contract);
+        assert_eq!(
+            eval_result.cost.value, expected_cost,
+            "Cost mismatch for '{}': expected={}, got={}", contract, expected_cost, eval_result.cost.value
+        );
         assert_eq!(
             cost_log.iter().map(|c| c.value).sum::<i64>(),
-            eval_result.cost.value,
-            "Cost log sum must equal evaluated cost for: {}", contract
+            expected_cost,
+            "Cost log sum mismatch for: {}", contract
         );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn cost_should_be_deterministic() {
+    for (contract, _) in contracts() {
+        let mut first_cost: Option<i64> = None;
+        for i in 0..20 {
+            let (result, _log) = evaluate_with_cost_log(i32::MAX as i64, contract.clone()).await;
+            assert!(result.errors.is_empty(), "Contract errored: {}", contract);
+            match first_cost {
+                None => first_cost = Some(result.cost.value),
+                Some(expected) => {
+                    assert_eq!(
+                        result.cost.value, expected,
+                        "Cost not deterministic at iteration {} for '{}': expected={}, got={}",
+                        i, contract, expected, result.cost.value
+                    );
+                }
+            }
+        }
     }
 }
 
@@ -404,9 +424,8 @@ async fn should_stop_the_evaluation_of_all_execution_branches_when_one_of_them_r
 async fn should_stop_the_evaluation_of_all_execution_branches_when_one_of_them_runs_out_of_phlo_with_a_more_sophisticated_contract(
 ) {
     let mut rng = rand::thread_rng();
-    for contract in contracts() {
-        // Use a small phlo amount that will always be insufficient
-        let initial_phlo = rng.gen_range(1..50);
+    for (contract, expected_total_cost) in contracts() {
+        let initial_phlo = rng.gen_range(1..expected_total_cost);
 
         let (result, _) = evaluate_with_cost_log(initial_phlo, contract.clone()).await;
 
