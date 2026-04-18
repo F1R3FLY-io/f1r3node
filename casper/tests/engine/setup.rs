@@ -446,7 +446,7 @@ impl TestFixture {
 
         // NOT in Scala Setup - created locally in each test as: implicit val eventBus = EventPublisher.noop[Task]
         // Rust: Create F1r3flyEvents with default capacity (equivalent to noop for tests)
-        let event_publisher = F1r3flyEvents::default();
+        let event_publisher = F1r3flyEvents::new();
 
         // TODO NOT in Scala Setup - created locally in each test as: implicit val engineCell = Cell.unsafe[Task, Engine[Task]](Engine.noop)
         // Rust: Create EngineCell with Engine::noop (equivalent to Scala)

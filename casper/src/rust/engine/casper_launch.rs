@@ -167,7 +167,8 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
             synchrony_recovery_cooldown: conf.synchrony_recovery_cooldown,
             synchrony_recovery_max_bypasses: conf.synchrony_recovery_max_bypasses,
             synchrony_finalized_baseline_enabled: conf.synchrony_finalized_baseline_enabled,
-            synchrony_finalized_baseline_max_distance: conf.synchrony_finalized_baseline_max_distance,
+            synchrony_finalized_baseline_max_distance: conf
+                .synchrony_finalized_baseline_max_distance,
             max_user_deploys_per_block: conf.max_user_deploys_per_block,
         };
 
@@ -555,7 +556,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
             self.conf.genesis_block_data.pos_multi_sig_quorum,
             &mut *self.runtime_manager.lock().await,
             self.last_approved_block.clone(),
-            None, // event_log
+            Some(self.event_publisher.clone()),
             self.transport_layer.clone(),
             Arc::new(self.connections_cell.clone()),
             Arc::new(self.rp_conf_ask.clone()),

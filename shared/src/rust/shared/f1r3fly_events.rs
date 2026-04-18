@@ -1,8 +1,9 @@
-// See node/src/main/scala/coop/rchain/node/effects/RchainEvents.scala
+// F1r3flyEvents — event publishing with startup replay buffer.
+// Ported from node/src/main/scala/coop/rchain/node/effects/RchainEvents.scala
 
 use futures::stream::Stream;
-use std::collections::VecDeque;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 use tokio::sync::broadcast;
@@ -10,75 +11,69 @@ use tokio_stream::wrappers::BroadcastStream;
 
 pub use super::f1r3fly_event::F1r3flyEvent;
 
-/// EventPublisher trait for publishing F1r3flyEvents
-pub trait EventPublisher: Send + Sync {
-    fn publish(&self, event: F1r3flyEvent) -> Result<(), String>;
-}
+/// Shared startup event buffer type.
+/// `Some(vec)` during startup — events accumulate.
+/// `Some(vec)` after `seal_startup()` — frozen for replay, no new appends.
+pub type StartupBuffer = Arc<Mutex<Option<Vec<F1r3flyEvent>>>>;
 
-/// Factory for creating EventPublisher instances
-pub struct EventPublisherFactory;
-
-impl EventPublisherFactory {
-    pub fn noop() -> Box<dyn EventPublisher> {
-        Box::new(NoopEventPublisher)
-    }
-}
-
-/// No-op implementation of EventPublisher for testing
-struct NoopEventPublisher;
-
-impl EventPublisher for NoopEventPublisher {
-    fn publish(&self, _event: F1r3flyEvent) -> Result<(), String> {
-        // Do nothing - this is the no-op implementation
-        Ok(())
-    }
-}
-
-/// Structure to publish and consume F1r3flyEvents
+/// Structure to publish and consume F1r3flyEvents.
+///
+/// During startup, published events are buffered so that WebSocket clients
+/// connecting after startup can receive a replay of events they missed.
+/// Call `seal_startup()` once the node reaches Running state to freeze
+/// the buffer. Events remain available for replay but no new events are
+/// appended.
 #[derive(Clone)]
 pub struct F1r3flyEvents {
-    queue: Arc<Mutex<VecDeque<F1r3flyEvent>>>, // TODO: this queue is not used by the consumer, so maybe it should be removed.
-    capacity: usize,
     sender: broadcast::Sender<F1r3flyEvent>,
+    startup_sealed: Arc<AtomicBool>,
+    startup_buffer: StartupBuffer,
 }
 
 impl F1r3flyEvents {
-    /// Create a new F1r3flyEvents with a circular buffer.
-    /// Default capacity is 100 to prevent event dropping.
-    pub fn new(capacity: Option<usize>) -> Self {
-        let capacity = capacity.unwrap_or(100);
+    /// Create a new F1r3flyEvents backed by a broadcast channel.
+    /// The startup buffer is active from creation until `seal_startup()`.
+    pub fn new() -> Self {
         let (sender, _) = broadcast::channel(100);
-
         F1r3flyEvents {
-            queue: Arc::new(Mutex::new(VecDeque::with_capacity(capacity))),
-            capacity,
             sender,
+            startup_sealed: Arc::new(AtomicBool::new(false)),
+            startup_buffer: Arc::new(Mutex::new(Some(Vec::new()))),
         }
     }
 
-    /// Create a new F1r3flyEvents with default capacity of 1
-    pub fn default() -> Self {
-        Self::new(None)
-    }
-
-    /// Publish an event
+    /// Publish an event to all active subscribers.
+    /// If the startup buffer is still open, the event is also buffered
+    /// for replay to late-connecting WebSocket clients.
     pub fn publish(&self, event: F1r3flyEvent) -> Result<(), String> {
-        let mut queue = match self.queue.lock() {
-            Ok(queue) => queue,
-            Err(_) => return Err("Failed to acquire lock on event queue".to_string()),
-        };
-
-        // If queue is full, remove oldest event (circular buffer behavior)
-        if queue.len() >= self.capacity {
-            queue.pop_front();
+        if !self.startup_sealed.load(Ordering::Acquire) {
+            if let Ok(mut guard) = self.startup_buffer.lock() {
+                if let Some(ref mut buf) = *guard {
+                    buf.push(event.clone());
+                }
+            }
         }
-
-        queue.push_back(event.clone());
-
-        // Broadcast to all consumers
-        let _ = self.sender.send(event);
-
+        let receivers = self.sender.send(event).unwrap_or(0);
+        tracing::trace!("Event published to {} receivers", receivers);
         Ok(())
+    }
+
+    /// Seal the startup buffer. After this call, no new events are
+    /// appended — `publish()` skips the lock entirely via the atomic flag.
+    /// Buffered events remain available for replay to late-connecting clients.
+    /// Called once when the node transitions to Running state.
+    pub fn seal_startup(&self) {
+        self.startup_sealed.store(true, Ordering::Release);
+        if let Ok(guard) = self.startup_buffer.lock() {
+            let count = guard.as_ref().map_or(0, |v| v.len());
+            tracing::info!("Startup event buffer sealed ({} events)", count);
+        }
+    }
+
+    /// Get a shared reference to the startup buffer.
+    /// Pass this to AppState so the WebSocket handler can replay events.
+    pub fn startup_buffer(&self) -> StartupBuffer {
+        self.startup_buffer.clone()
     }
 
     /// Publish a noop event
@@ -92,12 +87,6 @@ impl F1r3flyEvents {
             sender: self.sender.clone(),
             inner: BroadcastStream::new(self.sender.subscribe()),
         }
-    }
-
-    /// Get all events currently in the queue.
-    /// NOTE: This is intended for testing purposes.
-    pub fn get_events(&self) -> Vec<F1r3flyEvent> {
-        self.queue.lock().unwrap().iter().cloned().collect()
     }
 }
 
@@ -140,6 +129,7 @@ impl Stream for EventStream {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
     use std::time::Duration;
 
     use super::super::f1r3fly_event::{BlockAdded, BlockCreated, BlockFinalised, DeployEvent};
@@ -194,7 +184,7 @@ mod tests {
         let start = std::time::Instant::now();
 
         let result = tokio::time::timeout(Duration::from_secs(2), async {
-            let events = Arc::new(F1r3flyEvents::new(Some(2)));
+            let events = Arc::new(F1r3flyEvents::new());
             let mut stream = events.consume();
 
             // Publish event AFTER a delay (from another task)
@@ -239,8 +229,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_circular_buffer_behavior() {
-        // Create events publisher with capacity 2
-        let events = F1r3flyEvents::new(Some(2));
+        let events = F1r3flyEvents::new();
 
         // Get stream first (before publishing)
         let mut stream = events.consume();
@@ -283,8 +272,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_default_capacity() {
-        let events = F1r3flyEvents::default();
+    async fn test_new() {
+        let events = F1r3flyEvents::new();
 
         // Get stream first (before publishing)
         let mut stream = events.consume();
@@ -319,7 +308,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_concurrent_publish_and_consume() {
-        let events = Arc::new(F1r3flyEvents::new(Some(10)));
+        let events = Arc::new(F1r3flyEvents::new());
         let mut handles = vec![];
 
         // Spawn multiple consumers first
@@ -361,5 +350,115 @@ mod tests {
 
         // Each consumer should get all 5 events
         assert_eq!(total_events, 15);
+    }
+
+    #[tokio::test]
+    async fn test_startup_buffer_captures_events() {
+        // Events published before any subscriber should be buffered
+        let events = F1r3flyEvents::new();
+
+        events.publish(create_block_finalised_event()).unwrap();
+        events.publish(create_block_created_event()).unwrap();
+
+        // Buffer should contain both events
+        let buf = events.startup_buffer();
+        let guard = buf.lock().unwrap();
+        let buffered = guard.as_ref().expect("Buffer should be Some");
+        assert_eq!(buffered.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_startup_buffer_survives_seal() {
+        // After seal, buffer data stays available for replay
+        let events = F1r3flyEvents::new();
+
+        events.publish(create_block_finalised_event()).unwrap();
+        events.publish(create_block_created_event()).unwrap();
+        events.seal_startup();
+
+        // Buffer should still contain the events (frozen, not cleared)
+        let buf = events.startup_buffer();
+        let guard = buf.lock().unwrap();
+        let buffered = guard.as_ref().expect("Buffer should be Some after seal");
+        assert_eq!(buffered.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_startup_buffer_stops_appending_after_seal() {
+        let events = F1r3flyEvents::new();
+
+        events.publish(create_block_finalised_event()).unwrap();
+        events.seal_startup();
+        events.publish(create_block_created_event()).unwrap();
+
+        // Only the event before seal should be in the buffer
+        let buf = events.startup_buffer();
+        let guard = buf.lock().unwrap();
+        let buffered = guard.as_ref().expect("Buffer should be Some after seal");
+        assert_eq!(buffered.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_startup_replay_scenario() {
+        // Simulates the full WebSocket startup replay scenario:
+        // 1. Events published during startup (no subscribers)
+        // 2. Subscriber connects and reads buffer
+        // 3. More events arrive via live stream
+        // 4. Seal happens
+        // 5. Late subscriber connects and reads buffer + live
+        let events = Arc::new(F1r3flyEvents::new());
+
+        // Phase 1: Startup events (no subscribers yet)
+        events.publish(create_block_finalised_event()).unwrap();
+
+        // Phase 2: First subscriber connects
+        let mut stream = events.consume();
+        let buf = events.startup_buffer();
+
+        // Read buffer (simulating WebSocket replay)
+        let guard = buf.lock().unwrap();
+        let buffered = guard.as_ref().expect("Buffer should be Some");
+        assert_eq!(buffered.len(), 1);
+        drop(guard);
+
+        // Phase 3: More events arrive — both buffered AND broadcast (pre-seal)
+        events.publish(create_block_created_event()).unwrap();
+        let live_event = stream.next().await.expect("Should receive live event");
+        match live_event {
+            F1r3flyEvent::BlockCreated(BlockCreated { block_hash, .. }) => {
+                assert_eq!(block_hash, "hash456");
+            }
+            _ => panic!("Expected BlockCreated from live stream"),
+        }
+
+        // Buffer now has both events (all pre-seal events are buffered)
+        let guard = buf.lock().unwrap();
+        let buffered = guard.as_ref().expect("Buffer should be Some");
+        assert_eq!(buffered.len(), 2, "Both pre-seal events should be buffered");
+        drop(guard);
+
+        // Phase 4: Seal startup
+        events.seal_startup();
+
+        // Buffer still has both events (frozen, not cleared)
+        let guard = buf.lock().unwrap();
+        let buffered = guard.as_ref().expect("Buffer should survive seal");
+        assert_eq!(buffered.len(), 2);
+        drop(guard);
+
+        // Phase 5: Post-seal events only go to broadcast, not buffer
+        events.publish(create_block_added_event()).unwrap();
+        let post_seal = stream.next().await.expect("Should receive post-seal event");
+        match post_seal {
+            F1r3flyEvent::BlockAdded(BlockAdded { block_hash, .. }) => {
+                assert_eq!(block_hash, "hash789");
+            }
+            _ => panic!("Expected BlockAdded from live stream"),
+        }
+
+        // Buffer still only has the 2 pre-seal events
+        let guard = buf.lock().unwrap();
+        let buffered = guard.as_ref().expect("Buffer should survive seal");
+        assert_eq!(buffered.len(), 2, "Post-seal events should not be buffered");
     }
 }

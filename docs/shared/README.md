@@ -42,7 +42,8 @@ The KV store layer is the persistence backbone of the entire system.
 ## Other Modules
 
 - `compression.rs` -- LZ4 compression/decompression
-- `f1r3fly_event.rs` / `f1r3fly_events.rs` -- Event data structures
+- `f1r3fly_event.rs` -- 9 event types for WebSocket streaming (block lifecycle, genesis ceremony, node lifecycle)
+- `f1r3fly_events.rs` -- Event bus with broadcast channel and startup replay buffer (see [WebSocket Events](../node/websocket-events.md))
 - `grpc_server.rs` -- gRPC server utilities
 - `metrics_constants.rs` / `metrics_semaphore.rs` -- Observability
 - `env.rs` -- Environment variable parsing utilities (`var_parsed`, `var_or`, `var_bool`)

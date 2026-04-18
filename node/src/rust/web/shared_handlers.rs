@@ -16,7 +16,7 @@ use axum::{
 };
 use casper::rust::api::block_report_api::BlockReportAPI;
 use comm::rust::{discovery::node_discovery::NodeDiscovery, rp::connect::ConnectionsCell};
-use shared::rust::shared::f1r3fly_events::EventStream;
+use shared::rust::shared::f1r3fly_events::{EventStream, StartupBuffer};
 use tracing::warn;
 
 #[derive(Clone)]
@@ -28,6 +28,7 @@ pub struct AppState {
     pub connections_cell: Arc<ConnectionsCell>,
     pub node_discovery: Arc<dyn NodeDiscovery + Send + Sync + 'static>,
     pub event_stream: Arc<EventStream>,
+    pub startup_events: StartupBuffer,
 }
 
 impl AppState {
@@ -39,6 +40,7 @@ impl AppState {
         connections_cell: Arc<ConnectionsCell>,
         node_discovery: Arc<dyn NodeDiscovery + Send + Sync + 'static>,
         event_consumer: Arc<EventStream>,
+        startup_events: StartupBuffer,
     ) -> Self {
         Self {
             admin_web_api,
@@ -48,6 +50,7 @@ impl AppState {
             connections_cell,
             node_discovery,
             event_stream: event_consumer,
+            startup_events,
         }
     }
 }

@@ -91,6 +91,14 @@ CLI flags are applied to the parsed `NodeConf` by `config_mapper.rs`:
 | 40403 | Public REST (deploy, blocks, finalization, transactions) via Axum |
 | 40405 | Admin (propose, propose_result) |
 
+## WebSocket Events
+
+The `/ws/events` endpoint on the HTTP port (40403) streams real-time node events. See [websocket-events.md](websocket-events.md) for full documentation.
+
+9 event types are streamed: 3 block lifecycle (`block-created`, `block-added`, `block-finalised`), 4 genesis ceremony (`sent-unapproved-block`, `block-approval-received`, `sent-approved-block`, `approved-block-received`), and 2 node lifecycle (`entered-running-state`, `node-started`).
+
+Events published during startup are buffered and replayed to clients that connect after the node is running. The buffer is sealed when engine initialization completes.
+
 ## API Server Startup
 
 `bind_tcp_listener_with_retry()` in `servers_instances.rs` handles `AddrInUse` resilience for HTTP/Admin servers: 60 attempts with 500ms delay between retries.
