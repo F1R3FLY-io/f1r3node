@@ -469,8 +469,9 @@ async fn compute_state_should_capture_rholang_errors() {
     .unwrap();
 }
 
-// TODO: Remove ignore once we have a fix for this test
-// This test is producing non-deterministic results - it's not clear why - sometimes it passes, sometimes it doesn't
+// TODO: Flaky — GasRefundFailure("Insufficient funds") on some runs.
+// The deployer vault balance becomes insufficient for the second block's
+// refund when scheduling produces a higher deploy cost in block 1.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore]
 async fn compute_state_then_compute_bonds_should_be_replayable_after_all() {
