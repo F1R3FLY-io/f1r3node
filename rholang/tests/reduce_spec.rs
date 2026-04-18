@@ -459,7 +459,7 @@ async fn eval_of_bundle_should_evaluate_contents_of_bundle() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn eval_of_bundle_should_throw_an_error_if_names_are_used_against_their_polarity_1() {
-    let (space, reducer) =
+    let (_space, reducer) =
         create_test_space::<RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>()
             .await;
 
@@ -498,7 +498,7 @@ async fn eval_of_bundle_should_throw_an_error_if_names_are_used_against_their_po
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn eval_of_bundle_should_throw_an_error_if_names_are_used_against_their_polarity_2() {
-    let (space, reducer) =
+    let (_space, reducer) =
         create_test_space::<RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>()
             .await;
 

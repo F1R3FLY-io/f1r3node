@@ -14,7 +14,6 @@ use crate::rust::interpreter::{
     },
     errors::InterpreterError,
 };
-use crypto::rust::hash::blake2b512_random::Blake2b512Random;
 use models::rhoapi::{
     tagged_continuation::TaggedCont, BindPattern, ListParWithRandom, Par, TaggedContinuation,
 };
@@ -33,26 +32,22 @@ pub struct ChargingRSpace;
 #[derive(Clone)]
 pub enum TriggeredBy {
     Consume {
-        id: Blake2b512Random,
+        id: Vec<u8>,
         persistent: bool,
         channels_count: i64,
     },
     Produce {
-        id: Blake2b512Random,
+        id: Vec<u8>,
         persistent: bool,
         channels_count: i64,
     },
 }
 
-fn consume_id(continuation: TaggedContinuation) -> Result<Blake2b512Random, InterpreterError> {
-    //TODO: Make ScalaBodyRef-s have their own random state and merge it during its COMMs - OLD
-    match continuation.tagged_cont.unwrap() {
-        TaggedCont::ParBody(par_with_random) => Ok(Blake2b512Random::create_from_bytes(
-            &par_with_random.random_state,
-        )),
-        TaggedCont::ScalaBodyRef(value) => {
-            Ok(Blake2b512Random::create_from_bytes(&value.to_be_bytes()))
-        }
+//TODO: Make ScalaBodyRef-s have their own random state and merge it during its COMMs - OLD
+fn consume_id_bytes(continuation: &TaggedContinuation) -> Result<Vec<u8>, InterpreterError> {
+    match continuation.tagged_cont.as_ref().unwrap() {
+        TaggedCont::ParBody(par_with_random) => Ok(par_with_random.random_state.clone()),
+        TaggedCont::ScalaBodyRef(value) => Ok(value.to_be_bytes().to_vec()),
     }
 }
 
@@ -99,7 +94,7 @@ impl ChargingRSpace {
                     peeks,
                 ).await?;
 
-                let id = consume_id(continuation)?;
+                let id = consume_id_bytes(&continuation)?;
                 handle_result(
                     consume_res.clone(),
                     TriggeredBy::Consume {
@@ -130,7 +125,7 @@ impl ChargingRSpace {
                 handle_result(
                     common_result,
                     TriggeredBy::Produce {
-                        id: Blake2b512Random::create_from_bytes(&data.random_state),
+                        id: data.random_state.clone(),
                         persistent: persist,
                         channels_count: 1,
                     },
@@ -255,7 +250,7 @@ fn handle_result(
     triggered_by: TriggeredBy,
     cost: _cost,
 ) -> Result<(), InterpreterError> {
-    let triggered_by_id = match triggered_by.clone() {
+    let triggered_by_id_bytes = match triggered_by.clone() {
         TriggeredBy::Consume { id, .. } => id,
         TriggeredBy::Produce { id, .. } => id,
     };
@@ -267,15 +262,13 @@ fn handle_result(
         TriggeredBy::Consume { persistent, .. } => persistent,
         TriggeredBy::Produce { persistent, .. } => persistent,
     };
-    let triggered_by_id_bytes = triggered_by_id.to_bytes();
 
     match result {
         Some((cont, data_list)) => {
-            let consume_id = consume_id(cont.continuation.clone())?;
+            let consume_id_bytes = consume_id_bytes(&cont.continuation)?;
 
             // We refund for non-persistent continuations, and for the persistent continuation triggering the comm.
             // That persistent continuation is going to be charged for (without refund) once it has no matches in TS.
-            let consume_id_bytes = consume_id.to_bytes();
             let refund_for_consume =
                 if !cont.persistent || consume_id_bytes == triggered_by_id_bytes {
                     storage_cost_consume(
@@ -316,11 +309,10 @@ fn refund_for_removing_produces(
     cont: ContResult<Par, BindPattern, TaggedContinuation>,
     triggered_by: TriggeredBy,
 ) -> Cost {
-    let triggered_id = match triggered_by {
+    let triggered_id_bytes = match triggered_by {
         TriggeredBy::Consume { id, .. } => id,
         TriggeredBy::Produce { id, .. } => id,
     };
-    let triggered_id_bytes = triggered_id.to_bytes();
 
     let removed_data: Vec<(RSpaceResult<Par, ListParWithRandom>, Par)> = data_list
         .into_iter()

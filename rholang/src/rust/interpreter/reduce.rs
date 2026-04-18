@@ -498,6 +498,13 @@ impl DebruijnInterpreter {
                         >,
                     >);
 
+                    // When a persistent produce triggers a peek COMM, the non-persistent
+                    // peeked data on other channels was removed by RSpace. Re-issue it
+                    // to preserve peek semantics (data should remain after peek read).
+                    if peek {
+                        futures.extend(self.produce_peeks(data_list).await);
+                    }
+
                     // parTraverseSafe — spawn true parallel tasks
                     let handles: Vec<JoinHandle<Result<DispatchType, InterpreterError>>> = futures
                         .into_iter()

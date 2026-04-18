@@ -388,12 +388,12 @@ async fn measure_precharge_and_refund_cost() {
             }
 
             // Lock acquisition and spawn overhead
-            let (produce_lock_count, produce_lock_total) = get_histogram_stats(snapshotter, "rspace.produce.lock_acquire_seconds");
-            let (consume_lock_count, consume_lock_total) = get_histogram_stats(snapshotter, "rspace.consume.lock_acquire_seconds");
-            let (spawn_count, spawn_total) = get_histogram_stats(snapshotter, "reducer.eval_par.spawn_seconds");
-            let (join_count, join_total) = get_histogram_stats(snapshotter, "reducer.eval_par.join_seconds");
-            let (eval_par_count, _) = get_histogram_stats(snapshotter, "reducer.eval_par.term_count");
-            let eval_par_calls = get_counter_value(snapshotter, "reducer.eval_par.calls");
+            let (_produce_lock_count, _produce_lock_total) = get_histogram_stats(snapshotter, "rspace.produce.lock_acquire_seconds");
+            let (_consume_lock_count, _consume_lock_total) = get_histogram_stats(snapshotter, "rspace.consume.lock_acquire_seconds");
+            let (_spawn_count, _spawn_total) = get_histogram_stats(snapshotter, "reducer.eval_par.spawn_seconds");
+            let (_join_count, _join_total) = get_histogram_stats(snapshotter, "reducer.eval_par.join_seconds");
+            let (_eval_par_count, _) = get_histogram_stats(snapshotter, "reducer.eval_par.term_count");
+            let _eval_par_calls = get_counter_value(snapshotter, "reducer.eval_par.calls");
 
             // Debug: list all histogram metrics
             {

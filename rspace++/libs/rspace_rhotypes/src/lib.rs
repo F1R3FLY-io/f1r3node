@@ -115,7 +115,7 @@ pub extern "C" fn space_print(rspace: *mut Space) -> () {
 
 #[no_mangle]
 pub extern "C" fn space_clear(rspace: *mut Space) -> () {
-    let mut space = unsafe { (*rspace).rspace.lock().unwrap() };
+    let space = unsafe { (*rspace).rspace.lock().unwrap() };
     blocking_runtime()
         .block_on(async {
             space
@@ -179,7 +179,7 @@ pub extern "C" fn produce(
     let channel = Par::decode(channel_slice).unwrap();
     let data = ListParWithRandom::decode(data_slice).unwrap();
 
-    let mut space = unsafe { (*rspace).rspace.lock().unwrap() };
+    let space = unsafe { (*rspace).rspace.lock().unwrap() };
     let result_option = blocking_runtime()
         .block_on(async { space.produce(channel, data, persist).await })
         .unwrap();
@@ -254,7 +254,7 @@ pub extern "C" fn consume(
     let persist = consume_params.persist;
     let peeks = consume_params.peeks.into_iter().map(|e| e.value).collect();
 
-    let mut space = unsafe { (*rspace).rspace.lock().unwrap() };
+    let space = unsafe { (*rspace).rspace.lock().unwrap() };
     let result_option = blocking_runtime()
         .block_on(async {
             space
@@ -322,7 +322,7 @@ pub extern "C" fn install(
     let patterns = consume_params.patterns;
     let continuation = consume_params.continuation.unwrap();
 
-    let mut space = unsafe { (*rspace).rspace.lock().unwrap() };
+    let space = unsafe { (*rspace).rspace.lock().unwrap() };
     let result_option = blocking_runtime()
         .block_on(async { space.install(channels, patterns, continuation).await })
         .unwrap();
@@ -462,7 +462,7 @@ pub extern "C" fn reset_rspace(
     let root_slice = unsafe { std::slice::from_raw_parts(root_pointer, root_bytes_len) };
     let root = Blake2b256Hash::from_bytes(root_slice.to_vec());
 
-    let mut rs = match unsafe { (*rspace).rspace.lock() } {
+    let rs = match unsafe { (*rspace).rspace.lock() } {
         Ok(guard) => guard,
         Err(poisoned) => {
             eprintln!("ERROR: failed to lock rspace in reset: poisoned");
@@ -675,7 +675,7 @@ pub extern "C" fn to_map(rspace: *mut Space) -> *const u8 {
 
 #[no_mangle]
 pub extern "C" fn spawn(rspace: *mut Space) -> *mut Space {
-    let mut space = unsafe { (*rspace).rspace.lock().unwrap() };
+    let space = unsafe { (*rspace).rspace.lock().unwrap() };
     let new_rspace = space
         .spawn()
         .expect("Rust RSpacePlusPlus Library: Failed to spawn");
@@ -1961,7 +1961,7 @@ pub extern "C" fn replay_produce(
     let channel = Par::decode(channel_slice).unwrap();
     let data = ListParWithRandom::decode(data_slice).unwrap();
 
-    let mut space = unsafe { (*rspace).rspace.lock().unwrap() };
+    let space = unsafe { (*rspace).rspace.lock().unwrap() };
     let result_option = blocking_runtime()
         .block_on(async { space.produce(channel, data, persist).await })
         .unwrap();
@@ -2036,7 +2036,7 @@ pub extern "C" fn replay_consume(
     let persist = consume_params.persist;
     let peeks = consume_params.peeks.into_iter().map(|e| e.value).collect();
 
-    let mut space = unsafe { (*rspace).rspace.lock().unwrap() };
+    let space = unsafe { (*rspace).rspace.lock().unwrap() };
     let result_option = blocking_runtime()
         .block_on(async {
             space
@@ -2091,7 +2091,7 @@ pub extern "C" fn replay_consume(
 
 #[no_mangle]
 pub extern "C" fn replay_create_checkpoint(rspace: *mut Space) -> *const u8 {
-    let mut space = unsafe { (*rspace).rspace.lock().unwrap() };
+    let space = unsafe { (*rspace).rspace.lock().unwrap() };
     let checkpoint = blocking_runtime()
         .block_on(async {
             space
@@ -2218,7 +2218,7 @@ pub extern "C" fn replay_create_checkpoint(rspace: *mut Space) -> *const u8 {
 
 #[no_mangle]
 pub extern "C" fn replay_clear(rspace: *mut Space) -> () {
-    let mut space = unsafe { (*rspace).rspace.lock().unwrap() };
+    let space = unsafe { (*rspace).rspace.lock().unwrap() };
     blocking_runtime()
         .block_on(async {
             space
@@ -2230,7 +2230,7 @@ pub extern "C" fn replay_clear(rspace: *mut Space) -> () {
 
 #[no_mangle]
 pub extern "C" fn replay_spawn(replay_rspace_ptr: *mut ReplaySpace) -> *mut ReplaySpace {
-    let mut replay_space = unsafe { (*replay_rspace_ptr).replay_space.lock().unwrap() };
+    let replay_space = unsafe { (*replay_rspace_ptr).replay_space.lock().unwrap() };
     let new_replay_space = replay_space
         .spawn()
         .expect("Rust RSpacePlusPlus Library: Failed to spawn");
