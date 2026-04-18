@@ -113,6 +113,14 @@ The Cargo workspace contains 11 crates:
 | [Rholang Language Analysis](./rholang-language-analysis.md) | Language design analysis |
 | [Features](./features.md) | Feature requirements and status |
 
+### Genesis & Token Identity
+
+The native token's name, symbol, and decimals are configured before genesis and baked into the on-chain `TokenMetadata` contract at `rho:system:tokenMetadata`. They are immutable after genesis and exposed via `/api/status`. See:
+
+- [defaults.conf](../node/src/main/resources/defaults.conf) — `native-token-name`, `native-token-symbol`, `native-token-decimals` under `casper.genesis-block-data`
+- [Docker Genesis Configuration](../docker/README.md#native-token) — compose env var overrides, API and on-chain query examples
+- [Consensus Protocol § Configuration](./casper/CONSENSUS_PROTOCOL.md#10-configuration) — genesis-locked parameters
+
 ### Infrastructure
 
 | Document | Description |

@@ -244,6 +244,9 @@ async fn from_input_files(
         supply: i64::MAX,
         block_number: params.block_number,
         version: 1,
+        native_token_name: "F1R3CAP".to_string(),
+        native_token_symbol: "F1R3".to_string(),
+        native_token_decimals: 8,
     };
 
     let genesis_block = Genesis::create_genesis_block(runtime_manager, &genesis).await?;

@@ -197,6 +197,61 @@ pub struct GenesisBlockData {
 
     #[serde(rename = "pos-multi-sig-quorum")]
     pub pos_multi_sig_quorum: u32,
+
+    /// Full display name of the native token. Substituted into the
+    /// TokenMetadata Rholang contract at genesis and registered at
+    /// `rho:system:tokenMetadata`. Immutable after genesis.
+    #[serde(rename = "native-token-name")]
+    pub native_token_name: String,
+
+    /// Ticker symbol of the native token. Immutability rules are identical
+    /// to `native-token-name`. Operators MUST set this in config before genesis.
+    #[serde(rename = "native-token-symbol")]
+    pub native_token_symbol: String,
+
+    /// Number of decimal places used to display the native token
+    /// (1 token = 10^decimals dust). Immutability rules are identical to
+    /// `native-token-name`. Operators MUST set this in config before genesis.
+    #[serde(rename = "native-token-decimals")]
+    pub native_token_decimals: u32,
+}
+
+/// Maximum decimal places accepted for native token. Matches the de-facto
+/// ERC-20 standard (ETH uses 18). Values above 18 exceed IEEE-754 double
+/// safe-integer range (2^53), which breaks every JavaScript-based wallet
+/// and block explorer. No production blockchain uses more than 18
+/// (BTC=8, SOL=9, ATOM=6, DOT=10, KSM=12, ETH=18).
+pub const MAX_NATIVE_TOKEN_DECIMALS: u32 = 18;
+
+impl GenesisBlockData {
+    /// Validates native-token-* fields. Called during config load so a
+    /// misconfigured node fails startup loudly rather than baking bad
+    /// values into genesis or serving misleading metadata via `/api/status`.
+    pub fn validate_native_token(&self) -> Result<(), String> {
+        if self.native_token_name.trim().is_empty() {
+            return Err(format!(
+                "native-token-name must be non-empty and non-whitespace; got {:?}",
+                self.native_token_name
+            ));
+        }
+        if self.native_token_symbol.trim().is_empty() {
+            return Err(format!(
+                "native-token-symbol must be non-empty and non-whitespace; got {:?}",
+                self.native_token_symbol
+            ));
+        }
+        if self.native_token_decimals > MAX_NATIVE_TOKEN_DECIMALS {
+            return Err(format!(
+                "native-token-decimals={} exceeds maximum of {} (industry standard; \
+                 ETH=18, BTC=8, SOL=9, ATOM=6); values above {} exceed IEEE-754 \
+                 double safe-integer range and break JavaScript clients",
+                self.native_token_decimals,
+                MAX_NATIVE_TOKEN_DECIMALS,
+                MAX_NATIVE_TOKEN_DECIMALS
+            ));
+        }
+        Ok(())
+    }
 }
 
 /// Genesis ceremony configuration

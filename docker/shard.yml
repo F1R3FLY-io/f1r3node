@@ -49,6 +49,9 @@ services:
       - "2"
       - --ceremony-master-mode
       - --heartbeat-disabled
+      - --native-token-name=${BOOTSTRAP_NATIVE_TOKEN_NAME:-${NATIVE_TOKEN_NAME:-F1R3CAP}}
+      - --native-token-symbol=${BOOTSTRAP_NATIVE_TOKEN_SYMBOL:-${NATIVE_TOKEN_SYMBOL:-F1R3}}
+      - --native-token-decimals=${BOOTSTRAP_NATIVE_TOKEN_DECIMALS:-${NATIVE_TOKEN_DECIMALS:-8}}
     ports:
       - "40400:40400"
       - "40401:40401"
@@ -78,6 +81,9 @@ services:
       - --validator-public-key=${VALIDATOR1_PUBLIC_KEY:-04fa70d7be5eb750e0915c0f6d19e7085d18bb1c22d030feb2a877ca2cd226d04438aa819359c56c720142fbc66e9da03a5ab960a3d8b75363a226b7c800f60420}
       - --validator-private-key=${VALIDATOR1_PRIVATE_KEY:-357cdc4201a5650830e0bc5a03299a30038d9934ba4c7ab73ec164ad82471ff9}
       - --genesis-validator
+      - --native-token-name=${VALIDATOR1_NATIVE_TOKEN_NAME:-${NATIVE_TOKEN_NAME:-F1R3CAP}}
+      - --native-token-symbol=${VALIDATOR1_NATIVE_TOKEN_SYMBOL:-${NATIVE_TOKEN_SYMBOL:-F1R3}}
+      - --native-token-decimals=${VALIDATOR1_NATIVE_TOKEN_DECIMALS:-${NATIVE_TOKEN_DECIMALS:-8}}
     ports:
       - "40410:40400"
       - "40411:40401"
@@ -107,6 +113,9 @@ services:
       - --validator-public-key=${VALIDATOR2_PUBLIC_KEY:-04837a4cff833e3157e3135d7b40b8e1f33c6e6b5a4342b9fc784230ca4c4f9d356f258debef56ad4984726d6ab3e7709e1632ef079b4bcd653db00b68b2df065f}
       - --validator-private-key=${VALIDATOR2_PRIVATE_KEY:-2c02138097d019d263c1d5383fcaddb1ba6416a0f4e64e3a617fe3af45b7851d}
       - --genesis-validator
+      - --native-token-name=${VALIDATOR2_NATIVE_TOKEN_NAME:-${NATIVE_TOKEN_NAME:-F1R3CAP}}
+      - --native-token-symbol=${VALIDATOR2_NATIVE_TOKEN_SYMBOL:-${NATIVE_TOKEN_SYMBOL:-F1R3}}
+      - --native-token-decimals=${VALIDATOR2_NATIVE_TOKEN_DECIMALS:-${NATIVE_TOKEN_DECIMALS:-8}}
     ports:
       - "40420:40400"
       - "40421:40401"
@@ -136,6 +145,9 @@ services:
       - --validator-public-key=${VALIDATOR3_PUBLIC_KEY:-0457febafcc25dd34ca5e5c025cd445f60e5ea6918931a54eb8c3a204f51760248090b0c757c2bdad7b8c4dca757e109f8ef64737d90712724c8216c94b4ae661c}
       - --validator-private-key=${VALIDATOR3_PRIVATE_KEY:-b67533f1f99c0ecaedb7d829e430b1c0e605bda10f339f65d5567cb5bd77cbcb}
       - --genesis-validator
+      - --native-token-name=${VALIDATOR3_NATIVE_TOKEN_NAME:-${NATIVE_TOKEN_NAME:-F1R3CAP}}
+      - --native-token-symbol=${VALIDATOR3_NATIVE_TOKEN_SYMBOL:-${NATIVE_TOKEN_SYMBOL:-F1R3}}
+      - --native-token-decimals=${VALIDATOR3_NATIVE_TOKEN_DECIMALS:-${NATIVE_TOKEN_DECIMALS:-8}}
     ports:
       - "40430:40400"
       - "40431:40401"
@@ -165,6 +177,9 @@ services:
       - --no-upnp
       - --allow-private-addresses
       - --heartbeat-disabled
+      - --native-token-name=${READONLY_NATIVE_TOKEN_NAME:-${NATIVE_TOKEN_NAME:-F1R3CAP}}
+      - --native-token-symbol=${READONLY_NATIVE_TOKEN_SYMBOL:-${NATIVE_TOKEN_SYMBOL:-F1R3}}
+      - --native-token-decimals=${READONLY_NATIVE_TOKEN_DECIMALS:-${NATIVE_TOKEN_DECIMALS:-8}}
     ports:
       - "40450:40400"
       - "40451:40401"

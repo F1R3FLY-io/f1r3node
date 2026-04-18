@@ -267,6 +267,9 @@ impl GenesisBuilder {
                 supply: i64::MAX,
                 block_number: 0,
                 version: 1,
+                native_token_name: "F1R3CAP".to_string(),
+                native_token_symbol: "F1R3".to_string(),
+                native_token_decimals: 8,
             },
         )
     }

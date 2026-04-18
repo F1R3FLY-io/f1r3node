@@ -227,6 +227,9 @@ async fn run_compute_parents_post_state_finalized_skew_regression() {
         vaults: Vec::new(),
         supply: i64::MAX,
         version: 1,
+        native_token_name: "F1R3CAP".to_string(),
+        native_token_symbol: "F1R3".to_string(),
+        native_token_decimals: 8,
     };
 
     let genesis_block = Genesis::create_genesis_block(&mut runtime_manager, &genesis)
@@ -431,6 +434,9 @@ async fn run_compute_parents_post_state_missing_mergeable_regression() {
         vaults: Vec::new(),
         supply: i64::MAX,
         version: 1,
+        native_token_name: "F1R3CAP".to_string(),
+        native_token_symbol: "F1R3".to_string(),
+        native_token_decimals: 8,
     };
 
     let genesis_block = Genesis::create_genesis_block(&mut runtime_manager, &genesis)
@@ -631,6 +637,9 @@ async fn run_visible_blocks_scope_test() {
         vaults: Vec::new(),
         supply: i64::MAX,
         version: 1,
+        native_token_name: "F1R3CAP".to_string(),
+        native_token_symbol: "F1R3".to_string(),
+        native_token_decimals: 8,
     };
 
     let genesis_block = Genesis::create_genesis_block(&mut runtime_manager, &genesis)
