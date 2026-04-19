@@ -9,7 +9,6 @@ pub fn hash<C: Serialize>(channel: &C) -> Blake2b256Hash {
     Blake2b256Hash::new(&bytes)
 }
 
-// TODO: Double check the sorting here against scala side
 pub fn hash_vec<C: Serialize>(channels: &Vec<C>) -> Vec<Blake2b256Hash> {
     let mut hashes: Vec<Blake2b256Hash> = channels
         .iter()
@@ -23,15 +22,10 @@ pub fn hash_vec<C: Serialize>(channels: &Vec<C>) -> Vec<Blake2b256Hash> {
 }
 
 pub fn hash_from_vec<C: Serialize>(channels: &Vec<C>) -> Blake2b256Hash {
-    if channels.len() == 1 {
-        return hash(channels.first().unwrap());
-    }
-
     let hashes = hash_vec(channels);
     hash_from_hashes(&hashes)
 }
 
-// TODO: Double check the sorting here against scala side
 pub fn hash_from_hashes(channels_hashes: &Vec<Blake2b256Hash>) -> Blake2b256Hash {
     let mut ord_refs: Vec<&Blake2b256Hash> = channels_hashes.iter().collect();
     ord_refs.sort();

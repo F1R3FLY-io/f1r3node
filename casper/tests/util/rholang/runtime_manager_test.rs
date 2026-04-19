@@ -1672,6 +1672,235 @@ in {{
     );
 }
 
+/// Tests that bridge registry entries survive multi-parent DAG merge.
+///
+/// Deploys bridge.rho on block A (from genesis), creates empty block B (from
+/// genesis, sibling branch), merges [A, B] via compute_parents_post_state,
+/// then queries getNonce from the merged state.
+///
+/// Reproduces: system-integration docs/TODO.md "Contract query deploy returns
+/// empty deployId after finalization (intermittent)"
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn bridge_query_survives_multi_parent_merge() {
+    use block_storage::rust::key_value_block_store::KeyValueBlockStore;
+    use casper::rust::{
+        casper::{CasperShardConf, CasperSnapshot, OnChainCasperState},
+        util::{
+            proto_util,
+            rholang::interpreter_util::{compute_deploys_checkpoint, compute_parents_post_state},
+        },
+    };
+    use crate::util::rholang::resources::{
+        mk_test_rnode_store_manager_from_genesis, block_dag_storage_from_dyn,
+        mergeable_store_from_dyn,
+    };
+    use dashmap::{DashMap, DashSet};
+    use models::rust::{block_hash::BlockHash, block_implicits};
+    use rholang::rust::interpreter::external_services::ExternalServices;
+    use casper::rust::genesis::genesis::Genesis;
+
+    crate::init_logger();
+    let genesis_context = crate::util::rholang::resources::genesis_context()
+        .await
+        .unwrap();
+    let genesis_block = genesis_context.genesis_block.clone();
+    let genesis_hash = genesis_block.block_hash.clone();
+    let genesis_state = proto_util::post_state_hash(&genesis_block);
+    let genesis_bonds = genesis_block.body.state.bonds.clone();
+    let validator: prost::bytes::Bytes = genesis_context.validator_pks()[0].bytes.clone().into();
+    let shard_name = genesis_block.shard_id.clone();
+
+    // Create all stores from the same KVM (shared genesis scope)
+    let mut kvm = mk_test_rnode_store_manager_from_genesis(&genesis_context);
+
+    let rspace_store = kvm.r_space_stores().await.expect("rspace stores");
+    let mergeable_store = mergeable_store_from_dyn(&mut *kvm).await.expect("mergeable store");
+    let (mut rm, _) = RuntimeManager::create_with_history(
+        rspace_store, mergeable_store,
+        Genesis::non_negative_mergeable_tag_name(),
+        ExternalServices::noop(),
+    );
+
+    let mut block_store = KeyValueBlockStore::create_from_kvm(&mut *kvm)
+        .await
+        .expect("block store");
+    let dag_storage = block_dag_storage_from_dyn(&mut *kvm)
+        .await
+        .expect("dag storage");
+
+    block_store.put_block_message(&genesis_block).expect("store genesis");
+    dag_storage.insert(&genesis_block, false, true).expect("dag genesis");
+
+    let now_millis = || -> i64 {
+        SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
+    };
+
+    let mk_snapshot = |lfb: &BlockHash| -> CasperSnapshot {
+        let mut snapshot = CasperSnapshot::new(dag_storage.get_representation());
+        snapshot.last_finalized_block = lfb.clone();
+        let max_seq_nums: DashMap<prost::bytes::Bytes, u64> = DashMap::new();
+        max_seq_nums.insert(validator.clone(), 0);
+        snapshot.max_seq_nums = max_seq_nums;
+        let mut shard_conf = CasperShardConf::new();
+        shard_conf.shard_name = shard_name.clone();
+        shard_conf.max_parent_depth = 0;
+        let mut bonds_map = HashMap::new();
+        bonds_map.insert(validator.clone(), 100);
+        snapshot.on_chain_state = OnChainCasperState {
+            shard_conf,
+            bonds_map,
+            active_validators: vec![validator.clone()],
+        };
+        snapshot.deploys_in_scope = std::sync::Arc::new(DashSet::new());
+        snapshot
+    };
+
+    let make_deploy_id_par = |sig: &[u8]| -> models::rhoapi::Par {
+        models::rhoapi::Par {
+            unforgeables: vec![models::rhoapi::GUnforgeable {
+                unf_instance: Some(
+                    models::rhoapi::g_unforgeable::UnfInstance::GDeployIdBody(
+                        models::rhoapi::GDeployId { sig: sig.to_vec() },
+                    ),
+                ),
+            }],
+            ..Default::default()
+        }
+    };
+
+    let bridge_rho = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/resources/bridge.rho"),
+    ).expect("Failed to read bridge.rho");
+
+    // --- Block A: bridge deploy from genesis ---
+    let bridge_deploy = construct_deploy::source_deploy_now_full(
+        bridge_rho, None, None, None, None, None,
+    ).unwrap();
+
+    let block_a_raw = block_implicits::get_random_block(
+        Some(1), Some(1), Some(genesis_state.clone()), Some(StateHash::default()),
+        Some(validator.clone()), Some(1), Some(now_millis()),
+        Some(vec![genesis_hash.clone()]), Some(Vec::new()),
+        Some(vec![ProcessedDeploy::empty(bridge_deploy)]),
+        Some(Vec::new()), Some(genesis_bonds.clone()), Some(shard_name.clone()), None,
+    );
+
+    let parents_a = vec![genesis_block.clone()];
+    let deploys_a = proto_util::deploys(&block_a_raw).into_iter().map(|d| d.deploy).collect();
+    let snapshot_a = mk_snapshot(&genesis_hash);
+    let (_, post_state_a, pd_a, _, sys_pd_a, bonds_a) = compute_deploys_checkpoint(
+        &mut block_store, parents_a, deploys_a,
+        Vec::<casper::rust::util::rholang::system_deploy_enum::SystemDeployEnum>::new(),
+        &snapshot_a, &mut rm,
+        BlockData::from_block(&block_a_raw), HashMap::new(),
+    ).await.expect("compute block A");
+
+    assert!(!pd_a[0].is_failed, "Bridge deploy failed: {:?}", pd_a[0].system_deploy_error);
+
+    let mut block_a = block_a_raw;
+    block_a.body.state.post_state_hash = post_state_a.clone();
+    block_a.body.deploys = pd_a.clone();
+    block_a.body.system_deploys = sys_pd_a;
+    block_a.body.state.bonds = bonds_a;
+    block_store.put_block_message(&block_a).expect("store A");
+    dag_storage.insert(&block_a, false, false).expect("dag A");
+
+    // Verify bridge wrote data and extract queryUri
+    let bridge_data = rm.get_data(post_state_a.clone(), &make_deploy_id_par(&pd_a[0].deploy.sig)).await.unwrap();
+    assert!(!bridge_data.is_empty(), "Bridge deploy wrote no data to deployId");
+
+    let uri_regex = regex::Regex::new(r"rho:id:[a-zA-Z0-9]+").unwrap();
+    let data_str = format!("{:?}", bridge_data);
+    let uris: Vec<String> = uri_regex.find_iter(&data_str).map(|m| m.as_str().to_string()).collect();
+    let mut unique_uris: Vec<String> = Vec::new();
+    for uri in &uris { if !unique_uris.contains(uri) { unique_uris.push(uri.clone()); } }
+    assert!(unique_uris.len() >= 2, "Expected at least 2 URIs, got: {:?}", unique_uris);
+    let query_uri = unique_uris[0].clone();
+
+    // --- Block B: empty block from genesis (sibling branch) ---
+    let block_b_raw = block_implicits::get_random_block(
+        Some(1), Some(2), Some(genesis_state.clone()), Some(StateHash::default()),
+        Some(validator.clone()), Some(1), Some(now_millis()),
+        Some(vec![genesis_hash.clone()]), Some(Vec::new()),
+        Some(Vec::new()), Some(Vec::new()),
+        Some(genesis_bonds.clone()), Some(shard_name.clone()), None,
+    );
+
+    let parents_b = vec![genesis_block.clone()];
+    let snapshot_b = mk_snapshot(&genesis_hash);
+    let (_, post_state_b, pd_b, _, sys_pd_b, bonds_b) = compute_deploys_checkpoint(
+        &mut block_store, parents_b, Vec::new(),
+        Vec::<casper::rust::util::rholang::system_deploy_enum::SystemDeployEnum>::new(),
+        &snapshot_b, &mut rm,
+        BlockData::from_block(&block_b_raw), HashMap::new(),
+    ).await.expect("compute block B");
+
+    let mut block_b = block_b_raw;
+    block_b.body.state.post_state_hash = post_state_b.clone();
+    block_b.body.deploys = pd_b;
+    block_b.body.system_deploys = sys_pd_b;
+    block_b.body.state.bonds = bonds_b;
+    block_store.put_block_message(&block_b).expect("store B");
+    dag_storage.insert(&block_b, false, false).expect("dag B");
+
+    // --- Merge [A, B] ---
+    let parents = vec![block_a.clone(), block_b.clone()];
+    let snapshot_merge = mk_snapshot(&genesis_hash);
+    let (merged_state, rejected) = compute_parents_post_state(
+        &block_store, parents, &snapshot_merge, &rm, None,
+    ).expect("merge parents");
+
+    assert!(rejected.is_empty(), "Merge rejected deploys: {:?}", rejected);
+
+    // --- Query getNonce from merged state ---
+    let get_nonce_rho = format!(r#"
+new deployId(`rho:system:deployId`),
+    lookup(`rho:registry:lookup`),
+    queryCh, ret
+in {{
+  lookup!(`{}`, *queryCh) |
+  for (query <- queryCh) {{
+    query!("getNonce", Nil, *ret) |
+    for (@result <- ret) {{ deployId!(result) }}
+  }}
+}}
+"#, query_uri);
+
+    let query_deploy = construct_deploy::source_deploy_now_full(
+        get_nonce_rho, None, None, None, None, None,
+    ).unwrap();
+
+    let query_block_raw = block_implicits::get_random_block(
+        Some(2), Some(3), Some(merged_state.clone()), Some(StateHash::default()),
+        Some(validator.clone()), Some(1), Some(now_millis()),
+        Some(vec![block_a.block_hash.clone(), block_b.block_hash.clone()]),
+        Some(Vec::new()),
+        Some(vec![ProcessedDeploy::empty(query_deploy)]),
+        Some(Vec::new()), Some(genesis_bonds.clone()), Some(shard_name.clone()), None,
+    );
+
+    let parents_q = vec![block_a.clone(), block_b.clone()];
+    let deploys_q = proto_util::deploys(&query_block_raw).into_iter().map(|d| d.deploy).collect();
+    let snapshot_q = mk_snapshot(&genesis_hash);
+    let (_, post_state_q, pd_q, _, _, _) = compute_deploys_checkpoint(
+        &mut block_store, parents_q, deploys_q,
+        Vec::<casper::rust::util::rholang::system_deploy_enum::SystemDeployEnum>::new(),
+        &snapshot_q, &mut rm,
+        BlockData::from_block(&query_block_raw), HashMap::new(),
+    ).await.expect("compute query block");
+
+    assert!(!pd_q[0].is_failed, "Query deploy failed: {:?}", pd_q[0].system_deploy_error);
+
+    let query_data = rm.get_data(post_state_q, &make_deploy_id_par(&pd_q[0].deploy.sig)).await.unwrap();
+
+    assert!(
+        !query_data.is_empty(),
+        "Bridge query returned empty deployId after multi-parent merge. \
+         The merge did not preserve the bridge's registry entries when \
+         combining a bridge branch with an empty sibling branch."
+    );
+}
+
 /// Reproduces the replay determinism issue seen with tokio::spawn.
 /// Deploys a contract with parallel composition, plays it, then replays it.
 /// If tokio::spawn introduces non-deterministic evaluation order, the replay
