@@ -15,7 +15,7 @@ use rspace_plus_plus::rspace::hashing::blake2b256_hash::Blake2b256Hash;
 const _SHARD_ID: &str = "root-shard";
 
 /// 1:1 port of RhoTrieTraverserTest.scala - "traverse the TreeHashMap" should "work"
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn traverse_the_tree_hash_map_should_work() {
     let total = 1;
     let trie_depth = 2;
@@ -94,6 +94,7 @@ new
         runtime_ops
             .runtime
             .reset(&empty_hash_b2)
+            .await
             .expect("Failed to reset runtime to empty state");
 
         // Bootstrap registry directly (avoids heavy Registry.rho deploy which overflows stack)
@@ -103,10 +104,11 @@ new
             .expect("Failed to process registry deploy");
 
         // 4. Create a checkpoint and reset to it – aligns with Scala test
-        let check = runtime_ops.runtime.create_checkpoint();
+        let check = runtime_ops.runtime.create_checkpoint().await;
         runtime_ops
             .runtime
             .reset(&check.root)
+            .await
             .expect("Failed to reset runtime to first checkpoint");
 
         // 5. Create deploy that initializes the TreeHashMap
@@ -132,7 +134,7 @@ new
         );
 
         // 6. Create second checkpoint (before exploratory deploy)
-        let check2 = runtime_ops.runtime.create_checkpoint();
+        let check2 = runtime_ops.runtime.create_checkpoint().await;
 
         // 7. Run exploratory deploy to obtain the trie map handle
         let check2_root_bytes = check2.root.to_bytes_prost();
@@ -150,6 +152,7 @@ new
         runtime_ops
             .runtime
             .reset(&check2.root)
+            .await
             .expect("Failed to reset runtime to second checkpoint");
 
         // 9. Retrieve trie map handle (first element)
@@ -158,6 +161,7 @@ new
         // 10. Traverse trie and collect maps
         let maps =
             RhoTrieTraverser::traverse_trie(trie_depth, trie_map_handle, &runtime_ops.runtime)
+                .await
                 .expect("Failed to traverse trie");
 
         // 11. Convert collected ParMaps to HashMap<Vec<u8>, i64>

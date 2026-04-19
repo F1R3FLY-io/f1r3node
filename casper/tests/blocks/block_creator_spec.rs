@@ -122,7 +122,7 @@ fn create_snapshot(max_block_num: i64, validator_id: Bytes) -> CasperSnapshot {
 ///
 /// Expired deploy: validAfterBlockNumber = 0 (<= 51, expired)
 /// Valid deploy: validAfterBlockNumber = 60 (> 51 and < 101, valid)
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn should_remove_block_expired_deploys_while_keeping_valid_ones() {
     crate::init_logger();
 
@@ -215,7 +215,7 @@ async fn should_remove_block_expired_deploys_while_keeping_valid_ones() {
 /// - Block-expired deploy (validAfterBlockNumber = 0 is expired)
 /// - Time-expired deploy (validAfterBlockNumber = 60 is valid, but expirationTimestamp is past)
 /// - Valid deploy (validAfterBlockNumber = 60 is valid, no expiration timestamp)
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn should_remove_both_block_expired_and_time_expired_deploys() {
     crate::init_logger();
 

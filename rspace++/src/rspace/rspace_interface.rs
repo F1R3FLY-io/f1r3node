@@ -2,6 +2,7 @@
 
 use std::collections::{BTreeSet, HashMap};
 
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use super::checkpoint::Checkpoint;
@@ -46,58 +47,59 @@ pub type MaybeProduceResult<C, P, A, K> =
  * trait
  *
  */
-pub trait ISpace<C: Eq + std::hash::Hash, P: Clone, A: Clone, K: Clone> {
+#[async_trait]
+pub trait ISpace<C: Eq + std::hash::Hash + Send + Sync, P: Clone + Send + Sync, A: Clone + Send + Sync, K: Clone + Send + Sync>: Send + Sync {
     /** Creates a checkpoint.
      *
      * @return A [[Checkpoint]]
      */
-    fn create_checkpoint(&mut self) -> Result<Checkpoint, RSpaceError>;
+    async fn create_checkpoint(&self) -> Result<Checkpoint, RSpaceError>;
 
-    fn get_data(&self, channel: &C) -> Vec<Datum<A>>;
+    async fn get_data(&self, channel: &C) -> Vec<Datum<A>>;
 
-    fn get_waiting_continuations(&self, channels: Vec<C>) -> Vec<WaitingContinuation<P, K>>;
+    async fn get_waiting_continuations(&self, channels: Vec<C>) -> Vec<WaitingContinuation<P, K>>;
 
-    fn get_joins(&self, channel: C) -> Vec<Vec<C>>;
+    async fn get_joins(&self, channel: C) -> Vec<Vec<C>>;
 
     /** Clears the store.  Does not affect the history trie.
      */
-    fn clear(&mut self) -> Result<(), RSpaceError>;
+    async fn clear(&self) -> Result<(), RSpaceError>;
 
     /// Return current history root hash without creating a checkpoint.
-    fn get_root(&self) -> Blake2b256Hash;
+    async fn get_root(&self) -> Blake2b256Hash;
 
     /** Resets the store to the given root.
      *
      * @param root A BLAKE2b256 Hash representing the checkpoint
      */
-    fn reset(&mut self, root: &Blake2b256Hash) -> Result<(), RSpaceError>;
+    async fn reset(&self, root: &Blake2b256Hash) -> Result<(), RSpaceError>;
 
-    fn consume_result(
-        &mut self,
+    async fn consume_result(
+        &self,
         channel: Vec<C>,
         pattern: Vec<P>,
     ) -> Result<Option<(K, Vec<A>)>, RSpaceError>;
 
     // TODO: this should not be exposed - OLD
-    fn to_map(&self) -> HashMap<Vec<C>, Row<P, A, K>>;
+    async fn to_map(&self) -> HashMap<Vec<C>, Row<P, A, K>>;
 
     /**
     Allows to create a "soft" checkpoint which doesn't persist the checkpointed data into history.
     This operation is significantly faster than {@link #createCheckpoint()} because the computationally
     expensive operation of creating the history trie is avoided.
     */
-    fn create_soft_checkpoint(&mut self) -> SoftCheckpoint<C, P, A, K>;
+    async fn create_soft_checkpoint(&self) -> SoftCheckpoint<C, P, A, K>;
 
     /// Drain and return the in-memory event log without cloning the hot-store
     /// snapshot. This is a lightweight alternative when only logs are
     /// needed.
-    fn take_event_log(&mut self) -> Log;
+    async fn take_event_log(&self) -> Log;
 
     /**
     Reverts the ISpace to the state checkpointed using {@link #createSoftCheckpoint()}
     */
-    fn revert_to_soft_checkpoint(
-        &mut self,
+    async fn revert_to_soft_checkpoint(
+        &self,
         checkpoint: SoftCheckpoint<C, P, A, K>,
     ) -> Result<(), RSpaceError>;
 
@@ -130,8 +132,8 @@ pub trait ISpace<C: Eq + std::hash::Hash, P: Clone, A: Clone, K: Clone> {
      * matching data @param continuation A continuation
      * @param persist Whether or not to attempt to persist the data
      */
-    fn consume(
-        &mut self,
+    async fn consume(
+        &self,
         channels: Vec<C>,
         patterns: Vec<P>,
         continuation: K,
@@ -165,15 +167,15 @@ pub trait ISpace<C: Eq + std::hash::Hash, P: Clone, A: Clone, K: Clone> {
      * continuations and/or store data @param data A piece of data
      * @param persist Whether or not to attempt to persist the data
      */
-    fn produce(
-        &mut self,
+    async fn produce(
+        &self,
         channel: C,
         data: A,
         persist: bool,
     ) -> Result<MaybeProduceResult<C, P, A, K>, RSpaceError>;
 
-    fn install(
-        &mut self,
+    async fn install(
+        &self,
         channels: Vec<C>,
         patterns: Vec<P>,
         continuation: K,
@@ -181,13 +183,13 @@ pub trait ISpace<C: Eq + std::hash::Hash, P: Clone, A: Clone, K: Clone> {
 
     /* REPLAY */
 
-    fn rig_and_reset(&mut self, start_root: Blake2b256Hash, log: Log) -> Result<(), RSpaceError>;
+    async fn rig_and_reset(&self, start_root: Blake2b256Hash, log: Log) -> Result<(), RSpaceError>;
 
-    fn rig(&self, log: Log) -> Result<(), RSpaceError>;
+    async fn rig(&self, log: Log) -> Result<(), RSpaceError>;
 
-    fn check_replay_data(&self) -> Result<(), RSpaceError>;
+    async fn check_replay_data(&self) -> Result<(), RSpaceError>;
 
-    fn is_replay(&self) -> bool;
+    async fn is_replay(&self) -> bool;
 
-    fn update_produce(&mut self, produce: Produce) -> ();
+    async fn update_produce(&self, produce: Produce) -> ();
 }

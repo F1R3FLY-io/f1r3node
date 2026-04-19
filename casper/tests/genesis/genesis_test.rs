@@ -254,7 +254,7 @@ async fn from_input_files(
     Ok(genesis_block)
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn genesis_from_input_files_should_generate_random_validators_when_no_bonds_file_is_given() {
     with_gen_resources(
         |mut runtime_manager, genesis_path, _log, _time| async move {
@@ -279,7 +279,7 @@ async fn genesis_from_input_files_should_generate_random_validators_when_no_bond
     .await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn genesis_from_input_files_should_tell_when_bonds_file_does_not_exist() {
     with_gen_resources(
         |mut runtime_manager, genesis_path, _log, _time| async move {
@@ -306,7 +306,7 @@ async fn genesis_from_input_files_should_tell_when_bonds_file_does_not_exist() {
     .await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn genesis_from_input_files_should_fail_with_error_when_bonds_file_cannot_be_parsed() {
     with_gen_resources(
         |mut runtime_manager, genesis_path, _log, _time| async move {
@@ -339,7 +339,7 @@ async fn genesis_from_input_files_should_fail_with_error_when_bonds_file_cannot_
     .await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn genesis_from_input_files_should_create_a_genesis_block_with_the_right_bonds_when_a_proper_bonds_file_is_given(
 ) {
     with_gen_resources(
@@ -388,7 +388,7 @@ async fn genesis_from_input_files_should_create_a_genesis_block_with_the_right_b
     .await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn genesis_from_input_files_should_create_a_valid_genesis_block() {
     with_storage(|block_store, mut block_dag_storage| async move {
         with_gen_resources(
@@ -439,7 +439,7 @@ async fn genesis_from_input_files_should_create_a_valid_genesis_block() {
     .await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn genesis_from_input_files_should_detect_an_existing_bonds_file_in_the_default_location() {
     with_gen_resources(
         |mut runtime_manager, genesis_path, _log, _time| async move {
@@ -484,7 +484,7 @@ async fn genesis_from_input_files_should_detect_an_existing_bonds_file_in_the_de
     .await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "Scala ignore"]
 async fn genesis_from_input_files_should_parse_the_wallets_file_and_create_corresponding_rev_vaults(
 ) {

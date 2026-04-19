@@ -8,7 +8,6 @@ on:
       - trying
       - rust/dev
       - rust/main
-      - rust/staging
     tags: "**"
   pull_request:
     branches:
@@ -354,6 +353,7 @@ jobs:
             integration-tests/test/test_finalization.py \
             integration-tests/test/test_propose.py \
             integration-tests/test/test_replay_correctness.py \
+            integration-tests/test/test_convergence.py \
             integration-tests/test/test_bridge_admin.py \
             integration-tests/test/test_shard_degradation.py \
             integration-tests/test/test_consensus_health.py \
@@ -364,6 +364,7 @@ jobs:
             integration-tests/test/test_trim_state.py \
             -v --tb=short --log-cli-level=WARNING \
             -n 3 --dist=loadgroup \
+            --deselect=integration-tests/test/test_convergence.py::test_network_converges_after_slow_deploy \
             --startup-timeout=600 --command-timeout=300 --timeout=1200 $SCALE_FLAG
 
       - name: Upload Integration Test Logs

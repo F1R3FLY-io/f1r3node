@@ -7,10 +7,10 @@ use super::trace::Log;
 
 pub trait IReplayRSpace<C, P, A, K>: ISpace<C, P, A, K>
 where
-    C: Eq + std::hash::Hash,
-    P: Clone,
-    A: Clone,
-    K: Clone,
+    C: Eq + std::hash::Hash + Send + Sync,
+    P: Clone + Send + Sync,
+    A: Clone + Send + Sync,
+    K: Clone + Send + Sync,
 {
     fn rig_and_reset(&mut self, start_root: Blake2b256Hash, log: Log) -> Result<(), RSpaceError>;
 

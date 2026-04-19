@@ -1,5 +1,3 @@
-> Last updated: 2026-03-23
-
 # Crate: rholang (Interpreter/Reducer)
 
 **Path**: `rholang/`
@@ -65,15 +63,29 @@ Transforms parsed AST into canonical `Par` form with De Bruijn indices.
 ```
 eval_inner():
   1. Group par terms: Sends, Receives, News, Matches, Bundles, Exprs
-  2. For each term type:
-     - Send  -> space.produce(channel, data, persistent)
-     - Receive -> space.consume(channels, patterns, continuation, persistent, peeks)
+  2. tokio::spawn each term as an independent task (true parallel evaluation)
+  3. For each term type:
+     - Send  -> space.produce(channel, data, persistent).await
+     - Receive -> space.consume(channels, patterns, continuation, persistent, peeks).await
      - New -> create unforgeable names via Blake2b512Random, eval body
      - Match -> evaluate target, try each case pattern
      - Bundle -> evaluate in restricted scope
      - Expr -> evaluate arithmetic/logic/collection operations
-  3. If produce/consume returns a match -> dispatch continuation
+  4. If produce/consume returns a match -> dispatch continuation
+  5. Await all spawned tasks, aggregate errors (parTraverseSafe pattern)
 ```
+
+**Parallel evaluation**: Par branches (`A | B | C`) are dispatched as independent
+tokio tasks via `tokio::spawn`, matching Scala's `parTraverse` for true parallel
+execution. Per-channel FIFO locks in RSpace (`tokio::sync::Mutex`) ensure
+deterministic COMM matching. The `ReplayRSpace` event log oracle forces the same
+COMMs during replay regardless of scheduling order.
+
+**Persistent operation re-issue**: When a persistent produce triggers a COMM, the
+data was matched inline (never stored). The reducer re-issues it via
+`self.produce(chan, data, true)` to put it back for future matches. When a
+persistent produce triggers a peek COMM, the reducer also calls `produce_peeks()`
+to re-issue non-persistent peeked data on other channels that RSpace removed.
 
 **Stack safety**: `StackGrowingFuture` wraps recursive calls with `stacker::maybe_grow()` to dynamically expand the thread stack (1MB red zone).
 
@@ -88,12 +100,12 @@ Every operation is metered to prevent resource exhaustion:
 ```rust
 pub struct CostManager {
     state: Arc<Mutex<Cost>>,
-    semaphore: Arc<MetricsSemaphore>,
-    log: Arc<Mutex<Vec<Cost>>>,
+    log: Arc<Mutex<VecDeque<Cost>>>,
+    max_log_entries: usize,
 }
 ```
 
-- `charge(cost)` -- Subtract from remaining budget; returns `OutOfPhlogistonsError` if exhausted
+- `charge(cost)` -- Subtract from remaining budget via `lock()` (blocking, thread-safe under concurrent `tokio::spawn` tasks); returns `OutOfPhlogistonsError` if exhausted. Uses saturating arithmetic to prevent overflow with `i64::MAX` budgets (genesis deploys).
 - `set(cost)` -- Reset balance
 - `get()` -- Query remaining
 
@@ -110,6 +122,31 @@ pub struct CostManager {
 | `consume` | O(channels * patterns * continuation) |
 | Parsing | O(source_code_length) |
 | Substitution | O(result_term_size) |
+
+## ChargingRSpace
+
+Wraps any `ISpace` to add cost metering:
+```rust
+pub fn charging_rspace<T: ISpace>(space: T, cost: _cost) -> impl ISpace
+```
+
+Pre-charges `storage_cost_produce` or `storage_cost_consume` before each operation.
+When a COMM fires, `handle_result` adjusts costs based on the Scala-aligned model:
+
+- **Refund consume**: Always refunded for non-persistent consumes. For persistent
+  consumes, only refunded when the consume triggered the COMM (identity check via
+  raw `random_state` bytes).
+- **Refund produces**: Always refunded for non-persistent produces. For persistent
+  produces, only refunded when the produce triggered the COMM (identity check).
+- **Event storage cost**: Charged on `last_iteration` (when the triggering operation
+  is non-persistent).
+- **COMM event storage cost**: Always charged when a COMM fires.
+
+The identity check uses raw `Vec<u8>` proto bytes from `ListParWithRandom.random_state`,
+matching Scala's ScalaPB-deserialized `Blake2b512Random` comparison. The Scala cost
+model is designed so that the total cost of a COMM balances regardless of trigger
+direction: the re-issue cost of persistent operations cancels with the refund
+difference.
 
 ## System Processes (Built-in Channels)
 
@@ -190,14 +227,6 @@ During replay, `DispatchType::FailedNonDeterministicCall` triggers `Produce::wit
 - `FailedNonDeterministicCall(err)` -- Failed external call
 - `Skip` -- No-op
 
-## ChargingRSpace
-
-Wraps any `ISpace` to add cost metering:
-```rust
-pub fn charging_rspace<T: ISpace>(space: T, cost: _cost) -> impl ISpace
-```
-Charges `storage_cost_produce` or `storage_cost_consume` before each operation.
-
 ## RhoRuntime
 
 ```rust
@@ -206,11 +235,16 @@ pub trait RhoRuntime: Send + Sync {
                       rand: Blake2b512Random) -> Result<EvaluateResult, InterpreterError>;
     async fn inj(&mut self, par: Par, env: &Env<Par>, rand: Blake2b512Random)
         -> Result<(), InterpreterError>;
-    // ... checkpoint operations
+    async fn create_checkpoint(&mut self) -> Checkpoint;
+    async fn create_soft_checkpoint(&mut self) -> SoftCheckpoint<...>;
+    async fn reset(&mut self, root: &Blake2b256Hash) -> Result<(), InterpreterError>;
+    // ... other checkpoint/state operations (all async)
 }
 ```
 
 `RhoRuntimeImpl` is the concrete implementation connecting the interpreter to RSpace.
+The `RhoISpace` type is `Arc<Box<dyn ISpace<...> + Send + Sync>>` -- no outer mutex,
+as the async ISpace provides its own interior mutability and per-channel locking.
 
 ## Pattern Matching
 
@@ -245,8 +279,14 @@ C interface for Scala JNA interop:
 
 Test suites in `tests/`: `interpreter_spec.rs`, `reduce_spec.rs`, `substitute_test.rs`, `crypto_channels_spec.rs`, `abort_spec.rs`, `deploy_data_spec.rs`, `demo_verification.rs`, `getsubtrie_spec.rs`, `setsubtrie_spec.rs`, `replay_memory_profile_spec.rs`, `ollama_integration_test.rs`, `openai_service_spec.rs`, `zipper_*_spec.rs` (3 files), `accounting/cost_accounting_spec.rs`, `accounting/non_deterministic_processes_spec.rs`, `matcher/match_test.rs`.
 
+The `cost_accounting_spec.rs` suite includes:
+- `cost_should_be_repeatable_when_generated` -- 10,000 randomly generated contracts verified for play/replay cost determinism
+- `peek_with_parallel_produce_should_have_deterministic_replay_cost` -- regression test for f1r3node#178 (peek + parallel produce)
+- `total_cost_of_evaluation` -- verifies cost log internal consistency
+- Phlo exhaustion tests for single and multiple execution branches
+
 The `non_deterministic_processes_spec.rs` suite contains 9 replay consistency tests using the `evaluate_and_replay()` helper, which follows a play-checkpoint-rig-replay-verify cycle: evaluate the Rholang term, create a soft checkpoint, configure mock services to fail, replay from the checkpoint, and verify the replay trace matches the original. Tests cover GPT-4, DALL-E 3, TTS, and gRPC tell for both success and error cases.
 
 **See also:** [rholang/ crate README](../../rholang/README.md) | [Rholang Tutorial](./rholangtut.md) | [Pattern Matching](./rholangmatchingtut.md) | [Ollama Integration](./ollama.md)
 
-[← Back to docs index](../README.md)
+[<- Back to docs index](../README.md)

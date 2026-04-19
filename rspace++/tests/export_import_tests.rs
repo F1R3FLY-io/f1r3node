@@ -46,7 +46,7 @@ impl Match<Pattern, String> for StringMatch {
 // TODO: Don't works for MergingHistory
 #[tokio::test]
 async fn export_and_import_of_one_page_should_works_correctly() {
-    let (mut space1, exporter1, importer1, mut space2, _, importer2) = test_setup().await;
+    let (space1, exporter1, importer1, space2, _, importer2) = test_setup().await;
 
     let page_size = 1000;
     let data_size = 10;
@@ -56,11 +56,11 @@ async fn export_and_import_of_one_page_should_works_correctly() {
 
     // Generate init data in space1
     for i in 0..data_size {
-        let res = space1.produce(format!("ch{}", i), format!("data{}", i), false);
+        let res = space1.produce(format!("ch{}", i), format!("data{}", i), false).await;
         assert!(res.is_ok());
     }
 
-    let init_point = space1.create_checkpoint().unwrap();
+    let init_point = space1.create_checkpoint().await.unwrap();
 
     // Export 1 page from space1
     let init_start_path: Vec<(Blake2b256Hash, Option<Byte>)> =
@@ -90,7 +90,7 @@ async fn export_and_import_of_one_page_should_works_correctly() {
     let _ = importer2.set_history_items(history_items);
     let _ = importer2.set_data_items(data_items);
     let _ = importer2.set_root(&init_point.root);
-    let _ = space2.reset(&init_point.root);
+    let _ = space2.reset(&init_point.root).await;
 
     // space2.store.print();
 
@@ -102,19 +102,19 @@ async fn export_and_import_of_one_page_should_works_correctly() {
             continuation.clone(),
             false,
             BTreeSet::new(),
-        );
+        ).await;
         assert!(res.is_ok());
     }
 
     // println!("\nspace2: {:?}", space2.to_map());
 
-    let end_point = space2.create_checkpoint().unwrap();
+    let end_point = space2.create_checkpoint().await.unwrap();
     assert_eq!(end_point.root, RadixHistory::empty_root_node_hash())
 }
 
 #[tokio::test]
 async fn multipage_export_should_work_correctly() {
-    let (mut space1, exporter1, importer1, mut space2, _, importer2) = test_setup().await;
+    let (space1, exporter1, importer1, space2, _, importer2) = test_setup().await;
 
     let page_size = 10;
     let data_size = 1000;
@@ -177,11 +177,11 @@ async fn multipage_export_should_work_correctly() {
 
     // Generate init data in space1
     for i in 0..data_size {
-        let res = space1.produce(format!("ch{}", i), format!("data{}", i), false);
+        let res = space1.produce(format!("ch{}", i), format!("data{}", i), false).await;
         assert!(res.is_ok());
     }
 
-    let init_point = space1.create_checkpoint().unwrap();
+    let init_point = space1.create_checkpoint().await.unwrap();
 
     // Multipage export from space1
     let init_start_path: Vec<(Blake2b256Hash, Option<Byte>)> =
@@ -207,7 +207,7 @@ async fn multipage_export_should_work_correctly() {
     let _ = importer2.set_history_items(history_items);
     let _ = importer2.set_data_items(data_items);
     let _ = importer2.set_root(&init_point.root);
-    let _ = space2.reset(&init_point.root);
+    let _ = space2.reset(&init_point.root).await;
 
     // Testing data in space2 (match all installed channels)
     for i in 0..data_size {
@@ -217,10 +217,10 @@ async fn multipage_export_should_work_correctly() {
             continuation.clone(),
             false,
             BTreeSet::new(),
-        );
+        ).await;
         assert!(res.is_ok());
     }
-    let end_point = space2.create_checkpoint().unwrap();
+    let end_point = space2.create_checkpoint().await.unwrap();
     assert_eq!(end_point.root, RadixHistory::empty_root_node_hash())
 }
 
@@ -229,7 +229,7 @@ async fn multipage_export_should_work_correctly() {
 // nodes.
 #[tokio::test]
 async fn multipage_export_with_skip_should_work_correctly() {
-    let (mut space1, exporter1, importer1, mut space2, _, importer2) = test_setup().await;
+    let (space1, exporter1, importer1, space2, _, importer2) = test_setup().await;
 
     let page_size = 10;
     let data_size = 1000;
@@ -293,11 +293,11 @@ async fn multipage_export_with_skip_should_work_correctly() {
 
     // Generate init data in space1
     for i in 0..data_size {
-        let res = space1.produce(format!("ch{}", i), format!("data{}", i), false);
+        let res = space1.produce(format!("ch{}", i), format!("data{}", i), false).await;
         assert!(res.is_ok());
     }
 
-    let init_point = space1.create_checkpoint().unwrap();
+    let init_point = space1.create_checkpoint().await.unwrap();
 
     // Multipage export with skip from space1
     let init_start_path: Vec<(Blake2b256Hash, Option<Byte>)> =
@@ -323,7 +323,7 @@ async fn multipage_export_with_skip_should_work_correctly() {
     let _ = importer2.set_history_items(history_items);
     let _ = importer2.set_data_items(data_items);
     let _ = importer2.set_root(&init_point.root);
-    let _ = space2.reset(&init_point.root);
+    let _ = space2.reset(&init_point.root).await;
 
     // Testing data in space2 (match all installed channels)
     for i in 0..data_size {
@@ -333,10 +333,10 @@ async fn multipage_export_with_skip_should_work_correctly() {
             continuation.clone(),
             false,
             BTreeSet::new(),
-        );
+        ).await;
         assert!(res.is_ok());
     }
-    let end_point = space2.create_checkpoint().unwrap();
+    let end_point = space2.create_checkpoint().await.unwrap();
     assert_eq!(end_point.root, RadixHistory::empty_root_node_hash())
 }
 

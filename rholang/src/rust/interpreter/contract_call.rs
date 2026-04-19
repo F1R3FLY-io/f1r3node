@@ -47,7 +47,6 @@ impl ContractCall {
         &self,
         contract_args: (Vec<ListParWithRandom>, bool, Vec<Par>),
     ) -> Option<(Producer, bool, Vec<Par>, Vec<Par>)> {
-        // println!("\ncontract_call unapply");
         if contract_args.0.len() == 1 {
             let (args, rand, is_replay, previous) = (
                 contract_args.0[0].pars.clone(),
@@ -65,21 +64,16 @@ impl ContractCall {
                 let values_vec: Vec<Par> = values.to_vec();
                 let ch_cloned: Par = ch.clone();
                 Box::pin(async move {
-                    let mut space_lock = space.try_lock().unwrap();
-                    // println!("\nhit produce in contract_call, values: {:?}", values_vec);
-                    let produce_result = space_lock.produce(
+                    let produce_result = space.produce(
                         ch_cloned,
                         ListParWithRandom {
                             pars: values_vec,
                             random_state: rand,
                         },
                         false,
-                    )?;
+                    ).await?;
 
-                    let is_replay = space_lock.is_replay();
-                    drop(space_lock);
-
-                    // println!("\nproduce_result in contract_call: {:?}", produce_result);
+                    let is_replay = space.is_replay().await;
 
                     let dispatch_result = match produce_result {
                         Some((cont, channels, produce)) => {
