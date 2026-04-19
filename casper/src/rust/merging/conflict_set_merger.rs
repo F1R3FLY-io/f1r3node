@@ -263,6 +263,10 @@ pub fn merge<
         "source" => crate::rust::metrics_constants::MERGING_METRICS_SOURCE
     ).record(combine_all_changes_time.as_secs_f64());
 
+    let combined_datums_count = all_changes.datums_changes.len();
+    let combined_conts_count = all_changes.cont_changes.len();
+    let combined_joins_count = all_changes.consume_channels_to_join_serialized_map.len();
+
     // Combine all mergeable channels (in sorted order)
     let mut all_mergeable_channels = NumberChannelsDiff::new();
     for item in &to_merge_items {
@@ -283,8 +287,8 @@ pub fn merge<
     let log_str = format!(
         "Merging done: late set size {}; actual set size {}; computed branches ({}) in {:?}; \
         conflicts map in {:?}; rejection options ({}) in {:?}; optimal rejection set size {}; \
-        rejected as late dependency {}; changes combined in {:?}; trie actions ({}) in {:?}; \
-        actions applied in {:?}",
+        rejected as late dependency {}; changes combined (datums={}, conts={}, joins={}) in {:?}; \
+        trie actions ({}) in {:?}; actions applied in {:?}",
         late_set.len(),
         actual_set.len(),
         branches_set.0.len(),
@@ -294,6 +298,9 @@ pub fn merge<
         rejection_options_time,
         optimal_rejection.0.len(),
         rejected_as_dependents.0.len(),
+        combined_datums_count,
+        combined_conts_count,
+        combined_joins_count,
         combine_all_changes_time,
         trie_actions.len(),
         compute_actions_time,
