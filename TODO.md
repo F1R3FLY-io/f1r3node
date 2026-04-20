@@ -1,5 +1,33 @@
 # TODO
 
+## Bug: Validator permanently stuck if initial bootstrap connection fails
+
+When a validator starts before the boot node's P2P listener is ready, the initial TCP connection to boot fails with "Connection refused." The validator discovers other validators via Kademlia, connects to them, but **never retries the connection to boot**. Since the genesis ceremony only broadcasts the UnapprovedBlock from boot, the validator never receives the genesis candidate and loops forever on "Casper engine present but Casper not initialized yet."
+
+**Root cause (confirmed via logs):**
+1. Validator1 starts at T+0, tries to connect to boot — "Connection refused (os error 111)"
+2. Boot starts listening at T+1, computes genesis, broadcasts UnapprovedBlock at T+10
+3. Validator2 and validator3 are connected to boot, receive genesis, approve it
+4. Boot gets 2/2 required signatures, transitions to Running
+5. Validator2 and validator3 request ApprovedBlock from boot, initialize successfully
+6. **Validator1 never reconnects to boot** — stuck permanently in "Casper not initialized yet" loop
+7. Validator1 connects to validator3 via discovery at T+20 but this doesn't help — genesis ceremony only comes from boot
+
+**Impact:** ~50% of integration test runs fail due to startup timeout. All 5 containers report healthy (Docker healthcheck passes) but the shard is non-functional.
+
+**Fix locations:**
+- `comm/src/rust/rp/connect.rs:325` — connection failure handling (should retry bootstrap peer)
+- `casper/src/rust/engine/casper_launch.rs:770` — genesis validator mode (should retry fetching approved block from any peer, not just boot)
+- `node/src/rust/runtime/node_runtime.rs:572` — "Waiting for first connection" (should have retry logic for bootstrap)
+
+**Fix options:**
+1. **Retry bootstrap connection**: After initial connection failure, retry boot peer with exponential backoff
+2. **Request ApprovedBlock from any peer**: If validator connects to other validators that already have the approved block, request it from them instead of waiting for boot's broadcast
+3. **Increase boot startup priority**: Use Docker `depends_on` with healthcheck to ensure boot is fully ready before validators start (integration test workaround only)
+
+- Location: `node/src/rust/runtime/setup.rs:677` (the warning loop)
+- Reproduction: `F1R3FLY_NODE_IMAGE=... pytest test_bridge_admin.py -v -s --keep-running` — fails ~50% of runs
+
 ## Review: `compute_parents_post_state_regression_spec.rs`
 
 This test file needs review and cleanup:

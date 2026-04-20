@@ -1901,6 +1901,105 @@ in {{
     );
 }
 
+/// Verifies that exploratory deploy can query user-deployed contracts
+/// through the registry. The `contract` keyword is reserved in Rholang,
+/// so variable names in the query must not use it.
+///
+/// Also verifies that play_exploratory_deploy propagates errors (previously
+/// errors were silently swallowed, returning empty results).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn exploratory_deploy_async_contract_query() {
+    use crypto::rust::signatures::signatures_alg::SignaturesAlg;
+
+    with_runtime_manager(|runtime_manager, _genesis_context, genesis_block| async move {
+        let genesis_state = genesis_block.body.state.post_state_hash.clone();
+
+        // Deploy a contract with a persistent state channel + persistent consume
+        let contract_rho = r#"
+new return, stateCh, queryCh,
+    insertArbitrary(`rho:registry:insertArbitrary`)
+in {
+  stateCh!(42) |
+  contract queryCh(@method, ret) = {
+    for (@v <- stateCh) {
+      stateCh!(v) |
+      ret!(v)
+    }
+  } |
+  new uriCh in {
+    insertArbitrary!(bundle+{*queryCh}, *uriCh) |
+    for (@uri <- uriCh) {
+      return!(uri)
+    }
+  }
+}
+"#;
+
+        // Use a unique key to avoid GPrivate collision with exploratory deploy's DEFAULT_SEC
+        let (contract_key, _) = crypto::rust::signatures::secp256k1::Secp256k1.new_key_pair();
+        let deploy = construct_deploy::source_deploy(
+            contract_rho.to_string(), 0, Some(500_000_000), None, Some(contract_key), None, None,
+        ).unwrap();
+
+        // Deploy and read URI via capture_results
+        let uri_pars = runtime_manager
+            .capture_results(&genesis_state, &deploy)
+            .await
+            .expect("deploy contract");
+        assert!(!uri_pars.is_empty(), "Contract deploy returned no URI");
+
+        let uri_str = format!("{:?}", uri_pars[0]);
+        let uri_regex = regex::Regex::new(r"rho:id:[a-zA-Z0-9]+").unwrap();
+        let uri = uri_regex.find(&uri_str).expect("No rho:id URI found").as_str().to_string();
+
+        // Checkpoint via a fresh runtime so exploratory deploy can see the state
+        let runtime = runtime_manager.spawn_runtime().await;
+        let mut runtime_ops = RuntimeOps::new(runtime);
+        runtime_ops.runtime
+            .reset(&Blake2b256Hash::from_bytes_prost(&genesis_state)).await
+            .expect("reset");
+        let eval_result = runtime_ops.evaluate(&deploy).await.expect("evaluate");
+        assert!(eval_result.errors.is_empty(), "Deploy errors: {:?}", eval_result.errors);
+        let checkpoint = runtime_ops.runtime.create_checkpoint().await;
+        let post_state: StateHash = checkpoint.root.to_bytes_prost().into();
+        tracing::info!("Contract at {}, post_state={}", uri, hex::encode(&post_state[..8]));
+
+        // Query with correct variable names (NOT using reserved word 'contract')
+        let query_term = format!(
+            r#"new ret, lookup(`rho:registry:lookup`), ch in {{
+                lookup!(`{}`, *ch) |
+                for (c <- ch) {{
+                    c!("get", *ret)
+                }}
+            }}"#, uri
+        );
+        let (query_result, _) = runtime_manager
+            .play_exploratory_deploy(query_term, &post_state)
+            .await
+            .expect("query exploratory deploy");
+        tracing::info!("Query with correct var name: {} pars", query_result.len());
+        assert_eq!(query_result.len(), 1, "Query should return 1 par (the value 42)");
+
+        // Verify play_exploratory_deploy propagates parse errors (not swallows them)
+        let bad_term = format!(
+            r#"new ret, lookup(`rho:registry:lookup`), ch in {{
+                lookup!(`{}`, *ch) |
+                for (contract <- ch) {{
+                    contract!("get", *ret)
+                }}
+            }}"#, uri
+        );
+        let bad_result = runtime_manager
+            .play_exploratory_deploy(bad_term, &post_state)
+            .await;
+        assert!(bad_result.is_err(),
+            "Using reserved word 'contract' as var name should return Err, not empty Ok");
+    })
+    .await
+    .unwrap();
+}
+
+
 /// Reproduces the replay determinism issue seen with tokio::spawn.
 /// Deploys a contract with parallel composition, plays it, then replays it.
 /// If tokio::spawn introduces non-deterministic evaluation order, the replay
