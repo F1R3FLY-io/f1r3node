@@ -885,13 +885,7 @@ impl RuntimeOps {
                 .await
         })();
 
-        match deploy_result.await {
-            Ok(result) => Ok(result),
-            Err(err) => {
-                tracing::error!("Error in play_exploratory_deploy: {:?}", err);
-                Ok((Vec::new(), 0))
-            }
-        }
+        deploy_result.await
     }
 
     async fn play_exploratory_par(
