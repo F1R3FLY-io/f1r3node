@@ -15,11 +15,9 @@ on:
       - main
       - "feature/**"
 
-# Prevent interleaving of integration test jobs on single-runner-per-arch
-# self-hosted runners. A second workflow run for the same ref queues until
-# the first completes rather than cancelling it.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   # This is read by every new JVM. Every JVM thinks it can use up to 80% of
