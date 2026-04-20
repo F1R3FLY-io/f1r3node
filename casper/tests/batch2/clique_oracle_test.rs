@@ -53,6 +53,154 @@ fn create_block<'a>(
     }
 }
 
+/// Verifies that cached fault tolerance in BlockMetadata is stable after
+/// finalization, even when the DAG state changes.
+///
+/// DAG structure:
+/// ```
+///   Phase 1 — linear chain, all validators cooperating:
+///     genesis ← b1(V1) ← b2(V2) ← b3(V3) ← b4(V1) ← b5(V2) ← b6(V3)
+///
+///   Phase 2 — V2 and V3 fork off genesis (simulating different DAG tip on another node):
+///     genesis ← f1(V2) ← f2(V3)
+/// ```
+///
+/// After Phase 1, b1 is finalized with FT=1.0 (all validators agree).
+/// The FT is cached in BlockMetadata.fault_tolerance_value.
+///
+/// After Phase 2, V2 and V3's latest messages are on a fork — the clique
+/// oracle would return FT=-1.0 for b1. But the cached value in metadata
+/// remains 1.0 because finalization is permanent.
+#[tokio::test]
+async fn finalized_block_ft_should_not_change_with_dag_state() {
+    with_storage(|mut block_store, mut block_dag_storage| async move {
+        let v1 = generate_validator(Some("FT Stable V1"));
+        let v2 = generate_validator(Some("FT Stable V2"));
+        let v3 = generate_validator(Some("FT Stable V3"));
+        let bonds = vec![
+            Bond { validator: v1.clone(), stake: 100 },
+            Bond { validator: v2.clone(), stake: 100 },
+            Bond { validator: v3.clone(), stake: 100 },
+        ];
+
+        let genesis = create_genesis_block(
+            &mut block_store,
+            &mut block_dag_storage,
+            None,
+            Some(bonds.clone()),
+            None, None, None, None, None, None,
+        );
+
+        let creator1 = create_block(&bonds, &genesis, &v1);
+        let creator2 = create_block(&bonds, &genesis, &v2);
+        let creator3 = create_block(&bonds, &genesis, &v3);
+
+        // Phase 1: linear chain with full justification propagation
+        let gj = HashMap::from([(&v1, &genesis), (&v2, &genesis), (&v3, &genesis)]);
+
+        let b1 = creator1(&mut block_store, &mut block_dag_storage, &genesis, &gj);
+
+        let b2 = creator2(
+            &mut block_store, &mut block_dag_storage, &b1,
+            &HashMap::from([(&v1, &b1), (&v2, &genesis), (&v3, &genesis)]),
+        );
+
+        let b3 = creator3(
+            &mut block_store, &mut block_dag_storage, &b2,
+            &HashMap::from([(&v1, &b1), (&v2, &b2), (&v3, &genesis)]),
+        );
+
+        let b4 = creator1(
+            &mut block_store, &mut block_dag_storage, &b3,
+            &HashMap::from([(&v1, &b1), (&v2, &b2), (&v3, &b3)]),
+        );
+
+        let b5 = creator2(
+            &mut block_store, &mut block_dag_storage, &b4,
+            &HashMap::from([(&v1, &b4), (&v2, &b2), (&v3, &b3)]),
+        );
+
+        let _b6 = creator3(
+            &mut block_store, &mut block_dag_storage, &b5,
+            &HashMap::from([(&v1, &b4), (&v2, &b5), (&v3, &b3)]),
+        );
+
+        // Compute FT via oracle before finalization
+        let dag_phase1 = block_dag_storage.get_representation();
+        let safety_oracle = CliqueOracleImpl;
+        let ft_phase1 = safety_oracle
+            .normalized_fault_tolerance(&dag_phase1, &b1.block_hash)
+            .await
+            .unwrap();
+
+        assert!(
+            ft_phase1 > 0.0,
+            "b1 should have positive FT when all validators agree (got {ft_phase1})"
+        );
+
+        // Finalize b1 with the computed FT — this caches it in BlockMetadata
+        block_dag_storage
+            .record_directly_finalized(
+                b1.block_hash.clone(),
+                ft_phase1,
+                |_| async { Ok(()) },
+            )
+            .await
+            .unwrap();
+
+        // Verify FT is cached in metadata
+        let dag_after_finalize = block_dag_storage.get_representation();
+        let meta_after_finalize = dag_after_finalize.lookup(&b1.block_hash).unwrap().unwrap();
+        assert!(
+            meta_after_finalize.finalized,
+            "b1 should be marked as finalized"
+        );
+        assert_eq!(
+            meta_after_finalize.fault_tolerance_value, ft_phase1,
+            "Cached FT should match the value at finalization time"
+        );
+
+        // Phase 2: V2 and V3 create blocks forking off genesis (not through b1).
+        let f1 = creator2(
+            &mut block_store, &mut block_dag_storage, &genesis,
+            &HashMap::from([(&v1, &genesis), (&v2, &genesis), (&v3, &genesis)]),
+        );
+
+        let _f2 = creator3(
+            &mut block_store, &mut block_dag_storage, &f1,
+            &HashMap::from([(&v1, &genesis), (&v2, &f1), (&v3, &genesis)]),
+        );
+
+        // Verify the oracle now returns a different (lower) FT for b1
+        let dag_phase2 = block_dag_storage.get_representation();
+        let ft_oracle_phase2 = safety_oracle
+            .normalized_fault_tolerance(&dag_phase2, &b1.block_hash)
+            .await
+            .unwrap();
+        assert!(
+            ft_oracle_phase2 < ft_phase1,
+            "Oracle FT should decrease after fork (was {ft_phase1}, now {ft_oracle_phase2})"
+        );
+
+        // But the cached metadata FT should be unchanged
+        let meta_phase2 = dag_phase2.lookup(&b1.block_hash).unwrap().unwrap();
+        assert_eq!(
+            meta_phase2.fault_tolerance_value, ft_phase1,
+            "Cached FT in metadata should be immutable after finalization. \
+             Phase 1 (cached): {ft_phase1}, Phase 2 (cached): {}",
+            meta_phase2.fault_tolerance_value
+        );
+
+        // The cached value must be above any reasonable threshold
+        assert!(
+            meta_phase2.fault_tolerance_value > 0.0,
+            "Cached FT must be above threshold (got {})",
+            meta_phase2.fault_tolerance_value
+        );
+    })
+    .await
+}
+
 // See [[/docs/casper/images/cbc-casper_ping_pong_diagram.png]]
 /**
 *       *     b8
@@ -595,6 +743,104 @@ async fn clique_oracle_growth_feedback_loop_stale_justification_chain() {
                 "  height={height:>3} clique_oracle_ms={elapsed_ms} fault_tolerance={fault_tolerance:.4}"
             );
         }
+    })
+    .await
+}
+
+/// Tests whether a finalized block that becomes unreachable from future LFBs
+/// gets its cached FT updated by the propagation pass.
+///
+/// DAG structure:
+/// ```
+///   genesis
+///    ├── b1_v1 (V1, height 1) ← finalized as first LFB with FT=0.33
+///    ├── b1_v2 (V2, height 1)
+///    └── b1_v3 (V3, height 1)
+///              └── b2 (V1, height 2, parent=b1_v3) ← later LFB
+///
+///   b2's ancestor chain: b2 → b1_v3 → genesis
+///   b1_v1 is NOT in b2's ancestor chain (it's a sibling at height 1)
+/// ```
+///
+/// Question: does propagate_ft_to_ancestors update b1_v1 when b2 is finalized?
+/// If not, b1_v1 stays at FT=0.33 forever — the node issue.
+#[tokio::test]
+async fn orphaned_finalized_block_should_still_get_ft_updated() {
+    with_storage(|mut block_store, mut block_dag_storage| async move {
+        let v1 = generate_validator(Some("Orphan V1"));
+        let v2 = generate_validator(Some("Orphan V2"));
+        let v3 = generate_validator(Some("Orphan V3"));
+        let bonds = vec![
+            Bond { validator: v1.clone(), stake: 100 },
+            Bond { validator: v2.clone(), stake: 100 },
+            Bond { validator: v3.clone(), stake: 100 },
+        ];
+
+        let genesis = create_genesis_block(
+            &mut block_store,
+            &mut block_dag_storage,
+            None,
+            Some(bonds.clone()),
+            None, None, None, None, None, None,
+        );
+
+        let creator1 = create_block(&bonds, &genesis, &v1);
+        let creator2 = create_block(&bonds, &genesis, &v2);
+        let creator3 = create_block(&bonds, &genesis, &v3);
+
+        let gj = HashMap::from([(&v1, &genesis), (&v2, &genesis), (&v3, &genesis)]);
+
+        // Three blocks at height 1, one per validator, all parented on genesis
+        let b1_v1 = creator1(&mut block_store, &mut block_dag_storage, &genesis, &gj);
+        let _b1_v2 = creator2(&mut block_store, &mut block_dag_storage, &genesis, &gj);
+        let b1_v3 = creator3(&mut block_store, &mut block_dag_storage, &genesis, &gj);
+
+        // Finalize b1_v1 as the first LFB with a low FT
+        block_dag_storage
+            .record_directly_finalized(b1_v1.block_hash.clone(), 0.33, |_| async { Ok(()) })
+            .await
+            .unwrap();
+
+        let dag_after_first = block_dag_storage.get_representation();
+        let meta_v1 = dag_after_first.lookup(&b1_v1.block_hash).unwrap().unwrap();
+        assert!(
+            (meta_v1.fault_tolerance_value - 0.33).abs() < 0.01,
+            "b1_v1 should have FT=0.33 after first finalization (got {})",
+            meta_v1.fault_tolerance_value
+        );
+
+        // Build b2 on top of b1_v3 (NOT b1_v1) — the DAG diverges
+        let b2 = creator1(
+            &mut block_store, &mut block_dag_storage, &b1_v3,
+            &HashMap::from([(&v1, &b1_v1), (&v2, &genesis), (&v3, &b1_v3)]),
+        );
+
+        // Finalize b2 as the new LFB with FT=1.0
+        // b2's ancestor chain: b2 → b1_v3 → genesis
+        // b1_v1 is NOT in this chain
+        block_dag_storage
+            .record_directly_finalized(b2.block_hash.clone(), 1.0, |_| async { Ok(()) })
+            .await
+            .unwrap();
+
+        // Check: did b1_v1 get updated?
+        let dag_after_second = block_dag_storage.get_representation();
+        let meta_v1_after = dag_after_second.lookup(&b1_v1.block_hash).unwrap().unwrap();
+
+        eprintln!(
+            "b1_v1 FT after second finalization: {} (expected 1.0)",
+            meta_v1_after.fault_tolerance_value
+        );
+
+        // This assertion will FAIL if propagation doesn't reach orphaned
+        // finalized blocks — confirming the node issue.
+        assert!(
+            (meta_v1_after.fault_tolerance_value - 1.0).abs() < 0.01,
+            "b1_v1 should have FT updated to 1.0 after second finalization, \
+             but got {}. The block is finalized but not in the new LFB's \
+             ancestor chain — propagation didn't reach it.",
+            meta_v1_after.fault_tolerance_value
+        );
     })
     .await
 }

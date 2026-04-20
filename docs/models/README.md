@@ -1,4 +1,4 @@
-> Last updated: 2026-03-23
+> Last updated: 2026-04-19
 
 # Crate: models
 
@@ -28,6 +28,7 @@ pub struct BlockMetadata {
     pub invalid: bool,
     pub directly_finalized: bool,
     pub finalized: bool,
+    pub fault_tolerance_value: f32,  // cached normalized FT at finalization time
 }
 ```
 

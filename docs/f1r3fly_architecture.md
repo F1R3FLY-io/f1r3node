@@ -32,6 +32,7 @@ Implements CBC Casper consensus protocol for distributed blockchain consensus ba
 - PoS (Proof of Stake) validator management with staking and slashing
 - Equivocation detection and byzantine fault tolerance
 - Safety and liveness guarantees through CBC protocol design with mathematical finality thresholds
+- Fault tolerance caching: FT value is stored in `BlockMetadata` at finalization time, ensuring consistent finality reporting across all nodes
 
 **Relationships:** Uses `rspace` and `rholang` for state execution, `comm` for network coordination, `block-storage` for persistence, `models` for data structures.
 

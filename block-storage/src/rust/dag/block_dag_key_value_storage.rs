@@ -770,7 +770,9 @@ impl BlockDagKeyValueStorage {
 
             if approved {
                 let mut block_metadata_guard = self.block_metadata_index.write().unwrap();
-                block_metadata_guard.record_finalized(block_hash, HashSet::new())?;
+                // Genesis/approved block has FT=1.0 by construction: it is the DAG root,
+                // all validators start from it, so all stake agrees.
+                block_metadata_guard.record_finalized(block_hash, HashSet::new(), 1.0)?;
             }
 
             Ok(self.get_representation_internal())
@@ -790,6 +792,7 @@ impl BlockDagKeyValueStorage {
     pub async fn record_directly_finalized<F, Fut>(
         &self,
         directly_finalized_hash: BlockHash,
+        ft_value: f32,
         mut finalization_effect: F,
     ) -> Result<(), KvStoreError>
     where
@@ -816,7 +819,7 @@ impl BlockDagKeyValueStorage {
                 let _lock_guard = self.global_lock.lock().unwrap();
                 let mut block_metadata_index_guard = self.block_metadata_index.write().unwrap();
                 block_metadata_index_guard
-                    .record_finalized(directly_finalized_hash.clone(), indirectly_finalized)
+                    .record_finalized(directly_finalized_hash.clone(), indirectly_finalized, ft_value)
             };
 
         let mut effect_applied: HashSet<BlockHash> = HashSet::new();
@@ -847,7 +850,15 @@ impl BlockDagKeyValueStorage {
             };
 
             if pending_effect.is_empty() {
-                return persist_effect_applied(true, &effect_applied);
+                persist_effect_applied(true, &effect_applied)?;
+
+                // Propagate FT to all finalized blocks whose cached value is lower.
+                // This ensures FT converges toward 1.0 as later finalization
+                // rounds produce higher agreement. Covers orphaned branches
+                // not reachable via the new LFB's ancestor chain.
+                self.propagate_ft_to_finalized_blocks(ft_value)?;
+
+                return Ok(());
             }
 
             // Execute async effect without holding lock.
@@ -864,5 +875,19 @@ impl BlockDagKeyValueStorage {
             MAX_FINALIZATION_RECONCILE_LOOPS,
             PrettyPrinter::build_string_bytes(&directly_finalized_hash)
         )))
+    }
+
+    fn propagate_ft_to_finalized_blocks(
+        &self,
+        ft_value: f32,
+    ) -> Result<(), KvStoreError> {
+        let _lock_guard = self.global_lock.lock().unwrap();
+
+        // Update ALL finalized blocks with lower FT, not just ancestors of the
+        // current LFB. In a multi-parent DAG, finalized blocks on orphaned
+        // branches are not reachable via the ancestor chain of the new LFB.
+        let mut block_metadata_index_guard = self.block_metadata_index.write().unwrap();
+        let finalized_hashes = block_metadata_index_guard.finalized_block_hashes();
+        block_metadata_index_guard.update_ft_if_higher(finalized_hashes, ft_value)
     }
 }
