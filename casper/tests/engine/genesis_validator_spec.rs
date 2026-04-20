@@ -1,5 +1,4 @@
 // See casper/src/test/scala/coop/rchain/casper/engine/GenesisValidatorSpec.scala
-use shared::rust::shared::f1r3fly_events::{EventPublisher, EventPublisherFactory};
 
 use crate::engine::setup::TestFixture;
 use casper::rust::engine::block_approver_protocol::BlockApproverProtocol;
@@ -15,10 +14,6 @@ use tokio::time::{sleep, Duration};
 struct GenesisValidatorSpec;
 
 impl GenesisValidatorSpec {
-    fn event_bus() -> Box<dyn EventPublisher> {
-        EventPublisherFactory::noop()
-    }
-
     // TODO should be moved to Rust BlockApproverProtocolTest.createUnapproved, when BlockApproverProtocolTest will be created
     fn create_unapproved(required_sigs: i32, block: &BlockMessage) -> UnapprovedBlock {
         UnapprovedBlock {
@@ -32,7 +27,7 @@ impl GenesisValidatorSpec {
     }
 
     async fn respond_on_unapproved_block_messages_with_block_approval() {
-        let _event_bus = Self::event_bus();
+        let _event_bus = shared::rust::shared::f1r3fly_events::F1r3flyEvents::new();
 
         let fixture = TestFixture::new().await;
 
@@ -130,7 +125,7 @@ impl GenesisValidatorSpec {
     }
 
     async fn should_not_respond_to_any_other_message() {
-        let _event_bus = Self::event_bus();
+        let _event_bus = shared::rust::shared::f1r3fly_events::F1r3flyEvents::new();
 
         let fixture = TestFixture::new().await;
 

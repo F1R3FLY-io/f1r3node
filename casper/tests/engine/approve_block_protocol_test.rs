@@ -35,7 +35,7 @@ use crate::util::genesis_builder::GenesisBuilder;
 // An isolated test fixture created for each test
 struct TestFixture {
     protocol: Arc<ApproveBlockProtocolImpl<TransportLayerStub>>,
-    event_log: Arc<F1r3flyEvents>,
+    collected_events: shared::rust::shared::f1r3fly_events::StartupBuffer,
     transport: Arc<TransportLayerStub>,
     candidate: ApprovedBlockCandidate,
     last_approved_block:
@@ -50,9 +50,12 @@ impl TestFixture {
         key_pairs: Vec<(PrivateKey, PublicKey)>,
     ) -> Self {
         let genesis_block = GenesisBuilder::build_test_genesis(key_pairs.clone());
-        let event_log = Arc::new(F1r3flyEvents::new(Some(100)));
+        let event_log = Arc::new(F1r3flyEvents::new());
         let transport = Arc::new(TransportLayerStub::new());
         let last_approved_block = Arc::new(Mutex::new(None));
+
+        // Use the startup buffer to read published events (no race condition)
+        let collected_events = event_log.startup_buffer();
 
         let test_peer = PeerNode {
             id: NodeIdentifier {
@@ -96,16 +99,18 @@ impl TestFixture {
 
         Self {
             protocol: Arc::new(protocol_impl),
-            event_log,
+            collected_events,
             transport,
             candidate,
             last_approved_block,
         }
     }
 
-    // Isolated event verification using the new get_events() method
+    // Verify published events by name and expected count.
+    // Reads from the startup buffer which captures all events synchronously.
     fn events_contain(&self, event_name: &str, expected_count: usize) -> bool {
-        let events = self.event_log.get_events();
+        let guard = self.collected_events.lock().unwrap();
+        let events = guard.as_ref().map(|v| v.as_slice()).unwrap_or(&[]);
         let actual_count = events
             .iter()
             .filter(|event| match event {

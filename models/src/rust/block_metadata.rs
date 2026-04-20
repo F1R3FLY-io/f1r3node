@@ -7,7 +7,7 @@ use crate::casper::{BlockMetadataInternal, BondProto};
 
 use super::casper::protocol::casper_message::{BlockMessage, F1r3flyState, Justification};
 
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, Eq, PartialEq, Hash)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct BlockMetadata {
     #[serde(with = "shared::rust::serde_bytes")]
     pub block_hash: Bytes,
@@ -23,6 +23,42 @@ pub struct BlockMetadata {
     pub invalid: bool,
     pub directly_finalized: bool,
     pub finalized: bool,
+    pub fault_tolerance_value: f32,
+}
+
+impl PartialEq for BlockMetadata {
+    fn eq(&self, other: &Self) -> bool {
+        self.block_hash == other.block_hash
+            && self.parents == other.parents
+            && self.sender == other.sender
+            && self.justifications == other.justifications
+            && self.weight_map == other.weight_map
+            && self.block_number == other.block_number
+            && self.sequence_number == other.sequence_number
+            && self.invalid == other.invalid
+            && self.directly_finalized == other.directly_finalized
+            && self.finalized == other.finalized
+    }
+}
+
+impl Eq for BlockMetadata {}
+
+impl std::hash::Hash for BlockMetadata {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.block_hash.hash(state);
+        self.parents.hash(state);
+        self.sender.hash(state);
+        self.justifications.hash(state);
+        self.weight_map.iter().for_each(|(k, v)| {
+            k.hash(state);
+            v.hash(state);
+        });
+        self.block_number.hash(state);
+        self.sequence_number.hash(state);
+        self.invalid.hash(state);
+        self.directly_finalized.hash(state);
+        self.finalized.hash(state);
+    }
 }
 
 impl BlockMetadata {
@@ -46,6 +82,7 @@ impl BlockMetadata {
             invalid: proto.invalid,
             directly_finalized: proto.directly_finalized,
             finalized: proto.finalized,
+            fault_tolerance_value: proto.fault_tolerance_value,
         }
     }
 
@@ -68,6 +105,7 @@ impl BlockMetadata {
             invalid: self.invalid,
             directly_finalized: self.directly_finalized,
             finalized: self.finalized,
+            fault_tolerance_value: self.fault_tolerance_value,
         }
     }
 
@@ -120,6 +158,7 @@ impl BlockMetadata {
             // this value is not used anywhere down the call pipeline, so its safe to set it to false
             directly_finalized,
             finalized,
+            fault_tolerance_value: 0.0,
         }
     }
 }

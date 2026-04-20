@@ -498,7 +498,7 @@ async fn hash_set_casper_should_produce_identical_merge_results_regardless_of_fi
     // Advance finalization on node0 to block0 (node1 does NOT finalize block0)
     nodes[0]
         .block_dag_storage
-        .record_directly_finalized(block0.block_hash.clone(), |_| async { Ok(()) })
+        .record_directly_finalized(block0.block_hash.clone(), 1.0, |_| async { Ok(()) })
         .await
         .unwrap();
 

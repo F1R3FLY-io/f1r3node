@@ -630,6 +630,9 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
         conf.protocol_server.network_id.clone(),
         conf.casper.shard_name.clone(),
         conf.casper.min_phlo_price,
+        conf.casper.genesis_block_data.native_token_name.clone(),
+        conf.casper.genesis_block_data.native_token_symbol.clone(),
+        conf.casper.genesis_block_data.native_token_decimals,
         is_node_read_only,
         engine_cell.clone(),
         block_store.clone(),
@@ -783,6 +786,9 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
             conf.protocol_server.network_id.clone(),
             conf.casper.shard_name.clone(),
             conf.casper.min_phlo_price,
+            conf.casper.genesis_block_data.native_token_name.clone(),
+            conf.casper.genesis_block_data.native_token_symbol.clone(),
+            conf.casper.genesis_block_data.native_token_decimals,
             is_node_read_only,
             block_enricher.clone(),
             cache_transaction_api,
@@ -843,6 +849,9 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
             synchrony_finalized_baseline_enabled: conf.casper.synchrony_finalized_baseline_enabled,
             synchrony_finalized_baseline_max_distance: conf.casper.synchrony_finalized_baseline_max_distance,
             max_user_deploys_per_block: conf.casper.max_user_deploys_per_block,
+            native_token_name: conf.casper.genesis_block_data.native_token_name.clone(),
+            native_token_symbol: conf.casper.genesis_block_data.native_token_symbol.clone(),
+            native_token_decimals: conf.casper.genesis_block_data.native_token_decimals,
         };
 
         Some(Arc::new(

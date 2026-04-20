@@ -40,6 +40,7 @@ use crate::rust::errors::CasperError;
 use crate::rust::merging::block_index::BlockIndex;
 use crate::rust::metrics_constants::{
     BLOCK_INDEX_CACHE_SIZE_METRIC, CASPER_METRICS_SOURCE, PARENTS_POST_STATE_CACHE_SIZE_METRIC,
+    RUNTIME_SPAWN_TIME_METRIC, RUNTIME_SPAWN_REPLAY_TIME_METRIC,
 };
 use crate::rust::rholang::replay_runtime::ReplayRuntimeOps;
 use crate::rust::rholang::runtime::RuntimeOps;
@@ -259,6 +260,7 @@ impl RuntimeManager {
     }
 
     pub async fn spawn_runtime(&self) -> RhoRuntimeImpl {
+        let start = std::time::Instant::now();
         let new_space = self.space.spawn().expect("Failed to spawn RSpace");
         let runtime = rho_runtime::create_rho_runtime(
             new_space,
@@ -268,11 +270,14 @@ impl RuntimeManager {
             self.external_services.clone(),
         )
         .await;
+        metrics::histogram!(RUNTIME_SPAWN_TIME_METRIC, "source" => CASPER_METRICS_SOURCE)
+            .record(start.elapsed().as_secs_f64());
 
         runtime
     }
 
     pub async fn spawn_replay_runtime(&self) -> RhoRuntimeImpl {
+        let start = std::time::Instant::now();
         let new_replay_space = self
             .replay_space
             .spawn()
@@ -286,6 +291,8 @@ impl RuntimeManager {
             self.external_services.clone(),
         )
         .await;
+        metrics::histogram!(RUNTIME_SPAWN_REPLAY_TIME_METRIC, "source" => CASPER_METRICS_SOURCE)
+            .record(start.elapsed().as_secs_f64());
 
         runtime
     }
@@ -647,7 +654,7 @@ impl RuntimeManager {
                     .iter()
                     .map(crate::rust::util::event_converter::to_rspace_event)
                     .collect();
-                replay_runtime.rig(rspace_events)?;
+                replay_runtime.rig(rspace_events).await?;
 
                 return Ok(entry.post_state);
             }
@@ -760,10 +767,10 @@ impl RuntimeManager {
     pub async fn get_data(&self, hash: StateHash, channel: &Par) -> Result<Vec<Par>, CasperError> {
         let mut runtime = self.spawn_runtime().await;
 
-        runtime.reset(&Blake2b256Hash::from_bytes_prost(&hash))?;
+        runtime.reset(&Blake2b256Hash::from_bytes_prost(&hash)).await?;
 
         let runtime_ops = RuntimeOps::new(runtime);
-        let computed = runtime_ops.get_data_par(channel);
+        let computed = runtime_ops.get_data_par(channel).await;
         Ok(computed)
     }
 
@@ -774,10 +781,10 @@ impl RuntimeManager {
     ) -> Result<Vec<(Vec<BindPattern>, Par)>, CasperError> {
         let mut runtime = self.spawn_runtime().await;
 
-        runtime.reset(&Blake2b256Hash::from_bytes_prost(&hash))?;
+        runtime.reset(&Blake2b256Hash::from_bytes_prost(&hash)).await?;
 
         let runtime_ops = RuntimeOps::new(runtime);
-        let computed = runtime_ops.get_continuation_par(channels);
+        let computed = runtime_ops.get_continuation_par(channels).await;
         Ok(computed)
     }
 
@@ -1043,7 +1050,7 @@ impl RuntimeManager {
      * the time. For some situations, we can just use the value directly for better performance.
      */
     pub fn empty_state_hash_fixed() -> StateHash {
-        hex::decode("6fd88addb9708fdbd89156e23e305763d643f437079cef10a8ab00095c60a345")
+        hex::decode("852cc7a4a4e14a05574b9cd0779dbfb1f85489b606e75677f3ce3239dfec4e36")
             .unwrap()
             .into()
     }
@@ -1106,7 +1113,7 @@ impl RuntimeManager {
             RSpace::create_with_replay(store, Arc::new(Box::new(Matcher)))
                 .expect("Failed to create RSpaceWithReplay");
 
-        let history_repo = rspace.history_repository.clone();
+        let history_repo = rspace.get_history_repository();
 
         let runtime_manager = RuntimeManager::create_with_space(
             rspace,

@@ -19,6 +19,7 @@ pub mod stack_spec;
 pub mod standard_deploys_spec;
 pub mod system_vault_spec;
 pub mod timeout_result_collector_spec;
+pub mod token_metadata_spec;
 pub mod tree_hash_map_spec;
 pub mod vault_address_spec;
 pub mod vault_issuance_test;

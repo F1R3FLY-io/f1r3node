@@ -117,6 +117,9 @@ where
     network_id: String,
     shard_id: String,
     min_phlo_price: i64,
+    native_token_name: String,
+    native_token_symbol: String,
+    native_token_decimals: u32,
     is_node_read_only: bool,
     engine_cell: Arc<EngineCell>,
     block_enricher: Arc<dyn BlockEnricher>,
@@ -138,6 +141,9 @@ where
         network_id: String,
         shard_id: String,
         min_phlo_price: i64,
+        native_token_name: String,
+        native_token_symbol: String,
+        native_token_decimals: u32,
         is_node_read_only: bool,
         block_enricher: Arc<dyn BlockEnricher>,
         cache_transaction_api: CacheTransactionAPI<TA, TS>,
@@ -153,6 +159,9 @@ where
             network_id,
             shard_id,
             min_phlo_price,
+            native_token_name,
+            native_token_symbol,
+            native_token_decimals,
             is_node_read_only,
             engine_cell,
             block_enricher,
@@ -233,6 +242,9 @@ where
             nodes,
             min_phlo_price: self.min_phlo_price,
             peer_list,
+            native_token_name: self.native_token_name.clone(),
+            native_token_symbol: self.native_token_symbol.clone(),
+            native_token_decimals: self.native_token_decimals,
         })
     }
 
@@ -600,6 +612,16 @@ pub struct ApiStatus {
     pub min_phlo_price: i64,
     #[serde(rename = "peerList")]
     pub peer_list: Vec<PeerInfoData>,
+    /// Full display name of the native token. Baked into genesis state via
+    /// the `TokenMetadata` Rholang contract at `rho:system:tokenMetadata`.
+    #[serde(rename = "nativeTokenName")]
+    pub native_token_name: String,
+    /// Ticker symbol of the native token (e.g. "F1R3").
+    #[serde(rename = "nativeTokenSymbol")]
+    pub native_token_symbol: String,
+    /// Decimal places used to display the native token (dust per token = 10^decimals).
+    #[serde(rename = "nativeTokenDecimals")]
+    pub native_token_decimals: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]

@@ -41,7 +41,8 @@ flowchart TD
     STATE_UPDATE --> BLOCK_VALID[✅ Block Valid]
     
     BLOCK_VALID --> BROADCAST[📡 Broadcast Block]
-    BROADCAST --> FINALIZE[Add to DAG & Finalize]
+    BROADCAST --> FINALIZE[Add to DAG & Finalize
+    Cache FT in BlockMetadata]
     
     %% Styling
     style RUNNING fill:#4caf50,color:#fff

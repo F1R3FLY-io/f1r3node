@@ -39,7 +39,7 @@ use models::{
 use prost::Message;
 use rspace_plus_plus::rspace::checkpoint::SoftCheckpoint;
 use rspace_plus_plus::rspace::hashing::blake2b256_hash::Blake2b256Hash;
-use rspace_plus_plus::rspace::hot_store::{new_dashmap, HotStoreState};
+use rspace_plus_plus::rspace::hot_store::{new_hashmap, HotStoreState};
 use rspace_plus_plus::rspace::internal::{Datum, WaitingContinuation};
 use rspace_plus_plus::rspace::replay_rspace::ReplayRSpace;
 use rspace_plus_plus::rspace::trace::event::{Consume, Produce, COMM};
@@ -225,7 +225,9 @@ extern "C" fn inj(
 extern "C" fn create_soft_checkpoint(runtime_ptr: *mut RhoRuntime) -> *const u8 {
     // println!("\nhit rust lib create_soft_checkpoint");
     let runtime = unsafe { &mut (*runtime_ptr).runtime };
-    let soft_checkpoint = runtime.create_soft_checkpoint();
+    // TODO: FFI not used — block_on wrapper for async ISpace methods
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let soft_checkpoint = rt.block_on(async { runtime.create_soft_checkpoint().await });
 
     let mut conts_map_entries: Vec<StoreStateContMapEntry> = Vec::new();
     let mut installed_conts_map_entries: Vec<StoreStateInstalledContMapEntry> = Vec::new();
@@ -488,7 +490,7 @@ extern "C" fn revert_to_soft_checkpoint(
     let soft_checkpoint_proto = SoftCheckpointProto::decode(payload_slice).unwrap();
     let cache_snapshot_proto = soft_checkpoint_proto.cache_snapshot.unwrap();
 
-    let conts_map = new_dashmap();
+    let mut conts_map = new_hashmap();
     for map_entry in cache_snapshot_proto.continuations {
         let key = map_entry.key;
         let value = map_entry
@@ -521,7 +523,7 @@ extern "C" fn revert_to_soft_checkpoint(
         conts_map.insert(key, value);
     }
 
-    let installed_conts_map = new_dashmap();
+    let mut installed_conts_map = new_hashmap();
     for map_entry in cache_snapshot_proto.installed_continuations {
         let key = map_entry.key;
         let wk_proto = map_entry.value.unwrap();
@@ -547,7 +549,7 @@ extern "C" fn revert_to_soft_checkpoint(
         installed_conts_map.insert(key, value);
     }
 
-    let datums_map = new_dashmap();
+    let mut datums_map = new_hashmap();
     for map_entry in cache_snapshot_proto.data {
         let key = map_entry.key.unwrap();
         let value = map_entry
@@ -573,7 +575,7 @@ extern "C" fn revert_to_soft_checkpoint(
         datums_map.insert(key, value);
     }
 
-    let joins_map = new_dashmap();
+    let mut joins_map = new_hashmap();
     for map_entry in cache_snapshot_proto.joins {
         let key = map_entry.key.unwrap();
         let value = map_entry
@@ -585,7 +587,7 @@ extern "C" fn revert_to_soft_checkpoint(
         joins_map.insert(key, value);
     }
 
-    let installed_joins_map = new_dashmap();
+    let mut installed_joins_map = new_hashmap();
     for map_entry in cache_snapshot_proto.installed_joins {
         let key = map_entry.key.unwrap();
         let value = map_entry
@@ -732,13 +734,17 @@ extern "C" fn revert_to_soft_checkpoint(
 
     let runtime = unsafe { &mut (*runtime_ptr).runtime };
 
-    runtime.revert_to_soft_checkpoint(soft_checkpoint);
+    // TODO: FFI not used — block_on wrapper for async ISpace methods
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async { runtime.revert_to_soft_checkpoint(soft_checkpoint).await });
 }
 
 #[no_mangle]
 extern "C" fn create_checkpoint(runtime_ptr: *mut RhoRuntime) -> *const u8 {
     let runtime = unsafe { &mut (*runtime_ptr).runtime };
-    let checkpoint = runtime.create_checkpoint();
+    // TODO: FFI not used — block_on wrapper for async ISpace methods
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let checkpoint = rt.block_on(async { runtime.create_checkpoint().await });
 
     let log = checkpoint.log;
     let log_proto: Vec<EventProto> = log
@@ -868,12 +874,17 @@ extern "C" fn consume_result(
     let channel = consume_result_params.channel;
     let pattern = consume_result_params.pattern;
 
-    let consume_result_return = unsafe {
-        (*runtime_ptr)
-            .runtime
-            .consume_result(channel, pattern)
-            .unwrap()
-    };
+    // TODO: FFI not used — block_on wrapper for async ISpace methods
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let consume_result_return = rt.block_on(async {
+        unsafe {
+            (*runtime_ptr)
+                .runtime
+                .consume_result(channel, pattern)
+                .await
+                .unwrap()
+        }
+    });
 
     match consume_result_return {
         None => std::ptr::null(),
@@ -910,15 +921,9 @@ extern "C" fn reset(
     // Access underlying space directly to capture Result and map to error code
     let runtime = unsafe { &mut (*runtime_ptr).runtime };
 
-    let mut space_lock = match runtime.reducer.space.try_lock() {
-        Ok(lock) => lock,
-        Err(e) => {
-            eprintln!("ERROR: failed to lock reducer.space in reset: {:?}", e);
-            return 2; // lock error
-        }
-    };
-
-    match space_lock.reset(&root) {
+    // TODO: FFI not used — block_on wrapper for async ISpace methods
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    match rt.block_on(async { runtime.reducer.space.reset(&root).await }) {
         Ok(_) => 0,
         Err(e) => {
             eprintln!("ERROR: reset failed: {:?}", e);
@@ -939,7 +944,9 @@ extern "C" fn get_data(
     // let rt = tokio::runtime::Runtime::new().unwrap();
     // let datums =
     //     rt.block_on(async { unsafe { (*runtime_ptr).runtime.try_lock().unwrap().get_data(channel).await } });
-    let datums = unsafe { (*runtime_ptr).runtime.get_data(&channel) };
+    // TODO: FFI not used — block_on wrapper for async ISpace methods
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let datums = rt.block_on(async { unsafe { (*runtime_ptr).runtime.get_data(&channel).await } });
 
     // println!("\ndatums in rust get_data: {:?}", datums);
 
@@ -982,7 +989,9 @@ extern "C" fn get_joins(
     let channel_slice = unsafe { std::slice::from_raw_parts(channel_pointer, channel_bytes_len) };
     let channel = Par::decode(channel_slice).unwrap();
 
-    let joins = unsafe { (*runtime_ptr).runtime.get_joins(channel) };
+    // TODO: FFI not used — block_on wrapper for async ISpace methods
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let joins = rt.block_on(async { unsafe { (*runtime_ptr).runtime.get_joins(channel).await } });
 
     let vec_join: Vec<JoinProto> = joins.into_iter().map(|join| JoinProto { join }).collect();
     let joins_proto = JoinsProto { joins: vec_join };
@@ -1008,11 +1017,16 @@ extern "C" fn get_waiting_continuations(
         unsafe { std::slice::from_raw_parts(channels_pointer, channels_bytes_len) };
     let channels_proto = ChannelsProto::decode(channels_slice).unwrap();
 
-    let wks = unsafe {
-        (*runtime_ptr)
-            .runtime
-            .get_continuations(channels_proto.channels)
-    };
+    // TODO: FFI not used — block_on wrapper for async ISpace methods
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let wks = rt.block_on(async {
+        unsafe {
+            (*runtime_ptr)
+                .runtime
+                .get_continuations(channels_proto.channels)
+                .await
+        }
+    });
 
     let wks_protos: Vec<WaitingContinuationProto> = wks
         .into_iter()
@@ -1101,7 +1115,9 @@ extern "C" fn set_invalid_blocks(
 #[no_mangle]
 extern "C" fn get_hot_changes(runtime_ptr: *mut RhoRuntime) -> *const u8 {
     let runtime = unsafe { &(*runtime_ptr).runtime };
-    let hot_store_mapped = runtime.get_hot_changes();
+    // TODO: FFI not used — block_on wrapper for async ISpace methods
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let hot_store_mapped = rt.block_on(async { runtime.get_hot_changes().await });
 
     let mut map_entries: Vec<StoreToMapEntry> = Vec::new();
 
@@ -1288,16 +1304,24 @@ extern "C" fn rig(
         })
         .collect();
 
-    unsafe {
-        (*runtime_ptr).runtime.rig(log).unwrap();
-    }
+    // TODO: FFI not used — block_on wrapper for async ISpace methods
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        unsafe {
+            (*runtime_ptr).runtime.rig(log).await.unwrap();
+        }
+    });
 }
 
 #[no_mangle]
 extern "C" fn check_replay_data(runtime_ptr: *mut ReplayRhoRuntime) -> () {
-    unsafe {
-        (*runtime_ptr).runtime.check_replay_data().unwrap();
-    }
+    // TODO: FFI not used — block_on wrapper for async ISpace methods
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        unsafe {
+            (*runtime_ptr).runtime.check_replay_data().await.unwrap();
+        }
+    });
 }
 
 #[no_mangle]

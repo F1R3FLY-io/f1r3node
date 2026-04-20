@@ -1,4 +1,5 @@
-// See shared/src/main/scala/coop/rchain/shared/RChainEvent.scala
+// F1r3flyEvent — node event types for WebSocket streaming.
+// Ported from shared/src/main/scala/coop/rchain/shared/RChainEvent.scala
 
 use serde::{Deserialize, Serialize};
 

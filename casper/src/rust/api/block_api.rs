@@ -899,7 +899,13 @@ impl BlockAPI {
                         .collect();
 
                     for block in blocks_at_height {
-                        let block_info = BlockAPI::get_light_block_info(casper, &block).await?;
+                        let block_info = BlockAPI::get_block_info_with_dag(
+                            casper,
+                            &dag,
+                            &block,
+                            BlockAPI::construct_light_block_info,
+                        )
+                        .await?;
                         block_infos_at_height_acc.push(block_info);
                     }
                 }
@@ -1024,26 +1030,36 @@ impl BlockAPI {
         depth: i32,
         max_depth_limit: i32,
     ) -> ApiErr<Vec<LightBlockInfo>> {
-        let do_it = |(casper, topo_sort): (&dyn MultiParentCasper, Vec<Vec<BlockHash>>)| -> ApiErr<Vec<LightBlockInfo>> {
-            let mut block_infos_acc = Vec::new();
+        let effective_depth = clamp_depth(depth, max_depth_limit, "get-blocks");
+        let error_message =
+            "Could not get blocks, casper instance was not available yet.".to_string();
 
-            for block_hashes_at_height in topo_sort {
-                let blocks_at_height: Vec<_> = block_hashes_at_height
-                    .iter()
-                    .map(|block_hash| casper.block_store().get_unsafe(block_hash))
-                    .collect();
-
-                for block in blocks_at_height {
-                    let block_info = BlockAPI::construct_light_block_info(&block, 0.0);
-                    block_infos_acc.push(block_info);
-                }
-            }
-
-            block_infos_acc.reverse();
-            Ok(block_infos_acc)
+        let eng = engine_cell.get().await;
+        let Some(casper) = eng.with_casper() else {
+            return Err(eyre::eyre!("Error: {}", error_message));
         };
 
-        BlockAPI::toposort_dag(engine_cell, depth, max_depth_limit, do_it).await
+        let dag = casper.block_dag().await?;
+        let latest_block_number = dag.latest_block_number();
+        let topo_sort = dag.topo_sort(latest_block_number - effective_depth as i64, None)?;
+
+        let mut block_infos_acc = Vec::new();
+        for block_hashes_at_height in topo_sort {
+            for block_hash in block_hashes_at_height {
+                let block = casper.block_store().get_unsafe(&block_hash);
+                let block_info = BlockAPI::get_block_info_with_dag(
+                    casper.as_ref(),
+                    &dag,
+                    &block,
+                    Self::construct_light_block_info,
+                )
+                .await?;
+                block_infos_acc.push(block_info);
+            }
+        }
+
+        block_infos_acc.reverse();
+        Ok(block_infos_acc)
     }
 
     pub async fn show_main_chain(
@@ -1079,7 +1095,13 @@ impl BlockAPI {
 
             let mut block_infos = Vec::new();
             for block in main_chain {
-                let block_info = BlockAPI::construct_light_block_info(&block, 0.0);
+                let block_info = BlockAPI::get_block_info_with_dag(
+                    casper,
+                    &dag_mut,
+                    &block,
+                    BlockAPI::construct_light_block_info,
+                )
+                .await?;
                 block_infos.push(block_info);
             }
 
@@ -1208,16 +1230,27 @@ impl BlockAPI {
         }
     }
 
-    async fn get_block_info<M: MultiParentCasper + ?Sized, A: Sized + Send>(
+    async fn get_block_info_with_dag<M: MultiParentCasper + ?Sized, A: Sized + Send>(
         casper: &M,
+        dag: &KeyValueDagRepresentation,
         block: &BlockMessage,
         constructor: fn(&BlockMessage, f32) -> A,
     ) -> ApiErr<A> {
-        let dag = casper.block_dag().await?;
-        let safety_oracle = CliqueOracleImpl;
-        let normalized_fault_tolerance = safety_oracle
-            .normalized_fault_tolerance(&dag, &block.block_hash)
-            .await?;
+        let normalized_fault_tolerance = if dag.is_finalized(&block.block_hash) {
+            if let Ok(Some(meta)) = dag.lookup(&block.block_hash) {
+                meta.fault_tolerance_value
+            } else {
+                let safety_oracle = CliqueOracleImpl;
+                safety_oracle
+                    .normalized_fault_tolerance(dag, &block.block_hash)
+                    .await?
+            }
+        } else {
+            let safety_oracle = CliqueOracleImpl;
+            safety_oracle
+                .normalized_fault_tolerance(dag, &block.block_hash)
+                .await?
+        };
 
         let weights_map = proto_util::weight_map(block);
         let weights_u64: HashMap<Bytes, u64> = weights_map
@@ -1230,6 +1263,15 @@ impl BlockAPI {
 
         let block_info = constructor(block, fault_tolerance);
         Ok(block_info)
+    }
+
+    async fn get_block_info<M: MultiParentCasper + ?Sized, A: Sized + Send>(
+        casper: &M,
+        block: &BlockMessage,
+        constructor: fn(&BlockMessage, f32) -> A,
+    ) -> ApiErr<A> {
+        let dag = casper.block_dag().await?;
+        Self::get_block_info_with_dag(casper, &dag, block, constructor).await
     }
 
     async fn get_full_block_info<M: MultiParentCasper + ?Sized>(

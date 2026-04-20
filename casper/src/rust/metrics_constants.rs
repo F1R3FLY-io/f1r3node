@@ -99,6 +99,20 @@ pub const BLOCK_REPLAY_SYSDEPLOY_EVAL_EVALUATE_SOURCE_TIME_METRIC: &str =
 pub const BLOCK_REPLAY_SYSDEPLOY_EVAL_CONSUME_RESULT_TIME_METRIC: &str =
     "block.replay.sysdeploy.eval.consume-result.time";
 
+// Per-deploy replay breakdown metrics
+pub const BLOCK_REPLAY_DEPLOY_RIG_TIME_METRIC: &str = "block.replay.deploy.rig.time";
+pub const BLOCK_REPLAY_DEPLOY_PRECHARGE_TIME_METRIC: &str = "block.replay.deploy.precharge.time";
+pub const BLOCK_REPLAY_DEPLOY_EVALUATE_TIME_METRIC: &str = "block.replay.deploy.evaluate.time";
+pub const BLOCK_REPLAY_DEPLOY_REFUND_TIME_METRIC: &str = "block.replay.deploy.refund.time";
+pub const BLOCK_REPLAY_DEPLOY_DISCARD_EVENT_LOG_TIME_METRIC: &str =
+    "block.replay.deploy.discard-event-log.time";
+pub const BLOCK_REPLAY_DEPLOY_CHECK_REPLAY_DATA_TIME_METRIC: &str =
+    "block.replay.deploy.check-replay-data.time";
+
+// Runtime spawn timing metrics
+pub const RUNTIME_SPAWN_TIME_METRIC: &str = "runtime.spawn.time";
+pub const RUNTIME_SPAWN_REPLAY_TIME_METRIC: &str = "runtime.spawn-replay.time";
+
 // Block validation step time metrics (7 variants)
 pub const BLOCK_VALIDATION_STEP_BLOCK_SUMMARY_TIME_METRIC: &str =
     "block.validation.step.block-summary.time";

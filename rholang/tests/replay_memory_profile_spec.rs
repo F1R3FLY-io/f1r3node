@@ -25,7 +25,7 @@ fn delta_kb_to_mib(delta_kb: isize) -> f64 {
     delta_kb as f64 / 1024.0
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "manual memory profiling; run with --ignored --nocapture"]
 async fn profile_debruijn_interpreter_replay_memory_usage() {
     let iterations: usize = 80;
@@ -56,8 +56,8 @@ async fn profile_debruijn_interpreter_replay_memory_usage() {
     }
 
     for i in 1..=iterations {
-        let play_checkpoint = runtime.create_soft_checkpoint();
-        let replay_checkpoint = replay_runtime.create_soft_checkpoint();
+        let play_checkpoint = runtime.create_soft_checkpoint().await;
+        let replay_checkpoint = replay_runtime.create_soft_checkpoint().await;
         let rand = Blake2b512Random::create_from_bytes(&[]);
 
         let play_result = runtime
@@ -70,8 +70,8 @@ async fn profile_debruijn_interpreter_replay_memory_usage() {
             play_result.errors
         );
 
-        let log = runtime.take_event_log();
-        replay_runtime.rig(log).expect("Replay rig failed");
+        let log = runtime.take_event_log().await;
+        replay_runtime.rig(log).await.expect("Replay rig failed");
 
         let replay_result = replay_runtime
             .evaluate(term, initial_phlo.clone(), HashMap::new(), rand)
@@ -84,10 +84,11 @@ async fn profile_debruijn_interpreter_replay_memory_usage() {
         );
         replay_runtime
             .check_replay_data()
+            .await
             .expect("Replay data check failed");
 
-        runtime.revert_to_soft_checkpoint(play_checkpoint);
-        replay_runtime.revert_to_soft_checkpoint(replay_checkpoint);
+        runtime.revert_to_soft_checkpoint(play_checkpoint).await;
+        replay_runtime.revert_to_soft_checkpoint(replay_checkpoint).await;
 
         if i % sample_every == 0 {
             if let Some(rss) = vm_rss_kb() {

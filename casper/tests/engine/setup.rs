@@ -427,6 +427,9 @@ impl TestFixture {
                 .pos_multi_sig_public_keys
                 .clone(),
             genesis_params.proof_of_stake.pos_multi_sig_quorum,
+            genesis_params.native_token_name.clone(),
+            genesis_params.native_token_symbol.clone(),
+            genesis_params.native_token_decimals,
             transport_layer.clone(),
             Arc::new(rp_conf.clone()),
         )
@@ -446,7 +449,7 @@ impl TestFixture {
 
         // NOT in Scala Setup - created locally in each test as: implicit val eventBus = EventPublisher.noop[Task]
         // Rust: Create F1r3flyEvents with default capacity (equivalent to noop for tests)
-        let event_publisher = F1r3flyEvents::default();
+        let event_publisher = F1r3flyEvents::new();
 
         // TODO NOT in Scala Setup - created locally in each test as: implicit val engineCell = Cell.unsafe[Task, Engine[Task]](Engine.noop)
         // Rust: Create EngineCell with Engine::noop (equivalent to Scala)

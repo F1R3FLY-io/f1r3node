@@ -1,5 +1,6 @@
 // See See rholang/src/main/scala/coop/rchain/rholang/interpreter/Reduce.scala
 
+use tokio::task::JoinHandle;
 use crypto::rust::hash::blake2b512_random::Blake2b512Random;
 use models::rhoapi::expr::ExprInstance;
 use models::rhoapi::g_unforgeable::UnfInstance;
@@ -30,13 +31,15 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
+use tokio::sync::RwLock;
 use std::task::{Context, Poll};
 
 use crate::rust::interpreter::accounting::costs::{
     add_cost, bytes_to_hex_cost, diff_cost, hex_to_bytes_cost, interpolate_cost, keys_method_cost,
     length_method_cost, lookup_cost, match_eval_cost, nth_method_call_cost, remove_cost,
-    size_method_cost, slice_cost, take_cost, to_byte_array_cost, to_list_cost, union_cost,
+    size_method_cost, slice_cost, take_cost,
+    to_byte_array_cost, to_list_cost, union_cost,
 };
 use crate::rust::interpreter::matcher::spatial_matcher::SpatialMatcherContext;
 use crate::rust::interpreter::rho_type::RhoTuple2;
@@ -230,10 +233,11 @@ impl DebruijnInterpreter {
                 .map(|(index, term)| {
                     let self_clone = self.clone();
                     let term_clone = term.clone();
+                    let env_clone = env.clone();
                     let rand_split = split(index.try_into().unwrap(), &terms, rand.clone());
                     Box::pin(async move {
                         self_clone
-                            .generated_message_eval(&term_clone, env, rand_split)
+                            .generated_message_eval(&term_clone, &env_clone, rand_split)
                             .await
                     })
                         as Pin<
@@ -245,15 +249,32 @@ impl DebruijnInterpreter {
                 })
                 .collect();
 
-            let results: Vec<Result<(), InterpreterError>> =
-                futures::future::join_all(futures).await;
-            let err_count = results.iter().filter(|r| r.is_err()).count();
-            let mut flattened_results: Vec<InterpreterError> = Vec::with_capacity(err_count);
-            for result in results {
-                if let Err(err) = result {
-                    flattened_results.push(err);
+            metrics::counter!("reducer.eval_par.calls", "source" => "rholang").increment(1);
+            metrics::counter!("reducer.eval_par.term_count", "source" => "rholang")
+                .increment(futures.len() as u64);
+
+            let spawn_start = std::time::Instant::now();
+            let handles: Vec<JoinHandle<Result<(), InterpreterError>>> = futures
+                .into_iter()
+                .map(|fut| tokio::spawn(fut))
+                .collect();
+            metrics::counter!("reducer.eval_par.spawn_ns", "source" => "rholang")
+                .increment(spawn_start.elapsed().as_nanos() as u64);
+
+            let join_start = std::time::Instant::now();
+            let mut flattened_results: Vec<InterpreterError> = Vec::new();
+            for handle in handles {
+                match handle.await {
+                    Ok(Err(err)) => flattened_results.push(err),
+                    Err(join_err) => flattened_results.push(InterpreterError::ReduceError(
+                        format!("task panicked: {}", join_err),
+                    )),
+                    Ok(Ok(())) => {}
                 }
             }
+            metrics::counter!("reducer.eval_par.join_ns", "source" => "rholang")
+                .increment(join_start.elapsed().as_nanos() as u64);
+
             match self.aggregate_evaluator_errors(flattened_results) {
                 Ok(_) => Ok(()),
                 Err(e) => Err(e),
@@ -295,16 +316,9 @@ impl DebruijnInterpreter {
         data: ListParWithRandom,
         persistent: bool,
     ) -> Result<DispatchType, InterpreterError> {
-        // println!("\nreduce produce");
-        // println!("chan in reduce produce: {:?}", chan);
-        // println!("data in reduce produce: {:?}", data);
         self.update_mergeable_channels(&chan).await;
-        // println!("Attempting to lock space for produce");
-        let mut space_locked = self.space.try_lock().unwrap();
-        // println!("Locked space for produce");
-        let produce_result = space_locked.produce(chan.clone(), data.clone(), persistent)?;
-        let is_replay = space_locked.is_replay();
-        drop(space_locked);
+        let produce_result = self.space.produce(chan.clone(), data.clone(), persistent).await?;
+        let is_replay = self.space.is_replay().await;
 
         match produce_result {
             Some((c, s, produce_event)) => {
@@ -323,19 +337,15 @@ impl DebruijnInterpreter {
                 match dispatch_type {
                     DispatchType::NonDeterministicCall(ref output) => {
                         let produce1 = produce_event.mark_as_non_deterministic(output.clone());
-                        let mut space_locked = self.space.try_lock().unwrap();
-                        space_locked.update_produce(produce1);
-                        drop(space_locked);
-                        Ok(dispatch_type)
+                        self.space.update_produce(produce1).await;
+                                        Ok(dispatch_type)
                     }
 
                     DispatchType::FailedNonDeterministicCall(error) => {
                         // Mark the produce as failed for replay safety
                         let failed_produce = produce_event.with_error();
-                        let mut space_locked = self.space.try_lock().unwrap();
-                        space_locked.update_produce(failed_produce);
-                        drop(space_locked);
-                        // Re-raise known error types as-is to preserve output_not_produced;
+                        self.space.update_produce(failed_produce).await;
+                                        // Re-raise known error types as-is to preserve output_not_produced;
                         // wrap unknown errors in NonDeterministicProcessFailure.
                         match error {
                             InterpreterError::ProduceFailureWithOutput { .. }
@@ -381,9 +391,6 @@ impl DebruijnInterpreter {
         persistent: bool,
         peek: bool,
     ) -> Result<DispatchType, InterpreterError> {
-        // println!("\nreduce consume");
-        // println!("binds in reduce consume: {:?}", binds);
-        // println!("body in reduce consume: {:?}", body);
         let (patterns, sources): (Vec<BindPattern>, Vec<Par>) = binds.clone().into_iter().unzip();
 
         // Update mergeable channels
@@ -391,11 +398,7 @@ impl DebruijnInterpreter {
             self.update_mergeable_channels(source).await;
         }
 
-        // println!("\nsources in reduce consume: {:?}", sources);
-
-        // println!("Attempting to lock space for produce");
-        let mut space_locked = self.space.try_lock().unwrap();
-        let consume_result = space_locked.consume(
+        let consume_result = self.space.consume(
             sources.clone(),
             patterns.clone(),
             TaggedContinuation {
@@ -407,12 +410,8 @@ impl DebruijnInterpreter {
             } else {
                 BTreeSet::new()
             },
-        )?;
-        let is_replay = space_locked.is_replay();
-        drop(space_locked);
-
-        // println!("space map in reduce consume: {:?}", self.space.lock().unwrap().to_map());
-        // println!("\nconsume_result in reduce consume: {:?}", consume_result);
+        ).await?;
+        let is_replay = self.space.is_replay().await;
 
         self.continue_consume_process(
             unpack_option_with_peek(consume_result),
@@ -436,7 +435,6 @@ impl DebruijnInterpreter {
         previous_output: Vec<Vec<u8>>,
         trace_failed: bool,
     ) -> Result<DispatchType, InterpreterError> {
-        // println!("\ncontinue_produce_process");
         // During replay, if the trace shows a failed non-deterministic process,
         // we cannot replay it - the external service call failed during original execution
         if is_replay && trace_failed {
@@ -473,36 +471,52 @@ impl DebruijnInterpreter {
                         >,
                     > = vec![];
 
-                    let dispatch_fut = self_clone1.dispatch(
-                        continuation_clone,
-                        data_list_clone,
-                        is_replay_flag,
-                        previous_output_clone,
-                    );
-                    futures.push(Box::pin(dispatch_fut)
-                        as Pin<
-                            Box<
-                                dyn futures::Future<Output = Result<DispatchType, InterpreterError>>
-                                    + std::marker::Send,
-                            >,
-                        >);
+                    futures.push(Box::pin(async move {
+                        self_clone1.dispatch(
+                            continuation_clone,
+                            data_list_clone,
+                            is_replay_flag,
+                            previous_output_clone,
+                        ).await
+                    }) as Pin<
+                        Box<
+                            dyn futures::Future<Output = Result<DispatchType, InterpreterError>>
+                                + std::marker::Send,
+                        >,
+                    >);
 
-                    let produce_fut = self_clone2.produce(chan_clone, data_clone, persistent_flag);
-                    futures.push(Box::pin(produce_fut)
-                        as Pin<
-                            Box<
-                                dyn futures::Future<Output = Result<DispatchType, InterpreterError>>
-                                    + std::marker::Send,
-                            >,
-                        >);
+                    futures.push(Box::pin(async move {
+                        self_clone2.produce(chan_clone, data_clone, persistent_flag).await
+                    }) as Pin<
+                        Box<
+                            dyn futures::Future<Output = Result<DispatchType, InterpreterError>>
+                                + std::marker::Send,
+                        >,
+                    >);
 
-                    // parTraverseSafe
-                    let results: Vec<Result<DispatchType, InterpreterError>> =
-                        futures::future::join_all(futures).await;
-                    let flattened_results: Vec<InterpreterError> = results
+                    // When a persistent produce triggers a peek COMM, the non-persistent
+                    // peeked data on other channels was removed by RSpace. Re-issue it
+                    // to preserve peek semantics (data should remain after peek read).
+                    if peek {
+                        futures.extend(self.produce_peeks(data_list).await);
+                    }
+
+                    // parTraverseSafe — spawn true parallel tasks
+                    let handles: Vec<JoinHandle<Result<DispatchType, InterpreterError>>> = futures
                         .into_iter()
-                        .filter_map(|result| result.err())
+                        .map(|fut| tokio::spawn(fut))
                         .collect();
+
+                    let mut flattened_results: Vec<InterpreterError> = Vec::new();
+                    for handle in handles {
+                        match handle.await {
+                            Ok(Err(err)) => flattened_results.push(err),
+                            Err(join_err) => flattened_results.push(InterpreterError::ReduceError(
+                                format!("task panicked: {}", join_err),
+                            )),
+                            Ok(Ok(_)) => {}
+                        }
+                    }
 
                     self.aggregate_evaluator_errors(flattened_results)
                 } else if peek {
@@ -531,13 +545,22 @@ impl DebruijnInterpreter {
                     })];
                     futures.extend(self.produce_peeks(data_list).await);
 
-                    // parTraverseSafe
-                    let results: Vec<Result<DispatchType, InterpreterError>> =
-                        futures::future::join_all(futures).await;
-                    let flattened_results: Vec<InterpreterError> = results
+                    // parTraverseSafe — spawn true parallel tasks
+                    let handles: Vec<JoinHandle<Result<DispatchType, InterpreterError>>> = futures
                         .into_iter()
-                        .filter_map(|result| result.err())
+                        .map(|fut| tokio::spawn(fut))
                         .collect();
+
+                    let mut flattened_results: Vec<InterpreterError> = Vec::new();
+                    for handle in handles {
+                        match handle.await {
+                            Ok(Err(err)) => flattened_results.push(err),
+                            Err(join_err) => flattened_results.push(InterpreterError::ReduceError(
+                                format!("task panicked: {}", join_err),
+                            )),
+                            Ok(Ok(_)) => {}
+                        }
+                    }
 
                     self.aggregate_evaluator_errors(flattened_results)
                 } else {
@@ -559,8 +582,6 @@ impl DebruijnInterpreter {
         is_replay: bool,
         previous_output: Vec<Vec<u8>>,
     ) -> Result<DispatchType, InterpreterError> {
-        // println!("\ncontinue_consume_process");
-        // println!("\napplication in continue_consume_process: {:?}", res);
         let previous_output_as_par = previous_output
             .into_iter()
             .map(|bytes| {
@@ -592,37 +613,45 @@ impl DebruijnInterpreter {
                         >,
                     > = vec![];
 
-                    let dispatch_fut = self_clone1.dispatch(
-                        continuation_clone,
-                        data_list_clone,
-                        is_replay_flag,
-                        previous_output_clone,
-                    );
-                    futures.push(Box::pin(dispatch_fut)
-                        as Pin<
-                            Box<
-                                dyn futures::Future<Output = Result<DispatchType, InterpreterError>>
-                                    + std::marker::Send,
-                            >,
-                        >);
+                    futures.push(Box::pin(async move {
+                        self_clone1.dispatch(
+                            continuation_clone,
+                            data_list_clone,
+                            is_replay_flag,
+                            previous_output_clone,
+                        ).await
+                    }) as Pin<
+                        Box<
+                            dyn futures::Future<Output = Result<DispatchType, InterpreterError>>
+                                + std::marker::Send,
+                        >,
+                    >);
 
-                    let consume_fut =
-                        self_clone2.consume(binds_clone, body_clone, persistent_flag, peek_flag);
-                    futures.push(Box::pin(consume_fut)
-                        as Pin<
-                            Box<
-                                dyn futures::Future<Output = Result<DispatchType, InterpreterError>>
-                                    + std::marker::Send,
-                            >,
-                        >);
+                    futures.push(Box::pin(async move {
+                        self_clone2.consume(binds_clone, body_clone, persistent_flag, peek_flag).await
+                    }) as Pin<
+                        Box<
+                            dyn futures::Future<Output = Result<DispatchType, InterpreterError>>
+                                + std::marker::Send,
+                        >,
+                    >);
 
-                    // parTraverseSafe
-                    let results: Vec<Result<DispatchType, InterpreterError>> =
-                        futures::future::join_all(futures).await;
-                    let flattened_results: Vec<InterpreterError> = results
+                    // parTraverseSafe — spawn true parallel tasks
+                    let handles: Vec<JoinHandle<Result<DispatchType, InterpreterError>>> = futures
                         .into_iter()
-                        .filter_map(|result| result.err())
+                        .map(|fut| tokio::spawn(fut))
                         .collect();
+
+                    let mut flattened_results: Vec<InterpreterError> = Vec::new();
+                    for handle in handles {
+                        match handle.await {
+                            Ok(Err(err)) => flattened_results.push(err),
+                            Err(join_err) => flattened_results.push(InterpreterError::ReduceError(
+                                format!("task panicked: {}", join_err),
+                            )),
+                            Ok(Ok(_)) => {}
+                        }
+                    }
 
                     self.aggregate_evaluator_errors(flattened_results)
                 } else if _peek {
@@ -651,13 +680,22 @@ impl DebruijnInterpreter {
                     })];
                     futures.extend(self.produce_peeks(data_list).await);
 
-                    // parTraverseSafe
-                    let results: Vec<Result<DispatchType, InterpreterError>> =
-                        futures::future::join_all(futures).await;
-                    let flattened_results: Vec<InterpreterError> = results
+                    // parTraverseSafe — spawn true parallel tasks
+                    let handles: Vec<JoinHandle<Result<DispatchType, InterpreterError>>> = futures
                         .into_iter()
-                        .filter_map(|result| result.err())
+                        .map(|fut| tokio::spawn(fut))
                         .collect();
+
+                    let mut flattened_results: Vec<InterpreterError> = Vec::new();
+                    for handle in handles {
+                        match handle.await {
+                            Ok(Err(err)) => flattened_results.push(err),
+                            Err(join_err) => flattened_results.push(InterpreterError::ReduceError(
+                                format!("task panicked: {}", join_err),
+                            )),
+                            Ok(Ok(_)) => {}
+                        }
+                    }
 
                     self.aggregate_evaluator_errors(flattened_results)
                 } else {
@@ -694,7 +732,6 @@ impl DebruijnInterpreter {
         is_replay: bool,
         previous_output: Vec<Par>,
     ) -> Result<DispatchType, InterpreterError> {
-        // println!("\nreduce dispatch");
         self.dispatcher
             .dispatch(
                 continuation,
@@ -716,7 +753,6 @@ impl DebruijnInterpreter {
             >,
         >,
     > {
-        // println!("\nreduce produce_peeks");
         data_list
             .into_iter()
             .filter(|(_, _, _, persist)| !persist)
@@ -737,11 +773,10 @@ impl DebruijnInterpreter {
 
     async fn update_mergeable_channels(&self, chan: &Par) -> () {
         let is_mergeable = self.is_mergeable_channel(chan);
-        // println!("\nis_mergeable: {:?}", is_mergeable);
 
         if is_mergeable {
             {
-                let mut merge_chs_write = self.merge_chs.write().unwrap();
+                let mut merge_chs_write = self.merge_chs.write().await;
                 merge_chs_write.insert(chan.clone());
             }
         }
@@ -811,7 +846,6 @@ impl DebruijnInterpreter {
         env: &Env<Par>,
         rand: Blake2b512Random,
     ) -> Result<(), InterpreterError> {
-        // println!("\ngenerated_message_eval, term: {:?}", term);
         match term {
             GeneratedMessage::Send(term) => self.eval_send(term, env, rand).await,
             GeneratedMessage::Receive(term) => self.eval_receive(term, env, rand).await,
@@ -863,7 +897,6 @@ impl DebruijnInterpreter {
         env: &Env<Par>,
         rand: Blake2b512Random,
     ) -> Result<(), InterpreterError> {
-        // println!("\nenv in eval_send: {:?}", env);
         self.cost.charge(send_eval_cost())?;
         let eval_chan = self.eval_expr(&unwrap_option_safe(send.chan.clone())?, env)?;
         let sub_chan = self.substitute.substitute_and_charge(&eval_chan, 0, env)?;
@@ -889,12 +922,6 @@ impl DebruijnInterpreter {
             })
             .collect::<Result<Vec<_>, InterpreterError>>()?;
 
-        // println!("\ndata in eval_send: {:?}", data);
-        // println!("\nsubst_data in eval_send: {:?}", subst_data);
-
-        // println!("\nrand in eval_send");
-        // rand.debug_str();
-
         self.produce(
             unbundled,
             ListParWithRandom {
@@ -913,24 +940,18 @@ impl DebruijnInterpreter {
         env: &Env<Par>,
         rand: Blake2b512Random,
     ) -> Result<(), InterpreterError> {
-        // println!("\nreceive in eval_receive: {:?}", receive);
-        // println!("\nreceive binds length: {:?}", receive.binds.len());
         self.cost.charge(receive_eval_cost())?;
         let binds = receive
             .binds
             .clone()
             .into_iter()
             .map(|rb| {
-                // println!("\nrb in eval_receive: {:?}", rb);
                 let q = self.unbundle_receive(&rb, env)?;
-                // println!("\nq in eval_receive: {:?}", q);
                 let subst_patterns = rb
                     .patterns
                     .into_iter()
                     .map(|pattern| self.substitute.substitute_and_charge(&pattern, 1, env))
                     .collect::<Result<Vec<_>, InterpreterError>>()?;
-
-                // println!("\nsubst_patterns in eval_receive: {:?}", subst_patterns);
 
                 Ok((
                     BindPattern {
@@ -949,12 +970,6 @@ impl DebruijnInterpreter {
             0,
             &env.shift(receive.bind_count),
         )?;
-
-        // println!("\nbinds in eval_receive: {:?}", binds);
-        // println!("\nsubst_body in eval_receive: {:?}", subst_body);
-
-        // println!("\nrand in eval_receive");
-        // rand.debug_str();
 
         self.consume(
             binds,
@@ -981,7 +996,6 @@ impl DebruijnInterpreter {
      */
     fn eval_var(&self, valproc: &Var, env: &Env<Par>) -> Result<Par, InterpreterError> {
         self.cost.charge(var_eval_cost())?;
-        // println!("\nenv in eval_var: {:?}", env);
         match valproc.var_instance {
             Some(VarInstance::BoundVar(level)) => match env.get(&level) {
                 Some(p) => Ok(p),
@@ -1033,14 +1047,9 @@ impl DebruijnInterpreter {
                                 env,
                             )?;
 
-                            // println!("\ntarget in eval_matcher: {:?}", target);
-                            // println!("\npattern in eval_matcher: {:?}", pattern);
-
                             let mut spatial_matcher = SpatialMatcherContext::new();
                             let match_result =
                                 spatial_matcher.spatial_match_result(_target.clone(), pattern);
-
-                            // println!("\nmatch_result in eval_matcher: {:?}", match_result);
 
                             match match_result {
                                 None => {
@@ -1075,8 +1084,6 @@ impl DebruijnInterpreter {
             .substitute
             .substitute_and_charge(&evaled_target, 0, env)?;
 
-        // println!("\nsubst_target in eval_match: {:?}", subst_target);
-
         first_match(subst_target, mat.cases.clone(), rand).await
     }
 
@@ -1091,10 +1098,6 @@ impl DebruijnInterpreter {
         env: Env<Par>,
         mut rand: Blake2b512Random,
     ) -> Result<(), InterpreterError> {
-        // println!("\nnew in eval_new: {:?}", new);
-        // println!("\nrand in eval_new");
-        // rand.debug_str();
-        // println!("\nrand next: {:?}", rand.next());
         let mut alloc = |count: usize, urns: Vec<String>| {
             let simple_news =
                 (0..(count - urns.len()))
@@ -1105,21 +1108,13 @@ impl DebruijnInterpreter {
                                 id: rand.next().iter().map(|&x| x as u8).collect::<Vec<u8>>(),
                             })),
                         }]);
-                        // println!("\nrand in simple_news");
-                        // rand.debug_str();
                         _env.put(addr)
                     });
 
-            // println!("\nrand in eval_new after");
-            // rand.debug_str();
-            // println!("\nsimple_news in eval_new: {:?}", simple_news);
-
             let add_urn = |new_env: &mut Env<Par>, urn: String| {
-                // println!("\nurn_map: {:?}", self.urn_map);
                 if !self.urn_map.contains_key(&urn) {
                     // TODO: Injections (from normalizer) are not used currently, see [[NormalizerEnv]].
                     // If `urn` can't be found in `urnMap`, it must be referencing an injection - OLD
-                    // println!("\nnew_injections: {:?}", new.injections);
                     match new.injections.get(&urn) {
                         Some(p) => {
                             if let Some(gunf) = RhoUnforgeable::unapply(p) {
@@ -1171,12 +1166,9 @@ impl DebruijnInterpreter {
             })
         };
 
-        // println!("\nhit eval_new");
         self.cost.charge(new_bindings_cost(new.bind_count as i64))?;
-        // println!("\nnew uri: {:?}", new.uri);
         match alloc(new.bind_count as usize, new.uri.clone()) {
             Ok(env) => {
-                // println!("\nenv in eval_new: {:?}", env);
                 self.eval(unwrap_option_safe(new.p.clone())?, &env, rand)
                     .await
             }
@@ -1186,9 +1178,7 @@ impl DebruijnInterpreter {
 
     fn unbundle_receive(&self, rb: &ReceiveBind, env: &Env<Par>) -> Result<Par, InterpreterError> {
         let eval_src = self.eval_expr(&unwrap_option_safe(rb.source.clone())?, env)?;
-        // println!("\neval_src in unbundle_receive: {:?}", eval_src);
         let subst = self.substitute.substitute_and_charge(&eval_src, 0, env)?;
-        // println!("\nsubst in unbundle_receive: {:?}", eval_src);
         // Check if we try to read from bundled channel
         let unbndl = match single_bundle(&subst) {
             Some(value) => {
@@ -1203,7 +1193,6 @@ impl DebruijnInterpreter {
             None => subst,
         };
 
-        // println!("\nunbndl in unbundle_receive: {:?}", unbndl);
         Ok(unbndl)
     }
 
@@ -1221,10 +1210,7 @@ impl DebruijnInterpreter {
     pub fn eval_expr_to_par(&self, expr: &Expr, env: &Env<Par>) -> Result<Par, InterpreterError> {
         match unwrap_option_safe(expr.expr_instance.clone())? {
             ExprInstance::EVarBody(evar) => {
-                // println!("\nenv in eval_expr_to_par: {:?}", env);
                 let p = self.eval_var(&unwrap_option_safe(evar.v)?, env)?;
-                // println!("\np in eval_expr_to_par: {:?}", p);
-                // println!("\nenv in eval_expr_to_par: {:?}", env);
                 let evaled_p = self.eval_expr(&p, env)?;
                 Ok(evaled_p)
             }
@@ -2497,13 +2483,10 @@ impl DebruijnInterpreter {
                 }
 
                 let expr_evaled = self.outer.eval_expr(&p, env)?;
-                // println!("\nexpr_evaled in to_byte_array_method: {:?}", expr_evaled);
                 let expr_subst =
                     self.outer
                         .substitute
                         .substitute_and_charge(&expr_evaled, 0, env)?;
-
-                // println!("\nexpr_subst in to_byte_array_method: {:?}", expr_subst);
 
                 self.outer.cost.charge(to_byte_array_cost(&expr_subst))?;
                 let ba = self.serialize(&expr_subst)?;
@@ -5841,9 +5824,6 @@ impl DebruijnInterpreter {
                             let par_map =
                                 ParMap::create_from_sorted_par_map(base_ps.insert((key, value)));
 
-                            // println!("\nsorted_par_map in set_method: {:?}", sorted_par_map);
-                            // println!("\npar_map in set_method: {:?}", par_map);
-
                             Ok(Par::default().with_exprs(vec![Expr {
                                 expr_instance: Some(ExprInstance::EMapBody(
                                     ParMapTypeMapper::par_map_to_emap(par_map),
@@ -6693,8 +6673,6 @@ impl DebruijnInterpreter {
                 "Error: parallel or non expression found where expression expected.",
             )))
         } else {
-            // println!("\np: {:?}", p);
-            // println!("\np.exprs: {:?}", p.exprs);
             match p.exprs.as_slice() {
                 [Expr {
                     expr_instance: Some(ExprInstance::GInt(v)),
@@ -6867,8 +6845,6 @@ impl DebruijnInterpreter {
             .iter()
             .map(|expr| self.eval_expr_to_par(expr, env))
             .collect::<Result<Vec<_>, InterpreterError>>()?;
-        // println!("\npar in eval_expr: {:?}", par);
-        // println!("\nevaled_exprs in eval_expr: {:?}", evaled_exprs);
 
         // Note: the locallyFree cache in par could now be invalid, but given
         // that locallyFree is for use in the matcher, and the matcher uses

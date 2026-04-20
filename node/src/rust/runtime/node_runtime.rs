@@ -222,11 +222,14 @@ impl NodeRuntime {
 
         info!("NodeDiscovery initialized");
 
-        // Create event bus with circular buffer (capacity: 1)
+        // Create event bus backed by a broadcast channel (capacity: 100).
+        // Events published during startup are buffered for replay to
+        // late-connecting WebSocket clients. The buffer is sealed when
+        // engine_init completes (see the tokio::select! loop below).
         let event_bus = {
             use shared::rust::shared::f1r3fly_events::F1r3flyEvents;
 
-            F1r3flyEvents::new(Some(1))
+            F1r3flyEvents::new()
         };
 
         info!("Event bus (F1r3flyEvents) initialized");
@@ -481,6 +484,7 @@ impl NodeRuntime {
             node_discovery.clone(),
             block_report_api,
             event_stream,
+            event_bus.startup_buffer(),
             kademlia_store.clone(),
         )
         .await?;
@@ -495,6 +499,9 @@ impl NodeRuntime {
             .map_err(|e| eyre::eyre!("Failed to publish NodeStarted event: {}", e))?;
 
         info!("NodeStarted event published: {}", address);
+
+        // Keep a reference for sealing the startup buffer after engine_init
+        let event_bus_for_seal = event_bus.clone();
 
         // Start all concurrent tasks with categorized failure handling
         // Critical tasks: Failure triggers immediate shutdown
@@ -806,9 +813,11 @@ impl NodeRuntime {
                 }, if engine_init_handler.is_some() => {
                     match result {
                         Some(Ok(Ok(_))) => {
+                            event_bus_for_seal.seal_startup();
                             continue;
                         }
                         Some(Ok(Err(e))) => {
+                            event_bus_for_seal.seal_startup();
                             tracing::error!("Engine initialization failed: {}", e);
                             // Engine init failure is critical - trigger shutdown
                             break;

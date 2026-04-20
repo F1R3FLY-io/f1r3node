@@ -36,17 +36,27 @@ main()
 ## Configuration
 
 **Config precedence** (highest wins):
-1. CLI arguments
+1. CLI arguments (`--native-token-name=X`, `--network-id=Y`, etc.)
 2. Config file (`rnode.conf` in data directory)
-3. Default config (`defaults.conf`)
+3. Default config (`defaults.conf` baked into the binary)
+
+**Config build pipeline** (`configuration/mod.rs::build()`):
+1. Load `defaults.conf` via HOCON → `HoconLoader::load_file()`
+2. Merge user config on top (if `rnode.conf` exists in data dir) → `default_config.load_file(config_file)`
+3. Resolve HOCON substitutions (e.g. `protocol-client.network-id = ${protocol-server.network-id}`)
+4. Deserialize merged HOCON into `NodeConf` struct → `merged_config.resolve()`
+5. Apply CLI overrides → `node_conf.override_config_values(options)` (via `config_mapper.rs`)
+6. Validate → `validate_config(&node_conf)` (e.g. native token non-empty, decimals ≤ 18, quorum ≤ keys)
+
+**Important**: HOCON substitutions resolve in step 3, before CLI overrides in step 5. A CLI flag like `--network-id` must override both `protocol_server.network_id` AND `protocol_client.network_id` because the substitution `${protocol-server.network-id}` already resolved to the HOCON default.
 
 **`NodeConf`** fields:
 - `protocol_server` -- P2P (port 40400, network-id, TLS)
-- `protocol_client` -- Bootstrap peer, timeouts
+- `protocol_client` -- Bootstrap peer, network-id (must match server), timeouts
 - `peers_discovery` -- Kademlia (port 40404)
 - `api_server` -- gRPC external (40401), internal (40402), HTTP (40403), admin (40405)
 - `storage` -- Data directory (default `~/.rnode`)
-- `casper` -- Validator key, parents, finalization, heartbeat
+- `casper` -- Validator key, parents, finalization, heartbeat, genesis block data (bonds, wallets, native token metadata)
 - `metrics` -- Prometheus, InfluxDB, Zipkin, Sigar toggles
 - `dev` -- Dev mode, deployer private key
 - `openai` -- LLM integration settings
@@ -62,6 +72,9 @@ The following boolean flags override HOCON configuration at startup. CLI flags a
 | `--disable-mergeable-channel-gc` | `casper.enable_mergeable_channel_gc = false` | Disable mergeable channel GC (takes precedence over `--enable-mergeable-channel-gc`) |
 | `--heartbeat-enabled` | `casper.heartbeat_conf.enabled = true` | Enable heartbeat block proposing for liveness |
 | `--heartbeat-disabled` | `casper.heartbeat_conf.enabled = false` | Disable heartbeat proposing (takes precedence over `--heartbeat-enabled`) |
+| `--native-token-name` | `casper.genesis_block_data.native_token_name` | Native token display name (genesis-locked) |
+| `--native-token-symbol` | `casper.genesis_block_data.native_token_symbol` | Native token ticker symbol (genesis-locked) |
+| `--native-token-decimals` | `casper.genesis_block_data.native_token_decimals` | Native token decimal places, 0-18 (genesis-locked) |
 
 **Precedence rules for paired flags**: When both an enable and disable flag are provided for the same setting, the disable flag wins. The config mapper evaluates `--disable-*` after `--enable-*`, so the disable always takes final effect.
 
@@ -88,12 +101,50 @@ CLI flags are applied to the parsed `NodeConf` by `config_mapper.rs`:
 
 | Port | Purpose |
 |------|---------|
-| 40403 | Public REST (deploy, blocks, finalization, transactions) via Axum |
+| 40403 | Public REST (deploy, blocks, finalization, transactions, status) via Axum |
 | 40405 | Admin (propose, propose_result) |
+
+**`/api/status`** returns node identity, network membership, and native token metadata:
+
+```json
+{
+  "version": {"api": "1", "node": "..."},
+  "address": "rnode://...",
+  "networkId": "testnet",
+  "shardId": "root",
+  "peers": 4,
+  "nodes": 4,
+  "minPhloPrice": 1,
+  "nativeTokenName": "F1R3CAP",
+  "nativeTokenSymbol": "F1R3",
+  "nativeTokenDecimals": 8,
+  "peerList": [...]
+}
+```
+
+## WebSocket Events
+
+The `/ws/events` endpoint on the HTTP port (40403) streams real-time node events. See [websocket-events.md](websocket-events.md) for full documentation.
+
+9 event types are streamed: 3 block lifecycle (`block-created`, `block-added`, `block-finalised`), 4 genesis ceremony (`sent-unapproved-block`, `block-approval-received`, `sent-approved-block`, `approved-block-received`), and 2 node lifecycle (`entered-running-state`, `node-started`).
+
+Events published during startup are buffered and replayed to clients that connect after the node is running. The buffer is sealed when engine initialization completes.
+
+## Error Handling & Shutdown
+
+`handle_unrecoverable_errors()` in `node_runtime.rs` is the top-level error boundary. Any `Err` from `NodeRuntime::main()` is caught, logged via `tracing::error!`, and the process exits with code 1. This covers:
+- Config validation failures (empty token name, invalid decimals)
+- Genesis ceremony failures (required signatures not met)
+- Token metadata verification mismatch (joiner config disagrees with on-chain state)
+- Any runtime panic or unrecoverable error
+
+The error chain propagates cleanly: `verify_token_metadata_matches_config → Err(CasperError) → ? in casper_launch.launch() → ? in NodeRuntime::main() → handle_unrecoverable_errors → process::exit(1)`. Destructors fire in order; no mid-async process::exit calls.
 
 ## API Server Startup
 
 `bind_tcp_listener_with_retry()` in `servers_instances.rs` handles `AddrInUse` resilience for HTTP/Admin servers: 60 attempts with 500ms delay between retries.
+
+`APIServers::build()` in `api_servers.rs` constructs all gRPC services (Repl, Propose, Deploy, LSP) with shared dependencies (engine cell, block store, connections). `WebApiImpl` in `web_api.rs` handles the HTTP REST layer and caches config-derived values (network-id, shard-id, min-phlo-price, native token metadata) for fast `/api/status` responses without per-request config reads.
 
 ## Transfer Enrichment Pipeline
 

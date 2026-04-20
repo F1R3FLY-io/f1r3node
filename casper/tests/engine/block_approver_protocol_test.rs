@@ -71,6 +71,9 @@ impl TestContext {
             required_sigs,
             genesis_params.proof_of_stake.pos_multi_sig_public_keys,
             genesis_params.proof_of_stake.pos_multi_sig_quorum,
+            genesis_params.native_token_name.clone(),
+            genesis_params.native_token_symbol.clone(),
+            genesis_params.native_token_decimals,
             node.tle.clone(),
             Arc::new(node.rp_conf.clone()),
         )?;
@@ -192,6 +195,9 @@ async fn block_approver_protocol_should_successfully_validate_correct_candidate(
         SHARD_ID,
         &ctx.protocol.pos_multi_sig_public_keys,
         ctx.protocol.pos_multi_sig_quorum,
+        &ctx.protocol.native_token_name,
+        &ctx.protocol.native_token_symbol,
+        ctx.protocol.native_token_decimals,
     )
     .await;
 
@@ -222,6 +228,9 @@ async fn block_approver_protocol_should_reject_candidate_with_incorrect_bonds() 
         SHARD_ID,
         &ctx.protocol.pos_multi_sig_public_keys,
         ctx.protocol.pos_multi_sig_quorum,
+        &ctx.protocol.native_token_name,
+        &ctx.protocol.native_token_symbol,
+        ctx.protocol.native_token_decimals,
     )
     .await;
 
@@ -252,6 +261,9 @@ async fn block_approver_protocol_should_reject_candidate_with_incorrect_vaults()
         SHARD_ID,
         &ctx.protocol.pos_multi_sig_public_keys,
         ctx.protocol.pos_multi_sig_quorum,
+        &ctx.protocol.native_token_name,
+        &ctx.protocol.native_token_symbol,
+        ctx.protocol.native_token_decimals,
     )
     .await;
 
@@ -286,6 +298,9 @@ async fn block_approver_protocol_should_reject_candidate_with_incorrect_blessed_
         SHARD_ID,
         &ctx.protocol.pos_multi_sig_public_keys,
         ctx.protocol.pos_multi_sig_quorum,
+        &ctx.protocol.native_token_name,
+        &ctx.protocol.native_token_symbol,
+        ctx.protocol.native_token_decimals,
     )
     .await;
 

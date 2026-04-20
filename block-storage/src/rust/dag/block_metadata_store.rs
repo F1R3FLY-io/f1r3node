@@ -154,6 +154,7 @@ impl BlockMetadataStore {
         &mut self,
         directly: BlockHash,
         indirectly: HashSet<BlockHash>,
+        ft_value: f32,
     ) -> Result<(), KvStoreError> {
         let indirectly_serde: Vec<BlockHashSerde> = indirectly
             .iter()
@@ -166,11 +167,17 @@ impl BlockMetadataStore {
         let mut new_meta_for_df = self.store.get_unsafe(&BlockHashSerde(directly.clone()))?;
         new_meta_for_df.finalized = true;
         new_meta_for_df.directly_finalized = true;
+        if ft_value > new_meta_for_df.fault_tolerance_value {
+            new_meta_for_df.fault_tolerance_value = ft_value;
+        }
 
         let new_metas_for_if: Vec<(BlockHashSerde, BlockMetadata)> = cur_metas_for_if
             .into_iter()
             .map(|mut v| {
                 v.finalized = true;
+                if v.fault_tolerance_value < ft_value {
+                    v.fault_tolerance_value = ft_value;
+                }
                 (BlockHashSerde(v.block_hash.clone()), v)
             })
             .collect();
@@ -200,6 +207,36 @@ impl BlockMetadataStore {
         self.store.put(new_values)?;
 
         Ok(())
+    }
+
+    pub fn update_ft_if_higher(
+        &mut self,
+        block_hashes: HashSet<BlockHash>,
+        ft_value: f32,
+    ) -> Result<(), KvStoreError> {
+        let serde_keys: Vec<BlockHashSerde> = block_hashes
+            .iter()
+            .map(|h| BlockHashSerde(h.clone()))
+            .collect();
+        let metas = self.store.get_batch(&serde_keys)?;
+
+        let updates: Vec<(BlockHashSerde, BlockMetadata)> = metas
+            .into_iter()
+            .filter(|m| m.fault_tolerance_value < ft_value)
+            .map(|mut m| {
+                m.fault_tolerance_value = ft_value;
+                (BlockHashSerde(m.block_hash.clone()), m)
+            })
+            .collect();
+
+        if !updates.is_empty() {
+            self.store.put(updates)?;
+        }
+        Ok(())
+    }
+
+    pub fn finalized_block_hashes(&self) -> HashSet<BlockHash> {
+        self.dag_state.read().unwrap().finalized_block_set.iter().cloned().collect()
     }
 
     pub fn get(&self, hash: &BlockHash) -> Result<Option<BlockMetadata>, KvStoreError> {
