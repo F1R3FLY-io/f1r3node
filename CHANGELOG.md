@@ -4,6 +4,13 @@ All notable changes to the Scala implementation of F1r3node will be documented i
 This changelog is automatically generated from conventional commits.
 
 
+## [v0.4.9] - 2026-04-20
+
+### CI
+
+- add cancel-in-progress to concurrency block
+
+
 ## [v0.4.8] - 2026-04-02
 
 ### CI
