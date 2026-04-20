@@ -122,6 +122,7 @@ message BlockMetadataInternal {
   bool invalid                               = 8; // whether the block was marked as invalid
   bool directlyFinalized                     = 9; // whether the block has been last finalized block (LFB)
   bool finalized                             = 10;// whether the block is finalized
+  float faultToleranceValue                  = 11;// cached normalized FT at finalization time
 }
 
 message HeaderProto {

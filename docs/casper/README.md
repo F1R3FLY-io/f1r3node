@@ -1,4 +1,4 @@
-> Last updated: 2026-04-14
+> Last updated: 2026-04-19
 
 # Crate: casper (Consensus Layer)
 
@@ -119,8 +119,12 @@ Computes normalized fault tolerance between -1.0 and 1.0:
 **Finalizer** scoped search from last finalized block (LFB) to tips:
 1. Find blocks with >50% stake agreement via main parent chain
 2. Execute Clique Oracle on candidates
-3. Output first block exceeding fault tolerance threshold
-4. Guarded by `FinalizationInProgress` atomic bool (prevents snapshot creation during finalization)
+3. Output first block exceeding fault tolerance threshold, along with its computed FT value
+4. Cache the normalized FT in `BlockMetadata.fault_tolerance_value` for the directly finalized block and all indirectly finalized ancestors
+5. Propagate FT to all previously-finalized blocks whose cached value is lower (`propagate_ft_to_finalized_blocks`). This covers orphaned branches in the multi-parent DAG and ensures all finalized blocks converge toward FT=1.0 as later rounds produce higher agreement.
+6. Guarded by `FinalizationInProgress` atomic bool (prevents snapshot creation during finalization)
+
+**FT caching**: The block API returns the cached FT for finalized blocks instead of recomputing via the clique oracle. Cached FT is monotonically non-decreasing — it only increases as later finalization rounds propagate higher values. Bulk endpoints (`get_blocks`, `show_main_chain`, `get_blocks_by_heights`) use a single DAG snapshot per response for internal consistency.
 
 ## Equivocation Detection
 

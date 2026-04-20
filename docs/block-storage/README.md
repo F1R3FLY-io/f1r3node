@@ -1,4 +1,4 @@
-> Last updated: 2026-03-23
+> Last updated: 2026-04-19
 
 # Crate: block-storage
 
@@ -24,11 +24,14 @@ Block persistence, DAG state management, casper buffer, and deploy indexing.
 **`BlockDagKeyValueStorage`** -- Live mutable DAG with global `Mutex`:
 - `get_representation()` -- Atomic snapshot (acquires lock)
 - `insert(block, invalid, approved)` -- Add block with metadata updates
-- `record_directly_finalized(hash, effect)` -- Async finalization
+- `record_directly_finalized(hash, ft_value, effect)` -- Async finalization with cached FT
+- `propagate_ft_to_finalized_blocks(ft_value)` -- Update all finalized blocks with lower cached FT
 
 **`BlockMetadataStore`** -- Per-block metadata with in-memory DAG state:
 - Uses `imbl` persistent collections (HashSet, OrdMap, HashMap) for structural sharing
-- `add(metadata)`, `record_finalized(directly, indirectly)`, `contains(hash)`
+- `add(metadata)`, `record_finalized(directly, indirectly, ft_value)`, `contains(hash)`
+- `update_ft_if_higher(hashes, ft_value)` -- Batch update cached FT for blocks below threshold
+- `finalized_block_hashes()` -- Returns all finalized block hashes from in-memory set
 - **DAG metadata caches**: In-memory indices avoid repeated LMDB deserialization on hot paths:
   - `block_number_map`: BlockHash → block_num
   - `main_parent_map`: BlockHash → parent BlockHash
