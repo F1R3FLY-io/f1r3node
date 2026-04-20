@@ -4,6 +4,55 @@ All notable changes to the Rust implementation of F1r3node will be documented in
 This changelog is automatically generated from conventional commits.
 
 
+## [v0.4.12] - 2026-04-20
+
+### Bug Fixes
+
+- cache fault tolerance at finalization time (#484) ([#484](https://github.com/F1R3FLY-io/f1r3node/pull/484))
+- propagate exploratory deploy errors instead of swallowing them (#485) ([#485](https://github.com/F1R3FLY-io/f1r3node/pull/485))
+- correct hash_from_vec single-channel shortcut causing merge state loss (#483) ([#483](https://github.com/F1R3FLY-io/f1r3node/pull/483))
+- replay cost determinism for parallel Rholang evaluation
+
+### CI
+
+- remove rust/staging from push triggers to prevent duplicate CI runs
+- update system-integration ref to include websocket test fix
+
+### Documentation
+
+- add TODO.md with RSpace lock granularity note
+- update rholang and rspace docs for async ISpace and cost fixes
+- add comprehensive Rholang developer reference
+- fix seal_startup() comments to match frozen-buffer behavior
+
+### Features
+
+- configurable native token metadata (on-chain, API, CLI)
+- WebSocket startup event replay and dead code cleanup
+
+### Performance
+
+- async ISpace trait, true parallel Rholang evaluation
+- tokio::spawn for Par eval, ReplayRSpace locks, cleanup
+- RSpace interior mutability, per-channel locks, matcher rewrite
+
+### Refactoring
+
+- remove unnecessary space_locked reborrow variables
+- remove unused semaphore_count parameter from CostManager
+
+### Style
+
+- fmt touched files
+
+### Testing
+
+- ignore perf benchmark in CI, run manually with --include-ignored
+- update ignored test comment with specific failure reason
+- restore hardcoded cost values, add deterministic cost test, enable previously-broken contracts
+- add 300ms regression threshold to cost accounting benchmark
+
+
 ## [v0.4.11] - 2026-04-09
 
 ### Bug Fixes
