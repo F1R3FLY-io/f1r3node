@@ -236,7 +236,7 @@ impl DeployService for DeployGrpcServiceV1Impl {
         match BlockAPI::get_block(&self.engine_cell, &request.into_inner().hash).await {
             Ok(block_info) => {
                 let enriched = if let Some(ref enricher) = self.block_enricher {
-                    enricher.enrich(block_info).await
+                    enricher.enrich(block_info).await.0
                 } else {
                     block_info
                 };
@@ -627,7 +627,7 @@ impl DeployService for DeployGrpcServiceV1Impl {
         match BlockAPI::last_finalized_block(&self.engine_cell).await {
             Ok(block_info) => {
                 let enriched = if let Some(ref enricher) = self.block_enricher {
-                    enricher.enrich(block_info).await
+                    enricher.enrich(block_info).await.0
                 } else {
                     block_info
                 };

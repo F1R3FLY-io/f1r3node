@@ -364,7 +364,7 @@ mod tests {
             unimplemented!()
         }
         async fn find_deploy_minimal(&self, _: String) -> eyre::Result<DeployLookupResponse> {
-            Ok(DeployLookupResponse::from(sample_light_block_info()))
+            Ok(DeployLookupResponse::from_block_and_cost(sample_light_block_info(), 0))
         }
         async fn exploratory_deploy(
             &self,

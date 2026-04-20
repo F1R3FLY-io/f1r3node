@@ -80,9 +80,15 @@ curl -X POST http://localhost:40403/api/deploy \
 ```bash
 curl http://localhost:40403/api/deploy/$DEPLOY_ID
 curl http://localhost:40403/api/deploy/$DEPLOY_ID?view=detail
+curl http://localhost:40403/api/deploy/$DEPLOY_ID?view=minimal
 ```
 
-The `detail` view includes: `errored`, `cost`, `blockNumber`, `systemDeployError`.
+**Views:**
+- **`detail`** (default): full deploy execution info — `errored`, `cost`, `blockNumber`, `systemDeployError`, `transfers`
+- **`minimal`**: block metadata + `cost` — lightweight polling without full deploy details
+- **`block`**: containing block info (LightBlockInfo)
+
+**Transfers:** The `transfers` field is `null` on validator nodes (block replay unavailable) and a populated array on readonly nodes. `null` means transfers can't be extracted on this node type — query a readonly node for transfer details.
 
 ### Exploratory Deploy
 

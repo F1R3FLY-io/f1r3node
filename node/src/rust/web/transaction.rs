@@ -19,6 +19,7 @@ pub struct Transaction {
     pub from_addr: String,
     pub to_addr: String,
     pub amount: i64,
+    #[serde(skip, default)]
     pub ret_unforgeable: Par,
     pub fail_reason: Option<String>,
 }
@@ -86,7 +87,7 @@ impl TransactionAPI for TransactionAPIImpl {
 
         let block_event_info = match block_event_info {
             Ok(info) => info,
-            Err(_) => return Ok(Vec::new()),
+            Err(e) => return Err(eyre::eyre!("{}", e)),
         };
 
         let mut all_transactions = Vec::new();
@@ -464,31 +465,105 @@ pub fn transfer_unforgeable() -> Par {
     }
 }
 
-/// Create a CacheTransactionAPI with a key-value store for caching transaction responses
+/// JSON-based typed store for TransactionResponse caching.
+/// Uses serde_json instead of bincode because TransactionResponse contains
+/// internally-tagged enums (`#[serde(tag = "type")]` on TransactionType)
+/// which bincode does not support.
+pub struct JsonTypedStore {
+    store: std::sync::Arc<dyn shared::rust::store::key_value_store::KeyValueStore>,
+}
+
+impl shared::rust::store::key_value_typed_store::KeyValueTypedStore<String, TransactionResponse>
+    for JsonTypedStore
+{
+    fn get(
+        &self,
+        keys: &Vec<String>,
+    ) -> Result<Vec<Option<TransactionResponse>>, shared::rust::store::key_value_store::KvStoreError>
+    {
+        let encoded_keys: Vec<Vec<u8>> = keys
+            .iter()
+            .map(|k| k.as_bytes().to_vec())
+            .collect();
+        let raw_values = self.store.get(&encoded_keys)?;
+        Ok(raw_values
+            .into_iter()
+            .map(|opt| {
+                opt.and_then(|bytes| serde_json::from_slice(&bytes).ok())
+            })
+            .collect())
+    }
+
+    fn put(
+        &self,
+        kv_pairs: Vec<(String, TransactionResponse)>,
+    ) -> Result<(), shared::rust::store::key_value_store::KvStoreError> {
+        let encoded: Vec<(Vec<u8>, Vec<u8>)> = kv_pairs
+            .into_iter()
+            .map(|(k, v)| {
+                (
+                    k.as_bytes().to_vec(),
+                    serde_json::to_vec(&v).unwrap(),
+                )
+            })
+            .collect();
+        self.store.put(encoded)
+    }
+
+    fn delete(
+        &self,
+        keys: Vec<String>,
+    ) -> Result<(), shared::rust::store::key_value_store::KvStoreError> {
+        let encoded: Vec<Vec<u8>> = keys
+            .into_iter()
+            .map(|k| k.as_bytes().to_vec())
+            .collect();
+        self.store.delete(encoded)?;
+        Ok(())
+    }
+
+    fn contains(
+        &self,
+        keys: Vec<String>,
+    ) -> Result<Vec<bool>, shared::rust::store::key_value_store::KvStoreError> {
+        let values = self.get(&keys)?;
+        Ok(values.into_iter().map(|v| v.is_some()).collect())
+    }
+
+    fn collect<F, T>(&self, _f: F) -> Result<Vec<T>, shared::rust::store::key_value_store::KvStoreError>
+    where
+        F: FnMut((&String, &TransactionResponse)) -> Option<T>,
+    {
+        Ok(Vec::new())
+    }
+
+    fn to_map(
+        &self,
+    ) -> Result<
+        std::collections::HashMap<String, TransactionResponse>,
+        shared::rust::store::key_value_store::KvStoreError,
+    > {
+        Ok(std::collections::HashMap::new())
+    }
+
+    fn non_empty(&self) -> Result<bool, shared::rust::store::key_value_store::KvStoreError> {
+        self.store.non_empty()
+    }
+}
+
+/// Create a CacheTransactionAPI with a JSON-based cache store
 pub async fn cache_transaction_api(
     transaction_api: TransactionAPIImpl,
     rnode_store_manager: &mut impl rspace_plus_plus::rspace::shared::key_value_store_manager::KeyValueStoreManager,
-) -> Result<
-    CacheTransactionAPI<
-        TransactionAPIImpl,
-        shared::rust::store::key_value_typed_store_impl::KeyValueTypedStoreImpl<
-            String,
-            TransactionResponse,
-        >,
-    >,
-> {
-    use shared::rust::store::key_value_typed_store_impl::KeyValueTypedStoreImpl;
-
-    // Create the transaction store from the store manager
+) -> Result<CacheTransactionAPI<TransactionAPIImpl, JsonTypedStore>> {
     let store = rnode_store_manager
         .store("transaction".to_string())
         .await
         .map_err(|e| eyre::eyre!("Failed to create transaction store: {}", e))?;
 
-    // Wrap it in a typed store for String -> TransactionResponse
-    let typed_store = KeyValueTypedStoreImpl::<String, TransactionResponse>::new(store);
+    let json_store = JsonTypedStore { store };
 
-    Ok(CacheTransactionAPI::new(transaction_api, typed_store))
+    Ok(CacheTransactionAPI::new(transaction_api, json_store))
 }
 
 mod helpers {

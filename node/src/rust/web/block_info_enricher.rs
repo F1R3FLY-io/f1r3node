@@ -54,9 +54,14 @@ pub fn enrich_block_info(
 /// Trait for enriching block info with transfer data.
 /// Used to pass a type-erased enricher to gRPC services that don't know
 /// the concrete `CacheTransactionAPI` generic parameters.
+///
+/// Returns `(BlockInfo, bool)` where the bool indicates whether enrichment
+/// succeeded. When `true`, transfers on each deploy are meaningful (empty list
+/// means no transfers). When `false`, transfers could not be extracted (e.g.
+/// block replay unavailable on validator nodes) and should be treated as unknown.
 #[async_trait]
 pub trait BlockEnricher: Send + Sync {
-    async fn enrich(&self, block_info: BlockInfo) -> BlockInfo;
+    async fn enrich(&self, block_info: BlockInfo) -> (BlockInfo, bool);
 }
 
 /// Concrete `BlockEnricher` implementation backed by `CacheTransactionAPI`.
@@ -95,7 +100,7 @@ where
         + Sync
         + 'static,
 {
-    async fn enrich(&self, block_info: BlockInfo) -> BlockInfo {
+    async fn enrich(&self, block_info: BlockInfo) -> (BlockInfo, bool) {
         let block_hash = block_info
             .block_info
             .as_ref()
@@ -103,7 +108,7 @@ where
             .unwrap_or_default();
 
         if block_hash.is_empty() {
-            return block_info;
+            return (block_info, false);
         }
 
         match self
@@ -111,15 +116,15 @@ where
             .get_transaction(block_hash.clone())
             .await
         {
-            Ok(response) => enrich_block_info(block_info, &response),
+            Ok(response) => (enrich_block_info(block_info, &response), true),
             Err(e) => {
                 tracing::warn!(
                     target: "f1r3fly.api",
                     block_hash = %block_hash,
                     error = %e,
-                    "Failed to extract transfers for block, returning empty transfers"
+                    "Failed to extract transfers for block"
                 );
-                block_info
+                (block_info, false)
             }
         }
     }

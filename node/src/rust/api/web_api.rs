@@ -315,14 +315,26 @@ where
 
     async fn last_finalized_block(&self) -> Result<BlockInfoSerde> {
         let block_info = BlockAPI::last_finalized_block(&self.engine_cell).await?;
-        let enriched = self.block_enricher.enrich(block_info).await;
-        Ok(BlockInfoSerde::from(enriched))
+        let (enriched, transfers_available) = self.block_enricher.enrich(block_info).await;
+        let mut serde = BlockInfoSerde::from(enriched);
+        if !transfers_available {
+            for deploy in &mut serde.deploys {
+                deploy.transfers = None;
+            }
+        }
+        Ok(serde)
     }
 
     async fn get_block(&self, hash: String) -> Result<BlockInfoSerde> {
         let block_info = BlockAPI::get_block(&self.engine_cell, &hash).await?;
-        let enriched = self.block_enricher.enrich(block_info).await;
-        Ok(BlockInfoSerde::from(enriched))
+        let (enriched, transfers_available) = self.block_enricher.enrich(block_info).await;
+        let mut serde = BlockInfoSerde::from(enriched);
+        if !transfers_available {
+            for deploy in &mut serde.deploys {
+                deploy.transfers = None;
+            }
+        }
+        Ok(serde)
     }
 
     async fn get_blocks(&self, depth: i32) -> Result<Vec<LightBlockInfoSerde>> {
@@ -399,8 +411,17 @@ where
     }
 
     async fn find_deploy_minimal(&self, deploy_id: String) -> Result<DeployLookupResponse> {
-        let full = self.find_deploy(deploy_id).await?;
-        Ok(DeployLookupResponse::from(full))
+        let light_block = self.find_deploy(deploy_id.clone()).await?;
+        let block_info = self.get_block(light_block.block_hash.clone()).await?;
+
+        let cost = block_info
+            .deploys
+            .iter()
+            .find(|d| d.sig == deploy_id)
+            .map(|d| d.cost)
+            .unwrap_or(0);
+
+        Ok(DeployLookupResponse::from_block_and_cost(light_block, cost))
     }
 
     async fn exploratory_deploy(
@@ -653,10 +674,11 @@ pub struct DeployDetailResponse {
     pub sig_algorithm: String,
     #[serde(rename = "validAfterBlockNumber")]
     pub valid_after_block_number: i64,
-    pub transfers: Vec<TransferInfoSerde>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transfers: Option<Vec<TransferInfoSerde>>,
 }
 
-/// Minimal deploy lookup response containing only essential fields
+/// Minimal deploy lookup response containing essential fields plus cost
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct DeployLookupResponse {
     #[serde(rename = "blockHash")]
@@ -673,10 +695,11 @@ pub struct DeployLookupResponse {
     #[serde(rename = "shardId")]
     pub shard_id: String,
     pub version: i64,
+    pub cost: u64,
 }
 
-impl From<LightBlockInfoSerde> for DeployLookupResponse {
-    fn from(info: LightBlockInfoSerde) -> Self {
+impl DeployLookupResponse {
+    pub fn from_block_and_cost(info: LightBlockInfoSerde, cost: u64) -> Self {
         Self {
             block_hash: info.block_hash,
             block_number: info.block_number,
@@ -687,6 +710,7 @@ impl From<LightBlockInfoSerde> for DeployLookupResponse {
             sig_algorithm: info.sig_algorithm,
             shard_id: info.shard_id,
             version: info.version,
+            cost,
         }
     }
 }
@@ -1011,7 +1035,7 @@ mod tests {
             rejected_deploys: vec![],
         };
 
-        let result = DeployLookupResponse::from(light_block);
+        let result = DeployLookupResponse::from_block_and_cost(light_block, 0);
 
         assert_eq!(result.block_hash, "7bf8abc123");
         assert_eq!(result.block_number, 52331);
@@ -1036,6 +1060,7 @@ mod tests {
             sig_algorithm: "secp256k1".to_string(),
             shard_id: "root".to_string(),
             version: 1,
+            cost: 0,
         };
 
         let json = serde_json::to_value(&response).unwrap();
@@ -1093,7 +1118,7 @@ mod tests {
         light_block.sig_algorithm = String::new();
         light_block.shard_id = String::new();
 
-        let result = DeployLookupResponse::from(light_block);
+        let result = DeployLookupResponse::from_block_and_cost(light_block, 0);
 
         assert_eq!(result.block_hash, "");
         assert_eq!(result.sender, "");
@@ -1128,7 +1153,7 @@ mod tests {
             rejected_deploys: vec![],
         };
 
-        let result = DeployLookupResponse::from(light_block);
+        let result = DeployLookupResponse::from_block_and_cost(light_block, 0);
 
         assert_eq!(result.block_number, 0);
         assert_eq!(result.timestamp, 0);
@@ -1172,7 +1197,7 @@ mod tests {
             rejected_deploys: vec![],
         };
 
-        let result = DeployLookupResponse::from(light_block);
+        let result = DeployLookupResponse::from_block_and_cost(light_block, 0);
 
         // Response should be the same regardless of bonds size
         assert_eq!(result.block_hash, "7bf8abc123");
