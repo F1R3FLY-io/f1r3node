@@ -318,7 +318,7 @@ impl WebApi for WebApiImpl {
         let res = BlockAPI::get_listening_name_data_response(
             &self.engine_cell,
             request.depth,
-            to_par(request.name),
+            to_par(request.name)?,
             self.api_max_blocks_limit,
         )
         .await?;
@@ -332,7 +332,7 @@ impl WebApi for WebApiImpl {
     ) -> Result<RhoDataResponse> {
         let (pars, block) = BlockAPI::get_data_at_par(
             &self.engine_cell,
-            &to_par(request.name),
+            &to_par(request.name)?,
             request.block_hash,
             request.use_pre_state_hash,
         )
@@ -494,43 +494,74 @@ impl WebApi for WebApiImpl {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[schema(no_recursion)]
 pub enum RhoExpr {
-    /// Nested expressions (Par, Tuple, List and Set are converted to JSON list)
-    ExprPar {
-        data: Vec<RhoExpr>,
-    },
-    ExprTuple {
-        data: Vec<RhoExpr>,
-    },
-    ExprList {
-        data: Vec<RhoExpr>,
-    },
-    ExprSet {
-        data: Vec<RhoExpr>,
-    },
-    ExprMap {
-        data: HashMap<String, RhoExpr>,
-    },
+    // === Collections ===
+    ExprPar { data: Vec<RhoExpr> },
+    ExprTuple { data: Vec<RhoExpr> },
+    ExprList { data: Vec<RhoExpr> },
+    ExprSet { data: Vec<RhoExpr> },
+    ExprMap { data: HashMap<String, RhoExpr> },
 
-    /// Terminal expressions (here is the data)
-    ExprBool {
-        data: bool,
-    },
-    ExprInt {
-        data: i64,
-    },
-    ExprString {
-        data: String,
-    },
-    ExprUri {
-        data: String,
-    },
-    /// Binary data is encoded as base16 string
-    ExprBytes {
-        data: String,
-    },
-    ExprUnforg {
-        data: RhoUnforg,
-    },
+    // === Primitives ===
+    ExprBool { data: bool },
+    ExprInt { data: i64 },
+    ExprString { data: String },
+    ExprUri { data: String },
+    ExprBytes { data: String },
+
+    // === Extended numerics ===
+    ExprFloat { data: f64 },
+    ExprBigInt { data: String },
+    ExprBigRat { numerator: String, denominator: String },
+    ExprFixedPoint { value: String, scale: u32 },
+
+    // === Unforgeable names ===
+    ExprUnforg { data: RhoUnforg },
+
+    // === Bundle (with permissions) ===
+    ExprBundle { data: Box<RhoExpr>, read: bool, write: bool },
+
+    // === Unary operators ===
+    ExprNot { data: Box<RhoExpr> },
+    ExprNeg { data: Box<RhoExpr> },
+
+    // === Binary arithmetic ===
+    ExprPlus { left: Box<RhoExpr>, right: Box<RhoExpr> },
+    ExprMinus { left: Box<RhoExpr>, right: Box<RhoExpr> },
+    ExprMult { left: Box<RhoExpr>, right: Box<RhoExpr> },
+    ExprDiv { left: Box<RhoExpr>, right: Box<RhoExpr> },
+    ExprMod { left: Box<RhoExpr>, right: Box<RhoExpr> },
+
+    // === Comparison ===
+    ExprLt { left: Box<RhoExpr>, right: Box<RhoExpr> },
+    ExprLte { left: Box<RhoExpr>, right: Box<RhoExpr> },
+    ExprGt { left: Box<RhoExpr>, right: Box<RhoExpr> },
+    ExprGte { left: Box<RhoExpr>, right: Box<RhoExpr> },
+    ExprEq { left: Box<RhoExpr>, right: Box<RhoExpr> },
+    ExprNeq { left: Box<RhoExpr>, right: Box<RhoExpr> },
+
+    // === Logical ===
+    ExprAnd { left: Box<RhoExpr>, right: Box<RhoExpr> },
+    ExprOr { left: Box<RhoExpr>, right: Box<RhoExpr> },
+
+    // === String operations ===
+    ExprConcat { left: Box<RhoExpr>, right: Box<RhoExpr> },
+    ExprInterpolate { left: Box<RhoExpr>, right: Box<RhoExpr> },
+    ExprDiff { left: Box<RhoExpr>, right: Box<RhoExpr> },
+
+    // === Pattern matching ===
+    ExprMatches { target: Box<RhoExpr>, pattern: Box<RhoExpr> },
+
+    // === Method call ===
+    ExprMethod { target: Box<RhoExpr>, name: String, args: Vec<RhoExpr> },
+
+    // === Variable reference ===
+    ExprVar { index: i32 },
+
+    // === System ===
+    ExprSysAuthToken,
+
+    // === Catch-all for unknown/unhandled types ===
+    ExprUnknown { type_name: String },
 }
 
 /// Unforgeable name types
@@ -539,6 +570,7 @@ pub enum RhoUnforg {
     UnforgPrivate { data: String },
     UnforgDeploy { data: String },
     UnforgDeployer { data: String },
+    UnforgSysAuthToken,
 }
 
 // API request & response types
@@ -801,157 +833,288 @@ use models::rhoapi::g_unforgeable::UnfInstance;
 use models::rhoapi::{Bundle, Expr, GDeployId, GDeployerId, GPrivate};
 use models::rhoapi::{GUnforgeable, Par};
 
-/// Convert RhoUnforg to protobuf GUnforgeable
-fn unforg_to_unforg_proto(unforg: RhoUnforg) -> UnfInstance {
-    match unforg {
+/// Convert RhoUnforg to protobuf GUnforgeable.
+/// Hex decode errors produce empty bytes with a warning log.
+fn unforg_to_unforg_proto(unforg: RhoUnforg) -> eyre::Result<UnfInstance> {
+    fn decode_hex(data: &str) -> eyre::Result<Vec<u8>> {
+        hex::decode(data).map_err(|e| eyre::eyre!("Invalid hex in unforgeable name '{}': {}", data, e))
+    }
+    Ok(match unforg {
         RhoUnforg::UnforgPrivate { data } => UnfInstance::GPrivateBody(GPrivate {
-            id: hex::decode(data).unwrap_or_default().into(),
+            id: decode_hex(&data)?.into(),
         }),
         RhoUnforg::UnforgDeploy { data } => UnfInstance::GDeployIdBody(GDeployId {
-            sig: hex::decode(data).unwrap_or_default().into(),
+            sig: decode_hex(&data)?.into(),
         }),
         RhoUnforg::UnforgDeployer { data } => UnfInstance::GDeployerIdBody(GDeployerId {
-            public_key: hex::decode(data).unwrap_or_default().into(),
+            public_key: decode_hex(&data)?.into(),
         }),
-    }
+        RhoUnforg::UnforgSysAuthToken => {
+            use models::rhoapi::GSysAuthToken;
+            UnfInstance::GSysAuthTokenBody(GSysAuthToken {})
+        }
+    })
 }
 
-/// Convert DataAtNameRequest to Par
-fn to_par(rho_unforg: RhoUnforg) -> Par {
-    Par {
+/// Convert DataAtNameRequest to Par. Returns error if hex decode fails.
+fn to_par(rho_unforg: RhoUnforg) -> eyre::Result<Par> {
+    Ok(Par {
         unforgeables: vec![GUnforgeable {
-            unf_instance: Some(unforg_to_unforg_proto(rho_unforg)),
+            unf_instance: Some(unforg_to_unforg_proto(rho_unforg)?),
         }],
         ..Default::default()
-    }
+    })
 }
 
 /// Convert Par to RhoExpr - equivalent to Scala's exprFromParProto function
 fn expr_from_par_proto(par: Par) -> Option<RhoExpr> {
+    let has_process_fields = !par.sends.is_empty()
+        || !par.receives.is_empty()
+        || !par.news.is_empty()
+        || !par.matches.is_empty()
+        || !par.connectives.is_empty();
+
     let exprs = par.exprs.into_iter().filter_map(expr_from_expr_proto);
-
     let unforg_exprs = par.unforgeables.into_iter().filter_map(unforg_from_proto);
-
     let bundle_exprs = par.bundles.into_iter().filter_map(expr_from_bundle_proto);
 
     let all_exprs: Vec<RhoExpr> = exprs.chain(unforg_exprs).chain(bundle_exprs).collect();
 
-    // Implements semantic of Par with Unit: P | Nil ==> P
     if all_exprs.len() == 1 {
         all_exprs.into_iter().next()
     } else if all_exprs.is_empty() {
-        None
+        if has_process_fields {
+            // Par has process-level constructs (sends, receives, etc.) but no data expressions
+            Some(RhoExpr::ExprUnknown { type_name: "Process".to_string() })
+        } else {
+            None // Truly empty Par (Nil)
+        }
     } else {
         Some(RhoExpr::ExprPar { data: all_exprs })
     }
 }
 
-/// Convert Expr to RhoExpr - equivalent to Scala's exprFromExprProto function
+/// Convert Expr to RhoExpr — handles all Rholang expression types.
 fn expr_from_expr_proto(expr: Expr) -> Option<RhoExpr> {
     use models::rhoapi::expr::ExprInstance;
+    use num_bigint::BigInt;
 
-    match expr.expr_instance? {
-        // Primitive types
-        ExprInstance::GBool(value) => Some(RhoExpr::ExprBool { data: value }),
-        ExprInstance::GInt(value) => Some(RhoExpr::ExprInt { data: value }),
-        ExprInstance::GString(value) => Some(RhoExpr::ExprString { data: value }),
-        ExprInstance::GUri(value) => Some(RhoExpr::ExprUri { data: value }),
-        ExprInstance::GByteArray(bytes) => {
-            // Binary data as base16 string
-            Some(RhoExpr::ExprBytes {
-                data: hex::encode(&bytes),
-            })
+    let instance = expr.expr_instance?;
+    Some(match instance {
+        // Primitives
+        ExprInstance::GBool(v) => RhoExpr::ExprBool { data: v },
+        ExprInstance::GInt(v) => RhoExpr::ExprInt { data: v },
+        ExprInstance::GString(v) => RhoExpr::ExprString { data: v },
+        ExprInstance::GUri(v) => RhoExpr::ExprUri { data: v },
+        ExprInstance::GByteArray(bytes) => RhoExpr::ExprBytes { data: hex::encode(&bytes) },
+
+        // Extended numerics
+        ExprInstance::GDouble(bits) => RhoExpr::ExprFloat { data: f64::from_bits(bits) },
+        ExprInstance::GBigInt(bytes) => {
+            let n = BigInt::from_signed_bytes_be(&bytes);
+            RhoExpr::ExprBigInt { data: n.to_string() }
         }
-        // Tuple
+        ExprInstance::GBigRat(rat) => {
+            let num = BigInt::from_signed_bytes_be(&rat.numerator);
+            let den = BigInt::from_signed_bytes_be(&rat.denominator);
+            RhoExpr::ExprBigRat { numerator: num.to_string(), denominator: den.to_string() }
+        }
+        ExprInstance::GFixedPoint(fp) => {
+            let unscaled = BigInt::from_signed_bytes_be(&fp.unscaled);
+            RhoExpr::ExprFixedPoint { value: unscaled.to_string(), scale: fp.scale }
+        }
+
+        // Collections
         ExprInstance::ETupleBody(tuple) => {
-            let data: Vec<RhoExpr> = tuple
-                .ps
-                .into_iter()
-                .filter_map(expr_from_par_proto)
-                .collect();
-            Some(RhoExpr::ExprTuple { data })
+            RhoExpr::ExprTuple { data: tuple.ps.into_iter().filter_map(expr_from_par_proto).collect() }
         }
-        // List
         ExprInstance::EListBody(list) => {
-            let data: Vec<RhoExpr> = list
-                .ps
-                .into_iter()
-                .filter_map(expr_from_par_proto)
-                .collect();
-            Some(RhoExpr::ExprList { data })
+            RhoExpr::ExprList { data: list.ps.into_iter().filter_map(expr_from_par_proto).collect() }
         }
-        // Set
         ExprInstance::ESetBody(set) => {
-            let data: Vec<RhoExpr> = set.ps.into_iter().filter_map(expr_from_par_proto).collect();
-            Some(RhoExpr::ExprSet { data })
+            RhoExpr::ExprSet { data: set.ps.into_iter().filter_map(expr_from_par_proto).collect() }
         }
-        // Map
         ExprInstance::EMapBody(map) => {
             let mut data = HashMap::new();
             for kv in map.kvs {
                 if let (Some(key_par), Some(value_par)) = (kv.key, kv.value) {
-                    let key_expr = expr_from_par_proto(key_par);
-                    let value_expr = expr_from_par_proto(value_par);
-                    if let (Some(key_expr), Some(value_expr)) = (key_expr, value_expr) {
-                        if let Some(key) = extract_key_from_expr(&key_expr) {
-                            data.insert(key, value_expr);
-                        }
+                    if let (Some(key_expr), Some(value_expr)) = (expr_from_par_proto(key_par), expr_from_par_proto(value_par)) {
+                        let key = extract_key_from_expr(&key_expr);
+                        data.insert(key, value_expr);
                     }
                 }
             }
-            Some(RhoExpr::ExprMap { data })
+            RhoExpr::ExprMap { data }
         }
-        _ => None, // Other expression types not handled in the original Scala
-    }
+        ExprInstance::EPathmapBody(pm) => {
+            RhoExpr::ExprList { data: pm.ps.into_iter().filter_map(expr_from_par_proto).collect() }
+        }
+        ExprInstance::EZipperBody(z) => {
+            let pathmap = z.pathmap.map(|pm| {
+                RhoExpr::ExprList { data: pm.ps.into_iter().filter_map(expr_from_par_proto).collect() }
+            });
+            RhoExpr::ExprTuple {
+                data: vec![
+                    pathmap.unwrap_or(RhoExpr::ExprList { data: vec![] }),
+                    RhoExpr::ExprList {
+                        data: z.current_path.into_iter().map(|b| RhoExpr::ExprBytes { data: hex::encode(&b) }).collect(),
+                    },
+                ],
+            }
+        }
+
+        // Unary operators
+        ExprInstance::ENotBody(op) => {
+            RhoExpr::ExprNot { data: Box::new(par_to_expr(op.p)) }
+        }
+        ExprInstance::ENegBody(op) => {
+            RhoExpr::ExprNeg { data: Box::new(par_to_expr(op.p)) }
+        }
+
+        // Binary arithmetic
+        ExprInstance::EPlusBody(op) => {
+            RhoExpr::ExprPlus { left: Box::new(par_to_expr(op.p1)), right: Box::new(par_to_expr(op.p2)) }
+        }
+        ExprInstance::EMinusBody(op) => {
+            RhoExpr::ExprMinus { left: Box::new(par_to_expr(op.p1)), right: Box::new(par_to_expr(op.p2)) }
+        }
+        ExprInstance::EMultBody(op) => {
+            RhoExpr::ExprMult { left: Box::new(par_to_expr(op.p1)), right: Box::new(par_to_expr(op.p2)) }
+        }
+        ExprInstance::EDivBody(op) => {
+            RhoExpr::ExprDiv { left: Box::new(par_to_expr(op.p1)), right: Box::new(par_to_expr(op.p2)) }
+        }
+        ExprInstance::EModBody(op) => {
+            RhoExpr::ExprMod { left: Box::new(par_to_expr(op.p1)), right: Box::new(par_to_expr(op.p2)) }
+        }
+
+        // Comparison
+        ExprInstance::ELtBody(op) => {
+            RhoExpr::ExprLt { left: Box::new(par_to_expr(op.p1)), right: Box::new(par_to_expr(op.p2)) }
+        }
+        ExprInstance::ELteBody(op) => {
+            RhoExpr::ExprLte { left: Box::new(par_to_expr(op.p1)), right: Box::new(par_to_expr(op.p2)) }
+        }
+        ExprInstance::EGtBody(op) => {
+            RhoExpr::ExprGt { left: Box::new(par_to_expr(op.p1)), right: Box::new(par_to_expr(op.p2)) }
+        }
+        ExprInstance::EGteBody(op) => {
+            RhoExpr::ExprGte { left: Box::new(par_to_expr(op.p1)), right: Box::new(par_to_expr(op.p2)) }
+        }
+        ExprInstance::EEqBody(op) => {
+            RhoExpr::ExprEq { left: Box::new(par_to_expr(op.p1)), right: Box::new(par_to_expr(op.p2)) }
+        }
+        ExprInstance::ENeqBody(op) => {
+            RhoExpr::ExprNeq { left: Box::new(par_to_expr(op.p1)), right: Box::new(par_to_expr(op.p2)) }
+        }
+
+        // Logical
+        ExprInstance::EAndBody(op) => {
+            RhoExpr::ExprAnd { left: Box::new(par_to_expr(op.p1)), right: Box::new(par_to_expr(op.p2)) }
+        }
+        ExprInstance::EOrBody(op) => {
+            RhoExpr::ExprOr { left: Box::new(par_to_expr(op.p1)), right: Box::new(par_to_expr(op.p2)) }
+        }
+
+        // String operations
+        ExprInstance::EPlusPlusBody(op) => {
+            RhoExpr::ExprConcat { left: Box::new(par_to_expr(op.p1)), right: Box::new(par_to_expr(op.p2)) }
+        }
+        ExprInstance::EPercentPercentBody(op) => {
+            RhoExpr::ExprInterpolate { left: Box::new(par_to_expr(op.p1)), right: Box::new(par_to_expr(op.p2)) }
+        }
+        ExprInstance::EMinusMinusBody(op) => {
+            RhoExpr::ExprDiff { left: Box::new(par_to_expr(op.p1)), right: Box::new(par_to_expr(op.p2)) }
+        }
+
+        // Pattern matching
+        ExprInstance::EMatchesBody(op) => {
+            RhoExpr::ExprMatches { target: Box::new(par_to_expr(op.target)), pattern: Box::new(par_to_expr(op.pattern)) }
+        }
+
+        // Method call
+        ExprInstance::EMethodBody(method) => {
+            RhoExpr::ExprMethod {
+                target: Box::new(par_to_expr(method.target)),
+                name: method.method_name,
+                args: method.arguments.into_iter().filter_map(expr_from_par_proto).collect(),
+            }
+        }
+
+        // Variable
+        ExprInstance::EVarBody(var) => {
+            let index = var.v.and_then(|v| v.var_instance).map(|vi| match vi {
+                models::rhoapi::var::VarInstance::BoundVar(i) => i,
+                models::rhoapi::var::VarInstance::FreeVar(i) => i,
+                models::rhoapi::var::VarInstance::Wildcard(_) => -1,
+            }).unwrap_or(-1);
+            RhoExpr::ExprVar { index }
+        }
+    })
 }
 
-/// Convert GUnforgeable to RhoExpr - equivalent to Scala's unforgFromProto function
+/// Convert an optional Par to RhoExpr, falling back to ExprUnknown for None.
+fn par_to_expr(par: Option<Par>) -> RhoExpr {
+    par.and_then(expr_from_par_proto)
+        .unwrap_or(RhoExpr::ExprUnknown { type_name: "Nil".to_string() })
+}
+
+/// Convert GUnforgeable to RhoExpr.
 fn unforg_from_proto(unforg: GUnforgeable) -> Option<RhoExpr> {
     use models::rhoapi::g_unforgeable::UnfInstance;
 
-    match unforg.unf_instance? {
-        UnfInstance::GPrivateBody(private) => Some(RhoExpr::ExprUnforg {
+    Some(match unforg.unf_instance? {
+        UnfInstance::GPrivateBody(private) => RhoExpr::ExprUnforg {
             data: RhoUnforg::UnforgPrivate {
                 data: hex::encode(&private.id),
             },
-        }),
-        UnfInstance::GDeployIdBody(deploy_id) => Some(RhoExpr::ExprUnforg {
+        },
+        UnfInstance::GDeployIdBody(deploy_id) => RhoExpr::ExprUnforg {
             data: RhoUnforg::UnforgDeploy {
                 data: hex::encode(&deploy_id.sig),
             },
-        }),
-        UnfInstance::GDeployerIdBody(deployer_id) => Some(RhoExpr::ExprUnforg {
+        },
+        UnfInstance::GDeployerIdBody(deployer_id) => RhoExpr::ExprUnforg {
             data: RhoUnforg::UnforgDeployer {
                 data: hex::encode(&deployer_id.public_key),
             },
-        }),
-        _ => None, // Other unforgeable types not handled in the original Scala
-    }
-}
-
-/// Convert Bundle to RhoExpr - equivalent to Scala's exprFromBundleProto function
-fn expr_from_bundle_proto(bundle: Bundle) -> Option<RhoExpr> {
-    if let Some(body) = bundle.body {
-        expr_from_par_proto(body)
-    } else {
-        None
-    }
-}
-
-/// Extract a string key from a RhoExpr for map keys - equivalent to Scala's key extraction logic
-fn extract_key_from_expr(expr: &RhoExpr) -> Option<String> {
-    match expr {
-        RhoExpr::ExprString { data } => Some(data.clone()),
-        RhoExpr::ExprInt { data } => Some(data.to_string()),
-        RhoExpr::ExprBool { data } => Some(data.to_string()),
-        RhoExpr::ExprUri { data } => Some(data.clone()),
-        RhoExpr::ExprUnforg { data } => match data {
-            RhoUnforg::UnforgPrivate { data } => Some(data.clone()),
-            RhoUnforg::UnforgDeploy { data } => Some(data.clone()),
-            RhoUnforg::UnforgDeployer { data } => Some(data.clone()),
         },
-        RhoExpr::ExprBytes { data } => Some(data.clone()),
-        _ => None,
+        UnfInstance::GSysAuthTokenBody(_) => RhoExpr::ExprUnforg {
+            data: RhoUnforg::UnforgSysAuthToken,
+        },
+    })
+}
+
+/// Convert Bundle to RhoExpr, preserving read/write permissions.
+fn expr_from_bundle_proto(bundle: Bundle) -> Option<RhoExpr> {
+    let body_expr = bundle.body.and_then(expr_from_par_proto)
+        .unwrap_or(RhoExpr::ExprUnknown { type_name: "Nil".to_string() });
+    Some(RhoExpr::ExprBundle {
+        data: Box::new(body_expr),
+        read: bundle.read_flag,
+        write: bundle.write_flag,
+    })
+}
+
+/// Extract a string key from a RhoExpr for map keys.
+/// Primitive types use natural string representation; complex types use JSON serialization.
+fn extract_key_from_expr(expr: &RhoExpr) -> String {
+    match expr {
+        RhoExpr::ExprString { data } => data.clone(),
+        RhoExpr::ExprInt { data } => data.to_string(),
+        RhoExpr::ExprBool { data } => data.to_string(),
+        RhoExpr::ExprFloat { data } => data.to_string(),
+        RhoExpr::ExprBigInt { data } => data.clone(),
+        RhoExpr::ExprUri { data } => data.clone(),
+        RhoExpr::ExprBytes { data } => data.clone(),
+        RhoExpr::ExprUnforg { data } => match data {
+            RhoUnforg::UnforgPrivate { data } => data.clone(),
+            RhoUnforg::UnforgDeploy { data } => data.clone(),
+            RhoUnforg::UnforgDeployer { data } => data.clone(),
+            RhoUnforg::UnforgSysAuthToken => "SysAuthToken".to_string(),
+        },
+        // Complex types: serialize to JSON string
+        other => serde_json::to_string(other).unwrap_or_else(|_| format!("{:?}", other)),
     }
 }
 
@@ -1555,20 +1718,30 @@ mod tests {
                 }],
                 ..Default::default()
             }),
-            ..Default::default()
+            write_flag: true,
+            read_flag: false,
         };
         let result = expr_from_bundle_proto(bundle);
-        assert!(matches!(result, Some(RhoExpr::ExprString { data }) if data == "bundle_content"));
+        assert!(matches!(
+            result,
+            Some(RhoExpr::ExprBundle { ref data, write: true, read: false })
+            if matches!(data.as_ref(), RhoExpr::ExprString { data } if data == "bundle_content")
+        ));
     }
 
     #[test]
     fn test_expr_from_bundle_proto_empty() {
         let bundle = Bundle {
             body: None,
-            ..Default::default()
+            write_flag: false,
+            read_flag: true,
         };
         let result = expr_from_bundle_proto(bundle);
-        assert!(result.is_none());
+        // Empty body bundle returns ExprBundle with ExprUnknown body
+        assert!(matches!(
+            result,
+            Some(RhoExpr::ExprBundle { read: true, write: false, .. })
+        ));
     }
 
     #[test]
@@ -1577,30 +1750,27 @@ mod tests {
         let expr = RhoExpr::ExprString {
             data: "hello".to_string(),
         };
-        assert_eq!(extract_key_from_expr(&expr), Some("hello".to_string()));
+        assert_eq!(extract_key_from_expr(&expr), "hello");
 
         // Test int key
         let expr = RhoExpr::ExprInt { data: 42 };
-        assert_eq!(extract_key_from_expr(&expr), Some("42".to_string()));
+        assert_eq!(extract_key_from_expr(&expr), "42");
 
         // Test bool key
         let expr = RhoExpr::ExprBool { data: true };
-        assert_eq!(extract_key_from_expr(&expr), Some("true".to_string()));
+        assert_eq!(extract_key_from_expr(&expr), "true");
 
         // Test URI key
         let expr = RhoExpr::ExprUri {
             data: "rho:io:stdout".to_string(),
         };
-        assert_eq!(
-            extract_key_from_expr(&expr),
-            Some("rho:io:stdout".to_string())
-        );
+        assert_eq!(extract_key_from_expr(&expr), "rho:io:stdout");
 
         // Test bytes key
         let expr = RhoExpr::ExprBytes {
             data: "010203".to_string(),
         };
-        assert_eq!(extract_key_from_expr(&expr), Some("010203".to_string()));
+        assert_eq!(extract_key_from_expr(&expr), "010203");
 
         // Test unforgeable keys
         let expr = RhoExpr::ExprUnforg {
@@ -1608,10 +1778,11 @@ mod tests {
                 data: "private".to_string(),
             },
         };
-        assert_eq!(extract_key_from_expr(&expr), Some("private".to_string()));
+        assert_eq!(extract_key_from_expr(&expr), "private");
 
-        // Test unsupported key type
+        // Test complex key type — serialized to JSON
         let expr = RhoExpr::ExprPar { data: vec![] };
-        assert!(extract_key_from_expr(&expr).is_none());
+        let key = extract_key_from_expr(&expr);
+        assert!(!key.is_empty(), "complex keys should serialize to non-empty string");
     }
 }

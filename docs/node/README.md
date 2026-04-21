@@ -122,6 +122,63 @@ CLI flags are applied to the parsed `NodeConf` by `config_mapper.rs`:
 }
 ```
 
+## Rholang Type System (RhoExpr)
+
+API responses from `explore-deploy`, `data-at-name`, and related endpoints return Rholang values as `RhoExpr` — a JSON-serializable representation of all Rholang types.
+
+### Supported types
+
+| Category | RhoExpr variant | JSON example |
+|----------|----------------|-------------|
+| **Primitives** | | |
+| Boolean | `ExprBool` | `{"ExprBool": {"data": true}}` |
+| Integer | `ExprInt` | `{"ExprInt": {"data": 42}}` |
+| String | `ExprString` | `{"ExprString": {"data": "hello"}}` |
+| URI | `ExprUri` | `{"ExprUri": {"data": "rho:io:stdout"}}` |
+| Bytes | `ExprBytes` | `{"ExprBytes": {"data": "0a1b2c"}}` |
+| **Extended numerics** | | |
+| Float (f64) | `ExprFloat` | `{"ExprFloat": {"data": 3.14}}` |
+| BigInt | `ExprBigInt` | `{"ExprBigInt": {"data": "12345678901234567890"}}` |
+| BigRational | `ExprBigRat` | `{"ExprBigRat": {"numerator": "1", "denominator": "3"}}` |
+| FixedPoint | `ExprFixedPoint` | `{"ExprFixedPoint": {"value": "31415", "scale": 4}}` |
+| **Collections** | | |
+| Tuple | `ExprTuple` | `{"ExprTuple": {"data": [...]}}` |
+| List | `ExprList` | `{"ExprList": {"data": [...]}}` |
+| Set | `ExprSet` | `{"ExprSet": {"data": [...]}}` |
+| Map | `ExprMap` | `{"ExprMap": {"data": {"key": ...}}}` |
+| Par (parallel) | `ExprPar` | `{"ExprPar": {"data": [...]}}` |
+| **Unforgeable names** | | |
+| Private | `ExprUnforg` | `{"ExprUnforg": {"data": {"UnforgPrivate": {"data": "hex..."}}}}` |
+| Deploy ID | `ExprUnforg` | `{"ExprUnforg": {"data": {"UnforgDeploy": {"data": "hex..."}}}}` |
+| Deployer ID | `ExprUnforg` | `{"ExprUnforg": {"data": {"UnforgDeployer": {"data": "hex..."}}}}` |
+| System auth | `ExprUnforg` | `{"ExprUnforg": {"data": "UnforgSysAuthToken"}}` |
+| **Bundle** | `ExprBundle` | `{"ExprBundle": {"data": ..., "read": true, "write": false}}` |
+| **Operators** | | |
+| Arithmetic | `ExprPlus`, `ExprMinus`, `ExprMult`, `ExprDiv`, `ExprMod` | `{"ExprPlus": {"left": ..., "right": ...}}` |
+| Comparison | `ExprLt`, `ExprLte`, `ExprGt`, `ExprGte`, `ExprEq`, `ExprNeq` | `{"ExprEq": {"left": ..., "right": ...}}` |
+| Logical | `ExprNot`, `ExprNeg`, `ExprAnd`, `ExprOr` | `{"ExprAnd": {"left": ..., "right": ...}}` |
+| String | `ExprConcat`, `ExprInterpolate`, `ExprDiff` | `{"ExprConcat": {"left": ..., "right": ...}}` |
+| **Other** | | |
+| Pattern match | `ExprMatches` | `{"ExprMatches": {"target": ..., "pattern": ...}}` |
+| Method call | `ExprMethod` | `{"ExprMethod": {"target": ..., "name": "method", "args": [...]}}` |
+| Variable | `ExprVar` | `{"ExprVar": {"index": 0}}` |
+| Process | `ExprUnknown` | `{"ExprUnknown": {"type_name": "Process"}}` |
+| Unknown | `ExprUnknown` | `{"ExprUnknown": {"type_name": "..."}}` |
+
+### Design
+
+- **No silent drops**: every Rholang type has a representation. Unknown future types render as `ExprUnknown` with a type name — never silently disappear from responses.
+- **Map keys**: any RhoExpr can be a map key. Primitives use natural string representation; complex types are serialized to JSON strings.
+- **Extended numerics**: `BigInt`, `BigRat`, and `FixedPoint` are represented as decimal strings (not binary) for client readability. `Float` is IEEE 754 f64.
+- **Process-level constructs** (sends, receives, new bindings) are represented as `ExprUnknown { type_name: "Process" }` rather than full AST serialization. These are rarely returned by data queries.
+- **Deploy not found**: returns HTTP 404 (not 400) so clients can distinguish "not yet in block" from "invalid request."
+
+### Key files
+
+- `api/web_api.rs` — `RhoExpr` enum, `expr_from_par_proto()`, `expr_from_expr_proto()`, `unforg_from_proto()`, `extract_key_from_expr()`
+
+**See also:** [Exploratory Deploy](exploratory-deploy.md)
+
 ## WebSocket Events
 
 The `/ws/events` endpoint on the HTTP port (40403) streams real-time node events. See [websocket-events.md](websocket-events.md) for full documentation.

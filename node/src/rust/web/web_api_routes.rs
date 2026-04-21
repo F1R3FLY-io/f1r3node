@@ -196,19 +196,32 @@ pub async fn find_deploy_handler(
     Path(deploy_id): Path<String>,
     Query(query): Query<ViewQuery>,
 ) -> Response {
-    match query.view.as_deref() {
-        Some("detail") => match app_state.web_api.find_deploy_detail(deploy_id).await {
-            Ok(response) => Json(response).into_response(),
-            Err(e) => AppError(e).into_response(),
-        },
-        Some("minimal") => match app_state.web_api.find_deploy_minimal(deploy_id).await {
-            Ok(response) => Json(response).into_response(),
-            Err(e) => AppError(e).into_response(),
-        },
-        _ => match app_state.web_api.find_deploy(deploy_id).await {
-            Ok(response) => Json(response).into_response(),
-            Err(e) => AppError(e).into_response(),
-        },
+    let result = match query.view.as_deref() {
+        Some("detail") => app_state
+            .web_api
+            .find_deploy_detail(deploy_id)
+            .await
+            .map(|r| Json(r).into_response()),
+        Some("minimal") => app_state
+            .web_api
+            .find_deploy_minimal(deploy_id)
+            .await
+            .map(|r| Json(r).into_response()),
+        _ => app_state
+            .web_api
+            .find_deploy(deploy_id)
+            .await
+            .map(|r| Json(r).into_response()),
+    };
+    match result {
+        Ok(response) => response,
+        Err(e) => {
+            if e.downcast_ref::<casper::rust::api::block_api::DeployNotFoundError>().is_some() {
+                (axum::http::StatusCode::NOT_FOUND, format!("{}", e)).into_response()
+            } else {
+                AppError(e).into_response()
+            }
+        }
     }
 }
 
