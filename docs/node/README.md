@@ -1,4 +1,4 @@
-> Last updated: 2026-03-23
+> Last updated: 2026-04-21
 
 # Crate: node (Orchestrator/Entry Point)
 
@@ -146,21 +146,46 @@ The error chain propagates cleanly: `verify_token_metadata_matches_config → Er
 
 `APIServers::build()` in `api_servers.rs` constructs all gRPC services (Repl, Propose, Deploy, LSP) with shared dependencies (engine cell, block store, connections). `WebApiImpl` in `web_api.rs` handles the HTTP REST layer and caches config-derived values (network-id, shard-id, min-phlo-price, native token metadata) for fast `/api/status` responses without per-request config reads.
 
-## Transfer Enrichment Pipeline
+## Transfer Extraction
 
-Inline transfer data on `DeployInfo` for `get_block` and `last_finalized_block` responses:
+Transfer data (from/to/amount/success) is extracted from block execution reports and inlined on `DeployInfo` for `get_block` and `last_finalized_block` responses.
 
-1. **`BlockEnricher` trait** (`web/block_info_enricher.rs`) -- Async trait for enriching `BlockInfo` with transfer data. Single method: `enrich(&self, BlockInfo) -> BlockInfo`.
+### Architecture
 
-2. **`CacheTransactionEnricher`** -- Concrete implementation backed by `CacheTransactionAPI`. Extracts block hash, calls `get_transaction()`, maps `UserDeploy` transactions to `TransferInfo`, populates `DeployInfo.transfers`.
+Transfers are extracted from `BlockReportAPI`, which replays blocks using `ReportingRspace` to capture full COMM event data. Results are cached in `ReportStore` — each block is replayed once, then served from cache forever.
 
-3. **`CacheTransactionAPI`** (`web/transaction.rs`) -- Two-level caching: persistent LMDB store + `DashMap`-based in-flight request deduplication via `Shared<BoxFuture>`. Cache miss triggers extraction from `BlockReportAPI`, result stored persistently.
+```
+API handler (get_block / last_finalized_block)
+  → BlockReportAPI.block_report(hash, false)
+    → ReportStore check (cached? → return immediately)
+    → ReportingCasper.trace(block) → full replay → cache in ReportStore
+  → extract_transfers_from_report(&report, &transfer_unforgeable)
+    → scan COMM events on transfer_unforgeable channel
+    → parse from/to/amount/success from produce data
+  → populate DeployInfo.transfers / DeployInfoSerde.transfers
+```
 
-4. **Proactive caching** (`setup.rs`) -- Subscribes to `BlockFinalised` events. Background task spawns extraction with `Semaphore`-bounded concurrency (limit 8). Small race window where client may call `get_block` before cache is populated; `CacheTransactionAPI` handles this by computing on demand.
+### Behavior by node type
 
-5. **REST integration** -- `WebApiImpl` holds `Arc<dyn BlockEnricher>`. `get_block()` and `last_finalized_block()` call `block_enricher.enrich()` before serialization.
+| Node type | HTTP `transfers` field | gRPC `transfers` / `transfersAvailable` |
+|-----------|----------------------|----------------------------------------|
+| **Readonly** | `"transfers": [...]` (populated) or `"transfers": []` (no transfers) | `transfers: [...]`, `transfersAvailable: true` |
+| **Validator** | Field **omitted** (block replay unavailable) | `transfers: []`, `transfersAvailable: false` |
 
-6. **gRPC integration** -- `DeployGrpcServiceV1Impl` holds `Arc<dyn BlockEnricher>`. Same enrichment on `get_block` and `last_finalized_block` responses.
+- HTTP uses `Option<Vec<TransferInfoSerde>>` with `skip_serializing_if = "Option::is_none"` — field absent when `None`
+- gRPC uses `repeated TransferInfo` (always present, may be empty) + `bool transfersAvailable` to distinguish
+
+### Key files
+
+- `web/block_info_enricher.rs` — `extract_transfers_from_report()` standalone function, `find_transfers_in_report()` per-deploy scanner
+- `web/transaction.rs` — `transfer_unforgeable()` (computes transfer channel Par from SystemVault.rho), `helpers` module for parsing produce event data
+- `api/web_api.rs` — `WebApiImpl.enrich_transfers()` for HTTP path
+- `api/deploy_grpc_service_v1.rs` — `DeployGrpcServiceV1Impl.enrich_proto_transfers()` for gRPC path
+- `runtime/setup.rs` — wires `BlockReportAPI` + `transfer_unforgeable` into API services, proactive cache on finalization events
+
+### Proactive caching
+
+On finalization, a background task calls `block_report_api.block_report(hash, false)` to pre-warm `ReportStore`. On validators this is a no-op (block report rejected). On readonly nodes, the first API query for a block hits the pre-warmed cache.
 
 ## Find Deploy Retry
 
@@ -223,7 +248,7 @@ These values are hardcoded (previously configurable via `F1R3_*` env vars, remov
 
 ## Tests
 
-Integration tests in `tests/`: `transaction_api_test.rs` (end-to-end transaction API), `rho_trie_traverser_test.rs`. Inline tests in `block_info_enricher.rs` (3 unit tests for enrichment logic).
+Integration tests in `tests/`: `rho_trie_traverser_test.rs`. Inline tests in `block_info_enricher.rs` (2 unit tests for transfer extraction logic).
 
 **See also:** [node/ crate README](../../node/README.md) | [Docker Setup](../../docker/README.md)
 

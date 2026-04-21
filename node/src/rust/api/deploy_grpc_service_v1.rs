@@ -79,11 +79,11 @@ pub struct DeployGrpcServiceV1Impl {
     is_node_read_only: bool,
     engine_cell: EngineCell,
     block_report_api: BlockReportAPI,
+    transfer_unforgeable: models::rhoapi::Par,
     key_value_block_store: KeyValueBlockStore,
     rp_conf_cell: comm::rust::rp::rp_conf::RPConfCell,
     connections_cell: ConnectionsCell,
     node_discovery: Arc<dyn NodeDiscovery + Send + Sync>,
-    block_enricher: Option<Arc<dyn crate::rust::web::block_info_enricher::BlockEnricher>>,
 }
 
 impl DeployGrpcServiceV1Impl {
@@ -100,11 +100,11 @@ impl DeployGrpcServiceV1Impl {
         is_node_read_only: bool,
         engine_cell: EngineCell,
         block_report_api: BlockReportAPI,
+        transfer_unforgeable: models::rhoapi::Par,
         key_value_block_store: KeyValueBlockStore,
         rp_conf_cell: comm::rust::rp::rp_conf::RPConfCell,
         connections_cell: ConnectionsCell,
         node_discovery: Arc<dyn NodeDiscovery + Send + Sync>,
-        block_enricher: Option<Arc<dyn crate::rust::web::block_info_enricher::BlockEnricher>>,
     ) -> Self {
         Self {
             api_max_blocks_limit,
@@ -119,11 +119,50 @@ impl DeployGrpcServiceV1Impl {
             is_node_read_only,
             engine_cell,
             block_report_api,
+            transfer_unforgeable,
             key_value_block_store,
             rp_conf_cell,
             connections_cell,
             node_discovery,
-            block_enricher,
+        }
+    }
+
+    /// Enrich proto BlockInfo with transfers from BlockReportAPI.
+    /// On readonly: populates deploy transfers. On validators: leaves empty (block report rejected).
+    async fn enrich_proto_transfers(&self, block_info: &mut models::casper::BlockInfo) {
+        let block_hash_hex = block_info
+            .block_info
+            .as_ref()
+            .map(|bi| bi.block_hash.clone())
+            .unwrap_or_default();
+
+        if block_hash_hex.is_empty() {
+            return;
+        }
+
+        let block_hash_bytes: prost::bytes::Bytes = match hex::decode(&block_hash_hex) {
+            Ok(bytes) => bytes.into(),
+            Err(_) => return,
+        };
+
+        match self.block_report_api.block_report(block_hash_bytes, false).await {
+            Ok(report) => {
+                let transfers_by_deploy = crate::rust::web::block_info_enricher::extract_transfers_from_report(
+                    &report,
+                    &self.transfer_unforgeable,
+                );
+                for deploy in &mut block_info.deploys {
+                    deploy.transfers_available = true;
+                    if let Some(transfers) = transfers_by_deploy.get(&deploy.sig) {
+                        deploy.transfers = transfers.clone();
+                    }
+                }
+            }
+            Err(_) => {
+                // Validators: transfers_available stays false (proto default),
+                // transfers stays empty Vec. Clients check transfers_available
+                // to distinguish "no transfers" from "unavailable."
+            }
         }
     }
 
@@ -234,13 +273,11 @@ impl DeployService for DeployGrpcServiceV1Impl {
         request: tonic::Request<BlockQuery>,
     ) -> Result<tonic::Response<BlockResponse>, tonic::Status> {
         match BlockAPI::get_block(&self.engine_cell, &request.into_inner().hash).await {
-            Ok(block_info) => {
-                let enriched = if let Some(ref enricher) = self.block_enricher {
-                    enricher.enrich(block_info).await.0
-                } else {
-                    block_info
-                };
-                Self::create_success_block_response(enriched)
+            Ok(mut block_info) => {
+                // Enrich transfers from BlockReportAPI (uses ReportStore cache).
+                // On readonly: transfers populated. On validators: empty (block report rejected).
+                self.enrich_proto_transfers(&mut block_info).await;
+                Self::create_success_block_response(block_info)
             }
             Err(e) => {
                 error!("Deploy service method error get_block: {}", e);
@@ -625,16 +662,12 @@ impl DeployService for DeployGrpcServiceV1Impl {
     ) -> Result<tonic::Response<LastFinalizedBlockResponse>, tonic::Status> {
         let _request = request.into_inner();
         match BlockAPI::last_finalized_block(&self.engine_cell).await {
-            Ok(block_info) => {
-                let enriched = if let Some(ref enricher) = self.block_enricher {
-                    enricher.enrich(block_info).await.0
-                } else {
-                    block_info
-                };
+            Ok(mut block_info) => {
+                self.enrich_proto_transfers(&mut block_info).await;
                 Ok(tonic::Response::new(LastFinalizedBlockResponse {
                     message: Some(
                         models::casper::v1::last_finalized_block_response::Message::BlockInfo(
-                            enriched,
+                            block_info,
                         ),
                     ),
                 }))

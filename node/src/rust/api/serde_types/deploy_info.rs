@@ -88,6 +88,7 @@ impl From<DeployInfo> for DeployInfoSerde {
 
 impl From<DeployInfoSerde> for DeployInfo {
     fn from(json: DeployInfoSerde) -> Self {
+        let transfers_available = json.transfers.is_some();
         DeployInfo {
             deployer: json.deployer,
             term: json.term,
@@ -101,6 +102,7 @@ impl From<DeployInfoSerde> for DeployInfo {
             errored: json.errored,
             system_deploy_error: json.system_deploy_error,
             transfers: json.transfers.unwrap_or_default().into_iter().map(TransferInfo::from).collect(),
+            transfers_available,
         }
     }
 }

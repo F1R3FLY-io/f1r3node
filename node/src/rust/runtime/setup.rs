@@ -545,63 +545,32 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
 
     let block_report_api_for_return = block_report_api.clone();
 
-    // Create transaction API and cache before API servers so the block enricher
-    // can be threaded into the gRPC service
-    let transaction_api = {
-        use crate::rust::web::transaction::{transfer_unforgeable, TransactionAPIImpl};
-
-        let block_report_api_for_transaction = block_report_api.clone();
-        let transfer_unforgeable_par = transfer_unforgeable();
-        TransactionAPIImpl::new(block_report_api_for_transaction, transfer_unforgeable_par)
+    // Transfer unforgeable channel — used for transfer extraction from block reports
+    let transfer_unforgeable = {
+        use crate::rust::web::transaction::transfer_unforgeable;
+        transfer_unforgeable()
     };
 
-    let cache_transaction_api = {
-        use crate::rust::web::transaction::cache_transaction_api;
-
-        cache_transaction_api(transaction_api, &mut rnode_store_manager)
-            .await
-            .map_err(|e| {
-                CasperError::Other(format!("Failed to create cache transaction API: {}", e))
-            })?
-    };
-
-    let block_enricher: Arc<dyn crate::rust::web::block_info_enricher::BlockEnricher> = {
-        use crate::rust::web::block_info_enricher::CacheTransactionEnricher;
-        Arc::new(CacheTransactionEnricher::new(cache_transaction_api.clone()))
-    };
-
-    // Proactive transfer extraction: subscribe to BlockFinalised events and trigger
-    // cache_transaction_api.get_transaction() in the background so transfer data is
-    // pre-cached before clients request it.
-    //
-    // Note: This event-driven approach has a small race window where a client could
-    // call get_block for a just-finalized block before transfers are cached.
-    // CacheTransactionAPI handles this gracefully by computing on demand.
+    // Proactive transfer extraction: pre-warm BlockReportAPI's ReportStore on finalization
     {
         use futures::StreamExt;
         use shared::rust::shared::f1r3fly_event::F1r3flyEvent;
 
-        let cache_tx_api = cache_transaction_api.clone();
+        let report_api = block_report_api.clone();
         let mut event_stream = event_publisher.consume();
-        let concurrency_limit = Arc::new(tokio::sync::Semaphore::new(8));
 
         tokio::spawn(async move {
             while let Some(event) = event_stream.next().await {
                 if let F1r3flyEvent::BlockFinalised(finalized) = event {
-                    let api = cache_tx_api.clone();
+                    let api = report_api.clone();
                     let block_hash = finalized.block_hash.clone();
-                    let permit = match concurrency_limit.clone().acquire_owned().await {
-                        Ok(permit) => permit,
-                        Err(_) => break,
-                    };
                     tokio::spawn(async move {
-                        let _permit = permit;
-                        if let Err(e) = api.get_transaction(block_hash.clone()).await {
-                            tracing::warn!(
+                        if let Err(e) = api.block_report(block_hash.clone().into(), false).await {
+                            tracing::debug!(
                                 target: "f1r3fly.transaction",
-                                block_hash = %block_hash,
+                                block_hash = %hex::encode(&block_hash),
                                 error = %e,
-                                "Failed to extract transfers for finalized block"
+                                "Block report pre-cache skipped (expected on validators)"
                             );
                         }
                     });
@@ -627,6 +596,7 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
         conf.dev_mode,
         propose_f_for_api,
         block_report_api,
+        transfer_unforgeable.clone(),
         conf.protocol_server.network_id.clone(),
         conf.casper.shard_name.clone(),
         conf.casper.min_phlo_price,
@@ -639,7 +609,6 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
         rp_conf_cell.clone(),
         rp_connections.clone(),
         node_discovery.clone(),
-        Some(block_enricher.clone()),
     );
 
     // Reporting HTTP Routes - REST API for block reporting and tracing
@@ -790,8 +759,8 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
             conf.casper.genesis_block_data.native_token_symbol.clone(),
             conf.casper.genesis_block_data.native_token_decimals,
             is_node_read_only,
-            block_enricher.clone(),
-            cache_transaction_api,
+            block_report_api_for_return.clone(),
+            transfer_unforgeable,
             Arc::new(engine_cell.clone()),
             rp_conf_cell.clone(),
             rp_connections.clone(),

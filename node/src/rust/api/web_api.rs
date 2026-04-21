@@ -3,8 +3,9 @@
 use crate::rust::api::serde_types::block_info::BlockInfoSerde;
 use crate::rust::api::serde_types::deploy_info::TransferInfoSerde;
 use crate::rust::api::serde_types::light_block_info::LightBlockInfoSerde;
-use crate::rust::web::block_info_enricher::BlockEnricher;
-use crate::rust::web::transaction::{CacheTransactionAPI, TransactionAPI, TransactionResponse};
+use crate::rust::web::block_info_enricher::extract_transfers_from_report;
+use crate::rust::web::transaction::TransactionResponse;
+use casper::rust::api::block_report_api::BlockReportAPI;
 use crate::rust::web::version_info::get_version_info_str;
 use casper::rust::api::block_api::{BlockAPI, DeployNotFoundError};
 use casper::rust::engine::engine_cell::EngineCell;
@@ -23,7 +24,6 @@ use hex;
 use models::casper::{DataWithBlockInfo, LightBlockInfo};
 use models::rust::casper::protocol::casper_message::DeployData;
 use serde::{Deserialize, Serialize};
-use shared::rust::store::key_value_typed_store::KeyValueTypedStore;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -107,11 +107,7 @@ pub trait WebApi {
 }
 
 /// Web API implementation
-pub struct WebApiImpl<TA, TS>
-where
-    TA: TransactionAPI + Send + Sync + 'static,
-    TS: KeyValueTypedStore<String, TransactionResponse> + Send + Sync + 'static,
-{
+pub struct WebApiImpl {
     api_max_blocks_limit: i32,
     dev_mode: bool,
     network_id: String,
@@ -122,19 +118,15 @@ where
     native_token_decimals: u32,
     is_node_read_only: bool,
     engine_cell: Arc<EngineCell>,
-    block_enricher: Arc<dyn BlockEnricher>,
-    cache_transaction_api: CacheTransactionAPI<TA, TS>,
+    block_report_api: BlockReportAPI,
+    transfer_unforgeable: models::rhoapi::Par,
     rp_conf_cell: comm::rust::rp::rp_conf::RPConfCell,
     connections_cell: ConnectionsCell,
     node_discovery: Arc<dyn NodeDiscovery + Send + Sync>,
     trigger_propose_f: Option<Arc<ProposeFunction>>,
 }
 
-impl<TA, TS> WebApiImpl<TA, TS>
-where
-    TA: TransactionAPI + Send + Sync + 'static,
-    TS: KeyValueTypedStore<String, TransactionResponse> + Send + Sync + 'static,
-{
+impl WebApiImpl {
     pub fn new(
         api_max_blocks_limit: i32,
         dev_mode: bool,
@@ -145,8 +137,8 @@ where
         native_token_symbol: String,
         native_token_decimals: u32,
         is_node_read_only: bool,
-        block_enricher: Arc<dyn BlockEnricher>,
-        cache_transaction_api: CacheTransactionAPI<TA, TS>,
+        block_report_api: BlockReportAPI,
+        transfer_unforgeable: models::rhoapi::Par,
         engine_cell: Arc<EngineCell>,
         rp_conf_cell: comm::rust::rp::rp_conf::RPConfCell,
         connections_cell: ConnectionsCell,
@@ -164,22 +156,58 @@ where
             native_token_decimals,
             is_node_read_only,
             engine_cell,
-            block_enricher,
-            cache_transaction_api,
+            block_report_api,
+            transfer_unforgeable,
             rp_conf_cell,
             connections_cell,
             node_discovery,
             trigger_propose_f,
         }
     }
+    /// Enrich a BlockInfoSerde with transfer data from BlockReportAPI.
+    /// On success: each deploy gets `Some(transfers)`.
+    /// On failure (validator node): each deploy gets `None` (field omitted).
+    async fn enrich_transfers(
+        &self,
+        serde: &mut BlockInfoSerde,
+        block_hash_hex: String,
+    ) {
+        let block_hash_bytes: prost::bytes::Bytes = match hex::decode(&block_hash_hex) {
+            Ok(bytes) => bytes.into(),
+            Err(_) => {
+                for deploy in &mut serde.deploys {
+                    deploy.transfers = None;
+                }
+                return;
+            }
+        };
+        match self.block_report_api.block_report(block_hash_bytes, false).await {
+            Ok(report) => {
+                let transfers_by_deploy =
+                    extract_transfers_from_report(&report, &self.transfer_unforgeable);
+                for deploy in &mut serde.deploys {
+                    deploy.transfers = Some(
+                        transfers_by_deploy
+                            .get(&deploy.sig)
+                            .cloned()
+                            .unwrap_or_default()
+                            .into_iter()
+                            .map(TransferInfoSerde::from)
+                            .collect(),
+                    );
+                }
+            }
+            Err(_) => {
+                for deploy in &mut serde.deploys {
+                    deploy.transfers = None;
+                }
+            }
+        }
+    }
 }
 
 #[async_trait::async_trait]
-impl<TA, TS> WebApi for WebApiImpl<TA, TS>
-where
-    TA: TransactionAPI + Send + Sync + 'static,
-    TS: KeyValueTypedStore<String, TransactionResponse> + Send + Sync + 'static,
-{
+impl WebApi for WebApiImpl {
     async fn status(&self) -> Result<ApiStatus> {
         const STATUS_SLOW_THRESHOLD: Duration = Duration::from_millis(500);
         let total_start = Instant::now();
@@ -315,25 +343,17 @@ where
 
     async fn last_finalized_block(&self) -> Result<BlockInfoSerde> {
         let block_info = BlockAPI::last_finalized_block(&self.engine_cell).await?;
-        let (enriched, transfers_available) = self.block_enricher.enrich(block_info).await;
-        let mut serde = BlockInfoSerde::from(enriched);
-        if !transfers_available {
-            for deploy in &mut serde.deploys {
-                deploy.transfers = None;
-            }
-        }
+        let mut serde = BlockInfoSerde::from(block_info);
+        let block_hash = serde.block_info.block_hash.clone();
+        self.enrich_transfers(&mut serde, block_hash).await;
         Ok(serde)
     }
 
     async fn get_block(&self, hash: String) -> Result<BlockInfoSerde> {
         let block_info = BlockAPI::get_block(&self.engine_cell, &hash).await?;
-        let (enriched, transfers_available) = self.block_enricher.enrich(block_info).await;
-        let mut serde = BlockInfoSerde::from(enriched);
-        if !transfers_available {
-            for deploy in &mut serde.deploys {
-                deploy.transfers = None;
-            }
-        }
+        let mut serde = BlockInfoSerde::from(block_info);
+        let block_hash = serde.block_info.block_hash.clone();
+        self.enrich_transfers(&mut serde, block_hash).await;
         Ok(serde)
     }
 
@@ -465,8 +485,8 @@ where
         BlockAPI::is_finalized(&self.engine_cell, &hash).await
     }
 
-    async fn get_transaction(&self, hash: String) -> Result<TransactionResponse> {
-        self.cache_transaction_api.get_transaction(hash).await
+    async fn get_transaction(&self, _hash: String) -> Result<TransactionResponse> {
+        Err(eyre!("Deprecated: use /api/deploy/{{id}}?view=full for transfers or gRPC getEventByHash for raw events"))
     }
 }
 

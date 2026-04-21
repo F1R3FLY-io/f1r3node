@@ -28,24 +28,15 @@ When a validator starts before the boot node's P2P listener is ready, the initia
 - Location: `node/src/rust/runtime/setup.rs:677` (the warning loop)
 - Reproduction: `F1R3FLY_NODE_IMAGE=... pytest test_bridge_admin.py -v -s --keep-running` — fails ~50% of runs
 
-## Transfer Extraction: Store at Execution Time, Not Query Time
+## Transfer Extraction: Execution-Time Capture (Future)
 
-Currently, transfer data is extracted by replaying blocks via the Block Report API — an expensive operation restricted to readonly nodes. The transfer enricher caches results in LMDB, but the cache uses `serde_json` as a workaround because `TransactionType`'s `#[serde(tag = "type")]` is incompatible with bincode (the default serialization for `KeyValueTypedStoreImpl`).
+Transfer extraction currently uses block replay via `BlockReportAPI` → `ReportingCasper` → `ReportingRspace`. The pipeline was simplified (removed `CacheTransactionAPI`, `CacheTransactionEnricher`, `JsonTypedStore`, `TransactionAPIImpl`) — API handlers now call `BlockReportAPI` directly with `ReportStore` caching. See `docs/node/README.md` "Transfer Extraction" section.
 
-**Current flow:** API query → enricher → cache miss → block report (replay block in RSpace) → extract transfers → cache → return. Validators can't replay (returns `ReadOnlyRequired`), so transfers are unavailable on validators.
+**Current limitation:** Transfers only available on readonly nodes. Validators reject block replay (`ReadOnlyRequired`). gRPC clients can check `DeployInfo.transfersAvailable` to distinguish empty from unavailable.
 
-**Long-term fix:** Capture transfers during original block execution on every node. When the validator/readonly processes a block (play or replay in `RuntimeManager`), transfer events are already observed — they just aren't stored. Store them in `ProcessedDeploy` (proto) alongside `cost` and `errored`. The API reads transfers directly from block storage — no replay, no cache, no enricher, no readonly restriction.
+**Long-term improvement:** Capture transfers during original block execution by modifying RSpace to store produce data on watched channels (the `transfer_unforgeable` channel). The RSpace event log currently stores only hashes (`Blake2b256Hash`), not actual channel data — by design, to avoid slowing execution. A targeted change to populate `Produce.output_value` only for the transfer channel would enable execution-time capture with minimal overhead. This would make transfers available on all node types without replay.
 
-**Changes needed:**
-1. Add `repeated TransferInfo transfers` to `ProcessedDeploy` in `CasperMessage.proto`
-2. During `compute_deploys_checkpoint` / `replay_compute_state` in `RuntimeManager`, capture transfer events and populate `ProcessedDeploy.transfers`
-3. `ProcessedDeploy::to_deploy_info()` passes through stored transfers instead of `Vec::new()`
-4. Remove `CacheTransactionEnricher`, `CacheTransactionAPI`, `JsonTypedStore`, and the block report dependency for transfer extraction
-5. Remove the background finalization transfer pre-cache task in `setup.rs`
-
-**Impact:** Transfers available on all node types. No performance penalty. No bincode/JSON workaround. Simpler architecture.
-
-**Files:** `models/src/main/protobuf/CasperMessage.proto`, `casper/src/rust/util/rholang/runtime_manager.rs`, `models/src/rust/casper/protocol/casper_message.rs`, `node/src/rust/web/block_info_enricher.rs`, `node/src/rust/web/transaction.rs`
+**Why this wasn't done now:** Modifying RSpace core is a deeper change. The simplified replay approach is correct, cached, and performant for readonly nodes.
 
 ## Review: `compute_parents_post_state_regression_spec.rs`
 
