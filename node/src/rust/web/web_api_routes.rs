@@ -25,6 +25,11 @@ pub struct ViewQuery {
     pub view: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct BlockHashQuery {
+    pub block_hash: Option<String>,
+}
+
 pub struct WebApiRoutes;
 
 impl WebApiRoutes {
@@ -54,6 +59,10 @@ impl WebApiRoutes {
             .route("/blocks/{depth}", get(get_blocks_by_depth_handler))
             .route("/deploy/{deploy_id}", get(find_deploy_handler))
             .route("/is-finalized/{hash}", get(is_finalized_handler))
+            .route("/balance/{address}", get(balance_handler))
+            .route("/registry/{uri}", get(registry_handler))
+            .route("/validators", get(validators_handler))
+            .route("/epoch", get(epoch_handler))
             .route("/transactions/{hash}", get(get_transaction_handler))
     }
 }
@@ -264,6 +273,100 @@ pub async fn is_finalized_handler(
     }
 }
 
+use crate::rust::api::web_api::{BalanceResponse, RegistryResponse, ValidatorsResponse, EpochResponse};
+
+#[utoipa::path(
+    get,
+    path = "/api/balance/{address}",
+    params(
+        ("address" = String, Path, description = "Wallet address (hex public key)"),
+        ("block_hash" = Option<String>, Query, description = "Block hash to query against (defaults to LFB)"),
+    ),
+    responses(
+        (status = 200, description = "Balance for address", body = BalanceResponse),
+        (status = 400, description = "Bad request or address not found")
+    ),
+    tag = "Query"
+)]
+pub async fn balance_handler(
+    State(app_state): State<AppState>,
+    Path(address): Path<String>,
+    Query(query): Query<BlockHashQuery>,
+) -> Response {
+    match app_state.web_api.get_balance(address, query.block_hash).await {
+        Ok(response) => Json(response).into_response(),
+        Err(e) => AppError(e).into_response(),
+    }
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/registry/{uri}",
+    params(
+        ("uri" = String, Path, description = "Registry URI (e.g. rho:id:...)"),
+        ("block_hash" = Option<String>, Query, description = "Block hash to query against (defaults to LFB)"),
+    ),
+    responses(
+        (status = 200, description = "Registry entry", body = RegistryResponse),
+        (status = 400, description = "Bad request or URI not found")
+    ),
+    tag = "Query"
+)]
+pub async fn registry_handler(
+    State(app_state): State<AppState>,
+    Path(uri): Path<String>,
+    Query(query): Query<BlockHashQuery>,
+) -> Response {
+    match app_state.web_api.get_registry(uri, query.block_hash).await {
+        Ok(response) => Json(response).into_response(),
+        Err(e) => AppError(e).into_response(),
+    }
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/validators",
+    params(
+        ("block_hash" = Option<String>, Query, description = "Block hash to query against (defaults to LFB)"),
+    ),
+    responses(
+        (status = 200, description = "Active validator set", body = ValidatorsResponse),
+        (status = 400, description = "Bad request")
+    ),
+    tag = "Query"
+)]
+pub async fn validators_handler(
+    State(app_state): State<AppState>,
+    Query(query): Query<BlockHashQuery>,
+) -> Response {
+    match app_state.web_api.get_validators(query.block_hash).await {
+        Ok(response) => Json(response).into_response(),
+        Err(e) => AppError(e).into_response(),
+    }
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/epoch",
+    params(
+        ("block_hash" = Option<String>, Query, description = "Block hash to query against (defaults to LFB)"),
+    ),
+    responses(
+        (status = 200, description = "Current epoch info", body = EpochResponse),
+        (status = 400, description = "Bad request")
+    ),
+    tag = "Query"
+)]
+pub async fn epoch_handler(
+    State(app_state): State<AppState>,
+    Query(query): Query<BlockHashQuery>,
+) -> Response {
+    match app_state.web_api.get_epoch(query.block_hash).await {
+        Ok(response) => Json(response).into_response(),
+        Err(e) => AppError(e).into_response(),
+    }
+}
+
 #[utoipa::path(
     get,
     path = "/api/transactions/{hash}",
@@ -294,55 +397,11 @@ mod tests {
     use std::sync::Arc;
     use tower::ServiceExt;
 
-    use crate::rust::api::{
-        serde_types::light_block_info::{
-            BondInfoJson, JustificationInfoJson, LightBlockInfoSerde,
-        },
-        web_api::{
-            ApiStatus, DataAtNameByBlockHashRequest, DataAtNameRequest, DataAtNameResponse,
-            DeployRequest, DeployResponse, ViewMode, RhoDataResponse, WebApi,
-        },
+    use crate::rust::api::web_api::{
+        ApiStatus, DataAtNameByBlockHashRequest, DataAtNameRequest, DataAtNameResponse,
+        DeployRequest, DeployResponse, ViewMode, RhoDataResponse, WebApi,
     };
     use crate::rust::web::transaction::TransactionResponse;
-
-    fn sample_light_block_info() -> LightBlockInfoSerde {
-        LightBlockInfoSerde {
-            block_hash: "7bf8abc123".to_string(),
-            sender: "0487def456".to_string(),
-            seq_num: 17453,
-            sig: "3044abcdef".to_string(),
-            sig_algorithm: "secp256k1".to_string(),
-            shard_id: "root".to_string(),
-            extra_bytes: vec![],
-            version: 1,
-            timestamp: 1770028092477,
-            header_extra_bytes: vec![],
-            parents_hash_list: vec!["parent1hash".to_string(), "parent2hash".to_string()],
-            block_number: 52331,
-            pre_state_hash: "preState123".to_string(),
-            post_state_hash: "postState456".to_string(),
-            body_extra_bytes: vec![],
-            bonds: vec![
-                BondInfoJson {
-                    validator: "validator1".to_string(),
-                    stake: 100,
-                },
-                BondInfoJson {
-                    validator: "validator2".to_string(),
-                    stake: 200,
-                },
-            ],
-            block_size: "4096".to_string(),
-            deploy_count: 5,
-            fault_tolerance: 0.5,
-            justifications: vec![JustificationInfoJson {
-                validator: "validator1".to_string(),
-                latest_block_hash: "latestBlockHash1".to_string(),
-            }],
-            rejected_deploys: vec![],
-            is_finalized: true,
-        }
-    }
 
     /// Stub WebApi that returns sample DeployResponse for testing.
     struct StubWebApi;
@@ -434,6 +493,18 @@ mod tests {
             unimplemented!()
         }
         async fn is_finalized(&self, _: String) -> eyre::Result<bool> {
+            unimplemented!()
+        }
+        async fn get_balance(&self, _: String, _: Option<String>) -> eyre::Result<crate::rust::api::web_api::BalanceResponse> {
+            unimplemented!()
+        }
+        async fn get_registry(&self, _: String, _: Option<String>) -> eyre::Result<crate::rust::api::web_api::RegistryResponse> {
+            unimplemented!()
+        }
+        async fn get_validators(&self, _: Option<String>) -> eyre::Result<crate::rust::api::web_api::ValidatorsResponse> {
+            unimplemented!()
+        }
+        async fn get_epoch(&self, _: Option<String>) -> eyre::Result<crate::rust::api::web_api::EpochResponse> {
             unimplemented!()
         }
         async fn get_transaction(&self, _: String) -> eyre::Result<TransactionResponse> {

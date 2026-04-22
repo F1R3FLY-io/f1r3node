@@ -150,6 +150,44 @@ All block and deploy endpoints support a `?view=full|summary` query parameter:
 
 Single-item lookups default to full. Lists default to summary. Unknown view values fall back to the endpoint's default.
 
+## High-Level Query Endpoints
+
+Convenience endpoints for common queries. `/api/balance`, `/api/registry`, and `/api/validators` wrap `exploratory_deploy` with Rholang queries against system contracts — **readonly nodes only** (validators return errors). `/api/epoch` uses cached genesis config and works on all node types.
+
+All query endpoints accept an optional `?block_hash=` parameter to query against a specific block's post-state. Defaults to the last finalized block if omitted.
+
+### `GET /api/balance/{address}`
+
+Returns the vault balance for a wallet address (hex public key). Queries the SystemVault contract at `rho:vault:system`.
+
+```json
+{"address": "04abc...", "balance": 1000000, "blockNumber": 42, "blockHash": "abc..."}
+```
+
+### `GET /api/registry/{uri}`
+
+Looks up a registry URI (e.g. `rho:id:...`). Unwraps the `(true, data)` tuple from the registry — returns the inner data directly. If the URI is not found, returns `"not found"`.
+
+```json
+{"uri": "rho:id:abc...", "data": [<RhoExpr>], "blockNumber": 42, "blockHash": "abc..."}
+```
+
+### `GET /api/validators`
+
+Returns the active validator set with stake from the PoS contract at `rho:system:pos` (`getBonds`).
+
+```json
+{"validators": [{"publicKey": "04abc...", "stake": 100}], "totalStake": 300, "blockNumber": 42, "blockHash": "abc..."}
+```
+
+### `GET /api/epoch`
+
+Returns current epoch info. `epochLength` and `quarantineLength` are from genesis configuration (cached at startup). `currentEpoch` and `blocksUntilNextEpoch` are derived from the block number. No exploratory deploy — available on both validators and readonly nodes.
+
+```json
+{"currentEpoch": 15, "epochLength": 100, "quarantineLength": 10, "blocksUntilNextEpoch": 3, "lastFinalizedBlockNumber": 1497, "blockHash": "abc..."}
+```
+
 ## Rholang Type System (RhoExpr)
 
 API responses from `explore-deploy`, `data-at-name`, and related endpoints return Rholang values as `RhoExpr` — a JSON-serializable representation of all Rholang types.

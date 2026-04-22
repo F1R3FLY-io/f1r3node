@@ -785,6 +785,7 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
             node_discovery.clone(),
             trigger_propose_f,
             conf.casper.genesis_block_data.epoch_length,
+            conf.casper.genesis_block_data.quarantine_length,
             is_ready.clone(),
         )
     };

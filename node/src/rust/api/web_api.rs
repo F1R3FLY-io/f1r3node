@@ -98,6 +98,22 @@ pub trait WebApi {
     /// Check if a block is finalized
     async fn is_finalized(&self, hash: String) -> Result<bool>;
 
+    /// Get balance for an address via exploratory deploy against SystemVault.
+    /// Queries against `block_hash` if provided, otherwise LFB.
+    async fn get_balance(&self, address: String, block_hash: Option<String>) -> Result<BalanceResponse>;
+
+    /// Look up a registry URI via exploratory deploy.
+    /// Queries against `block_hash` if provided, otherwise LFB.
+    async fn get_registry(&self, uri: String, block_hash: Option<String>) -> Result<RegistryResponse>;
+
+    /// Get active validator set via exploratory deploy against PoS contract.
+    /// Queries against `block_hash` if provided, otherwise LFB.
+    async fn get_validators(&self, block_hash: Option<String>) -> Result<ValidatorsResponse>;
+
+    /// Get epoch info via exploratory deploy against PoS contract.
+    /// Queries against `block_hash` if provided, otherwise LFB.
+    async fn get_epoch(&self, block_hash: Option<String>) -> Result<EpochResponse>;
+
     /// Get transaction by hash
     async fn get_transaction(&self, hash: String) -> Result<TransactionResponse>;
 }
@@ -121,6 +137,7 @@ pub struct WebApiImpl {
     node_discovery: Arc<dyn NodeDiscovery + Send + Sync>,
     trigger_propose_f: Option<Arc<ProposeFunction>>,
     epoch_length: i32,
+    quarantine_length: i32,
     is_ready: Arc<AtomicBool>,
 }
 
@@ -143,6 +160,7 @@ impl WebApiImpl {
         node_discovery: Arc<dyn NodeDiscovery + Send + Sync>,
         trigger_propose_f: Option<Arc<ProposeFunction>>,
         epoch_length: i32,
+        quarantine_length: i32,
         is_ready: Arc<AtomicBool>,
     ) -> Self {
         Self {
@@ -163,9 +181,29 @@ impl WebApiImpl {
             node_discovery,
             trigger_propose_f,
             epoch_length,
+            quarantine_length,
             is_ready,
         }
     }
+    /// Resolve a block hash to query against. If provided, use it; otherwise use LFB.
+    /// Returns (block_hash, block_number).
+    async fn resolve_block(&self, block_hash: Option<String>) -> Result<(String, i64)> {
+        match block_hash {
+            Some(hash) => {
+                let block = BlockAPI::get_block(&self.engine_cell, &hash).await?;
+                let bi = block.block_info.as_ref()
+                    .ok_or_else(|| eyre!("Block {} returned without block_info", hash))?;
+                Ok((hash, bi.block_number))
+            }
+            None => {
+                let lfb = BlockAPI::last_finalized_block(&self.engine_cell).await?;
+                let bi = lfb.block_info.as_ref()
+                    .ok_or_else(|| eyre!("Last finalized block returned without block_info"))?;
+                Ok((bi.block_hash.clone(), bi.block_number))
+            }
+        }
+    }
+
     /// Enrich a BlockInfoSerde with transfer data from BlockReportAPI.
     /// On success: each deploy gets `Some(transfers)`.
     /// On failure (validator node): each deploy gets `None` (field omitted).
@@ -534,6 +572,163 @@ impl WebApi for WebApiImpl {
         BlockAPI::is_finalized(&self.engine_cell, &hash).await
     }
 
+    async fn get_balance(&self, address: String, block_hash: Option<String>) -> Result<BalanceResponse> {
+        let term = format!(
+            r#"new return, rl(`rho:registry:lookup`), systemVaultCh, vaultCh, balanceCh in {{
+  rl!(`rho:vault:system`, *systemVaultCh) |
+  for (@(_, SystemVault) <- systemVaultCh) {{
+    @SystemVault!("findOrCreate", "{address}", *vaultCh) |
+    for (@either <- vaultCh) {{
+      match either {{
+        (true, vault) => {{
+          @vault!("balance", *balanceCh) |
+          for (@balance <- balanceCh) {{
+            return!(balance)
+          }}
+        }}
+        (false, errorMsg) => {{
+          return!(errorMsg)
+        }}
+      }}
+    }}
+  }}
+}}"#
+        );
+
+        let (resolved_hash, block_number) = self.resolve_block(block_hash).await?;
+
+        let (pars, _block, _cost) = BlockAPI::exploratory_deploy(
+            &self.engine_cell,
+            term,
+            Some(resolved_hash.clone()),
+            false,
+            self.dev_mode,
+        )
+        .await?;
+
+        let exprs: Vec<RhoExpr> = pars.into_iter().filter_map(expr_from_par_proto).collect();
+        let balance = match exprs.first() {
+            Some(RhoExpr::ExprInt { data }) => *data,
+            _ => return Err(eyre!("Unexpected balance result for address {}", address)),
+        };
+
+        Ok(BalanceResponse {
+            address,
+            balance,
+            block_number,
+            block_hash: resolved_hash,
+        })
+    }
+
+    async fn get_registry(&self, uri: String, block_hash: Option<String>) -> Result<RegistryResponse> {
+        let term = format!(
+            r#"new return, rl(`rho:registry:lookup`), ch in {{
+  rl!(`{uri}`, *ch) |
+  for (@val <- ch) {{
+    match val {{
+      (true, data) => {{ return!(data) }}
+      (false, _)   => {{ return!("not found") }}
+    }}
+  }}
+}}"#
+        );
+
+        let (resolved_hash, block_number) = self.resolve_block(block_hash).await?;
+
+        let (pars, _block, _cost) = BlockAPI::exploratory_deploy(
+            &self.engine_cell,
+            term,
+            Some(resolved_hash.clone()),
+            false,
+            self.dev_mode,
+        )
+        .await?;
+
+        let data: Vec<RhoExpr> = pars.into_iter().filter_map(expr_from_par_proto).collect();
+
+        Ok(RegistryResponse {
+            uri,
+            data,
+            block_number,
+            block_hash: resolved_hash,
+        })
+    }
+
+    async fn get_validators(&self, block_hash: Option<String>) -> Result<ValidatorsResponse> {
+        let term = r#"new return, rl(`rho:registry:lookup`), poSCh in {
+  rl!(`rho:system:pos`, *poSCh) |
+  for(@(_, PoS) <- poSCh) {
+    @PoS!("getBonds", *return)
+  }
+}"#
+        .to_string();
+
+        let (resolved_hash, block_number) = self.resolve_block(block_hash).await?;
+
+        let (pars, _block, _cost) = BlockAPI::exploratory_deploy(
+            &self.engine_cell,
+            term,
+            Some(resolved_hash.clone()),
+            false,
+            self.dev_mode,
+        )
+        .await?;
+
+        let exprs: Vec<RhoExpr> = pars.into_iter().filter_map(expr_from_par_proto).collect();
+
+        let mut validators = Vec::new();
+        let mut total_stake: i64 = 0;
+
+        // getBonds returns a Rholang map: {pubkey: stake, ...}
+        // ExprMap keys are already String (extracted by extract_key_from_expr)
+        if let Some(RhoExpr::ExprMap { data }) = exprs.first() {
+            for (public_key, value) in data {
+                let stake = match value {
+                    RhoExpr::ExprInt { data } => *data,
+                    other => return Err(eyre!(
+                        "Unexpected stake type for validator {}: {:?}",
+                        public_key, other
+                    )),
+                };
+                total_stake += stake;
+                validators.push(ValidatorInfo {
+                    public_key: public_key.clone(),
+                    stake,
+                });
+            }
+        }
+
+        Ok(ValidatorsResponse {
+            validators,
+            total_stake,
+            block_number,
+            block_hash: resolved_hash,
+        })
+    }
+
+    async fn get_epoch(&self, block_hash: Option<String>) -> Result<EpochResponse> {
+        let (resolved_hash, block_number) = self.resolve_block(block_hash).await?;
+
+        let epoch_length = self.epoch_length as i64;
+        let quarantine_length = self.quarantine_length as i64;
+
+        let current_epoch = if epoch_length > 0 { block_number / epoch_length } else { 0 };
+        let blocks_until_next_epoch = if epoch_length > 0 {
+            epoch_length - (block_number % epoch_length)
+        } else {
+            0
+        };
+
+        Ok(EpochResponse {
+            current_epoch,
+            epoch_length,
+            quarantine_length,
+            blocks_until_next_epoch,
+            last_finalized_block_number: block_number,
+            block_hash: resolved_hash,
+        })
+    }
+
     async fn get_transaction(&self, _hash: String) -> Result<TransactionResponse> {
         Err(eyre!("Deprecated: use /api/deploy/{{id}}?view=full for transfers or gRPC getEventByHash for raw events"))
     }
@@ -813,6 +1008,65 @@ pub enum ViewMode {
     Full,
     /// Core fields only — for polling.
     Summary,
+}
+
+/// Balance query response
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct BalanceResponse {
+    pub address: String,
+    pub balance: i64,
+    #[serde(rename = "blockNumber")]
+    pub block_number: i64,
+    #[serde(rename = "blockHash")]
+    pub block_hash: String,
+}
+
+/// Registry lookup response
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct RegistryResponse {
+    pub uri: String,
+    pub data: Vec<RhoExpr>,
+    #[serde(rename = "blockNumber")]
+    pub block_number: i64,
+    #[serde(rename = "blockHash")]
+    pub block_hash: String,
+}
+
+/// Validator info in the active set
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ValidatorInfo {
+    #[serde(rename = "publicKey")]
+    pub public_key: String,
+    pub stake: i64,
+}
+
+/// Active validator set response
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ValidatorsResponse {
+    pub validators: Vec<ValidatorInfo>,
+    #[serde(rename = "totalStake")]
+    pub total_stake: i64,
+    #[serde(rename = "blockNumber")]
+    pub block_number: i64,
+    #[serde(rename = "blockHash")]
+    pub block_hash: String,
+}
+
+/// Epoch info response
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct EpochResponse {
+    #[serde(rename = "currentEpoch")]
+    pub current_epoch: i64,
+    #[serde(rename = "epochLength")]
+    pub epoch_length: i64,
+    #[serde(rename = "quarantineLength")]
+    pub quarantine_length: i64,
+    #[serde(rename = "blocksUntilNextEpoch")]
+    pub blocks_until_next_epoch: i64,
+    #[serde(rename = "lastFinalizedBlockNumber")]
+    pub last_finalized_block_number: i64,
+    #[serde(rename = "blockHash")]
+    pub block_hash: String,
 }
 
 // Error types
