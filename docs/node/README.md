@@ -135,6 +135,21 @@ CLI flags are applied to the parsed `NodeConf` by `config_mapper.rs`:
 - `currentEpoch` — `lastFinalizedBlockNumber / epochLength`
 - `epochLength` — blocks per epoch, from genesis configuration
 
+## View Parameters
+
+All block and deploy endpoints support a `?view=full|summary` query parameter:
+
+| Endpoint | Default | `?view=summary` | `?view=full` |
+|----------|---------|-----------------|--------------|
+| `GET /api/block/{hash}` | **full** (block + deploys + transfers) | Block header only | — |
+| `GET /api/last-finalized-block` | **full** (block + deploys + transfers) | Block header only | — |
+| `GET /api/deploy/{id}` | **full** (all deploy fields) | Core fields only | — |
+| `GET /api/blocks` | **summary** (block headers) | — | Headers + deploys |
+| `GET /api/blocks/{depth}` | **summary** (block headers) | — | Headers + deploys |
+| `GET /api/blocks/{start}/{end}` | **summary** (block headers) | — | Headers + deploys |
+
+Single-item lookups default to full. Lists default to summary. Unknown view values fall back to the endpoint's default.
+
 ## Rholang Type System (RhoExpr)
 
 API responses from `explore-deploy`, `data-at-name`, and related endpoints return Rholang values as `RhoExpr` — a JSON-serializable representation of all Rholang types.

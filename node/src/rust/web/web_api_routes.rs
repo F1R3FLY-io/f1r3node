@@ -8,7 +8,7 @@ use serde::Deserialize;
 
 use crate::rust::{
     api::{
-        serde_types::{block_info::BlockInfoSerde, light_block_info::LightBlockInfoSerde},
+        serde_types::block_info::BlockInfoSerde,
         web_api::{
             DataAtNameByBlockHashRequest, DeployResponse, PrepareRequest, PrepareResponse,
             RhoDataResponse,
@@ -118,14 +118,26 @@ pub async fn data_at_name_by_block_hash_handler(
 #[utoipa::path(
     get,
     path = "/api/last-finalized-block",
+    params(
+        ("view" = Option<String>, Query, description = "Response view: 'full' (default) includes deploys, 'summary' block header only"),
+    ),
     responses(
         (status = 200, description = "Last finalized block", body = BlockInfoSerde),
         (status = 400, description = "Bad request or block not found")
     ),
     tag = "WebAPI"
 )]
-pub async fn last_finalized_block_handler(State(app_state): State<AppState>) -> Response {
-    match app_state.web_api.last_finalized_block().await {
+pub async fn last_finalized_block_handler(
+    State(app_state): State<AppState>,
+    Query(query): Query<ViewQuery>,
+) -> Response {
+    use crate::rust::api::web_api::ViewMode;
+
+    let view = match query.view.as_deref() {
+        Some("summary") => ViewMode::Summary,
+        _ => ViewMode::Full,
+    };
+    match app_state.web_api.last_finalized_block(view).await {
         Ok(response) => Json(response).into_response(),
         Err(e) => AppError(e).into_response(),
     }
@@ -137,9 +149,10 @@ pub async fn last_finalized_block_handler(State(app_state): State<AppState>) -> 
     params(
         ("start" = i64, Path, description = "Start block height"),
         ("end" = i64, Path, description = "End block height"),
+        ("view" = Option<String>, Query, description = "Response view: 'summary' (default) block headers only, 'full' includes deploys"),
     ),
     responses(
-        (status = 200, description = "Blocks by height range", body = Vec<LightBlockInfoSerde>),
+        (status = 200, description = "Blocks by height range", body = Vec<BlockInfoSerde>),
         (status = 400, description = "Bad request or invalid height range")
     ),
     tag = "WebAPI"
@@ -147,8 +160,15 @@ pub async fn last_finalized_block_handler(State(app_state): State<AppState>) -> 
 pub async fn get_blocks_by_heights_handler(
     State(app_state): State<AppState>,
     Path((start, end)): Path<(i64, i64)>,
+    Query(query): Query<ViewQuery>,
 ) -> Response {
-    match app_state.web_api.get_blocks_by_heights(start, end).await {
+    use crate::rust::api::web_api::ViewMode;
+
+    let view = match query.view.as_deref() {
+        Some("full") => ViewMode::Full,
+        _ => ViewMode::Summary,
+    };
+    match app_state.web_api.get_blocks_by_heights(start, end, view).await {
         Ok(response) => Json(response).into_response(),
         Err(e) => AppError(e).into_response(),
     }
@@ -159,9 +179,10 @@ pub async fn get_blocks_by_heights_handler(
     path = "/api/blocks/{depth}",
     params(
         ("depth" = i32, Path, description = "Block depth"),
+        ("view" = Option<String>, Query, description = "Response view: 'summary' (default) block headers only, 'full' includes deploys"),
     ),
     responses(
-        (status = 200, description = "Blocks by depth", body = Vec<LightBlockInfoSerde>),
+        (status = 200, description = "Blocks by depth", body = Vec<BlockInfoSerde>),
         (status = 400, description = "Bad request or invalid depth")
     ),
     tag = "WebAPI"
@@ -169,8 +190,15 @@ pub async fn get_blocks_by_heights_handler(
 pub async fn get_blocks_by_depth_handler(
     State(app_state): State<AppState>,
     Path(depth): Path<i32>,
+    Query(query): Query<ViewQuery>,
 ) -> Response {
-    match app_state.web_api.get_blocks(depth).await {
+    use crate::rust::api::web_api::ViewMode;
+
+    let view = match query.view.as_deref() {
+        Some("full") => ViewMode::Full,
+        _ => ViewMode::Summary,
+    };
+    match app_state.web_api.get_blocks(depth, view).await {
         Ok(response) => Json(response).into_response(),
         Err(e) => AppError(e).into_response(),
     }
@@ -195,11 +223,11 @@ pub async fn find_deploy_handler(
     Path(deploy_id): Path<String>,
     Query(query): Query<ViewQuery>,
 ) -> Response {
-    use crate::rust::api::web_api::DeployView;
+    use crate::rust::api::web_api::ViewMode;
 
     let view = match query.view.as_deref() {
-        Some("summary") => DeployView::Summary,
-        _ => DeployView::Full,
+        Some("summary") => ViewMode::Summary,
+        _ => ViewMode::Full,
     };
 
     match app_state.web_api.find_deploy(deploy_id, view).await {
@@ -272,7 +300,7 @@ mod tests {
         },
         web_api::{
             ApiStatus, DataAtNameByBlockHashRequest, DataAtNameRequest, DataAtNameResponse,
-            DeployRequest, DeployResponse, DeployView, RhoDataResponse, WebApi,
+            DeployRequest, DeployResponse, ViewMode, RhoDataResponse, WebApi,
         },
     };
     use crate::rust::web::transaction::TransactionResponse;
@@ -319,8 +347,8 @@ mod tests {
     /// Stub WebApi that returns sample DeployResponse for testing.
     struct StubWebApi;
 
-    fn sample_deploy_response(view: DeployView) -> DeployResponse {
-        let is_full = view == DeployView::Full;
+    fn sample_deploy_response(view: ViewMode) -> DeployResponse {
+        let is_full = view == ViewMode::Full;
         DeployResponse {
             deploy_id: "abc123def".to_string(),
             block_hash: "7bf8abc123".to_string(),
@@ -368,19 +396,25 @@ mod tests {
         }
         async fn last_finalized_block(
             &self,
+            _: ViewMode,
         ) -> eyre::Result<crate::rust::api::serde_types::block_info::BlockInfoSerde> {
             unimplemented!()
         }
         async fn get_block(
             &self,
             _: String,
+            _: ViewMode,
         ) -> eyre::Result<crate::rust::api::serde_types::block_info::BlockInfoSerde> {
             unimplemented!()
         }
-        async fn get_blocks(&self, _: i32) -> eyre::Result<Vec<LightBlockInfoSerde>> {
+        async fn get_blocks(
+            &self,
+            _: i32,
+            _: ViewMode,
+        ) -> eyre::Result<Vec<crate::rust::api::serde_types::block_info::BlockInfoSerde>> {
             unimplemented!()
         }
-        async fn find_deploy(&self, _: String, view: DeployView) -> eyre::Result<DeployResponse> {
+        async fn find_deploy(&self, _: String, view: ViewMode) -> eyre::Result<DeployResponse> {
             Ok(sample_deploy_response(view))
         }
         async fn exploratory_deploy(
@@ -395,7 +429,8 @@ mod tests {
             &self,
             _: i64,
             _: i64,
-        ) -> eyre::Result<Vec<LightBlockInfoSerde>> {
+            _: ViewMode,
+        ) -> eyre::Result<Vec<crate::rust::api::serde_types::block_info::BlockInfoSerde>> {
             unimplemented!()
         }
         async fn is_finalized(&self, _: String) -> eyre::Result<bool> {
@@ -412,8 +447,8 @@ mod tests {
         Query(query): Query<ViewQuery>,
     ) -> Response {
         let view = match query.view.as_deref() {
-            Some("summary") => DeployView::Summary,
-            _ => DeployView::Full,
+            Some("summary") => ViewMode::Summary,
+            _ => ViewMode::Full,
         };
         match web_api.find_deploy(deploy_id, view).await {
             Ok(response) => Json(response).into_response(),

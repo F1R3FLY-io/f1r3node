@@ -3,14 +3,14 @@ use std::time::{Duration, Instant};
 
 use crate::rust::api::{
     admin_web_api::AdminWebApi,
-    serde_types::{block_info::BlockInfoSerde, light_block_info::LightBlockInfoSerde},
+    serde_types::block_info::BlockInfoSerde,
     web_api::{
         DataAtNameRequest, DataAtNameResponse, DeployRequest, ExploreDeployRequest,
-        RhoDataResponse, SimpleExploreDeployRequest, WebApi,
+        RhoDataResponse, SimpleExploreDeployRequest, ViewMode, WebApi,
     },
 };
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Json, Response},
 };
@@ -203,14 +203,24 @@ pub async fn data_at_name_handler(
 #[utoipa::path(
     get,
     path = "/blocks",
+    params(
+        ("view" = Option<String>, Query, description = "Response view: 'summary' (default) block headers only, 'full' includes deploys"),
+    ),
     responses(
-        (status = 200, description = "Blocks retrieved successfully", body = Vec<LightBlockInfoSerde>),
+        (status = 200, description = "Blocks retrieved successfully", body = Vec<BlockInfoSerde>),
         (status = 400, description = "Error retrieving blocks"),
     ),
     tag = "Blocks"
 )]
-pub async fn get_blocks_handler(State(app_state): State<AppState>) -> Response {
-    match app_state.web_api.get_blocks(1).await {
+pub async fn get_blocks_handler(
+    State(app_state): State<AppState>,
+    Query(query): Query<crate::rust::web::web_api_routes::ViewQuery>,
+) -> Response {
+    let view = match query.view.as_deref() {
+        Some("full") => ViewMode::Full,
+        _ => ViewMode::Summary,
+    };
+    match app_state.web_api.get_blocks(1, view).await {
         Ok(response) => Json(response).into_response(),
         Err(e) => AppError(e).into_response(),
     }
@@ -220,7 +230,8 @@ pub async fn get_blocks_handler(State(app_state): State<AppState>) -> Response {
     get,
     path = "/block/{hash}",
     params(
-        ("hash" = String, Path, description = "Block hash in hex format")
+        ("hash" = String, Path, description = "Block hash in hex format"),
+        ("view" = Option<String>, Query, description = "Response view: 'full' (default) includes deploys, 'summary' block header only"),
     ),
     responses(
         (status = 200, description = "Block information retrieved successfully", body = BlockInfoSerde),
@@ -231,8 +242,13 @@ pub async fn get_blocks_handler(State(app_state): State<AppState>) -> Response {
 pub async fn get_block_handler(
     State(app_state): State<AppState>,
     Path(hash): Path<String>,
+    Query(query): Query<crate::rust::web::web_api_routes::ViewQuery>,
 ) -> Response {
-    match app_state.web_api.get_block(hash).await {
+    let view = match query.view.as_deref() {
+        Some("summary") => ViewMode::Summary,
+        _ => ViewMode::Full,
+    };
+    match app_state.web_api.get_block(hash, view).await {
         Ok(response) => Json(response).into_response(),
         Err(e) => AppError(e).into_response(),
     }

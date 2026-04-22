@@ -68,16 +68,16 @@ pub trait WebApi {
     ) -> Result<RhoDataResponse>;
 
     /// Get the last finalized block
-    async fn last_finalized_block(&self) -> Result<BlockInfoSerde>;
+    async fn last_finalized_block(&self, view: ViewMode) -> Result<BlockInfoSerde>;
 
     /// Get a specific block by hash
-    async fn get_block(&self, hash: String) -> Result<BlockInfoSerde>;
+    async fn get_block(&self, hash: String, view: ViewMode) -> Result<BlockInfoSerde>;
 
     /// Get blocks with specified depth
-    async fn get_blocks(&self, depth: i32) -> Result<Vec<LightBlockInfoSerde>>;
+    async fn get_blocks(&self, depth: i32, view: ViewMode) -> Result<Vec<BlockInfoSerde>>;
 
     /// Find a deploy by ID with the specified view.
-    async fn find_deploy(&self, deploy_id: String, view: DeployView) -> Result<DeployResponse>;
+    async fn find_deploy(&self, deploy_id: String, view: ViewMode) -> Result<DeployResponse>;
 
     /// Perform exploratory deploy
     async fn exploratory_deploy(
@@ -92,7 +92,8 @@ pub trait WebApi {
         &self,
         start_block_number: i64,
         end_block_number: i64,
-    ) -> Result<Vec<LightBlockInfoSerde>>;
+        view: ViewMode,
+    ) -> Result<Vec<BlockInfoSerde>>;
 
     /// Check if a block is finalized
     async fn is_finalized(&self, hash: String) -> Result<bool>;
@@ -173,10 +174,15 @@ impl WebApiImpl {
         serde: &mut BlockInfoSerde,
         block_hash_hex: String,
     ) {
+        let deploys = match serde.deploys.as_mut() {
+            Some(deploys) => deploys,
+            None => return,
+        };
+
         let block_hash_bytes: prost::bytes::Bytes = match hex::decode(&block_hash_hex) {
             Ok(bytes) => bytes.into(),
             Err(_) => {
-                for deploy in &mut serde.deploys {
+                for deploy in deploys {
                     deploy.transfers = None;
                 }
                 return;
@@ -186,7 +192,7 @@ impl WebApiImpl {
             Ok(report) => {
                 let transfers_by_deploy =
                     extract_transfers_from_report(&report, &self.transfer_unforgeable);
-                for deploy in &mut serde.deploys {
+                for deploy in deploys {
                     deploy.transfers = Some(
                         transfers_by_deploy
                             .get(&deploy.sig)
@@ -199,7 +205,7 @@ impl WebApiImpl {
                 }
             }
             Err(_) => {
-                for deploy in &mut serde.deploys {
+                for deploy in deploys {
                     deploy.transfers = None;
                 }
             }
@@ -365,33 +371,47 @@ impl WebApi for WebApiImpl {
         Ok(to_rho_data_response(pars, block, 0))
     }
 
-    async fn last_finalized_block(&self) -> Result<BlockInfoSerde> {
+    async fn last_finalized_block(&self, view: ViewMode) -> Result<BlockInfoSerde> {
         let block_info = BlockAPI::last_finalized_block(&self.engine_cell).await?;
         let mut serde = BlockInfoSerde::from(block_info);
-        let block_hash = serde.block_info.block_hash.clone();
-        self.enrich_transfers(&mut serde, block_hash).await;
+        if view == ViewMode::Full {
+            let block_hash = serde.block_info.block_hash.clone();
+            self.enrich_transfers(&mut serde, block_hash).await;
+        } else {
+            serde.deploys = None;
+        }
         Ok(serde)
     }
 
-    async fn get_block(&self, hash: String) -> Result<BlockInfoSerde> {
+    async fn get_block(&self, hash: String, view: ViewMode) -> Result<BlockInfoSerde> {
         let block_info = BlockAPI::get_block(&self.engine_cell, &hash).await?;
         let mut serde = BlockInfoSerde::from(block_info);
-        let block_hash = serde.block_info.block_hash.clone();
-        self.enrich_transfers(&mut serde, block_hash).await;
+        if view == ViewMode::Full {
+            let block_hash = serde.block_info.block_hash.clone();
+            self.enrich_transfers(&mut serde, block_hash).await;
+        } else {
+            serde.deploys = None;
+        }
         Ok(serde)
     }
 
-    async fn get_blocks(&self, depth: i32) -> Result<Vec<LightBlockInfoSerde>> {
-        let blocks =
-            BlockAPI::get_blocks(&self.engine_cell, depth, self.api_max_blocks_limit).await?;
-
-        Ok(blocks
-            .into_iter()
-            .map(|block| LightBlockInfoSerde::from(block))
-            .collect())
+    async fn get_blocks(&self, depth: i32, view: ViewMode) -> Result<Vec<BlockInfoSerde>> {
+        if view == ViewMode::Full {
+            let blocks =
+                BlockAPI::get_blocks_full(&self.engine_cell, depth, self.api_max_blocks_limit)
+                    .await?;
+            Ok(blocks.into_iter().map(BlockInfoSerde::from).collect())
+        } else {
+            let blocks =
+                BlockAPI::get_blocks(&self.engine_cell, depth, self.api_max_blocks_limit).await?;
+            Ok(blocks
+                .into_iter()
+                .map(|block| BlockInfoSerde::from_light(LightBlockInfoSerde::from(block)))
+                .collect())
+        }
     }
 
-    async fn find_deploy(&self, deploy_id: String, view: DeployView) -> Result<DeployResponse> {
+    async fn find_deploy(&self, deploy_id: String, view: ViewMode) -> Result<DeployResponse> {
         let deploy_id_bytes =
             hex::decode(&deploy_id).map_err(|e| eyre!("Invalid deploy ID format: {}", e))?;
 
@@ -425,11 +445,15 @@ impl WebApi for WebApiImpl {
             }
         };
 
-        // Fetch full block to get deploy execution details
-        let block_info = self.get_block(light_block.block_hash.clone()).await?;
+        // Always fetch full block to get deploy execution details
+        let block_info = self.get_block(light_block.block_hash.clone(), ViewMode::Full).await?;
 
-        let deploy = block_info
-            .deploys
+        let deploys = block_info.deploys.as_ref().ok_or_else(|| eyre!(
+            "Block {} returned without deploys",
+            light_block.block_hash
+        ))?;
+
+        let deploy = deploys
             .iter()
             .find(|d| d.sig == deploy_id)
             .ok_or_else(|| eyre!(
@@ -437,7 +461,7 @@ impl WebApi for WebApiImpl {
                 deploy_id, light_block.block_hash
             ))?;
 
-        let is_full = view == DeployView::Full;
+        let is_full = view == ViewMode::Full;
 
         Ok(DeployResponse {
             deploy_id,
@@ -480,19 +504,30 @@ impl WebApi for WebApiImpl {
         &self,
         start_block_number: i64,
         end_block_number: i64,
-    ) -> Result<Vec<LightBlockInfoSerde>> {
-        let blocks = BlockAPI::get_blocks_by_heights(
-            &self.engine_cell,
-            start_block_number,
-            end_block_number,
-            self.api_max_blocks_limit,
-        )
-        .await?;
-
-        Ok(blocks
-            .into_iter()
-            .map(|block| LightBlockInfoSerde::from(block))
-            .collect())
+        view: ViewMode,
+    ) -> Result<Vec<BlockInfoSerde>> {
+        if view == ViewMode::Full {
+            let blocks = BlockAPI::get_blocks_by_heights_full(
+                &self.engine_cell,
+                start_block_number,
+                end_block_number,
+                self.api_max_blocks_limit,
+            )
+            .await?;
+            Ok(blocks.into_iter().map(BlockInfoSerde::from).collect())
+        } else {
+            let blocks = BlockAPI::get_blocks_by_heights(
+                &self.engine_cell,
+                start_block_number,
+                end_block_number,
+                self.api_max_blocks_limit,
+            )
+            .await?;
+            Ok(blocks
+                .into_iter()
+                .map(|block| BlockInfoSerde::from_light(LightBlockInfoSerde::from(block)))
+                .collect())
+        }
     }
 
     async fn is_finalized(&self, hash: String) -> Result<bool> {
@@ -773,7 +808,7 @@ pub struct DeployResponse {
 
 /// View mode for deploy lookups.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DeployView {
+pub enum ViewMode {
     /// All fields populated (default).
     Full,
     /// Core fields only — for polling.
