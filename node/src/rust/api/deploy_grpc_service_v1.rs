@@ -19,13 +19,13 @@ use models::casper::v1::deploy_service_server::DeployService;
 use models::casper::v1::{
     BlockInfoResponse, BlockResponse, BondStatusResponse, ContinuationAtNameResponse,
     DeployResponse, EventInfoResponse, ExploratoryDeployResponse, FindDeployResponse,
-    IsFinalizedResponse, LastFinalizedBlockResponse, ListeningNameDataResponse,
+    IsFinalizedResponse, LastFinalizedBlockResponse,
     MachineVerifyResponse, PrivateNamePreviewResponse, RhoDataResponse, StatusResponse,
     VisualizeBlocksResponse,
 };
 use models::casper::{
     BlockQuery, BlocksQuery, BlocksQueryByHeight, BondStatusQuery, ContinuationAtNameQuery,
-    DataAtNameByBlockQuery, DataAtNameQuery, DeployDataProto, ExploratoryDeployQuery,
+    DataAtNameByBlockQuery, DeployDataProto, ExploratoryDeployQuery,
     FindDeployQuery, IsFinalizedQuery, LastFinalizedBlockQuery, MachineVerifyQuery,
     PrivateNamePreviewQuery, ReportQuery, Status, VersionInfo, VisualizeDagQuery,
 };
@@ -462,42 +462,6 @@ impl DeployService for DeployGrpcServiceV1Impl {
         Ok(tonic::Response::new(
             tokio_stream::wrappers::ReceiverStream::new(rx),
         ))
-    }
-
-    /// Listen for data at name (DEPRECATED — use get_data_at_name instead)
-    async fn listen_for_data_at_name(
-        &self,
-        request: tonic::Request<DataAtNameQuery>,
-    ) -> Result<tonic::Response<ListeningNameDataResponse>, tonic::Status> {
-        tracing::warn!("listenForDataAtName is deprecated, use getDataAtName(DataAtNameByBlockQuery) instead");
-        let request = request.into_inner();
-        match BlockAPI::get_listening_name_data_response(
-            &self.engine_cell,
-            request.depth,
-            request.name.unwrap_or_default(),
-            self.api_max_blocks_limit,
-        )
-        .await
-        {
-            Ok((block_info, length)) => {
-                let payload = models::casper::v1::ListeningNameDataPayload { block_info, length };
-                Ok(tonic::Response::new(ListeningNameDataResponse {
-                    message: Some(
-                        models::casper::v1::listening_name_data_response::Message::Payload(payload),
-                    ),
-                }))
-            }
-            Err(e) => {
-                error!("Deploy service method error listen_for_data_at_name: {}", e);
-                Ok(tonic::Response::new(ListeningNameDataResponse {
-                    message: Some(
-                        models::casper::v1::listening_name_data_response::Message::Error(
-                            e.into_service_error(),
-                        ),
-                    ),
-                }))
-            }
-        }
     }
 
     /// Get data at name

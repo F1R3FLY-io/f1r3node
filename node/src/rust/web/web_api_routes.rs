@@ -14,10 +14,7 @@ use crate::rust::{
             RhoDataResponse,
         },
     },
-    web::{
-        shared_handlers::{self, AppError, AppState},
-        transaction::TransactionResponse,
-    },
+    web::shared_handlers::{self, AppError, AppState},
 };
 
 #[derive(Debug, Deserialize)]
@@ -47,7 +44,6 @@ impl WebApiRoutes {
                 "/explore-deploy-by-block-hash",
                 post(shared_handlers::explore_deploy_by_block_hash_handler),
             )
-            .route("/data-at-name", post(shared_handlers::data_at_name_handler))
             .route(
                 "/data-at-name-by-block-hash",
                 post(data_at_name_by_block_hash_handler),
@@ -62,8 +58,11 @@ impl WebApiRoutes {
             .route("/balance/{address}", get(balance_handler))
             .route("/registry/{uri}", get(registry_handler))
             .route("/validators", get(validators_handler))
+            .route("/validator/{pubkey}", get(validator_handler))
             .route("/epoch", get(epoch_handler))
-            .route("/transactions/{hash}", get(get_transaction_handler))
+            .route("/epoch/rewards", get(epoch_rewards_handler))
+            .route("/estimate-cost", post(estimate_cost_handler))
+            .route("/bond-status/{pubkey}", get(bond_status_handler))
     }
 }
 
@@ -367,23 +366,98 @@ pub async fn epoch_handler(
     }
 }
 
+use crate::rust::api::web_api::{
+    EstimateCostResponse, EpochRewardsResponse, ValidatorStatusResponse,
+    BondStatusResponse as BondStatusResp, SimpleExploreDeployRequest,
+};
+
 #[utoipa::path(
-    get,
-    path = "/api/transactions/{hash}",
+    post,
+    path = "/api/estimate-cost",
+    request_body = SimpleExploreDeployRequest,
     params(
-        ("hash" = String, Path, description = "Transaction hash"),
+        ("block_hash" = Option<String>, Query, description = "Block hash to query against (defaults to LFB)"),
     ),
     responses(
-        (status = 200, description = "Transaction information", body = TransactionResponse),
-        (status = 400, description = "Bad request or transaction not found")
+        (status = 200, description = "Estimated phlogiston cost", body = EstimateCostResponse),
+        (status = 400, description = "Bad request or parse error")
     ),
-    tag = "WebAPI"
+    tag = "Query"
 )]
-pub async fn get_transaction_handler(
+pub async fn estimate_cost_handler(
     State(app_state): State<AppState>,
-    Path(hash): Path<String>,
+    Query(query): Query<BlockHashQuery>,
+    Json(request): Json<SimpleExploreDeployRequest>,
 ) -> Response {
-    match app_state.web_api.get_transaction(hash).await {
+    match app_state.web_api.estimate_cost(request.term, query.block_hash).await {
+        Ok(response) => Json(response).into_response(),
+        Err(e) => AppError(e).into_response(),
+    }
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/epoch/rewards",
+    params(
+        ("block_hash" = Option<String>, Query, description = "Block hash to query against (defaults to LFB)"),
+    ),
+    responses(
+        (status = 200, description = "Current epoch rewards", body = EpochRewardsResponse),
+        (status = 400, description = "Bad request")
+    ),
+    tag = "Query"
+)]
+pub async fn epoch_rewards_handler(
+    State(app_state): State<AppState>,
+    Query(query): Query<BlockHashQuery>,
+) -> Response {
+    match app_state.web_api.get_epoch_rewards(query.block_hash).await {
+        Ok(response) => Json(response).into_response(),
+        Err(e) => AppError(e).into_response(),
+    }
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/validator/{pubkey}",
+    params(
+        ("pubkey" = String, Path, description = "Validator public key (hex)"),
+        ("block_hash" = Option<String>, Query, description = "Block hash to query against (defaults to LFB)"),
+    ),
+    responses(
+        (status = 200, description = "Validator status", body = ValidatorStatusResponse),
+        (status = 400, description = "Bad request")
+    ),
+    tag = "Query"
+)]
+pub async fn validator_handler(
+    State(app_state): State<AppState>,
+    Path(pubkey): Path<String>,
+    Query(query): Query<BlockHashQuery>,
+) -> Response {
+    match app_state.web_api.get_validator(pubkey, query.block_hash).await {
+        Ok(response) => Json(response).into_response(),
+        Err(e) => AppError(e).into_response(),
+    }
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/bond-status/{pubkey}",
+    params(
+        ("pubkey" = String, Path, description = "Validator public key (hex)"),
+    ),
+    responses(
+        (status = 200, description = "Bond status", body = BondStatusResp),
+        (status = 400, description = "Bad request or invalid public key")
+    ),
+    tag = "Query"
+)]
+pub async fn bond_status_handler(
+    State(app_state): State<AppState>,
+    Path(pubkey): Path<String>,
+) -> Response {
+    match app_state.web_api.get_bond_status(pubkey).await {
         Ok(response) => Json(response).into_response(),
         Err(e) => AppError(e).into_response(),
     }
@@ -398,10 +472,9 @@ mod tests {
     use tower::ServiceExt;
 
     use crate::rust::api::web_api::{
-        ApiStatus, DataAtNameByBlockHashRequest, DataAtNameRequest, DataAtNameResponse,
+        ApiStatus, DataAtNameByBlockHashRequest,
         DeployRequest, DeployResponse, ViewMode, RhoDataResponse, WebApi,
     };
-    use crate::rust::web::transaction::TransactionResponse;
 
     /// Stub WebApi that returns sample DeployResponse for testing.
     struct StubWebApi;
@@ -439,12 +512,6 @@ mod tests {
             unimplemented!()
         }
         async fn deploy(&self, _: DeployRequest) -> eyre::Result<String> {
-            unimplemented!()
-        }
-        async fn listen_for_data_at_name(
-            &self,
-            _: DataAtNameRequest,
-        ) -> eyre::Result<DataAtNameResponse> {
             unimplemented!()
         }
         async fn get_data_at_par(
@@ -507,7 +574,16 @@ mod tests {
         async fn get_epoch(&self, _: Option<String>) -> eyre::Result<crate::rust::api::web_api::EpochResponse> {
             unimplemented!()
         }
-        async fn get_transaction(&self, _: String) -> eyre::Result<TransactionResponse> {
+        async fn estimate_cost(&self, _: String, _: Option<String>) -> eyre::Result<crate::rust::api::web_api::EstimateCostResponse> {
+            unimplemented!()
+        }
+        async fn get_epoch_rewards(&self, _: Option<String>) -> eyre::Result<crate::rust::api::web_api::EpochRewardsResponse> {
+            unimplemented!()
+        }
+        async fn get_validator(&self, _: String, _: Option<String>) -> eyre::Result<crate::rust::api::web_api::ValidatorStatusResponse> {
+            unimplemented!()
+        }
+        async fn get_bond_status(&self, _: String) -> eyre::Result<crate::rust::api::web_api::BondStatusResponse> {
             unimplemented!()
         }
     }

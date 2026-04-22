@@ -5,7 +5,7 @@ use crate::rust::api::{
     admin_web_api::AdminWebApi,
     serde_types::block_info::BlockInfoSerde,
     web_api::{
-        DataAtNameRequest, DataAtNameResponse, DeployRequest, ExploreDeployRequest,
+        DeployRequest, ExploreDeployRequest,
         RhoDataResponse, SimpleExploreDeployRequest, ViewMode, WebApi,
     },
 };
@@ -174,27 +174,6 @@ pub async fn explore_deploy_by_block_hash_handler(
         .exploratory_deploy(request.term, request_block_hash, false)
         .await
     {
-        Ok(response) => Json(response).into_response(),
-        Err(e) => AppError(e).into_response(),
-    }
-}
-
-#[utoipa::path(
-    post,
-    path = "/data-at-name",
-    request_body = DataAtNameRequest,
-    responses(
-        (status = 200, description = "Data retrieval successful", body = DataAtNameResponse),
-        (status = 400, description = "Invalid name or depth parameter"),
-    ),
-    tag = "Data"
-)]
-pub async fn data_at_name_handler(
-    State(app_state): State<AppState>,
-    Json(request): Json<DataAtNameRequest>,
-) -> Response {
-    tracing::warn!("/data-at-name is deprecated, use /data-at-name-by-block-hash instead");
-    match app_state.web_api.listen_for_data_at_name(request).await {
         Ok(response) => Json(response).into_response(),
         Err(e) => AppError(e).into_response(),
     }

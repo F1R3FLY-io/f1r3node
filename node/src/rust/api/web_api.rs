@@ -4,7 +4,6 @@ use crate::rust::api::serde_types::block_info::BlockInfoSerde;
 use crate::rust::api::serde_types::deploy_info::TransferInfoSerde;
 use crate::rust::api::serde_types::light_block_info::LightBlockInfoSerde;
 use crate::rust::web::block_info_enricher::extract_transfers_from_report;
-use crate::rust::web::transaction::TransactionResponse;
 use casper::rust::api::block_report_api::BlockReportAPI;
 use crate::rust::web::version_info::get_version_info_str;
 use casper::rust::api::block_api::{BlockAPI, DeployNotFoundError};
@@ -22,7 +21,7 @@ use crypto::rust::{
 };
 use eyre::{eyre, Result};
 use hex;
-use models::casper::{DataWithBlockInfo, LightBlockInfo};
+use models::casper::LightBlockInfo;
 use models::rust::casper::protocol::casper_message::DeployData;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -54,12 +53,6 @@ pub trait WebApi {
 
     /// Deploy a contract
     async fn deploy(&self, request: DeployRequest) -> Result<String>;
-
-    /// Listen for data at a name
-    async fn listen_for_data_at_name(
-        &self,
-        request: DataAtNameRequest,
-    ) -> Result<DataAtNameResponse>;
 
     /// Get data at a par (parallel expression)
     async fn get_data_at_par(
@@ -114,8 +107,17 @@ pub trait WebApi {
     /// Queries against `block_hash` if provided, otherwise LFB.
     async fn get_epoch(&self, block_hash: Option<String>) -> Result<EpochResponse>;
 
-    /// Get transaction by hash
-    async fn get_transaction(&self, hash: String) -> Result<TransactionResponse>;
+    /// Estimate phlogiston cost of Rholang code via exploratory deploy
+    async fn estimate_cost(&self, term: String, block_hash: Option<String>) -> Result<EstimateCostResponse>;
+
+    /// Get current epoch rewards from PoS contract
+    async fn get_epoch_rewards(&self, block_hash: Option<String>) -> Result<EpochRewardsResponse>;
+
+    /// Get status of a specific validator (bond, active/quarantined)
+    async fn get_validator(&self, pubkey: String, block_hash: Option<String>) -> Result<ValidatorStatusResponse>;
+
+    /// Check if a public key is bonded
+    async fn get_bond_status(&self, pubkey: String) -> Result<BondStatusResponse>;
 }
 
 /// Web API implementation
@@ -377,21 +379,6 @@ impl WebApi for WebApiImpl {
             &self.shard_id,
         )
         .await
-    }
-
-    async fn listen_for_data_at_name(
-        &self,
-        request: DataAtNameRequest,
-    ) -> Result<DataAtNameResponse> {
-        let res = BlockAPI::get_listening_name_data_response(
-            &self.engine_cell,
-            request.depth,
-            to_par(request.name)?,
-            self.api_max_blocks_limit,
-        )
-        .await?;
-
-        Ok(to_data_at_name_response(res))
     }
 
     async fn get_data_at_par(
@@ -729,8 +716,109 @@ impl WebApi for WebApiImpl {
         })
     }
 
-    async fn get_transaction(&self, _hash: String) -> Result<TransactionResponse> {
-        Err(eyre!("Deprecated: use /api/deploy/{{id}}?view=full for transfers or gRPC getEventByHash for raw events"))
+    async fn estimate_cost(&self, term: String, block_hash: Option<String>) -> Result<EstimateCostResponse> {
+        let (resolved_hash, block_number) = self.resolve_block(block_hash).await?;
+
+        let (_pars, _block, cost) = BlockAPI::exploratory_deploy(
+            &self.engine_cell,
+            term,
+            Some(resolved_hash.clone()),
+            false,
+            self.dev_mode,
+        )
+        .await?;
+
+        Ok(EstimateCostResponse {
+            cost,
+            block_number,
+            block_hash: resolved_hash,
+        })
+    }
+
+    async fn get_epoch_rewards(&self, block_hash: Option<String>) -> Result<EpochRewardsResponse> {
+        let term = r#"new return, rl(`rho:registry:lookup`), poSCh in {
+  rl!(`rho:system:pos`, *poSCh) |
+  for(@(_, PoS) <- poSCh) {
+    @PoS!("getCurrentEpochRewards", *return)
+  }
+}"#
+        .to_string();
+
+        let (resolved_hash, block_number) = self.resolve_block(block_hash).await?;
+
+        let (pars, _block, _cost) = BlockAPI::exploratory_deploy(
+            &self.engine_cell,
+            term,
+            Some(resolved_hash.clone()),
+            false,
+            self.dev_mode,
+        )
+        .await?;
+
+        let exprs: Vec<RhoExpr> = pars.into_iter().filter_map(expr_from_par_proto).collect();
+        let rewards = exprs.into_iter().next()
+            .ok_or_else(|| eyre!("No result from getCurrentEpochRewards"))?;
+
+        Ok(EpochRewardsResponse {
+            rewards,
+            block_number,
+            block_hash: resolved_hash,
+        })
+    }
+
+    async fn get_validator(&self, pubkey: String, block_hash: Option<String>) -> Result<ValidatorStatusResponse> {
+        let term = r#"new return, rl(`rho:registry:lookup`), poSCh in {
+  rl!(`rho:system:pos`, *poSCh) |
+  for(@(_, PoS) <- poSCh) {
+    @PoS!("getBonds", *return)
+  }
+}"#
+        .to_string();
+
+        let (resolved_hash, block_number) = self.resolve_block(block_hash).await?;
+
+        let (pars, _block, _cost) = BlockAPI::exploratory_deploy(
+            &self.engine_cell,
+            term,
+            Some(resolved_hash.clone()),
+            false,
+            self.dev_mode,
+        )
+        .await?;
+
+        let exprs: Vec<RhoExpr> = pars.into_iter().filter_map(expr_from_par_proto).collect();
+
+        let mut is_bonded = false;
+        let mut stake = None;
+
+        if let Some(RhoExpr::ExprMap { data }) = exprs.first() {
+            if let Some(value) = data.get(&pubkey) {
+                is_bonded = true;
+                if let RhoExpr::ExprInt { data } = value {
+                    stake = Some(*data);
+                }
+            }
+        }
+
+        Ok(ValidatorStatusResponse {
+            public_key: pubkey,
+            is_bonded,
+            stake,
+            block_number,
+            block_hash: resolved_hash,
+        })
+    }
+
+    async fn get_bond_status(&self, pubkey: String) -> Result<BondStatusResponse> {
+        let pubkey_bytes = hex::decode(&pubkey)
+            .map_err(|e| eyre!("Invalid public key hex: {}", e))?;
+
+        let is_bonded = BlockAPI::bond_status(&self.engine_cell, &pubkey_bytes).await?;
+
+        Ok(BondStatusResponse {
+            public_key: pubkey,
+            is_bonded,
+        })
     }
 }
 
@@ -1067,6 +1155,49 @@ pub struct EpochResponse {
     pub last_finalized_block_number: i64,
     #[serde(rename = "blockHash")]
     pub block_hash: String,
+}
+
+/// Cost estimation response
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct EstimateCostResponse {
+    pub cost: u64,
+    #[serde(rename = "blockNumber")]
+    pub block_number: i64,
+    #[serde(rename = "blockHash")]
+    pub block_hash: String,
+}
+
+/// Epoch rewards response
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct EpochRewardsResponse {
+    pub rewards: RhoExpr,
+    #[serde(rename = "blockNumber")]
+    pub block_number: i64,
+    #[serde(rename = "blockHash")]
+    pub block_hash: String,
+}
+
+/// Individual validator status response
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ValidatorStatusResponse {
+    #[serde(rename = "publicKey")]
+    pub public_key: String,
+    #[serde(rename = "isBonded")]
+    pub is_bonded: bool,
+    pub stake: Option<i64>,
+    #[serde(rename = "blockNumber")]
+    pub block_number: i64,
+    #[serde(rename = "blockHash")]
+    pub block_hash: String,
+}
+
+/// Bond status response (HTTP equivalent of gRPC bondStatus)
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct BondStatusResponse {
+    #[serde(rename = "publicKey")]
+    pub public_key: String,
+    #[serde(rename = "isBonded")]
+    pub is_bonded: bool,
 }
 
 // Error types
@@ -1420,43 +1551,6 @@ fn extract_key_from_expr(expr: &RhoExpr) -> String {
     }
 }
 
-/// Convert (Vec<DataWithBlockInfo>, i32) to DataAtNameResponse
-/// Equivalent to Scala's toDataAtNameResponse function
-fn to_data_at_name_response(req: (Vec<DataWithBlockInfo>, i32)) -> DataAtNameResponse {
-    let (dbs, length) = req;
-
-    let exprs_with_block: Vec<RhoExprWithBlock> = dbs
-        .into_iter()
-        .rev() // Reverse to match Scala's foldLeft behavior (+: prepends)
-        .map(|data| {
-            // Convert post_block_data (Vec<Par>) to Vec<RhoExpr> using expr_from_par_proto
-            let exprs: Vec<RhoExpr> = data
-                .post_block_data
-                .into_iter()
-                .filter_map(expr_from_par_proto)
-                .collect();
-
-            // Implements semantic of Par with Unit: P | Nil ==> P
-            let expr = if exprs.len() == 1 {
-                exprs.into_iter().next().unwrap()
-            } else {
-                RhoExpr::ExprPar { data: exprs }
-            };
-
-            // Convert LightBlockInfo to LightBlockInfoSerde
-            let block = data
-                .block
-                .map(|block_info| LightBlockInfoSerde::from(block_info))
-                .unwrap_or_default();
-            RhoExprWithBlock { expr, block }
-        })
-        .collect();
-
-    DataAtNameResponse {
-        exprs: exprs_with_block,
-        length,
-    }
-}
 
 /// Convert (Vec<Par>, LightBlockInfo) to RhoDataResponse
 /// Equivalent to Scala's toRhoDataResponse function

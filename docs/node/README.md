@@ -90,7 +90,7 @@ CLI flags are applied to the parsed `NodeConf` by `config_mapper.rs`:
 
 | Service | Port | Methods |
 |---------|------|---------|
-| **DeployService** | 40401 (external) | `do_deploy`, `show_main_chain`, `get_blocks`, `get_block`, `find_deploy`, `exploratory_deploy`, `last_finalized_block`, `is_finalized`, `bond_status`, `get_data_at_name`, `listen_for_data_at_name` (deprecated), `listen_for_continuation_at_name`, `status`, `machine_verifiable_dag`, `visualize_dag`, `get_blocks_by_heights`, `get_event_by_hash` |
+| **DeployService** | 40401 (external) | `do_deploy`, `show_main_chain`, `get_blocks`, `get_block`, `find_deploy`, `exploratory_deploy`, `last_finalized_block`, `is_finalized`, `bond_status`, `get_data_at_name`, `listen_for_continuation_at_name`, `status`, `machine_verifiable_dag`, `visualize_dag`, `get_blocks_by_heights`, `get_event_by_hash` |
 | **ProposeService** | 40402 (internal) | `propose`, `propose_result` |
 | **ReplService** | 40402 (internal) | `run` (single command), `eval` (full program) |
 | **LspService** | 40402 (internal) | `validate` (Rholang syntax diagnostics) |
@@ -101,7 +101,7 @@ CLI flags are applied to the parsed `NodeConf` by `config_mapper.rs`:
 
 | Port | Purpose |
 |------|---------|
-| 40403 | Public REST (deploy, blocks, finalization, transactions, status) via Axum |
+| 40403 | Public REST (deploy, blocks, finalization, balance, validators, epoch, status) via Axum |
 | 40405 | Admin (propose, propose_result) |
 
 **`/api/status`** returns node identity, network membership, native token metadata, and operational state. HTTP and gRPC endpoints return identical fields:
@@ -152,13 +152,13 @@ Single-item lookups default to full. Lists default to summary. Unknown view valu
 
 ## High-Level Query Endpoints
 
-Convenience endpoints for common queries. `/api/balance`, `/api/registry`, and `/api/validators` wrap `exploratory_deploy` with Rholang queries against system contracts — **readonly nodes only** (validators return errors). `/api/epoch` uses cached genesis config and works on all node types.
+Convenience endpoints for common queries. Most wrap `exploratory_deploy` with Rholang queries against system contracts — **readonly nodes only** (validators return errors). `/api/epoch` and `/api/bond-status` use direct APIs and work on all node types.
 
 All query endpoints accept an optional `?block_hash=` parameter to query against a specific block's post-state. Defaults to the last finalized block if omitted.
 
 ### `GET /api/balance/{address}`
 
-Returns the vault balance for a wallet address (hex public key). Queries the SystemVault contract at `rho:vault:system`.
+Returns the vault balance for a wallet address. The address must be a REV address (Base58-encoded, starts with `1111`). Queries the SystemVault contract at `rho:vault:system`.
 
 ```json
 {"address": "04abc...", "balance": 1000000, "blockNumber": 42, "blockHash": "abc..."}
@@ -188,9 +188,27 @@ Returns current epoch info. `epochLength` and `quarantineLength` are from genesi
 {"currentEpoch": 15, "epochLength": 100, "quarantineLength": 10, "blocksUntilNextEpoch": 3, "lastFinalizedBlockNumber": 1497, "blockHash": "abc..."}
 ```
 
+### `GET /api/epoch/rewards`
+
+Current epoch rewards from the PoS contract. Readonly only.
+
+### `POST /api/estimate-cost`
+
+Estimate phlogiston cost of Rholang code. Takes `{"term": "..."}`, returns `{"cost": 39, ...}`. Readonly only.
+
+### `GET /api/validator/{pubkey}`
+
+Status of a specific validator — bond and stake. Readonly only.
+
+### `GET /api/bond-status/{pubkey}`
+
+Check if a public key is bonded. Uses `BlockAPI::bond_status` directly — available on all node types.
+
+See [api-reference.md](api-reference.md) for complete endpoint documentation with curl examples.
+
 ## Rholang Type System (RhoExpr)
 
-API responses from `explore-deploy`, `data-at-name`, and related endpoints return Rholang values as `RhoExpr` — a JSON-serializable representation of all Rholang types.
+API responses from `explore-deploy`, `data-at-name-by-block-hash`, `registry`, and related endpoints return Rholang values as `RhoExpr` — a JSON-serializable representation of all Rholang types.
 
 ### Supported types
 
@@ -365,7 +383,6 @@ These values are hardcoded (previously configurable via `F1R3_*` env vars, remov
 | `last-finalized-block` | Latest finalized block |
 | `is-finalized HASH` | Check finalization |
 | `bond-status KEY` | Validator bond query |
-| `data-at-name NAME` | RSpace data subscription |
 | `cont-at-name NAMES` | RSpace continuation subscription |
 | `status` | Node status |
 

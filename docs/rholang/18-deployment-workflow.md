@@ -98,12 +98,12 @@ curl -X POST http://localhost:40403/api/explore-deploy \
 
 Response includes the phlogiston cost.
 
-### Get Data at Name
+### Get Data at Name by Block Hash
 
 ```bash
-curl -X POST http://localhost:40403/api/data-at-name \
+curl -X POST http://localhost:40403/api/data-at-name-by-block-hash \
   -H 'Content-Type: application/json' \
-  -d '{"name": {"UnforgPrivate": {"data": "..."}}, "depth": 1}'
+  -d '{"par": {"unforgeables": [{"g_private_body": {"id": "..."}}]}, "blockHash": "abc123...", "usePreStateHash": false}'
 ```
 
 ## gRPC API
