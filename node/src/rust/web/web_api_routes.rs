@@ -323,6 +323,7 @@ mod tests {
                 latest_block_hash: "latestBlockHash1".to_string(),
             }],
             rejected_deploys: vec![],
+            is_finalized: true,
         }
     }
 

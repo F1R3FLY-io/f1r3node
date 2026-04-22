@@ -104,7 +104,7 @@ CLI flags are applied to the parsed `NodeConf` by `config_mapper.rs`:
 | 40403 | Public REST (deploy, blocks, finalization, transactions, status) via Axum |
 | 40405 | Admin (propose, propose_result) |
 
-**`/api/status`** returns node identity, network membership, and native token metadata:
+**`/api/status`** returns node identity, network membership, native token metadata, and operational state. HTTP and gRPC endpoints return identical fields:
 
 ```json
 {
@@ -118,9 +118,22 @@ CLI flags are applied to the parsed `NodeConf` by `config_mapper.rs`:
   "nativeTokenName": "F1R3CAP",
   "nativeTokenSymbol": "F1R3",
   "nativeTokenDecimals": 8,
-  "peerList": [...]
+  "peerList": [...],
+  "lastFinalizedBlockNumber": 1234,
+  "isValidator": true,
+  "isReadOnly": false,
+  "isReady": true,
+  "currentEpoch": 12,
+  "epochLength": 100
 }
 ```
+
+- `lastFinalizedBlockNumber` — block number of the LFB, or -1 if casper not yet initialized
+- `isValidator` — true if the node has a propose function (can create blocks)
+- `isReadOnly` — true if the node is running in read-only mode
+- `isReady` — true after the engine enters Running state; clients can poll this instead of parsing logs
+- `currentEpoch` — `lastFinalizedBlockNumber / epochLength`
+- `epochLength` — blocks per epoch, from genesis configuration
 
 ## Rholang Type System (RhoExpr)
 
@@ -201,7 +214,7 @@ The error chain propagates cleanly: `verify_token_metadata_matches_config → Er
 
 `bind_tcp_listener_with_retry()` in `servers_instances.rs` handles `AddrInUse` resilience for HTTP/Admin servers: 60 attempts with 500ms delay between retries.
 
-`APIServers::build()` in `api_servers.rs` constructs all gRPC services (Repl, Propose, Deploy, LSP) with shared dependencies (engine cell, block store, connections). `WebApiImpl` in `web_api.rs` handles the HTTP REST layer and caches config-derived values (network-id, shard-id, min-phlo-price, native token metadata) for fast `/api/status` responses without per-request config reads.
+`APIServers::build()` in `api_servers.rs` constructs all gRPC services (Repl, Propose, Deploy, LSP) with shared dependencies (engine cell, block store, connections, epoch_length, is_ready). `WebApiImpl` in `web_api.rs` handles the HTTP REST layer and caches config-derived values (network-id, shard-id, min-phlo-price, native token metadata, epoch-length) for fast `/api/status` responses without per-request config reads. The `is_ready` flag is a shared `AtomicBool` set by the event listener in `setup.rs` when `EnteredRunningState` fires.
 
 ## Transfer Extraction
 

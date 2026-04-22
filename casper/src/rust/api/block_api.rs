@@ -1234,9 +1234,11 @@ impl BlockAPI {
         casper: &M,
         dag: &KeyValueDagRepresentation,
         block: &BlockMessage,
-        constructor: fn(&BlockMessage, f32) -> A,
+        constructor: fn(&BlockMessage, f32, bool) -> A,
     ) -> ApiErr<A> {
-        let normalized_fault_tolerance = if dag.is_finalized(&block.block_hash) {
+        let is_finalized = dag.is_finalized(&block.block_hash);
+
+        let normalized_fault_tolerance = if is_finalized {
             if let Ok(Some(meta)) = dag.lookup(&block.block_hash) {
                 meta.fault_tolerance_value
             } else {
@@ -1261,14 +1263,14 @@ impl BlockAPI {
         let initial_fault = casper.normalized_initial_fault(weights_u64)?;
         let fault_tolerance = normalized_fault_tolerance - initial_fault;
 
-        let block_info = constructor(block, fault_tolerance);
+        let block_info = constructor(block, fault_tolerance, is_finalized);
         Ok(block_info)
     }
 
     async fn get_block_info<M: MultiParentCasper + ?Sized, A: Sized + Send>(
         casper: &M,
         block: &BlockMessage,
-        constructor: fn(&BlockMessage, f32) -> A,
+        constructor: fn(&BlockMessage, f32, bool) -> A,
     ) -> ApiErr<A> {
         let dag = casper.block_dag().await?;
         Self::get_block_info_with_dag(casper, &dag, block, constructor).await
@@ -1288,8 +1290,13 @@ impl BlockAPI {
         Self::get_block_info(casper, block, Self::construct_light_block_info).await
     }
 
-    fn construct_block_info(block: &BlockMessage, fault_tolerance: f32) -> BlockInfo {
-        let light_block_info = Self::construct_light_block_info(block, fault_tolerance);
+    fn construct_block_info(
+        block: &BlockMessage,
+        fault_tolerance: f32,
+        is_finalized: bool,
+    ) -> BlockInfo {
+        let light_block_info =
+            Self::construct_light_block_info(block, fault_tolerance, is_finalized);
         let deploys = block
             .body
             .deploys
@@ -1303,7 +1310,11 @@ impl BlockAPI {
         }
     }
 
-    fn construct_light_block_info(block: &BlockMessage, fault_tolerance: f32) -> LightBlockInfo {
+    fn construct_light_block_info(
+        block: &BlockMessage,
+        fault_tolerance: f32,
+        is_finalized: bool,
+    ) -> LightBlockInfo {
         LightBlockInfo {
             block_hash: PrettyPrinter::build_string_no_limit(&block.block_hash),
             sender: PrettyPrinter::build_string_no_limit(&block.sender),
@@ -1350,6 +1361,7 @@ impl BlockAPI {
                     sig: PrettyPrinter::build_string_no_limit(&r.sig),
                 })
                 .collect(),
+            is_finalized,
         }
     }
 
@@ -1393,6 +1405,7 @@ impl BlockAPI {
             Ok(Self::construct_block_info(
                 &last_finalized_block,
                 fault_tolerance,
+                true, // LFB is always finalized
             ))
         } else {
             tracing::warn!("{}", error_message);

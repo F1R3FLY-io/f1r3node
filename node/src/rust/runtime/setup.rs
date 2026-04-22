@@ -551,29 +551,45 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
         transfer_unforgeable()
     };
 
-    // Proactive transfer extraction: pre-warm BlockReportAPI's ReportStore on finalization
+    // Shared is_ready flag — set to true when engine enters Running state.
+    // Used by both HTTP and gRPC status endpoints.
+    let is_ready = Arc::new(std::sync::atomic::AtomicBool::new(false));
+
+    // Event-driven background tasks: transfer extraction + readiness tracking.
+    // Listens on the broadcast event stream and handles:
+    // - BlockFinalised: pre-warm ReportStore cache, extract transfers, emit TransfersAvailable
+    // - EnteredRunningState: flip is_ready flag for status endpoints
     {
         use futures::StreamExt;
         use shared::rust::shared::f1r3fly_event::F1r3flyEvent;
 
         let report_api = block_report_api.clone();
+        let transfer_unforgeable_for_events = transfer_unforgeable.clone();
+        let event_pub = event_publisher.clone();
+        let is_ready_flag = is_ready.clone();
         let mut event_stream = event_publisher.consume();
 
         tokio::spawn(async move {
             while let Some(event) = event_stream.next().await {
-                if let F1r3flyEvent::BlockFinalised(finalized) = event {
-                    let api = report_api.clone();
-                    let block_hash = finalized.block_hash.clone();
-                    tokio::spawn(async move {
-                        if let Err(e) = api.block_report(block_hash.clone().into(), false).await {
-                            tracing::debug!(
-                                target: "f1r3fly.transaction",
-                                block_hash = %hex::encode(&block_hash),
-                                error = %e,
-                                "Block report pre-cache skipped (expected on validators)"
-                            );
-                        }
-                    });
+                match &event {
+                    F1r3flyEvent::BlockFinalised(finalized) => {
+                        let api = report_api.clone();
+                        let unforgeable = transfer_unforgeable_for_events.clone();
+                        let publisher = event_pub.clone();
+                        let block_hash = finalized.block_hash.clone();
+                        let block_number = finalized.block_number;
+                        tokio::spawn(async move {
+                            handle_block_finalized(
+                                api, unforgeable, publisher, block_hash, block_number,
+                            )
+                            .await;
+                        });
+                    }
+                    F1r3flyEvent::EnteredRunningState(_) => {
+                        is_ready_flag.store(true, std::sync::atomic::Ordering::Release);
+                        tracing::info!("Node is ready (EnteredRunningState received)");
+                    }
+                    _ => {}
                 }
             }
         });
@@ -609,6 +625,8 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
         rp_conf_cell.clone(),
         rp_connections.clone(),
         node_discovery.clone(),
+        conf.casper.genesis_block_data.epoch_length,
+        is_ready.clone(),
     );
 
     // Reporting HTTP Routes - REST API for block reporting and tracing
@@ -766,6 +784,8 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
             rp_connections.clone(),
             node_discovery.clone(),
             trigger_propose_f,
+            conf.casper.genesis_block_data.epoch_length,
+            is_ready.clone(),
         )
     };
 
@@ -889,4 +909,69 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
         // Mergeable channels GC loop
         mergeable_channels_gc_loop,
     ))
+}
+
+/// Pre-warm the ReportStore cache for a finalized block, then extract transfers
+/// and publish a `TransfersAvailable` event so WebSocket clients can receive
+/// transfer data without polling the REST API.
+///
+/// Runs as a fire-and-forget task — errors (e.g. on validators where block
+/// reports are unavailable) are logged at debug level and silently ignored.
+async fn handle_block_finalized(
+    report_api: casper::rust::api::block_report_api::BlockReportAPI,
+    transfer_unforgeable: models::rhoapi::Par,
+    event_publisher: shared::rust::shared::f1r3fly_events::F1r3flyEvents,
+    block_hash: String,
+    block_number: i64,
+) {
+    use crate::rust::web::block_info_enricher::extract_transfers_from_report;
+    use shared::rust::shared::f1r3fly_event::{
+        DeployTransfers, F1r3flyEvent, TransferEvent,
+    };
+
+    let block_hash_bytes: prost::bytes::Bytes = block_hash.clone().into();
+    match report_api.block_report(block_hash_bytes, false).await {
+        Ok(report) => {
+            let transfers_by_deploy =
+                extract_transfers_from_report(&report, &transfer_unforgeable);
+
+            let deploy_transfers: Vec<DeployTransfers> = transfers_by_deploy
+                .into_iter()
+                .map(|(deploy_id, transfers)| DeployTransfers {
+                    deploy_id,
+                    transfers: transfers
+                        .into_iter()
+                        .map(|t| TransferEvent {
+                            from_addr: t.from_addr,
+                            to_addr: t.to_addr,
+                            amount: t.amount,
+                            success: t.success,
+                        })
+                        .collect(),
+                })
+                .collect();
+
+            if !deploy_transfers.is_empty() {
+                if let Err(e) = event_publisher.publish(F1r3flyEvent::transfers_available(
+                    block_hash.clone(),
+                    block_number,
+                    deploy_transfers,
+                )) {
+                    tracing::warn!(
+                        %block_hash,
+                        error = %e,
+                        "Failed to publish TransfersAvailable event"
+                    );
+                }
+            }
+        }
+        Err(e) => {
+            tracing::debug!(
+                target: "f1r3fly.transaction",
+                %block_hash,
+                error = %e,
+                "Block report pre-cache skipped (expected on validators)"
+            );
+        }
+    }
 }

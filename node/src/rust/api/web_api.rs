@@ -10,6 +10,7 @@ use crate::rust::web::version_info::get_version_info_str;
 use casper::rust::api::block_api::{BlockAPI, DeployNotFoundError};
 use casper::rust::engine::engine_cell::EngineCell;
 use casper::rust::ProposeFunction;
+use std::sync::atomic::{AtomicBool, Ordering};
 use comm::rust::discovery::node_discovery::NodeDiscovery;
 use comm::rust::rp::connect::ConnectionsCell;
 #[cfg(feature = "schnorr_secp256k1_experimental")]
@@ -124,6 +125,8 @@ pub struct WebApiImpl {
     connections_cell: ConnectionsCell,
     node_discovery: Arc<dyn NodeDiscovery + Send + Sync>,
     trigger_propose_f: Option<Arc<ProposeFunction>>,
+    epoch_length: i32,
+    is_ready: Arc<AtomicBool>,
 }
 
 impl WebApiImpl {
@@ -144,6 +147,8 @@ impl WebApiImpl {
         connections_cell: ConnectionsCell,
         node_discovery: Arc<dyn NodeDiscovery + Send + Sync>,
         trigger_propose_f: Option<Arc<ProposeFunction>>,
+        epoch_length: i32,
+        is_ready: Arc<AtomicBool>,
     ) -> Self {
         Self {
             api_max_blocks_limit,
@@ -162,6 +167,8 @@ impl WebApiImpl {
             connections_cell,
             node_discovery,
             trigger_propose_f,
+            epoch_length,
+            is_ready,
         }
     }
     /// Enrich a BlockInfoSerde with transfer data from BlockReportAPI.
@@ -258,6 +265,23 @@ impl WebApi for WebApiImpl {
             );
         }
 
+        let lfb_number = match BlockAPI::last_finalized_block(&self.engine_cell).await {
+            Ok(block_info) => block_info
+                .block_info
+                .as_ref()
+                .map(|bi| bi.block_number)
+                .unwrap_or(-1),
+            Err(_) => -1,
+        };
+
+        let is_validator = self.trigger_propose_f.is_some();
+        let is_ready = self.is_ready.load(Ordering::Relaxed);
+        let current_epoch = if self.epoch_length > 0 && lfb_number >= 0 {
+            lfb_number / self.epoch_length as i64
+        } else {
+            0
+        };
+
         Ok(ApiStatus {
             version: VersionInfo {
                 api: "1".to_string(),
@@ -273,6 +297,12 @@ impl WebApi for WebApiImpl {
             native_token_name: self.native_token_name.clone(),
             native_token_symbol: self.native_token_symbol.clone(),
             native_token_decimals: self.native_token_decimals,
+            last_finalized_block_number: lfb_number,
+            is_validator,
+            is_read_only: self.is_node_read_only,
+            is_ready,
+            current_epoch,
+            epoch_length: self.epoch_length,
         })
     }
 
@@ -695,6 +725,24 @@ pub struct ApiStatus {
     /// Decimal places used to display the native token (dust per token = 10^decimals).
     #[serde(rename = "nativeTokenDecimals")]
     pub native_token_decimals: u32,
+    /// Block number of the last finalized block. -1 if casper not yet initialized.
+    #[serde(rename = "lastFinalizedBlockNumber")]
+    pub last_finalized_block_number: i64,
+    /// Whether this node is a validator (can propose blocks).
+    #[serde(rename = "isValidator")]
+    pub is_validator: bool,
+    /// Whether this node is running in read-only mode.
+    #[serde(rename = "isReadOnly")]
+    pub is_read_only: bool,
+    /// Whether the node has completed initialization and entered running state.
+    #[serde(rename = "isReady")]
+    pub is_ready: bool,
+    /// Current epoch number (lastFinalizedBlockNumber / epochLength).
+    #[serde(rename = "currentEpoch")]
+    pub current_epoch: i64,
+    /// Blocks per epoch, from genesis configuration.
+    #[serde(rename = "epochLength")]
+    pub epoch_length: i32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -1216,6 +1264,7 @@ mod tests {
                 },
             ],
             rejected_deploys: vec![],
+            is_finalized: true,
         };
 
         let result = DeployLookupResponse::from_block_and_cost(light_block, 0);
@@ -1294,6 +1343,7 @@ mod tests {
             fault_tolerance: 0.0,
             justifications: vec![],
             rejected_deploys: vec![],
+            is_finalized: false,
         };
         light_block.block_hash = String::new();
         light_block.sender = String::new();
@@ -1334,6 +1384,7 @@ mod tests {
             fault_tolerance: 0.0,
             justifications: vec![],
             rejected_deploys: vec![],
+            is_finalized: false,
         };
 
         let result = DeployLookupResponse::from_block_and_cost(light_block, 0);
@@ -1378,6 +1429,7 @@ mod tests {
             fault_tolerance: 0.0,
             justifications: vec![],
             rejected_deploys: vec![],
+            is_finalized: true,
         };
 
         let result = DeployLookupResponse::from_block_and_cost(light_block, 0);

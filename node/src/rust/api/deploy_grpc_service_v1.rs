@@ -31,6 +31,7 @@ use models::casper::{
 };
 use models::servicemodelapi::ServiceError;
 use tokio::time::{sleep, Duration};
+use std::sync::atomic::{AtomicBool, Ordering};
 use tracing::error;
 
 trait IntoServiceError {
@@ -84,6 +85,8 @@ pub struct DeployGrpcServiceV1Impl {
     rp_conf_cell: comm::rust::rp::rp_conf::RPConfCell,
     connections_cell: ConnectionsCell,
     node_discovery: Arc<dyn NodeDiscovery + Send + Sync>,
+    epoch_length: i32,
+    is_ready: Arc<AtomicBool>,
 }
 
 impl DeployGrpcServiceV1Impl {
@@ -105,6 +108,8 @@ impl DeployGrpcServiceV1Impl {
         rp_conf_cell: comm::rust::rp::rp_conf::RPConfCell,
         connections_cell: ConnectionsCell,
         node_discovery: Arc<dyn NodeDiscovery + Send + Sync>,
+        epoch_length: i32,
+        is_ready: Arc<AtomicBool>,
     ) -> Self {
         Self {
             api_max_blocks_limit,
@@ -124,6 +129,8 @@ impl DeployGrpcServiceV1Impl {
             rp_conf_cell,
             connections_cell,
             node_discovery,
+            epoch_length,
+            is_ready,
         }
     }
 
@@ -915,6 +922,23 @@ impl DeployService for DeployGrpcServiceV1Impl {
             })
             .collect();
 
+        let lfb_number = match BlockAPI::last_finalized_block(&self.engine_cell).await {
+            Ok(block_info) => block_info
+                .block_info
+                .as_ref()
+                .map(|bi| bi.block_number)
+                .unwrap_or(-1),
+            Err(_) => -1,
+        };
+
+        let is_validator = self.trigger_propose_f.is_some();
+        let is_ready = self.is_ready.load(Ordering::Relaxed);
+        let current_epoch = if self.epoch_length > 0 && lfb_number >= 0 {
+            lfb_number / self.epoch_length as i64
+        } else {
+            0
+        };
+
         let status = Status {
             version: Some(VersionInfo {
                 api: "1".to_string(),
@@ -930,6 +954,12 @@ impl DeployService for DeployGrpcServiceV1Impl {
             native_token_name: self.native_token_name.clone(),
             native_token_symbol: self.native_token_symbol.clone(),
             native_token_decimals: self.native_token_decimals,
+            last_finalized_block_number: lfb_number,
+            is_validator,
+            is_read_only: self.is_node_read_only,
+            is_ready,
+            current_epoch,
+            epoch_length: self.epoch_length,
         };
 
         Ok(tonic::Response::new(StatusResponse {

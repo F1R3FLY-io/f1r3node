@@ -6,6 +6,7 @@ use casper::rust::api::block_report_api::BlockReportAPI;
 use casper::rust::engine::engine_cell::EngineCell;
 use casper::rust::state::instances::proposer_state::ProposerState;
 use casper::rust::ProposeFunction;
+use std::sync::atomic::AtomicBool;
 use tokio::sync::RwLock;
 
 use crate::rust::api::{
@@ -85,6 +86,8 @@ impl APIServers {
         rp_conf_cell: comm::rust::rp::rp_conf::RPConfCell,
         connections_cell: ConnectionsCell,
         node_discovery: Arc<dyn NodeDiscovery + Send + Sync>,
+        epoch_length: i32,
+        is_ready: Arc<AtomicBool>,
     ) -> Self {
         // Create REPL service
         let repl = ReplGrpcServiceImpl::new(runtime);
@@ -115,6 +118,8 @@ impl APIServers {
             rp_conf_cell.clone(),
             connections_cell,
             node_discovery,
+            epoch_length,
+            is_ready,
         );
 
         // Create LSP service (stateless)
