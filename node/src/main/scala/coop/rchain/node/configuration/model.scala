@@ -9,6 +9,32 @@ import coop.rchain.crypto.{PrivateKey, PublicKey}
 import java.nio.file.Path
 import scala.concurrent.duration.FiniteDuration
 
+final case class FileUploadConf(
+    chunkSize: Long,
+    replicationDir: String,
+    phloPerStorageByte: Long,
+    baseRegisterPhlo: Long,
+    maxConcurrentDownloadsPerIp: Int,
+    fileSyncTimeout: FiniteDuration,
+    maxFileSize: Long,
+    maxDownloadCacheEntries: Int,
+    maxFileDataSizePerBlock: Long,
+    maxFileDeploysPerBlock: Int
+) {
+
+  /** Build a [[coop.rchain.casper.FileConf]] suitable for the casper layer,
+    * resolving [[replicationDir]] as a child of the given `dataDir`.
+    */
+  def toFileConf(dataDir: Path): coop.rchain.casper.FileConf =
+    coop.rchain.casper.FileConf(
+      fileReplicationDir = Some(dataDir.resolve(replicationDir)),
+      fileChunkSize = chunkSize.toInt,
+      fileSyncTimeout = fileSyncTimeout,
+      maxFileDataSizePerBlock = maxFileDataSizePerBlock,
+      maxFileDeploysPerBlock = maxFileDeploysPerBlock
+    )
+}
+
 final case class NodeConf(
     standalone: Boolean,
     autopropose: Boolean,
@@ -22,6 +48,7 @@ final case class NodeConf(
     metrics: Metrics,
     openai: Option[OpenAIConf],
     ollama: Option[OllamaConf],
+    fileUpload: FileUploadConf,
     devMode: Boolean,
     dev: DevConf,
     // This field is dynamic and computed according to profile and is not used directly in client code.

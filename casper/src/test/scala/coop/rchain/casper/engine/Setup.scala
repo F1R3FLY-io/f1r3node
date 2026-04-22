@@ -79,7 +79,8 @@ object Setup {
         historyRepo,
         mStore,
         Genesis.NonNegativeMergeableTagName,
-        NoOpExternalServices
+        NoOpExternalServices,
+        None
       ).unsafeRunSync(scheduler)
 
     val (validatorSk, validatorPk) = context.validatorKeyPairs.head

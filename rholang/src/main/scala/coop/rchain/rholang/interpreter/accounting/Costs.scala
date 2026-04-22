@@ -153,6 +153,13 @@ trait Costs {
   def eventStorageCost(channelsInvolved: Int): Cost =
     Cost(eventHashStorageCost + channelsInvolved * channelHashStorageCost, "event storage cost")
 
+  /** Phlo cost for on-chain file registration proportional to the physical file size. */
+  def fileStorageCost(fileSize: Long, phloPerStorageByte: Long = 1L): Cost =
+    try Cost(Math.multiplyExact(fileSize, phloPerStorageByte), "file storage cost")
+    catch {
+      case _: ArithmeticException => Cost(Long.MaxValue, "file storage cost (overflow)")
+    }
+
   private val eventHashStorageCost   = Blake2b256Hash.length
   private val channelHashStorageCost = Blake2b256Hash.length
 

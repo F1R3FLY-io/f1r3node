@@ -571,6 +571,34 @@ final case class Options(arguments: Seq[String]) extends ScallopConf(arguments) 
       descr = "Disable background garbage collection for mergeable channels"
     )
 
+    val fileUploadChunkSize = opt[Long](
+      descr = "Chunk size in bytes for file upload streaming. Defaults to 4MB."
+    )
+
+    val fileReplicationDir = opt[String](
+      descr =
+        "Sub-directory (relative to data-dir) where uploaded files are stored. Defaults to 'file-replication'."
+    )
+
+    val fileUploadPhloPerStorageByte = opt[Long](
+      descr = "Phlogiston charged per stored byte for file uploads. Defaults to 1.",
+      validate = _ >= 0
+    )
+
+    val maxConcurrentDownloadsPerIp = opt[Int](
+      descr = "Maximum concurrent file downloads from a single IP. Defaults to 4.",
+      validate = _ > 0
+    )
+
+    val fileSyncTimeout = opt[FiniteDuration](
+      descr = "Maximum time to wait for P2P file transfers before rejecting a block. " +
+        "Tune for your largest files and slowest link. Default: 2 hours."
+    )
+
+    val rspacePlusPlus = opt[Flag](
+      descr = "Enable rpsace++"
+    )
+
   }
   addSubcommand(run)
 

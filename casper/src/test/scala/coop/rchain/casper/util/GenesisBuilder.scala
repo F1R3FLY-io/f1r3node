@@ -174,7 +174,8 @@ object GenesisBuilder {
                          rStore,
                          mStore,
                          Genesis.NonNegativeMergeableTagName,
-                         NoOpExternalServices
+                         NoOpExternalServices,
+                         None
                        )
       genesis         <- Genesis.createGenesisBlock(runtimeManager, genesisParameters)
       blockStore      <- KeyValueBlockStore[Task](kvsManager)

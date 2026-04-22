@@ -136,6 +136,14 @@ object ConfigMapper {
       add("dev-mode", run.devMode)
       add("dev.deployer-private-key", run.deployerPrivateKey)
 
+      add("rspace-plus-plus", run.rspacePlusPlus)
+
+      add("file-upload.chunk-size", run.fileUploadChunkSize)
+      add("file-upload.replication-dir", run.fileReplicationDir)
+      add("file-upload.phlo-per-storage-byte", run.fileUploadPhloPerStorageByte)
+      add("file-upload.max-concurrent-downloads-per-ip", run.maxConcurrentDownloadsPerIp)
+      add("file-upload.file-sync-timeout", run.fileSyncTimeout)
+
       //TODO remove
       //add(keys.KnownValidatorsFile, run.knownValidators
     }

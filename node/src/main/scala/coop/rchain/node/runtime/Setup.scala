@@ -186,7 +186,8 @@ object Setup {
                    rStores,
                    mergeStore,
                    Genesis.NonNegativeMergeableTagName,
-                   externalServices
+                   externalServices,
+                   Some(conf.storage.dataDir.resolve(conf.fileUpload.replicationDir))
                  )
         } yield rm
       }
@@ -302,7 +303,8 @@ object Setup {
           !conf.protocolClient.disableLfs,
           conf.protocolServer.disableStateExporter,
           onBlockFinalized,
-          conf.standalone
+          conf.standalone,
+          fileConf = conf.fileUpload.toFileConf(conf.storage.dataDir)
         )
       }
       packetHandler = {
@@ -320,6 +322,11 @@ object Setup {
           conf.roundRobinDispatcher.dropPeerAfterRetries
         )
       }*/
+      uploadDir <- Sync[F].delay {
+                    val dir = conf.storage.dataDir.resolve(conf.fileUpload.replicationDir)
+                    Files.createDirectories(dir)
+                    dir
+                  }
       apiServers = {
         implicit val (ec, bs, or, sp) = (engineCell, blockStore, oracle, span)
         implicit val (sc, lh)         = (synchronyConstraintChecker, lastFinalizedHeightConstraintChecker)
@@ -340,7 +347,9 @@ object Setup {
           conf.protocolServer.networkId,
           conf.casper.shardName,
           conf.casper.minPhloPrice,
-          isNodeReadOnly
+          isNodeReadOnly,
+          uploadDir,
+          conf.fileUpload
         )
       }
       reportingRoutes = {
@@ -381,7 +390,7 @@ object Setup {
           conf.casper.maxParentDepth.getOrElse(Int.MaxValue),
           conf.casper.synchronyConstraintThreshold.toFloat,
           conf.casper.heightConstraintThreshold,
-          50,
+          250,
           1,
           1,
           conf.casper.genesisBlockData.bondMinimum,
@@ -392,7 +401,8 @@ object Setup {
           conf.casper.enableMergeableChannelGC,
           conf.casper.mergeableChannelsGCDepthBuffer,
           conf.casper.disableLateBlockFiltering,
-          conf.standalone // Disable validator progress check in standalone mode
+          conf.standalone, // Disable validator progress check in standalone mode
+          conf.fileUpload.toFileConf(conf.storage.dataDir)
         )
         for {
           _ <- if (conf.casper.enableMergeableChannelGC) {

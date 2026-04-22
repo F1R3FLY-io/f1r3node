@@ -530,6 +530,8 @@ class Initializing[F[_]
   private def createCasperAndTransitionToRunning(approvedBlock: ApprovedBlock): F[Unit] = {
     val ab = approvedBlock.candidate.block
     for {
+      setup                       <- FileReplicationSetup.create[F](casperShardConf)
+      (fileRequester, daCallback) = setup
       // Create heartbeat signal ref for triggering fast proposals on deploy submission
       heartbeatSignalRef <- Ref[F].of(Option.empty[HeartbeatSignal[F]])
       casper <- MultiParentCasper
@@ -538,7 +540,8 @@ class Initializing[F[_]
                    casperShardConf,
                    ab,
                    heartbeatSignalRef,
-                   onBlockFinalized
+                   onBlockFinalized,
+                   daCallback
                  )
       _ <- Log[F].info("MultiParentCasper instance created.")
       _ <- transitionToRunning[F](
@@ -548,7 +551,8 @@ class Initializing[F[_]
             approvedBlock,
             validatorId,
             ().pure,
-            disableStateExporter
+            disableStateExporter,
+            fileRequester
           )
       _ <- CommUtil[F].sendForkChoiceTipRequest
     } yield ()

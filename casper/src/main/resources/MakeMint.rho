@@ -87,18 +87,22 @@ in {
             contract thisPurse(@"getBalance", return) = { balance!("value", *return) } |
             contract thisPurse(@"sprout", return) = { thisMint!("makePurse", 0, *return) } |
             contract thisPurse(@"split", @amount, return) = {
-              new destPurseCh, successCh in {
-                thisPurse!("sprout", *destPurseCh) |
-                for (@destPurse <- destPurseCh) {
-                  @destPurse!("deposit", amount, *thisPurse, *successCh) |
-                  for (@success <- successCh) {
-                    if (success) {
-                      return!([destPurse])
-                    } else {
-                      return!([])
+              if (amount >= 0) {
+                new destPurseCh, successCh in {
+                  thisMint!("makePurse", 0, *destPurseCh) |
+                  for (@destPurse <- destPurseCh) {
+                    @destPurse!("deposit", amount, *thisPurse, *successCh) |
+                    for (@success <- successCh) {
+                      if (success) {
+                        return!([destPurse])
+                      } else {
+                        return!([])
+                      }
                     }
                   }
                 }
+              } else {
+                return!([])
               }
             } |
             contract thisPurse(@"deposit", @amount, @src, success) = {

@@ -15,6 +15,7 @@ import coop.rchain.node.configuration._
 import coop.rchain.node.configuration.{
   ApiServer,
   DevConf,
+  FileUploadConf,
   Metrics,
   NodeConf,
   PeersDiscovery,
@@ -84,6 +85,18 @@ class HoconConfigurationSpec extends FunSuite with Matchers {
           timeoutSec = 30
         )
       ), // defaults from config
+      fileUpload = FileUploadConf(
+        chunkSize = 16777216,
+        replicationDir = "file-replication",
+        phloPerStorageByte = 1,
+        baseRegisterPhlo = 300,
+        maxConcurrentDownloadsPerIp = 4,
+        fileSyncTimeout = 2.hours,
+        maxFileSize = 10737418240L,      // 10GB default
+        maxDownloadCacheEntries = 10000, // default
+        maxFileDataSizePerBlock = 53687091200L,
+        maxFileDeploysPerBlock = 10
+      ),
       protocolClient = ProtocolClient(
         networkId = "testnet",
         bootstrap = PeerNode
@@ -101,7 +114,7 @@ class HoconConfigurationSpec extends FunSuite with Matchers {
       peersDiscovery = PeersDiscovery(
         port = 40404,
         lookupInterval = 20.seconds,
-        cleanupInterval = 20.minutes,
+        cleanupInterval = 10.seconds,
         heartbeatBatchSize = 100,
         initWaitLoopInterval = 1.second
       ),
@@ -112,7 +125,7 @@ class HoconConfigurationSpec extends FunSuite with Matchers {
         grpcMaxRecvMessageSize = 16777216,
         portHttp = 40403,
         portAdminHttp = 40405,
-        maxBlocksLimit = 50,
+        maxBlocksLimit = 100,
         enableReporting = false,
         keepAliveTime = 2.hours,
         keepAliveTimeout = 20.seconds,
@@ -145,7 +158,7 @@ class HoconConfigurationSpec extends FunSuite with Matchers {
         maxParentDepth = Some(2147483647),
         forkChoiceStaleThreshold = 10.minutes,
         forkChoiceCheckIfStaleInterval = 11.minutes,
-        synchronyConstraintThreshold = 0.67,
+        synchronyConstraintThreshold = 0.0,
         heightConstraintThreshold = 1000,
         roundRobinDispatcher = RoundRobinDispatcher(
           maxPeerQueueSize = 100,
@@ -183,7 +196,7 @@ class HoconConfigurationSpec extends FunSuite with Matchers {
           checkInterval = 30.seconds,
           maxLfbAge = 60.seconds
         ),
-        disableLateBlockFiltering = false
+        disableLateBlockFiltering = true
       ),
       metrics = Metrics(
         prometheus = false,
