@@ -79,14 +79,12 @@ curl -X POST http://localhost:40403/api/deploy \
 
 ```bash
 curl http://localhost:40403/api/deploy/$DEPLOY_ID
-curl http://localhost:40403/api/deploy/$DEPLOY_ID?view=detail
-curl http://localhost:40403/api/deploy/$DEPLOY_ID?view=minimal
+curl http://localhost:40403/api/deploy/$DEPLOY_ID?view=summary
 ```
 
 **Views:**
-- **`detail`** (default): full deploy execution info — `errored`, `cost`, `blockNumber`, `systemDeployError`, `transfers`
-- **`minimal`**: block metadata + `cost` — lightweight polling without full deploy details
-- **`block`**: containing block info (LightBlockInfo)
+- **`full`** (default): all fields — `deployId`, `blockHash`, `blockNumber`, `timestamp`, `cost`, `errored`, `isFinalized`, `deployer`, `term`, `systemDeployError`, `phloPrice`, `phloLimit`, `sigAlgorithm`, `validAfterBlockNumber`, `transfers`
+- **`summary`**: core fields only — `deployId`, `blockHash`, `blockNumber`, `timestamp`, `cost`, `errored`, `isFinalized`. For lightweight polling.
 
 **Transfers:** The `transfers` field is `null` on validator nodes (block replay unavailable) and a populated array on readonly nodes. `null` means transfers can't be extracted on this node type — query a readonly node for transfer details.
 

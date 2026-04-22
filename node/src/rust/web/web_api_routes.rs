@@ -10,7 +10,7 @@ use crate::rust::{
     api::{
         serde_types::{block_info::BlockInfoSerde, light_block_info::LightBlockInfoSerde},
         web_api::{
-            DataAtNameByBlockHashRequest, DeployDetailResponse, DeployLookupResponse, PrepareRequest, PrepareResponse,
+            DataAtNameByBlockHashRequest, DeployResponse, PrepareRequest, PrepareResponse,
             RhoDataResponse,
         },
     },
@@ -181,13 +181,12 @@ pub async fn get_blocks_by_depth_handler(
     path = "/api/deploy/{deploy_id}",
     params(
         ("deploy_id" = String, Path, description = "Deploy ID"),
-        ("view" = Option<String>, Query, description = "Response view: 'detail' (default) returns deploy execution info, 'block' returns containing block, 'minimal' returns block metadata only"),
+        ("view" = Option<String>, Query, description = "Response view: 'full' (default) returns all fields, 'summary' returns core fields only"),
     ),
     responses(
-        (status = 200, description = "Deploy execution details (default or ?view=detail)", body = DeployDetailResponse),
-        (status = 200, description = "Containing block (?view=block)", body = LightBlockInfoSerde),
-        (status = 200, description = "Block metadata only (?view=minimal)", body = DeployLookupResponse),
-        (status = 400, description = "Bad request or deploy not found")
+        (status = 200, description = "Deploy information", body = DeployResponse),
+        (status = 404, description = "Deploy not found"),
+        (status = 400, description = "Bad request")
     ),
     tag = "WebAPI"
 )]
@@ -196,25 +195,15 @@ pub async fn find_deploy_handler(
     Path(deploy_id): Path<String>,
     Query(query): Query<ViewQuery>,
 ) -> Response {
-    let result = match query.view.as_deref() {
-        Some("detail") => app_state
-            .web_api
-            .find_deploy_detail(deploy_id)
-            .await
-            .map(|r| Json(r).into_response()),
-        Some("minimal") => app_state
-            .web_api
-            .find_deploy_minimal(deploy_id)
-            .await
-            .map(|r| Json(r).into_response()),
-        _ => app_state
-            .web_api
-            .find_deploy(deploy_id)
-            .await
-            .map(|r| Json(r).into_response()),
+    use crate::rust::api::web_api::DeployView;
+
+    let view = match query.view.as_deref() {
+        Some("summary") => DeployView::Summary,
+        _ => DeployView::Full,
     };
-    match result {
-        Ok(response) => response,
+
+    match app_state.web_api.find_deploy(deploy_id, view).await {
+        Ok(response) => Json(response).into_response(),
         Err(e) => {
             if e.downcast_ref::<casper::rust::api::block_api::DeployNotFoundError>().is_some() {
                 (axum::http::StatusCode::NOT_FOUND, format!("{}", e)).into_response()
@@ -283,7 +272,7 @@ mod tests {
         },
         web_api::{
             ApiStatus, DataAtNameByBlockHashRequest, DataAtNameRequest, DataAtNameResponse,
-            DeployLookupResponse, DeployRequest, RhoDataResponse, WebApi,
+            DeployRequest, DeployResponse, DeployView, RhoDataResponse, WebApi,
         },
     };
     use crate::rust::web::transaction::TransactionResponse;
@@ -327,9 +316,29 @@ mod tests {
         }
     }
 
-    /// Stub WebApi that only implements find_deploy and find_deploy_minimal.
-    /// Mirrors the Scala stubWebApi in WebApiRoutesDeploySpec.
+    /// Stub WebApi that returns sample DeployResponse for testing.
     struct StubWebApi;
+
+    fn sample_deploy_response(view: DeployView) -> DeployResponse {
+        let is_full = view == DeployView::Full;
+        DeployResponse {
+            deploy_id: "abc123def".to_string(),
+            block_hash: "7bf8abc123".to_string(),
+            block_number: 52331,
+            timestamp: 1770028092477,
+            cost: 100,
+            errored: false,
+            is_finalized: true,
+            deployer: if is_full { Some("0487def456".to_string()) } else { None },
+            term: if is_full { Some("new ret in { ret!(42) }".to_string()) } else { None },
+            system_deploy_error: if is_full { Some(String::new()) } else { None },
+            phlo_price: if is_full { Some(10) } else { None },
+            phlo_limit: if is_full { Some(100000) } else { None },
+            sig_algorithm: if is_full { Some("secp256k1".to_string()) } else { None },
+            valid_after_block_number: if is_full { Some(0) } else { None },
+            transfers: if is_full { Some(vec![]) } else { None },
+        }
+    }
 
     #[async_trait::async_trait]
     impl WebApi for StubWebApi {
@@ -371,14 +380,8 @@ mod tests {
         async fn get_blocks(&self, _: i32) -> eyre::Result<Vec<LightBlockInfoSerde>> {
             unimplemented!()
         }
-        async fn find_deploy(&self, _: String) -> eyre::Result<LightBlockInfoSerde> {
-            Ok(sample_light_block_info())
-        }
-        async fn find_deploy_detail(&self, _: String) -> eyre::Result<DeployDetailResponse> {
-            unimplemented!()
-        }
-        async fn find_deploy_minimal(&self, _: String) -> eyre::Result<DeployLookupResponse> {
-            Ok(DeployLookupResponse::from_block_and_cost(sample_light_block_info(), 0))
+        async fn find_deploy(&self, _: String, view: DeployView) -> eyre::Result<DeployResponse> {
+            Ok(sample_deploy_response(view))
         }
         async fn exploratory_deploy(
             &self,
@@ -403,24 +406,18 @@ mod tests {
         }
     }
 
-    /// Test-only handler that mirrors find_deploy_handler but uses Arc<dyn WebApi> as state
-    /// instead of AppState (which requires BlockReportAPI, RPConfCell, etc.).
-    /// This is equivalent to the Scala approach where WebApiRoutes.service(stubWebApi)
-    /// takes only a WebApi instance.
     async fn test_find_deploy_handler(
         State(web_api): State<Arc<dyn WebApi + Send + Sync>>,
         Path(deploy_id): Path<String>,
         Query(query): Query<ViewQuery>,
     ) -> Response {
-        match query.view.as_deref() {
-            Some("minimal") => match web_api.find_deploy_minimal(deploy_id).await {
-                Ok(response) => Json(response).into_response(),
-                Err(e) => AppError(e).into_response(),
-            },
-            _ => match web_api.find_deploy(deploy_id).await {
-                Ok(response) => Json(response).into_response(),
-                Err(e) => AppError(e).into_response(),
-            },
+        let view = match query.view.as_deref() {
+            Some("summary") => DeployView::Summary,
+            _ => DeployView::Full,
+        };
+        match web_api.find_deploy(deploy_id, view).await {
+            Ok(response) => Json(response).into_response(),
+            Err(e) => AppError(e).into_response(),
         }
     }
 
@@ -437,7 +434,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_find_deploy_returns_full_response_without_view_param() {
+    async fn test_find_deploy_returns_full_response_by_default() {
         let app = test_router();
 
         let request: axum::http::Request<Body> = axum::http::Request::builder()
@@ -451,24 +448,30 @@ mod tests {
         let body = body_to_string(response.into_body()).await;
         let json: serde_json::Value = serde_json::from_str(&body).unwrap();
 
-        // Full response should contain block-level fields
+        // Core fields always present
+        assert_eq!(json["deployId"], "abc123def");
         assert_eq!(json["blockHash"], "7bf8abc123");
         assert_eq!(json["blockNumber"], 52331);
         assert_eq!(json["timestamp"], 1770028092477i64);
-        // Should contain fields that minimal view excludes
-        assert_eq!(json["preStateHash"], "preState123");
-        assert_eq!(json["postStateHash"], "postState456");
-        assert!(json.get("bonds").is_some());
-        assert!(json.get("justifications").is_some());
-        assert!(json.get("parentsHashList").is_some());
+        assert_eq!(json["cost"], 100);
+        assert_eq!(json["errored"], false);
+        assert_eq!(json["isFinalized"], true);
+
+        // Full view includes deploy execution details
+        assert_eq!(json["deployer"], "0487def456");
+        assert!(json.get("term").is_some());
+        assert!(json.get("phloPrice").is_some());
+        assert!(json.get("phloLimit").is_some());
+        assert!(json.get("sigAlgorithm").is_some());
+        assert!(json.get("transfers").is_some());
     }
 
     #[tokio::test]
-    async fn test_find_deploy_returns_minimal_response_with_view_minimal() {
+    async fn test_find_deploy_returns_summary_response() {
         let app = test_router();
 
         let request: axum::http::Request<Body> = axum::http::Request::builder()
-            .uri("/deploy/abc123def?view=minimal")
+            .uri("/deploy/abc123def?view=summary")
             .body(Body::empty())
             .unwrap();
         let response = app.oneshot(request).await.unwrap();
@@ -478,30 +481,24 @@ mod tests {
         let body = body_to_string(response.into_body()).await;
         let json: serde_json::Value = serde_json::from_str(&body).unwrap();
 
-        // Minimal response should contain only deploy-centric fields
+        // Core fields present
+        assert_eq!(json["deployId"], "abc123def");
         assert_eq!(json["blockHash"], "7bf8abc123");
         assert_eq!(json["blockNumber"], 52331);
-        assert_eq!(json["timestamp"], 1770028092477i64);
-        assert_eq!(json["sender"], "0487def456");
-        assert_eq!(json["seqNum"], 17453);
-        assert_eq!(json["sig"], "3044abcdef");
-        assert_eq!(json["sigAlgorithm"], "secp256k1");
-        assert_eq!(json["shardId"], "root");
-        assert_eq!(json["version"], 1);
+        assert_eq!(json["cost"], 100);
+        assert_eq!(json["isFinalized"], true);
 
-        // Should NOT contain block-level fields
-        assert!(json.get("bonds").is_none());
-        assert!(json.get("justifications").is_none());
-        assert!(json.get("parentsHashList").is_none());
-        assert!(json.get("preStateHash").is_none());
-        assert!(json.get("postStateHash").is_none());
-        assert!(json.get("faultTolerance").is_none());
-        assert!(json.get("deployCount").is_none());
-        assert!(json.get("blockSize").is_none());
+        // Full-only fields omitted
+        assert!(json.get("deployer").is_none());
+        assert!(json.get("term").is_none());
+        assert!(json.get("phloPrice").is_none());
+        assert!(json.get("phloLimit").is_none());
+        assert!(json.get("sigAlgorithm").is_none());
+        assert!(json.get("transfers").is_none());
     }
 
     #[tokio::test]
-    async fn test_find_deploy_returns_full_response_with_unknown_view() {
+    async fn test_find_deploy_unknown_view_defaults_to_full() {
         let app = test_router();
 
         let request: axum::http::Request<Body> = axum::http::Request::builder()
@@ -515,8 +512,8 @@ mod tests {
         let body = body_to_string(response.into_body()).await;
         let json: serde_json::Value = serde_json::from_str(&body).unwrap();
 
-        // Unknown view value should fall back to full response
-        assert!(json.get("bonds").is_some());
-        assert!(json.get("justifications").is_some());
+        // Unknown view falls back to full
+        assert!(json.get("deployer").is_some());
+        assert!(json.get("term").is_some());
     }
 }

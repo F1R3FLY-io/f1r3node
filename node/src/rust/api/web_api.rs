@@ -76,14 +76,8 @@ pub trait WebApi {
     /// Get blocks with specified depth
     async fn get_blocks(&self, depth: i32) -> Result<Vec<LightBlockInfoSerde>>;
 
-    /// Find a deploy by ID
-    async fn find_deploy(&self, deploy_id: String) -> Result<LightBlockInfoSerde>;
-
-    /// Find a deploy by ID, returning deploy execution details with block context
-    async fn find_deploy_detail(&self, deploy_id: String) -> Result<DeployDetailResponse>;
-
-    /// Find a deploy by ID, returning minimal response
-    async fn find_deploy_minimal(&self, deploy_id: String) -> Result<DeployLookupResponse>;
+    /// Find a deploy by ID with the specified view.
+    async fn find_deploy(&self, deploy_id: String, view: DeployView) -> Result<DeployResponse>;
 
     /// Perform exploratory deploy
     async fn exploratory_deploy(
@@ -397,81 +391,71 @@ impl WebApi for WebApiImpl {
             .collect())
     }
 
-    async fn find_deploy(&self, deploy_id: String) -> Result<LightBlockInfoSerde> {
+    async fn find_deploy(&self, deploy_id: String, view: DeployView) -> Result<DeployResponse> {
         let deploy_id_bytes =
             hex::decode(&deploy_id).map_err(|e| eyre!("Invalid deploy ID format: {}", e))?;
 
         let retry_interval_ms = find_deploy_retry_interval_ms();
         let max_attempts = find_deploy_max_attempts();
 
-        let mut attempt: u16 = 1;
-        loop {
-            match BlockAPI::find_deploy(&self.engine_cell, &deploy_id_bytes).await {
-                Ok(block) => return Ok(LightBlockInfoSerde::from(block)),
-                Err(err) => {
-                    let not_found = err.downcast_ref::<DeployNotFoundError>().is_some();
+        // Retry loop: deploy may not be visible in DAG immediately after submission
+        let light_block: LightBlockInfoSerde = {
+            let mut attempt: u16 = 1;
+            loop {
+                match BlockAPI::find_deploy(&self.engine_cell, &deploy_id_bytes).await {
+                    Ok(block) => break LightBlockInfoSerde::from(block),
+                    Err(err) => {
+                        let not_found = err.downcast_ref::<DeployNotFoundError>().is_some();
 
-                    if !not_found || attempt >= max_attempts {
-                        return Err(err);
+                        if !not_found || attempt >= max_attempts {
+                            return Err(err);
+                        }
+
+                        tracing::debug!(
+                            ?attempt,
+                            ?max_attempts,
+                            ?retry_interval_ms,
+                            ?deploy_id,
+                            "Waiting for deploy to become visible in block DAG"
+                        );
+                        sleep(Duration::from_millis(retry_interval_ms)).await;
+                        attempt += 1;
                     }
-
-                    tracing::debug!(
-                        ?attempt,
-                        ?max_attempts,
-                        ?retry_interval_ms,
-                        ?deploy_id,
-                        "Waiting for deploy to become visible in block DAG"
-                    );
-                    sleep(Duration::from_millis(retry_interval_ms)).await;
-                    attempt += 1;
                 }
             }
-        }
-    }
+        };
 
-    async fn find_deploy_detail(&self, deploy_id: String) -> Result<DeployDetailResponse> {
-        let light_block = self.find_deploy(deploy_id.clone()).await?;
+        // Fetch full block to get deploy execution details
         let block_info = self.get_block(light_block.block_hash.clone()).await?;
 
-        let matching_deploy = block_info
+        let deploy = block_info
             .deploys
             .iter()
             .find(|d| d.sig == deploy_id)
-            .cloned();
+            .ok_or_else(|| eyre!(
+                "Deploy {} found in block {} but not in deploy list",
+                deploy_id, light_block.block_hash
+            ))?;
 
-        match matching_deploy {
-            Some(deploy) => Ok(DeployDetailResponse {
-                block_hash: light_block.block_hash,
-                block_number: light_block.block_number,
-                timestamp: light_block.timestamp,
-                deployer: deploy.deployer,
-                term: deploy.term,
-                cost: deploy.cost,
-                errored: deploy.errored,
-                system_deploy_error: deploy.system_deploy_error,
-                phlo_price: deploy.phlo_price,
-                phlo_limit: deploy.phlo_limit,
-                sig: deploy.sig,
-                sig_algorithm: deploy.sig_algorithm,
-                valid_after_block_number: deploy.valid_after_block_number,
-                transfers: deploy.transfers,
-            }),
-            None => Err(eyre!("Deploy {} found in block {} but not in deploy list", deploy_id, light_block.block_hash)),
-        }
-    }
+        let is_full = view == DeployView::Full;
 
-    async fn find_deploy_minimal(&self, deploy_id: String) -> Result<DeployLookupResponse> {
-        let light_block = self.find_deploy(deploy_id.clone()).await?;
-        let block_info = self.get_block(light_block.block_hash.clone()).await?;
-
-        let cost = block_info
-            .deploys
-            .iter()
-            .find(|d| d.sig == deploy_id)
-            .map(|d| d.cost)
-            .unwrap_or(0);
-
-        Ok(DeployLookupResponse::from_block_and_cost(light_block, cost))
+        Ok(DeployResponse {
+            deploy_id,
+            block_hash: light_block.block_hash,
+            block_number: light_block.block_number,
+            timestamp: light_block.timestamp,
+            cost: deploy.cost,
+            errored: deploy.errored,
+            is_finalized: light_block.is_finalized,
+            deployer: if is_full { Some(deploy.deployer.clone()) } else { None },
+            term: if is_full { Some(deploy.term.clone()) } else { None },
+            system_deploy_error: if is_full { Some(deploy.system_deploy_error.clone()) } else { None },
+            phlo_price: if is_full { Some(deploy.phlo_price) } else { None },
+            phlo_limit: if is_full { Some(deploy.phlo_limit) } else { None },
+            sig_algorithm: if is_full { Some(deploy.sig_algorithm.clone()) } else { None },
+            valid_after_block_number: if is_full { Some(deploy.valid_after_block_number) } else { None },
+            transfers: if is_full { deploy.transfers.clone() } else { None },
+        })
     }
 
     async fn exploratory_deploy(
@@ -751,68 +735,49 @@ pub struct VersionInfo {
     pub node: String,
 }
 
-/// Deploy detail response with execution info and block context
+/// Unified deploy response. Default (full) includes all fields.
+/// Summary view (`?view=summary`) omits Optional fields for lightweight polling.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct DeployDetailResponse {
+pub struct DeployResponse {
+    // === Always present (summary + full) ===
+    #[serde(rename = "deployId")]
+    pub deploy_id: String,
     #[serde(rename = "blockHash")]
     pub block_hash: String,
     #[serde(rename = "blockNumber")]
     pub block_number: i64,
     pub timestamp: i64,
-    pub deployer: String,
-    pub term: String,
     pub cost: u64,
     pub errored: bool,
-    #[serde(rename = "systemDeployError")]
-    pub system_deploy_error: String,
-    #[serde(rename = "phloPrice")]
-    pub phlo_price: i64,
-    #[serde(rename = "phloLimit")]
-    pub phlo_limit: i64,
-    pub sig: String,
-    #[serde(rename = "sigAlgorithm")]
-    pub sig_algorithm: String,
-    #[serde(rename = "validAfterBlockNumber")]
-    pub valid_after_block_number: i64,
+    #[serde(rename = "isFinalized")]
+    pub is_finalized: bool,
+
+    // === Full view only (omitted in summary) ===
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deployer: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub term: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", rename = "systemDeployError")]
+    pub system_deploy_error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", rename = "phloPrice")]
+    pub phlo_price: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none", rename = "phloLimit")]
+    pub phlo_limit: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none", rename = "sigAlgorithm")]
+    pub sig_algorithm: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", rename = "validAfterBlockNumber")]
+    pub valid_after_block_number: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub transfers: Option<Vec<TransferInfoSerde>>,
 }
 
-/// Minimal deploy lookup response containing essential fields plus cost
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct DeployLookupResponse {
-    #[serde(rename = "blockHash")]
-    pub block_hash: String,
-    #[serde(rename = "blockNumber")]
-    pub block_number: i64,
-    pub timestamp: i64,
-    pub sender: String,
-    #[serde(rename = "seqNum")]
-    pub seq_num: i64,
-    pub sig: String,
-    #[serde(rename = "sigAlgorithm")]
-    pub sig_algorithm: String,
-    #[serde(rename = "shardId")]
-    pub shard_id: String,
-    pub version: i64,
-    pub cost: u64,
-}
-
-impl DeployLookupResponse {
-    pub fn from_block_and_cost(info: LightBlockInfoSerde, cost: u64) -> Self {
-        Self {
-            block_hash: info.block_hash,
-            block_number: info.block_number,
-            timestamp: info.timestamp,
-            sender: info.sender,
-            seq_num: info.seq_num,
-            sig: info.sig,
-            sig_algorithm: info.sig_algorithm,
-            shard_id: info.shard_id,
-            version: info.version,
-            cost,
-        }
-    }
+/// View mode for deploy lookups.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeployView {
+    /// All fields populated (default).
+    Full,
+    /// Core fields only — for polling.
+    Summary,
 }
 
 // Error types
@@ -1227,216 +1192,75 @@ mod tests {
     };
 
     #[test]
-    fn test_deploy_lookup_response_from_light_block_info() {
-        let light_block = LightBlockInfoSerde {
-            block_hash: "7bf8abc123".to_string(),
-            sender: "0487def456".to_string(),
-            seq_num: 17453,
-            sig: "3044abcdef".to_string(),
-            sig_algorithm: "secp256k1".to_string(),
-            shard_id: "root".to_string(),
-            extra_bytes: vec![],
-            version: 1,
-            timestamp: 1770028092477,
-            header_extra_bytes: vec![],
-            parents_hash_list: vec!["parent1".to_string(), "parent2".to_string()],
-            block_number: 52331,
-            pre_state_hash: "preState123".to_string(),
-            post_state_hash: "postState456".to_string(),
-            body_extra_bytes: vec![],
-            bonds: vec![
-                super::super::serde_types::light_block_info::BondInfoJson {
-                    validator: "validator1".to_string(),
-                    stake: 100,
-                },
-                super::super::serde_types::light_block_info::BondInfoJson {
-                    validator: "validator2".to_string(),
-                    stake: 200,
-                },
-            ],
-            block_size: "4096".to_string(),
-            deploy_count: 5,
-            fault_tolerance: 0.5,
-            justifications: vec![
-                super::super::serde_types::light_block_info::JustificationInfoJson {
-                    validator: "validator1".to_string(),
-                    latest_block_hash: "latestBlockHash1".to_string(),
-                },
-            ],
-            rejected_deploys: vec![],
+    fn test_deploy_response_full_view_includes_all_fields() {
+        let response = DeployResponse {
+            deploy_id: "abc123".to_string(),
+            block_hash: "hash1".to_string(),
+            block_number: 100,
+            timestamp: 1700000000000,
+            cost: 500,
+            errored: false,
             is_finalized: true,
-        };
-
-        let result = DeployLookupResponse::from_block_and_cost(light_block, 0);
-
-        assert_eq!(result.block_hash, "7bf8abc123");
-        assert_eq!(result.block_number, 52331);
-        assert_eq!(result.timestamp, 1770028092477);
-        assert_eq!(result.sender, "0487def456");
-        assert_eq!(result.seq_num, 17453);
-        assert_eq!(result.sig, "3044abcdef");
-        assert_eq!(result.sig_algorithm, "secp256k1");
-        assert_eq!(result.shard_id, "root");
-        assert_eq!(result.version, 1);
-    }
-
-    #[test]
-    fn test_deploy_lookup_response_excludes_heavy_fields() {
-        let response = DeployLookupResponse {
-            block_hash: "hash".to_string(),
-            block_number: 1,
-            timestamp: 123,
-            sender: "sender".to_string(),
-            seq_num: 1,
-            sig: "sig".to_string(),
-            sig_algorithm: "secp256k1".to_string(),
-            shard_id: "root".to_string(),
-            version: 1,
-            cost: 0,
+            deployer: Some("deployer1".to_string()),
+            term: Some("new ret in { ret!(42) }".to_string()),
+            system_deploy_error: Some(String::new()),
+            phlo_price: Some(10),
+            phlo_limit: Some(100000),
+            sig_algorithm: Some("secp256k1".to_string()),
+            valid_after_block_number: Some(0),
+            transfers: Some(vec![]),
         };
 
         let json = serde_json::to_value(&response).unwrap();
 
-        // Should contain only the 9 minimal fields
-        assert!(json.get("blockHash").is_some());
-        assert!(json.get("blockNumber").is_some());
-        assert!(json.get("timestamp").is_some());
-        assert!(json.get("sender").is_some());
-        assert!(json.get("seqNum").is_some());
-        assert!(json.get("sig").is_some());
-        assert!(json.get("sigAlgorithm").is_some());
-        assert!(json.get("shardId").is_some());
-        assert!(json.get("version").is_some());
-
-        // Should NOT contain heavy fields
-        assert!(json.get("bonds").is_none());
-        assert!(json.get("justifications").is_none());
-        assert!(json.get("parentsHashList").is_none());
-        assert!(json.get("preStateHash").is_none());
-        assert!(json.get("postStateHash").is_none());
-        assert!(json.get("faultTolerance").is_none());
-        assert!(json.get("deployCount").is_none());
-        assert!(json.get("blockSize").is_none());
+        assert_eq!(json["deployId"], "abc123");
+        assert_eq!(json["blockHash"], "hash1");
+        assert_eq!(json["blockNumber"], 100);
+        assert_eq!(json["cost"], 500);
+        assert_eq!(json["isFinalized"], true);
+        assert!(json.get("deployer").is_some());
+        assert!(json.get("term").is_some());
+        assert!(json.get("phloPrice").is_some());
+        assert!(json.get("phloLimit").is_some());
+        assert!(json.get("transfers").is_some());
     }
 
     #[test]
-    fn test_deploy_lookup_response_handles_empty_string_fields() {
-        let mut light_block = LightBlockInfoSerde {
-            block_hash: "7bf8abc123".to_string(),
-            sender: "0487def456".to_string(),
-            seq_num: 17453,
-            sig: "3044abcdef".to_string(),
-            sig_algorithm: "secp256k1".to_string(),
-            shard_id: "root".to_string(),
-            extra_bytes: vec![],
-            version: 1,
-            timestamp: 1770028092477,
-            header_extra_bytes: vec![],
-            parents_hash_list: vec![],
-            block_number: 52331,
-            pre_state_hash: String::new(),
-            post_state_hash: String::new(),
-            body_extra_bytes: vec![],
-            bonds: vec![],
-            block_size: String::new(),
-            deploy_count: 0,
-            fault_tolerance: 0.0,
-            justifications: vec![],
-            rejected_deploys: vec![],
-            is_finalized: false,
-        };
-        light_block.block_hash = String::new();
-        light_block.sender = String::new();
-        light_block.sig = String::new();
-        light_block.sig_algorithm = String::new();
-        light_block.shard_id = String::new();
-
-        let result = DeployLookupResponse::from_block_and_cost(light_block, 0);
-
-        assert_eq!(result.block_hash, "");
-        assert_eq!(result.sender, "");
-        assert_eq!(result.sig, "");
-        assert_eq!(result.sig_algorithm, "");
-        assert_eq!(result.shard_id, "");
-    }
-
-    #[test]
-    fn test_deploy_lookup_response_handles_zero_numeric_fields() {
-        let light_block = LightBlockInfoSerde {
-            block_hash: "hash".to_string(),
-            sender: "sender".to_string(),
-            seq_num: 0,
-            sig: "sig".to_string(),
-            sig_algorithm: "secp256k1".to_string(),
-            shard_id: "root".to_string(),
-            extra_bytes: vec![],
-            version: 0,
-            timestamp: 0,
-            header_extra_bytes: vec![],
-            parents_hash_list: vec![],
-            block_number: 0,
-            pre_state_hash: String::new(),
-            post_state_hash: String::new(),
-            body_extra_bytes: vec![],
-            bonds: vec![],
-            block_size: String::new(),
-            deploy_count: 0,
-            fault_tolerance: 0.0,
-            justifications: vec![],
-            rejected_deploys: vec![],
-            is_finalized: false,
-        };
-
-        let result = DeployLookupResponse::from_block_and_cost(light_block, 0);
-
-        assert_eq!(result.block_number, 0);
-        assert_eq!(result.timestamp, 0);
-        assert_eq!(result.seq_num, 0);
-        assert_eq!(result.version, 0);
-    }
-
-    #[test]
-    fn test_deploy_lookup_response_correct_regardless_of_bonds_list_size() {
-        let large_bonds: Vec<super::super::serde_types::light_block_info::BondInfoJson> = (1
-            ..=1000)
-            .map(
-                |i| super::super::serde_types::light_block_info::BondInfoJson {
-                    validator: format!("validator{}", i),
-                    stake: i,
-                },
-            )
-            .collect();
-
-        let light_block = LightBlockInfoSerde {
-            block_hash: "7bf8abc123".to_string(),
-            sender: "0487def456".to_string(),
-            seq_num: 17453,
-            sig: "3044abcdef".to_string(),
-            sig_algorithm: "secp256k1".to_string(),
-            shard_id: "root".to_string(),
-            extra_bytes: vec![],
-            version: 1,
-            timestamp: 1770028092477,
-            header_extra_bytes: vec![],
-            parents_hash_list: vec![],
-            block_number: 52331,
-            pre_state_hash: String::new(),
-            post_state_hash: String::new(),
-            body_extra_bytes: vec![],
-            bonds: large_bonds,
-            block_size: String::new(),
-            deploy_count: 0,
-            fault_tolerance: 0.0,
-            justifications: vec![],
-            rejected_deploys: vec![],
+    fn test_deploy_response_summary_view_omits_optional_fields() {
+        let response = DeployResponse {
+            deploy_id: "abc123".to_string(),
+            block_hash: "hash1".to_string(),
+            block_number: 100,
+            timestamp: 1700000000000,
+            cost: 500,
+            errored: false,
             is_finalized: true,
+            deployer: None,
+            term: None,
+            system_deploy_error: None,
+            phlo_price: None,
+            phlo_limit: None,
+            sig_algorithm: None,
+            valid_after_block_number: None,
+            transfers: None,
         };
 
-        let result = DeployLookupResponse::from_block_and_cost(light_block, 0);
+        let json = serde_json::to_value(&response).unwrap();
 
-        // Response should be the same regardless of bonds size
-        assert_eq!(result.block_hash, "7bf8abc123");
-        assert_eq!(result.block_number, 52331);
+        // Core fields present
+        assert_eq!(json["deployId"], "abc123");
+        assert_eq!(json["blockHash"], "hash1");
+        assert_eq!(json["cost"], 500);
+        assert_eq!(json["isFinalized"], true);
+
+        // Optional fields omitted
+        assert!(json.get("deployer").is_none());
+        assert!(json.get("term").is_none());
+        assert!(json.get("phloPrice").is_none());
+        assert!(json.get("phloLimit").is_none());
+        assert!(json.get("sigAlgorithm").is_none());
+        assert!(json.get("validAfterBlockNumber").is_none());
+        assert!(json.get("transfers").is_none());
     }
 
     #[test]
