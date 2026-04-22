@@ -83,7 +83,6 @@ These fire once during node startup when the genesis block is being created and 
 | Event | Description | Payload |
 |-------|-------------|---------|
 | `sent-unapproved-block` | Boot node broadcasts genesis candidate | block-hash |
-| `block-approval-received` | Boot node receives approval from a validator | block-hash, sender |
 | `sent-approved-block` | Boot node broadcasts the approved genesis block | block-hash |
 | `approved-block-received` | Validator receives the approved genesis block | block-hash |
 

@@ -758,22 +758,25 @@ impl DeployService for DeployGrpcServiceV1Impl {
     ) -> Result<tonic::Response<EventInfoResponse>, tonic::Status> {
         let request = request.into_inner();
 
-        if let Err(_) = hex::decode(&request.hash) {
-            let error = Self::create_service_error(format!(
-                "Request hash: {} is not valid hex string",
-                request.hash
-            ));
-            return Ok(tonic::Response::new(EventInfoResponse {
-                message: Some(models::casper::v1::event_info_response::Message::Error(
-                    error,
-                )),
-            }));
-        }
+        let block_hash_bytes: prost::bytes::Bytes = match hex::decode(&request.hash) {
+            Ok(bytes) => bytes.into(),
+            Err(_) => {
+                let error = Self::create_service_error(format!(
+                    "Request hash: {} is not valid hex string",
+                    request.hash
+                ));
+                return Ok(tonic::Response::new(EventInfoResponse {
+                    message: Some(models::casper::v1::event_info_response::Message::Error(
+                        error,
+                    )),
+                }));
+            }
+        };
 
         match self
             .block_report_api
             .block_report(
-                prost::bytes::Bytes::from(request.hash),
+                block_hash_bytes,
                 request.force_replay,
             )
             .await

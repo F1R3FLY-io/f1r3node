@@ -930,7 +930,17 @@ async fn handle_block_finalized(
         DeployTransfers, F1r3flyEvent, TransferEvent,
     };
 
-    let block_hash_bytes: prost::bytes::Bytes = block_hash.clone().into();
+    let block_hash_bytes: prost::bytes::Bytes = match hex::decode(&block_hash) {
+        Ok(bytes) => bytes.into(),
+        Err(e) => {
+            tracing::warn!(
+                %block_hash,
+                error = %e,
+                "Invalid block hash hex in finalization event"
+            );
+            return;
+        }
+    };
     match report_api.block_report(block_hash_bytes, false).await {
         Ok(report) => {
             let transfers_by_deploy =
