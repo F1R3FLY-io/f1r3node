@@ -33,6 +33,37 @@ pub fn cost_optimal_rejection_alg() -> impl Fn(&DeployChainIndex) -> u64 {
     }
 }
 
+/// BFS walk of DAG descendants of `start_blocks`, restricted to `scope`.
+///
+/// When the merge rejects the deploy chains of a block, any descendant block
+/// in scope has diffs that were computed against the rejected block's
+/// post-state and are therefore stale. This walk identifies the affected
+/// descendants so their chains can be rejected as well.
+///
+/// Returns the strict descendants; the start blocks themselves are not included.
+fn descendants_within_scope(
+    dag: &KeyValueDagRepresentation,
+    start_blocks: &HashSet<BlockHash>,
+    scope: &HashSet<BlockHash>,
+) -> HashSet<BlockHash> {
+    let mut result = HashSet::new();
+    let mut queue: Vec<BlockHash> = start_blocks.iter().cloned().collect();
+    let mut visited: HashSet<BlockHash> = start_blocks.clone();
+
+    while let Some(current) = queue.pop() {
+        if let Some(children) = dag.children(&current) {
+            for child in children {
+                if scope.contains(&child) && visited.insert(child.clone()) {
+                    result.insert(child.clone());
+                    queue.push(child);
+                }
+            }
+        }
+    }
+
+    result
+}
+
 pub fn merge(
     dag: &KeyValueDagRepresentation,
     lfb: &BlockHash,
@@ -110,6 +141,63 @@ pub fn merge(
     for block_hash in late_blocks_sorted {
         let indices = index(block_hash)?;
         late_set_vec.extend(indices);
+    }
+
+    // Deploy de-duplication. When the same deploy ID appears in chains from
+    // multiple blocks in scope — for example, because a previously-rejected
+    // deploy was re-proposed in a later block — keep the copy from the freshest
+    // source: higher block number first, then lexicographically-smaller block
+    // hash as a deterministic tiebreak. A chain containing any deploy whose
+    // freshest source is a different chain is dropped; its diffs were computed
+    // against a pre-state that the fresh execution replaces.
+    if !actual_set_vec.is_empty() {
+        // Find the freshest source for each deploy_id across all chains.
+        let mut latest_for_deploy: HashMap<Bytes, (i64, BlockHash)> = HashMap::new();
+        for chain in &actual_set_vec {
+            for deploy in &chain.deploys_with_cost.0 {
+                let candidate = (chain.source_block_number, chain.source_block_hash.clone());
+                match latest_for_deploy.get(&deploy.deploy_id) {
+                    Some((best_num, best_hash)) => {
+                        // Fresher = higher block number, or byte-lex smaller hash at tie.
+                        let is_fresher = candidate.0 > *best_num
+                            || (candidate.0 == *best_num && candidate.1 < *best_hash);
+                        if is_fresher {
+                            latest_for_deploy.insert(deploy.deploy_id.clone(), candidate);
+                        }
+                    }
+                    None => {
+                        latest_for_deploy.insert(deploy.deploy_id.clone(), candidate);
+                    }
+                }
+            }
+        }
+
+        // Retain chains only if every deploy in the chain points back to THIS chain
+        // as the freshest source. A chain with even one stale deploy is discarded —
+        // its diffs are against a pre-state that includes the stale deploy's effects,
+        // which are being dropped.
+        let pre_dedup_count = actual_set_vec.len();
+        actual_set_vec.retain(|chain| {
+            chain.deploys_with_cost.0.iter().all(|deploy| {
+                match latest_for_deploy.get(&deploy.deploy_id) {
+                    Some((best_num, best_hash)) => {
+                        chain.source_block_number == *best_num
+                            && chain.source_block_hash == *best_hash
+                    }
+                    None => true,
+                }
+            })
+        });
+        let post_dedup_count = actual_set_vec.len();
+
+        if post_dedup_count < pre_dedup_count {
+            tracing::info!(
+                "DagMerger dedup: dropped {} stale chain(s) ({} -> {})",
+                pre_dedup_count - post_dedup_count,
+                pre_dedup_count,
+                post_dedup_count
+            );
+        }
     }
 
     // Sort the deploy chain indices for deterministic iteration order
@@ -211,93 +299,179 @@ pub fn merge(
             .map_err(|e| CasperError::HistoryError(e))?,
     );
 
-    // Use ConflictSetMerger to perform the actual merge
-    let result = conflict_set_merger::merge(
+    // Bind merge-logic closures to named variables so both resolve_conflicts
+    // and compute_merged_state can take them by reference, with the rejection
+    // expansion step interposed between the two calls.
+    let depends_fn = |target: &DeployChainIndex, source: &DeployChainIndex| -> bool {
+        // Cached depends: pre-computes source's derived sets on first access
+        let source_addr = get_chain_derived(source);
+        let cache = chain_cache.borrow();
+        let derived = cache.get(&source_addr).unwrap();
+
+        let produces_source: HashSet<_> = derived
+            .produces_created
+            .0
+            .difference(&source.event_log_index.produces_mergeable.0)
+            .collect();
+        let produces_target: HashSet<_> = target
+            .event_log_index
+            .produces_consumed
+            .0
+            .difference(&source.event_log_index.produces_mergeable.0)
+            .collect();
+
+        if produces_source.intersection(&produces_target).next().is_some() {
+            return true;
+        }
+
+        derived
+            .consumes_created
+            .0
+            .intersection(&target.event_log_index.consumes_produced.0)
+            .next()
+            .is_some()
+    };
+
+    let conflicts_fn = |as_set: &HashableSet<DeployChainIndex>,
+                        bs_set: &HashableSet<DeployChainIndex>|
+     -> bool {
+        // Cached branch conflicts: pre-computes deploy IDs and combined event log
+        let a_addr = get_branch_derived(as_set);
+        let b_addr = get_branch_derived(bs_set);
+        let cache = branch_cache.borrow();
+        let a_derived = cache.get(&a_addr).unwrap();
+        let b_derived = cache.get(&b_addr).unwrap();
+
+        let same_deploy = a_derived
+            .user_deploy_ids
+            .intersection(&b_derived.user_deploy_ids)
+            .next()
+            .is_some();
+
+        if same_deploy {
+            return true;
+        }
+
+        merging_logic::are_conflicting(
+            &a_derived.combined_event_log,
+            &b_derived.combined_event_log,
+        )
+    };
+
+    let state_changes_fn = |chain: &DeployChainIndex| Ok(chain.state_changes.clone());
+
+    let mergeable_channels_fn =
+        |chain: &DeployChainIndex| chain.event_log_index.number_channels_data.clone();
+
+    let compute_trie_actions_fn = {
+        let reader = Arc::clone(&history_reader);
+        move |changes, mergeable_chs| {
+            state_change_merger::compute_trie_actions(
+                &changes,
+                &*reader,
+                &mergeable_chs,
+                |hash: &Blake2b256Hash, channel_changes, number_chs: &NumberChannelsDiff| {
+                    if let Some(number_ch_val) = number_chs.get(hash) {
+                        let base_get_data = |h: &Blake2b256Hash| reader.get_data(h);
+                        Ok(Some(RholangMergingLogic::calculate_number_channel_merge(
+                            hash,
+                            *number_ch_val,
+                            channel_changes,
+                            base_get_data,
+                        )))
+                    } else {
+                        Ok(None)
+                    }
+                },
+            )
+        }
+    };
+
+    let apply_trie_actions_fn = |actions| {
+        history_repository
+            .reset(lfb_post_state)
+            .and_then(|reset_repo| Ok(reset_repo.do_checkpoint(actions)))
+            .map(|checkpoint| checkpoint.root())
+            .map_err(|e| e.into())
+    };
+
+    let get_data_fn = |hash| history_reader.get_data(&hash).map_err(|e| e.into());
+
+    // Resolve conflicts: detect conflicts and select the cost-optimal rejection set.
+    let mut resolved = conflict_set_merger::resolve_conflicts(
         actual_seq,
         late_seq,
-        |target: &DeployChainIndex, source: &DeployChainIndex| {
-            // Cached depends: pre-computes source's derived sets on first access
-            let source_addr = get_chain_derived(source);
-            let cache = chain_cache.borrow();
-            let derived = cache.get(&source_addr).unwrap();
-
-            let produces_source: HashSet<_> = derived.produces_created
-                .0
-                .difference(&source.event_log_index.produces_mergeable.0)
-                .collect();
-            let produces_target: HashSet<_> = target.event_log_index
-                .produces_consumed
-                .0
-                .difference(&source.event_log_index.produces_mergeable.0)
-                .collect();
-
-            if produces_source.intersection(&produces_target).next().is_some() {
-                return true;
-            }
-
-            derived.consumes_created
-                .0
-                .intersection(&target.event_log_index.consumes_produced.0)
-                .next()
-                .is_some()
-        },
-        |as_set: &HashableSet<DeployChainIndex>, bs_set: &HashableSet<DeployChainIndex>| {
-            // Cached branch conflicts: pre-computes deploy IDs and combined event log
-            let a_addr = get_branch_derived(as_set);
-            let b_addr = get_branch_derived(bs_set);
-            let cache = branch_cache.borrow();
-            let a_derived = cache.get(&a_addr).unwrap();
-            let b_derived = cache.get(&b_addr).unwrap();
-
-            let same_deploy = a_derived.user_deploy_ids
-                .intersection(&b_derived.user_deploy_ids)
-                .next()
-                .is_some();
-
-            if same_deploy {
-                return true;
-            }
-
-            merging_logic::are_conflicting(&a_derived.combined_event_log, &b_derived.combined_event_log)
-        },
-        rejection_cost_f,
-        |chain: &DeployChainIndex| Ok(chain.state_changes.clone()),
-        |chain: &DeployChainIndex| chain.event_log_index.number_channels_data.clone(),
-        {
-            let reader = Arc::clone(&history_reader);
-            move |changes, mergeable_chs| {
-                state_change_merger::compute_trie_actions(
-                    &changes,
-                    &*reader,
-                    &mergeable_chs,
-                    |hash: &Blake2b256Hash, channel_changes, number_chs: &NumberChannelsDiff| {
-                        if let Some(number_ch_val) = number_chs.get(hash) {
-                            let base_get_data = |h: &Blake2b256Hash| reader.get_data(h);
-                            Ok(Some(RholangMergingLogic::calculate_number_channel_merge(
-                                hash,
-                                *number_ch_val,
-                                channel_changes,
-                                base_get_data,
-                            )))
-                        } else {
-                            Ok(None)
-                        }
-                    },
-                )
-            }
-        },
-        |actions| {
-            history_repository
-                .reset(lfb_post_state)
-                .and_then(|reset_repo| Ok(reset_repo.do_checkpoint(actions)))
-                .map(|checkpoint| checkpoint.root())
-                .map_err(|e| e.into())
-        },
-        |hash| history_reader.get_data(&hash).map_err(|e| e.into()),
+        &depends_fn,
+        &conflicts_fn,
+        &rejection_cost_f,
+        &mergeable_channels_fn,
+        &get_data_fn,
     )
     .map_err(|e| CasperError::HistoryError(e))?;
 
-    let (new_state, rejected) = result;
+    // Rejection expansion. Any chain whose source block is a DAG descendant
+    // of a rejected chain's source block (within merge scope) has pre-computed
+    // diffs against a pre-state that the merge is about to drop. Expand the
+    // rejection set to include those chains before applying diffs.
+    //
+    // All descendant chains are rejected unconditionally; an event-log
+    // read/write analysis could narrow this, but event logs miss indirect
+    // dependencies through system contracts (the very condition the expansion
+    // exists to catch), so we prefer conservative correctness.
+    let rejected_source_blocks: HashSet<BlockHash> = resolved
+        .rejected
+        .0
+        .iter()
+        .map(|chain| chain.source_block_hash.clone())
+        .collect();
+
+    let pre_expansion_rejected = resolved.rejected.0.len();
+
+    if !rejected_source_blocks.is_empty() {
+        let descendant_blocks =
+            descendants_within_scope(dag, &rejected_source_blocks, &actual_blocks);
+
+        if !descendant_blocks.is_empty() {
+            // Rebuild to_merge: any branch containing a chain from a descendant
+            // block gets moved whole into rejected. Branches are dependency
+            // clusters — rejecting partial branches would leave internally
+            // inconsistent diffs.
+            let mut new_to_merge: Vec<HashableSet<DeployChainIndex>> = Vec::new();
+            for branch in resolved.to_merge.drain(..) {
+                let has_stale = branch
+                    .0
+                    .iter()
+                    .any(|chain| descendant_blocks.contains(&chain.source_block_hash));
+                if has_stale {
+                    for chain in branch.0 {
+                        resolved.rejected.0.insert(chain);
+                    }
+                } else {
+                    new_to_merge.push(branch);
+                }
+            }
+            resolved.to_merge = new_to_merge;
+
+            tracing::info!(
+                "DagMerger rejection expansion: {} descendant blocks, rejected grew from {} to {} chains",
+                descendant_blocks.len(),
+                pre_expansion_rejected,
+                resolved.rejected.0.len()
+            );
+        }
+    }
+
+    // Combine surviving diffs and apply to the LFB post-state.
+    let new_state = conflict_set_merger::compute_merged_state(
+        &resolved,
+        &state_changes_fn,
+        &mergeable_channels_fn,
+        &compute_trie_actions_fn,
+        &apply_trie_actions_fn,
+    )
+    .map_err(|e| CasperError::HistoryError(e))?;
+
+    let rejected = resolved.rejected;
 
     // Extract rejected deploy IDs, filtering out system deploy IDs
     // System deploys are deterministic and excluded from conflict detection

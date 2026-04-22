@@ -767,6 +767,7 @@ pub fn compute_parents_post_state(
 
                 let block_index = crate::rust::merging::block_index::new(
                     &b.block_hash,
+                    b.body.state.block_number,
                     &b.body.deploys,
                     &b.body.system_deploys,
                     &Blake2b256Hash::from_bytes_prost(pre_state),

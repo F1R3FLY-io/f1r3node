@@ -726,6 +726,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
                             .await
                             .get_or_compute_block_index(
                                 &block.block_hash,
+                                block.body.state.block_number,
                                 &block.body.deploys,
                                 &block.body.system_deploys,
                                 &Blake2b256Hash::from_bytes_prost(&block.body.state.pre_state_hash),
@@ -953,6 +954,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
                             .await
                             .get_or_compute_block_index(
                                 &block.block_hash,
+                                block.body.state.block_number,
                                 &block.body.deploys,
                                 &block.body.system_deploys,
                                 &Blake2b256Hash::from_bytes_prost(&block.body.state.pre_state_hash),

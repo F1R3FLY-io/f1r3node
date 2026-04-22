@@ -796,6 +796,7 @@ impl RuntimeManager {
     pub fn get_or_compute_block_index(
         &self,
         block_hash: &BlockHash,
+        block_number: i64,
         usr_processed_deploys: &Vec<ProcessedDeploy>,
         sys_processed_deploys: &Vec<ProcessedSystemDeploy>,
         pre_state_hash: &Blake2b256Hash,
@@ -812,6 +813,7 @@ impl RuntimeManager {
         // Cache miss - compute the BlockIndex.
         let block_index = crate::rust::merging::block_index::new(
             block_hash,
+            block_number,
             usr_processed_deploys,
             sys_processed_deploys,
             pre_state_hash,
