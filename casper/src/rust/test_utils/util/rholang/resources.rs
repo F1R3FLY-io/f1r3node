@@ -594,6 +594,7 @@ pub fn mk_dummy_casper_snapshot() -> CasperSnapshot {
         justifications: DashSet::new(),
         invalid_blocks: HashMap::new(),
         deploys_in_scope: Arc::new(DashSet::new()),
+        rejected_in_scope: Arc::new(DashSet::new()),
         max_block_num: 0,
         max_seq_nums: DashMap::new(),
         on_chain_state: OnChainCasperState {

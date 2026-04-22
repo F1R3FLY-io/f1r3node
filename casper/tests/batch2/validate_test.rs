@@ -1891,6 +1891,7 @@ async fn bonds_cache_validation_should_succeed_on_a_valid_block_and_fail_on_modi
             &mut block_store,
             &mut casper_snapshot,
             &mut runtime_manager,
+            None,
         )
         .await
         .unwrap();

@@ -44,9 +44,7 @@ use block_storage::rust::dag::block_dag_key_value_storage::KeyValueDagRepresenta
 
 use crate::rust::ProposeFunction;
 
-use crate::rust::safety_oracle::{
-    CliqueOracleImpl, SafetyOracle, MAX_FAULT_TOLERANCE,
-};
+use crate::rust::safety_oracle::{CliqueOracleImpl, SafetyOracle, MAX_FAULT_TOLERANCE};
 use block_storage::rust::dag::block_dag_key_value_storage::DeployId;
 use rspace_plus_plus::rspace::history::Either;
 use shared::rust::ByteString;
@@ -337,10 +335,15 @@ impl BlockAPI {
                                         continue;
                                     }
 
-                                    if let Some(msg) = recoverable_propose_failure_message(&status) {
+                                    if let Some(msg) = recoverable_propose_failure_message(&status)
+                                    {
                                         tracing::info!("{} (seqNum {})", msg, seq_number);
                                     } else {
-                                        tracing::error!("Failure: {} (seqNum {})", status, seq_number);
+                                        tracing::error!(
+                                            "Failure: {} (seqNum {})",
+                                            status,
+                                            seq_number
+                                        );
                                     }
                                 }
                                 ProposerResult::Empty => {
@@ -371,7 +374,10 @@ impl BlockAPI {
                                     tokio::time::sleep(retry_delay).await;
                                     continue;
                                 }
-                                tracing::error!("Failed to trigger propose from deploy path: {}", err);
+                                tracing::error!(
+                                    "Failed to trigger propose from deploy path: {}",
+                                    err
+                                );
                             }
                         }
                         break;
@@ -1496,6 +1502,7 @@ impl BlockAPI {
                                 &snapshot,
                                 &runtime_guard,
                                 Some(true), // disable_late_block_filtering = true for exploratory deploy
+                                None,       // exploratory deploy: no buffer populate needed
                             )?;
                         merged_state_hash
                     };

@@ -73,7 +73,7 @@ pub fn merge(
     rejection_cost_f: impl Fn(&DeployChainIndex) -> u64,
     scope: Option<HashSet<BlockHash>>,
     disable_late_block_filtering: bool,
-) -> Result<(Blake2b256Hash, Vec<Bytes>), CasperError> {
+) -> Result<(Blake2b256Hash, Vec<(Bytes, BlockHash)>), CasperError> {
     // Blocks to merge are all blocks in scope that are NOT the LFB or its ancestors.
     // This includes:
     // 1. Descendants of LFB (blocks built on top of LFB)
@@ -264,7 +264,10 @@ pub fn merge(
                 },
             );
 
-        BranchDerived { user_deploy_ids, combined_event_log }
+        BranchDerived {
+            user_deploy_ids,
+            combined_event_log,
+        }
     }
 
     // Lazy caches keyed by pointer address. Safe because:
@@ -276,11 +279,13 @@ pub fn merge(
     let get_chain_derived = |chain: &DeployChainIndex| -> usize {
         let addr = std::ptr::addr_of!(*chain) as usize;
         let mut cache = chain_cache.borrow_mut();
-        cache.entry(addr).or_insert_with(|| {
-            ChainDerived {
-                produces_created: merging_logic::produces_created_and_not_destroyed(&chain.event_log_index),
-                consumes_created: merging_logic::consumes_created_and_not_destroyed(&chain.event_log_index),
-            }
+        cache.entry(addr).or_insert_with(|| ChainDerived {
+            produces_created: merging_logic::produces_created_and_not_destroyed(
+                &chain.event_log_index,
+            ),
+            consumes_created: merging_logic::consumes_created_and_not_destroyed(
+                &chain.event_log_index,
+            ),
         });
         addr
     };
@@ -288,7 +293,9 @@ pub fn merge(
     let get_branch_derived = |branch: &HashableSet<DeployChainIndex>| -> usize {
         let addr = std::ptr::addr_of!(*branch) as usize;
         let mut cache = branch_cache.borrow_mut();
-        cache.entry(addr).or_insert_with(|| compute_branch_derived(branch));
+        cache
+            .entry(addr)
+            .or_insert_with(|| compute_branch_derived(branch));
         addr
     };
 
@@ -320,7 +327,11 @@ pub fn merge(
             .difference(&source.event_log_index.produces_mergeable.0)
             .collect();
 
-        if produces_source.intersection(&produces_target).next().is_some() {
+        if produces_source
+            .intersection(&produces_target)
+            .next()
+            .is_some()
+        {
             return true;
         }
 
@@ -352,10 +363,7 @@ pub fn merge(
             return true;
         }
 
-        merging_logic::are_conflicting(
-            &a_derived.combined_event_log,
-            &b_derived.combined_event_log,
-        )
+        merging_logic::are_conflicting(&a_derived.combined_event_log, &b_derived.combined_event_log)
     };
 
     let state_changes_fn = |chain: &DeployChainIndex| Ok(chain.state_changes.clone());
@@ -473,17 +481,24 @@ pub fn merge(
 
     let rejected = resolved.rejected;
 
-    // Extract rejected deploy IDs, filtering out system deploy IDs
-    // System deploys are deterministic and excluded from conflict detection
-    let mut rejected_deploys: Vec<Bytes> = rejected
+    // Extract (rejected deploy ID, source block hash) pairs. System deploy IDs
+    // are filtered out; callers need only user-deploy IDs for buffering and
+    // downstream tracking.
+    let mut rejected_deploys: Vec<(Bytes, BlockHash)> = rejected
         .0
         .iter()
-        .flat_map(|chain| chain.deploys_with_cost.0.iter())
-        .map(|deploy| deploy.deploy_id.clone())
-        .filter(|id| !is_system_deploy_id(id))
+        .flat_map(|chain| {
+            let src = chain.source_block_hash.clone();
+            chain
+                .deploys_with_cost
+                .0
+                .iter()
+                .map(move |deploy| (deploy.deploy_id.clone(), src.clone()))
+        })
+        .filter(|(id, _)| !is_system_deploy_id(id))
         .collect();
 
-    // Sort rejected deploys to ensure deterministic ordering
+    // Sort rejected pairs for deterministic ordering across validators.
     rejected_deploys.sort();
 
     // Log merge summary at debug level
@@ -502,7 +517,7 @@ pub fn merge(
     if !rejected_deploys.is_empty() {
         let rejected_str: Vec<_> = rejected_deploys
             .iter()
-            .map(|bs| hex::encode(&bs[..std::cmp::min(8, bs.len())]))
+            .map(|(sig, _)| hex::encode(&sig[..std::cmp::min(8, sig.len())]))
             .collect();
         tracing::info!(
             "DagMerger rejected {} deploys: {}",

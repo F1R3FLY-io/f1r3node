@@ -418,6 +418,33 @@ pub async fn key_value_deploy_storage_from_dyn(
     })
 }
 
+pub async fn key_value_rejected_deploy_buffer_from_dyn(
+    kvm: &mut dyn KeyValueStoreManager,
+) -> Result<
+    block_storage::rust::deploy::key_value_rejected_deploy_buffer::KeyValueRejectedDeployBuffer,
+    shared::rust::store::key_value_store::KvStoreError,
+> {
+    use block_storage::rust::deploy::key_value_rejected_deploy_buffer::KeyValueRejectedDeployBuffer;
+    use crypto::rust::signatures::signed::Signed;
+    use models::rust::casper::protocol::casper_message::DeployData;
+    use shared::rust::store::key_value_typed_store_impl::KeyValueTypedStoreImpl;
+    use shared::rust::ByteString;
+
+    let buffer_kv_store = kvm
+        .store("rejected_deploy_buffer".to_string())
+        .await
+        .map_err(|e| {
+            shared::rust::store::key_value_store::KvStoreError::IoError(format!(
+                "Failed to get rejected_deploy_buffer store: {:?}",
+                e
+            ))
+        })?;
+    let buffer_db: KeyValueTypedStoreImpl<ByteString, Signed<DeployData>> =
+        KeyValueTypedStoreImpl::new(buffer_kv_store);
+
+    Ok(KeyValueRejectedDeployBuffer { store: buffer_db })
+}
+
 pub async fn casper_buffer_storage_from_dyn(
     kvm: &mut dyn KeyValueStoreManager,
 ) -> Result<
@@ -519,6 +546,7 @@ pub fn mk_dummy_casper_snapshot() -> CasperSnapshot {
         justifications: DashSet::new(),
         invalid_blocks: HashMap::new(),
         deploys_in_scope: Arc::new(DashSet::new()),
+        rejected_in_scope: Arc::new(DashSet::new()),
         max_block_num: 0,
         max_seq_nums: DashMap::new(),
         on_chain_state: OnChainCasperState {

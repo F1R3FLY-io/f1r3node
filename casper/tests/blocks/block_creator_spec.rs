@@ -109,6 +109,7 @@ fn create_snapshot(max_block_num: i64, validator_id: Bytes) -> CasperSnapshot {
         justifications: DashSet::new(),
         invalid_blocks: HashMap::new(),
         deploys_in_scope: Arc::new(DashSet::new()),
+        rejected_in_scope: Arc::new(DashSet::new()),
         max_block_num,
         max_seq_nums,
         on_chain_state,
@@ -137,6 +138,11 @@ async fn should_remove_block_expired_deploys_while_keeping_valid_ones() {
         KeyValueDeployStorage::new(&mut kvm)
             .await
             .expect("Failed to create deploy storage"),
+    ));
+    let rejected_deploy_buffer = Arc::new(Mutex::new(
+        block_storage::rust::deploy::key_value_rejected_deploy_buffer::KeyValueRejectedDeployBuffer::new(&mut kvm)
+            .await
+            .expect("Failed to create rejected deploy buffer"),
     ));
 
     let block_store = KeyValueBlockStore::create_from_kvm(&mut kvm)
@@ -186,6 +192,7 @@ async fn should_remove_block_expired_deploys_while_keeping_valid_ones() {
         &validator_identity,
         None,
         deploy_storage.clone(),
+        rejected_deploy_buffer.clone(),
         &mut runtime_manager,
         &mut block_store.clone(),
         false,
@@ -230,6 +237,11 @@ async fn should_remove_both_block_expired_and_time_expired_deploys() {
         KeyValueDeployStorage::new(&mut kvm)
             .await
             .expect("Failed to create deploy storage"),
+    ));
+    let rejected_deploy_buffer = Arc::new(Mutex::new(
+        block_storage::rust::deploy::key_value_rejected_deploy_buffer::KeyValueRejectedDeployBuffer::new(&mut kvm)
+            .await
+            .expect("Failed to create rejected deploy buffer"),
     ));
 
     let block_store = KeyValueBlockStore::create_from_kvm(&mut kvm)
@@ -290,6 +302,7 @@ async fn should_remove_both_block_expired_and_time_expired_deploys() {
         &validator_identity,
         None,
         deploy_storage.clone(),
+        rejected_deploy_buffer.clone(),
         &mut runtime_manager,
         &mut block_store.clone(),
         false,
