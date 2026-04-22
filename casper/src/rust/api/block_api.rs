@@ -45,7 +45,7 @@ use block_storage::rust::dag::block_dag_key_value_storage::KeyValueDagRepresenta
 use crate::rust::ProposeFunction;
 
 use crate::rust::safety_oracle::{
-    CliqueOracleImpl, SafetyOracle, MAX_FAULT_TOLERANCE,
+    CliqueOracleImpl, SafetyOracle,
 };
 use block_storage::rust::dag::block_dag_key_value_storage::DeployId;
 use rspace_plus_plus::rspace::history::Either;
@@ -1462,21 +1462,16 @@ impl BlockAPI {
                 )
             })?;
 
-            // LFB is already finalized; avoid an additional clique-oracle pass in this
-            // read API path and derive fault tolerance directly from finalized status.
-            let weights_map = proto_util::weight_map(&last_finalized_block);
-            let weights_u64: HashMap<Bytes, u64> = weights_map
-                .into_iter()
-                .map(|(k, v)| (k, v as u64))
-                .collect();
-            let initial_fault = casper.normalized_initial_fault(weights_u64)?;
-            let fault_tolerance = MAX_FAULT_TOLERANCE - initial_fault;
-
-            Ok(Self::construct_block_info(
+            // Use the same FT computation path as get_block for consistency.
+            // Reads cached FT from DAG metadata (populated at finalization time,
+            // propagated upward by propagate_ft_to_finalized_blocks).
+            Ok(Self::get_block_info_with_dag(
+                casper.as_ref(),
+                &dag,
                 &last_finalized_block,
-                fault_tolerance,
-                true, // LFB is always finalized
-            ))
+                Self::construct_block_info,
+            )
+            .await?)
         } else {
             tracing::warn!("{}", error_message);
             Err(eyre::eyre!("Error: {}", error_message))
