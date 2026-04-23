@@ -54,6 +54,10 @@ impl WebApiRoutes {
             .route("/blocks/{depth}", get(get_blocks_by_depth_handler))
             .route("/deploy/{deploy_id}", get(find_deploy_handler))
             .route("/is-finalized/{hash}", get(is_finalized_handler))
+            .route(
+                "/deploy-finalization-status/{deploy_sig_hex}",
+                get(deploy_finalization_status_handler),
+            )
             .route("/transactions/{hash}", get(get_transaction_handler))
     }
 }
@@ -236,6 +240,32 @@ pub async fn is_finalized_handler(
 
 #[utoipa::path(
     get,
+    path = "/api/deploy-finalization-status/{deploy_sig_hex}",
+    params(
+        ("deploy_sig_hex" = String, Path, description = "Hex-encoded deploy signature"),
+    ),
+    responses(
+        (
+            status = 200,
+            description = "Canonical-state finalization status for the deploy",
+            body = crate::rust::api::web_api::DeployFinalizationStatusJson
+        ),
+        (status = 400, description = "Bad request or invalid hex")
+    ),
+    tag = "WebAPI"
+)]
+pub async fn deploy_finalization_status_handler(
+    State(app_state): State<AppState>,
+    Path(deploy_sig_hex): Path<String>,
+) -> Response {
+    match app_state.web_api.deploy_finalization_status(deploy_sig_hex).await {
+        Ok(response) => Json(response).into_response(),
+        Err(e) => AppError(e).into_response(),
+    }
+}
+
+#[utoipa::path(
+    get,
     path = "/api/transactions/{hash}",
     params(
         ("hash" = String, Path, description = "Transaction hash"),
@@ -382,6 +412,12 @@ mod tests {
             unimplemented!()
         }
         async fn is_finalized(&self, _: String) -> eyre::Result<bool> {
+            unimplemented!()
+        }
+        async fn deploy_finalization_status(
+            &self,
+            _: String,
+        ) -> eyre::Result<crate::rust::api::web_api::DeployFinalizationStatusJson> {
             unimplemented!()
         }
         async fn get_transaction(&self, _: String) -> eyre::Result<TransactionResponse> {

@@ -158,6 +158,11 @@ pub trait MultiParentCasper: Casper + Send + Sync {
 
     fn block_store(&self) -> &KeyValueBlockStore;
 
+    /// Read-only access to the shard configuration. Used by APIs that need
+    /// shard-scoped parameters such as `deploy_lifespan` to compute deploy
+    /// finalization status.
+    fn casper_shard_conf(&self) -> &CasperShardConf;
+
     fn runtime_manager(&self) -> Arc<tokio::sync::Mutex<RuntimeManager>>;
 
     fn get_validator(&self) -> Option<ValidatorIdentity>;
@@ -547,6 +552,10 @@ pub mod test_helpers {
 
         fn block_store(&self) -> &KeyValueBlockStore {
             &self.block_store
+        }
+
+        fn casper_shard_conf(&self) -> &CasperShardConf {
+            &self.snapshot.on_chain_state.shard_conf
         }
 
         fn runtime_manager(&self) -> Arc<tokio::sync::Mutex<RuntimeManager>> {

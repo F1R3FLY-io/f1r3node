@@ -83,6 +83,26 @@ message IsFinalizedQuery {
   string hash = 1;
 }
 
+message DeployFinalizationStatusQuery {
+  bytes deploySig = 1;
+}
+
+enum DeployFinalizationStateProto {
+  DEPLOY_STATE_UNSPECIFIED = 0;
+  DEPLOY_STATE_FINALIZED   = 1;
+  DEPLOY_STATE_FAILED      = 2;
+  DEPLOY_STATE_PENDING     = 3;
+  DEPLOY_STATE_EXPIRED     = 4;
+}
+
+message DeployFinalizationStatusInfo {
+  DeployFinalizationStateProto state = 1;
+  uint32 rejectionCount              = 2;
+  // Present when the sig has been included in at least one block.
+  // Absent (no field set) when the deploy is unknown to this node.
+  optional bytes latestBlockHash     = 3;
+}
+
 message BondStatusQuery {
   bytes publicKey = 1;
 }

@@ -1414,6 +1414,10 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasper for MultiParentCasperImp
         &self.block_store
     }
 
+    fn casper_shard_conf(&self) -> &crate::rust::casper::CasperShardConf {
+        &self.casper_shard_conf
+    }
+
     fn get_validator(&self) -> Option<ValidatorIdentity> {
         self.validator_id.clone()
     }

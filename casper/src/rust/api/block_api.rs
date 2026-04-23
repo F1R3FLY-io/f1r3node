@@ -1423,6 +1423,240 @@ impl BlockAPI {
         }
     }
 
+    /// Query the finalization status of a deploy by its signature. Clients
+    /// should prefer this over block-hash finalization polling: after the
+    /// merge fix, a block can finalize while some of its deploys' effects
+    /// were dropped during merge — polling by block hash returns a
+    /// misleading `true`. Polling by deploy sig via this API correctly
+    /// reports the effect's canonical-state presence.
+    ///
+    /// The state machine matches the design decision in
+    /// `merge-fix-design-decisions.md` Decision 4.
+    pub async fn deploy_finalization_status(
+        engine_cell: &EngineCell,
+        sig: &[u8],
+    ) -> ApiErr<crate::rust::api::deploy_finalization_status::DeployFinalizationStatus> {
+        use crate::rust::api::deploy_finalization_status::{
+            DeployFinalizationState, DeployFinalizationStatus,
+        };
+
+        let error_message =
+            "Could not compute deploy finalization status, casper instance was not available yet.";
+        let eng = engine_cell.get().await;
+        let Some(casper) = eng.with_casper() else {
+            tracing::warn!("{}", error_message);
+            return Err(eyre::eyre!("Error: {}", error_message));
+        };
+
+        let dag = casper.block_dag().await?;
+        let block_store = casper.block_store();
+        let deploy_lifespan = casper.casper_shard_conf().deploy_lifespan;
+
+        // The deploy index keys are `Vec<u8>` (`DeployId`); comparisons
+        // against `pd.deploy.sig` need `Bytes`. Copy the input slice once
+        // for each representation — slashes and status queries are rare
+        // enough that a single O(sig.len()) allocation for each is
+        // immaterial against the block-walk cost that follows.
+        let sig_vec: Vec<u8> = sig.to_vec();
+        let sig_bytes: Bytes = Bytes::copy_from_slice(sig);
+
+        // Unknown sig → Pending with empty fields.
+        let Some(first_seen_block_hash) = dag
+            .lookup_by_deploy_id(&sig_vec)
+            .map_err(|e| eyre::eyre!("deploy index lookup failed: {}", e))?
+        else {
+            return Ok(DeployFinalizationStatus::pending_unknown());
+        };
+
+        // Fetch the first-seen block to pull valid_after_block_number.
+        // A sig can appear in multiple blocks post-recovery, but each shares
+        // the same DeployData (same content). Any one block suffices. An
+        // IO error here is a real storage failure — propagate it so callers
+        // can distinguish it from a deploy that is legitimately unknown.
+        let first_seen_block = match block_store.get(&first_seen_block_hash) {
+            Ok(Some(b)) => b,
+            Ok(None) => {
+                tracing::warn!(
+                    "deploy_finalization_status: sig {} indexed at block {} but block body absent from store",
+                    hex::encode(&sig_bytes),
+                    PrettyPrinter::build_string_bytes(&first_seen_block_hash)
+                );
+                return Ok(DeployFinalizationStatus::pending_unknown());
+            }
+            Err(e) => {
+                return Err(eyre::eyre!(
+                    "block_store.get failed for first-seen block {}: {}",
+                    PrettyPrinter::build_string_bytes(&first_seen_block_hash),
+                    e
+                ));
+            }
+        };
+        let valid_after_block_number = first_seen_block
+            .body
+            .deploys
+            .iter()
+            .find(|pd| pd.deploy.sig == sig_bytes)
+            .map(|pd| pd.deploy.data.valid_after_block_number)
+            .ok_or_else(|| {
+                eyre::eyre!(
+                    "deploy_finalization_status: sig {} is indexed at block {} \
+                     but missing from that block's body.deploys (inconsistent state)",
+                    hex::encode(&sig_bytes),
+                    PrettyPrinter::build_string_bytes(&first_seen_block_hash),
+                )
+            })?;
+
+        // Walk the finalized chain from LFB backward for deploy_lifespan
+        // blocks. This window is bounded and matches the deploy's window
+        // of validity, so any canonical-state event for the deploy must
+        // be in scope.
+        let lfb_hash = dag.last_finalized_block();
+        let lfb_height = dag.block_number(&lfb_hash).ok_or_else(|| {
+            eyre::eyre!(
+                "deploy_finalization_status: LFB {} has no block_number entry",
+                PrettyPrinter::build_string_bytes(&lfb_hash),
+            )
+        })?;
+        let scan_floor = (lfb_height - deploy_lifespan).max(0);
+        let mut chain_hashes = vec![lfb_hash.clone()];
+        chain_hashes.extend(
+            dag.main_parent_chain(lfb_hash, scan_floor)
+                .map_err(|e| eyre::eyre!("main_parent_chain failed: {}", e))?,
+        );
+
+        // Collect events (highest block_number first, since we walked from LFB).
+        let mut rejection_count: u32 = 0;
+        let mut has_failed_finalized = false;
+        let mut clean_finalized_height: Option<i64> = None;
+        let mut latest_event: Option<(i64, BlockHash)> = None;
+
+        // Track latest rejection height seen. A clean inclusion gets
+        // invalidated if a rejection at a strictly higher height is observed.
+        let mut latest_rejected_finalized_height: Option<i64> = None;
+
+        for candidate_hash in &chain_hashes {
+            let height = match dag.block_number(candidate_hash) {
+                Some(h) => h,
+                None => {
+                    tracing::debug!(
+                        "deploy_finalization_status: no block_number for candidate {} — \
+                         skipping (likely cleanup race or partial DAG)",
+                        PrettyPrinter::build_string_bytes(candidate_hash)
+                    );
+                    continue;
+                }
+            };
+            let candidate_block = match block_store.get(candidate_hash) {
+                Ok(Some(b)) => b,
+                Ok(None) => {
+                    tracing::warn!(
+                        "deploy_finalization_status: canonical-chain block {} absent from store — \
+                         scan may miss deploy events in this block",
+                        PrettyPrinter::build_string_bytes(candidate_hash)
+                    );
+                    continue;
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "deploy_finalization_status: block_store.get failed for {}: {} — \
+                         continuing scan; result may be incomplete",
+                        PrettyPrinter::build_string_bytes(candidate_hash),
+                        e
+                    );
+                    continue;
+                }
+            };
+
+            let mut seen_here = false;
+            for pd in &candidate_block.body.deploys {
+                if pd.deploy.sig == sig_bytes {
+                    seen_here = true;
+                    if pd.is_failed {
+                        has_failed_finalized = true;
+                    } else if clean_finalized_height.map(|h| height > h).unwrap_or(true) {
+                        clean_finalized_height = Some(height);
+                    }
+                    break;
+                }
+            }
+            for rd in &candidate_block.body.rejected_deploys {
+                if rd.sig == sig_bytes {
+                    seen_here = true;
+                    rejection_count = rejection_count.saturating_add(1);
+                    if latest_rejected_finalized_height
+                        .map(|h| height > h)
+                        .unwrap_or(true)
+                    {
+                        latest_rejected_finalized_height = Some(height);
+                    }
+                    break;
+                }
+            }
+            if seen_here {
+                if latest_event
+                    .as_ref()
+                    .map(|(h, _)| height > *h)
+                    .unwrap_or(true)
+                {
+                    latest_event = Some((height, candidate_hash.clone()));
+                }
+            }
+        }
+
+        // Rejection after a clean inclusion invalidates that inclusion:
+        // the rejected-deploy recovery mechanism means the deploy may
+        // still land in a later block. Report `Pending` so the client
+        // keeps polling.
+        if let (Some(clean_h), Some(reject_h)) =
+            (clean_finalized_height, latest_rejected_finalized_height)
+        {
+            if reject_h > clean_h {
+                clean_finalized_height = None;
+            }
+        }
+
+        // Also account for latest_block_hash via the first-seen lookup —
+        // covers the case where the sig lives only in a non-finalized
+        // block (outside the finalized scan). If the first-seen block
+        // somehow has no height entry, skip this fallback rather than
+        // record a block_number=0 which would mis-sort against real
+        // canonical events.
+        if latest_event.is_none() {
+            if let Some(first_seen_height) = dag.block_number(&first_seen_block_hash) {
+                latest_event = Some((first_seen_height, first_seen_block_hash.clone()));
+            } else {
+                tracing::debug!(
+                    "deploy_finalization_status: first-seen block {} has no block_number — \
+                     leaving latest_block_hash empty rather than record with bogus height",
+                    PrettyPrinter::build_string_bytes(&first_seen_block_hash)
+                );
+            }
+        }
+
+        // Expiry rule: tip height strictly past valid_after + deployLifespan
+        // AND no clean finalized inclusion. Use the DAG's overall latest
+        // block number (may be higher than LFB height) as tip.
+        let tip_height = dag.latest_block_number();
+        let expired = tip_height > valid_after_block_number + deploy_lifespan
+            && clean_finalized_height.is_none();
+
+        let state = if has_failed_finalized {
+            DeployFinalizationState::Failed
+        } else if clean_finalized_height.is_some() {
+            DeployFinalizationState::Finalized
+        } else if expired {
+            DeployFinalizationState::Expired
+        } else {
+            DeployFinalizationState::Pending
+        };
+
+        Ok(DeployFinalizationStatus {
+            state,
+            rejection_count,
+            latest_block_hash: latest_event.map(|(_, h)| h),
+        })
+    }
+
     pub async fn bond_status(engine_cell: &EngineCell, public_key: &ByteString) -> ApiErr<bool> {
         let error_message =
             "Could not check if validator is bonded, casper instance was not available yet.";
