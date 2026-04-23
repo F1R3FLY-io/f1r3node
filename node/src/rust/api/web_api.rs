@@ -3,12 +3,13 @@
 use crate::rust::api::serde_types::block_info::BlockInfoSerde;
 use crate::rust::api::serde_types::deploy_info::TransferInfoSerde;
 use crate::rust::api::serde_types::light_block_info::LightBlockInfoSerde;
-use crate::rust::web::block_info_enricher::BlockEnricher;
-use crate::rust::web::transaction::{CacheTransactionAPI, TransactionAPI, TransactionResponse};
+use crate::rust::web::block_info_enricher::extract_transfers_from_report;
+use casper::rust::api::block_report_api::BlockReportAPI;
 use crate::rust::web::version_info::get_version_info_str;
 use casper::rust::api::block_api::{BlockAPI, DeployNotFoundError};
 use casper::rust::engine::engine_cell::EngineCell;
 use casper::rust::ProposeFunction;
+use std::sync::atomic::{AtomicBool, Ordering};
 use comm::rust::discovery::node_discovery::NodeDiscovery;
 use comm::rust::rp::connect::ConnectionsCell;
 #[cfg(feature = "schnorr_secp256k1_experimental")]
@@ -20,10 +21,9 @@ use crypto::rust::{
 };
 use eyre::{eyre, Result};
 use hex;
-use models::casper::{DataWithBlockInfo, LightBlockInfo};
+use models::casper::LightBlockInfo;
 use models::rust::casper::protocol::casper_message::DeployData;
 use serde::{Deserialize, Serialize};
-use shared::rust::store::key_value_typed_store::KeyValueTypedStore;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -54,12 +54,6 @@ pub trait WebApi {
     /// Deploy a contract
     async fn deploy(&self, request: DeployRequest) -> Result<String>;
 
-    /// Listen for data at a name
-    async fn listen_for_data_at_name(
-        &self,
-        request: DataAtNameRequest,
-    ) -> Result<DataAtNameResponse>;
-
     /// Get data at a par (parallel expression)
     async fn get_data_at_par(
         &self,
@@ -67,22 +61,16 @@ pub trait WebApi {
     ) -> Result<RhoDataResponse>;
 
     /// Get the last finalized block
-    async fn last_finalized_block(&self) -> Result<BlockInfoSerde>;
+    async fn last_finalized_block(&self, view: ViewMode) -> Result<BlockInfoSerde>;
 
     /// Get a specific block by hash
-    async fn get_block(&self, hash: String) -> Result<BlockInfoSerde>;
+    async fn get_block(&self, hash: String, view: ViewMode) -> Result<BlockInfoSerde>;
 
     /// Get blocks with specified depth
-    async fn get_blocks(&self, depth: i32) -> Result<Vec<LightBlockInfoSerde>>;
+    async fn get_blocks(&self, depth: i32, view: ViewMode) -> Result<Vec<BlockInfoSerde>>;
 
-    /// Find a deploy by ID
-    async fn find_deploy(&self, deploy_id: String) -> Result<LightBlockInfoSerde>;
-
-    /// Find a deploy by ID, returning deploy execution details with block context
-    async fn find_deploy_detail(&self, deploy_id: String) -> Result<DeployDetailResponse>;
-
-    /// Find a deploy by ID, returning minimal response
-    async fn find_deploy_minimal(&self, deploy_id: String) -> Result<DeployLookupResponse>;
+    /// Find a deploy by ID with the specified view.
+    async fn find_deploy(&self, deploy_id: String, view: ViewMode) -> Result<DeployResponse>;
 
     /// Perform exploratory deploy
     async fn exploratory_deploy(
@@ -97,7 +85,8 @@ pub trait WebApi {
         &self,
         start_block_number: i64,
         end_block_number: i64,
-    ) -> Result<Vec<LightBlockInfoSerde>>;
+        view: ViewMode,
+    ) -> Result<Vec<BlockInfoSerde>>;
 
     /// Check if a block is finalized
     async fn is_finalized(&self, hash: String) -> Result<bool>;
@@ -108,8 +97,33 @@ pub trait WebApi {
         deploy_sig_hex: String,
     ) -> Result<DeployFinalizationStatusJson>;
 
-    /// Get transaction by hash
-    async fn get_transaction(&self, hash: String) -> Result<TransactionResponse>;
+    /// Get balance for an address via exploratory deploy against SystemVault.
+    /// Queries against `block_hash` if provided, otherwise LFB.
+    async fn get_balance(&self, address: String, block_hash: Option<String>) -> Result<BalanceResponse>;
+
+    /// Look up a registry URI via exploratory deploy.
+    /// Queries against `block_hash` if provided, otherwise LFB.
+    async fn get_registry(&self, uri: String, block_hash: Option<String>) -> Result<RegistryResponse>;
+
+    /// Get active validator set via exploratory deploy against PoS contract.
+    /// Queries against `block_hash` if provided, otherwise LFB.
+    async fn get_validators(&self, block_hash: Option<String>) -> Result<ValidatorsResponse>;
+
+    /// Get epoch info via exploratory deploy against PoS contract.
+    /// Queries against `block_hash` if provided, otherwise LFB.
+    async fn get_epoch(&self, block_hash: Option<String>) -> Result<EpochResponse>;
+
+    /// Estimate phlogiston cost of Rholang code via exploratory deploy
+    async fn estimate_cost(&self, term: String, block_hash: Option<String>) -> Result<EstimateCostResponse>;
+
+    /// Get current epoch rewards from PoS contract
+    async fn get_epoch_rewards(&self, block_hash: Option<String>) -> Result<EpochRewardsResponse>;
+
+    /// Get status of a specific validator (bond, active/quarantined)
+    async fn get_validator(&self, pubkey: String, block_hash: Option<String>) -> Result<ValidatorStatusResponse>;
+
+    /// Check if a public key is bonded
+    async fn get_bond_status(&self, pubkey: String) -> Result<BondStatusResponse>;
 }
 
 /// JSON-serializable view of a deploy-finalization-status response.
@@ -136,11 +150,7 @@ fn deploy_state_json_label(
 }
 
 /// Web API implementation
-pub struct WebApiImpl<TA, TS>
-where
-    TA: TransactionAPI + Send + Sync + 'static,
-    TS: KeyValueTypedStore<String, TransactionResponse> + Send + Sync + 'static,
-{
+pub struct WebApiImpl {
     api_max_blocks_limit: i32,
     dev_mode: bool,
     network_id: String,
@@ -151,19 +161,18 @@ where
     native_token_decimals: u32,
     is_node_read_only: bool,
     engine_cell: Arc<EngineCell>,
-    block_enricher: Arc<dyn BlockEnricher>,
-    cache_transaction_api: CacheTransactionAPI<TA, TS>,
+    block_report_api: BlockReportAPI,
+    transfer_unforgeable: models::rhoapi::Par,
     rp_conf_cell: comm::rust::rp::rp_conf::RPConfCell,
     connections_cell: ConnectionsCell,
     node_discovery: Arc<dyn NodeDiscovery + Send + Sync>,
     trigger_propose_f: Option<Arc<ProposeFunction>>,
+    epoch_length: i32,
+    quarantine_length: i32,
+    is_ready: Arc<AtomicBool>,
 }
 
-impl<TA, TS> WebApiImpl<TA, TS>
-where
-    TA: TransactionAPI + Send + Sync + 'static,
-    TS: KeyValueTypedStore<String, TransactionResponse> + Send + Sync + 'static,
-{
+impl WebApiImpl {
     pub fn new(
         api_max_blocks_limit: i32,
         dev_mode: bool,
@@ -174,13 +183,16 @@ where
         native_token_symbol: String,
         native_token_decimals: u32,
         is_node_read_only: bool,
-        block_enricher: Arc<dyn BlockEnricher>,
-        cache_transaction_api: CacheTransactionAPI<TA, TS>,
+        block_report_api: BlockReportAPI,
+        transfer_unforgeable: models::rhoapi::Par,
         engine_cell: Arc<EngineCell>,
         rp_conf_cell: comm::rust::rp::rp_conf::RPConfCell,
         connections_cell: ConnectionsCell,
         node_discovery: Arc<dyn NodeDiscovery + Send + Sync>,
         trigger_propose_f: Option<Arc<ProposeFunction>>,
+        epoch_length: i32,
+        quarantine_length: i32,
+        is_ready: Arc<AtomicBool>,
     ) -> Self {
         Self {
             api_max_blocks_limit,
@@ -193,22 +205,85 @@ where
             native_token_decimals,
             is_node_read_only,
             engine_cell,
-            block_enricher,
-            cache_transaction_api,
+            block_report_api,
+            transfer_unforgeable,
             rp_conf_cell,
             connections_cell,
             node_discovery,
             trigger_propose_f,
+            epoch_length,
+            quarantine_length,
+            is_ready,
+        }
+    }
+    /// Resolve a block hash to query against. If provided, use it; otherwise use LFB.
+    /// Returns (block_hash, block_number).
+    async fn resolve_block(&self, block_hash: Option<String>) -> Result<(String, i64)> {
+        match block_hash {
+            Some(hash) => {
+                let block = BlockAPI::get_block(&self.engine_cell, &hash).await?;
+                let bi = block.block_info.as_ref()
+                    .ok_or_else(|| eyre!("Block {} returned without block_info", hash))?;
+                Ok((hash, bi.block_number))
+            }
+            None => {
+                let lfb = BlockAPI::last_finalized_block(&self.engine_cell).await?;
+                let bi = lfb.block_info.as_ref()
+                    .ok_or_else(|| eyre!("Last finalized block returned without block_info"))?;
+                Ok((bi.block_hash.clone(), bi.block_number))
+            }
+        }
+    }
+
+    /// Enrich a BlockInfoSerde with transfer data from BlockReportAPI.
+    /// On success: each deploy gets `Some(transfers)`.
+    /// On failure (validator node): each deploy gets `None` (field omitted).
+    async fn enrich_transfers(
+        &self,
+        serde: &mut BlockInfoSerde,
+        block_hash_hex: String,
+    ) {
+        let deploys = match serde.deploys.as_mut() {
+            Some(deploys) => deploys,
+            None => return,
+        };
+
+        let block_hash_bytes: prost::bytes::Bytes = match hex::decode(&block_hash_hex) {
+            Ok(bytes) => bytes.into(),
+            Err(_) => {
+                for deploy in deploys {
+                    deploy.transfers = None;
+                }
+                return;
+            }
+        };
+        match self.block_report_api.block_report(block_hash_bytes, false).await {
+            Ok(report) => {
+                let transfers_by_deploy =
+                    extract_transfers_from_report(&report, &self.transfer_unforgeable);
+                for deploy in deploys {
+                    deploy.transfers = Some(
+                        transfers_by_deploy
+                            .get(&deploy.sig)
+                            .cloned()
+                            .unwrap_or_default()
+                            .into_iter()
+                            .map(TransferInfoSerde::from)
+                            .collect(),
+                    );
+                }
+            }
+            Err(_) => {
+                for deploy in deploys {
+                    deploy.transfers = None;
+                }
+            }
         }
     }
 }
 
 #[async_trait::async_trait]
-impl<TA, TS> WebApi for WebApiImpl<TA, TS>
-where
-    TA: TransactionAPI + Send + Sync + 'static,
-    TS: KeyValueTypedStore<String, TransactionResponse> + Send + Sync + 'static,
-{
+impl WebApi for WebApiImpl {
     async fn status(&self) -> Result<ApiStatus> {
         const STATUS_SLOW_THRESHOLD: Duration = Duration::from_millis(500);
         let total_start = Instant::now();
@@ -259,6 +334,23 @@ where
             );
         }
 
+        let lfb_number = match BlockAPI::last_finalized_block(&self.engine_cell).await {
+            Ok(block_info) => block_info
+                .block_info
+                .as_ref()
+                .map(|bi| bi.block_number)
+                .unwrap_or(-1),
+            Err(_) => -1,
+        };
+
+        let is_validator = self.trigger_propose_f.is_some();
+        let is_ready = self.is_ready.load(Ordering::Relaxed);
+        let current_epoch = if self.epoch_length > 0 && lfb_number >= 0 {
+            lfb_number / self.epoch_length as i64
+        } else {
+            0
+        };
+
         Ok(ApiStatus {
             version: VersionInfo {
                 api: "1".to_string(),
@@ -274,6 +366,12 @@ where
             native_token_name: self.native_token_name.clone(),
             native_token_symbol: self.native_token_symbol.clone(),
             native_token_decimals: self.native_token_decimals,
+            last_finalized_block_number: lfb_number,
+            is_validator,
+            is_read_only: self.is_node_read_only,
+            is_ready,
+            current_epoch,
+            epoch_length: self.epoch_length,
         })
     }
 
@@ -312,28 +410,13 @@ where
         .await
     }
 
-    async fn listen_for_data_at_name(
-        &self,
-        request: DataAtNameRequest,
-    ) -> Result<DataAtNameResponse> {
-        let res = BlockAPI::get_listening_name_data_response(
-            &self.engine_cell,
-            request.depth,
-            to_par(request.name),
-            self.api_max_blocks_limit,
-        )
-        .await?;
-
-        Ok(to_data_at_name_response(res))
-    }
-
     async fn get_data_at_par(
         &self,
         request: DataAtNameByBlockHashRequest,
     ) -> Result<RhoDataResponse> {
         let (pars, block) = BlockAPI::get_data_at_par(
             &self.engine_cell,
-            &to_par(request.name),
+            &to_par(request.name)?,
             request.block_hash,
             request.use_pre_state_hash,
         )
@@ -342,98 +425,115 @@ where
         Ok(to_rho_data_response(pars, block, 0))
     }
 
-    async fn last_finalized_block(&self) -> Result<BlockInfoSerde> {
+    async fn last_finalized_block(&self, view: ViewMode) -> Result<BlockInfoSerde> {
         let block_info = BlockAPI::last_finalized_block(&self.engine_cell).await?;
-        let enriched = self.block_enricher.enrich(block_info).await;
-        Ok(BlockInfoSerde::from(enriched))
+        let mut serde = BlockInfoSerde::from(block_info);
+        if view == ViewMode::Full {
+            let block_hash = serde.block_info.block_hash.clone();
+            self.enrich_transfers(&mut serde, block_hash).await;
+        } else {
+            serde.deploys = None;
+        }
+        Ok(serde)
     }
 
-    async fn get_block(&self, hash: String) -> Result<BlockInfoSerde> {
+    async fn get_block(&self, hash: String, view: ViewMode) -> Result<BlockInfoSerde> {
         let block_info = BlockAPI::get_block(&self.engine_cell, &hash).await?;
-        let enriched = self.block_enricher.enrich(block_info).await;
-        Ok(BlockInfoSerde::from(enriched))
+        let mut serde = BlockInfoSerde::from(block_info);
+        if view == ViewMode::Full {
+            let block_hash = serde.block_info.block_hash.clone();
+            self.enrich_transfers(&mut serde, block_hash).await;
+        } else {
+            serde.deploys = None;
+        }
+        Ok(serde)
     }
 
-    async fn get_blocks(&self, depth: i32) -> Result<Vec<LightBlockInfoSerde>> {
-        let blocks =
-            BlockAPI::get_blocks(&self.engine_cell, depth, self.api_max_blocks_limit).await?;
-
-        Ok(blocks
-            .into_iter()
-            .map(|block| LightBlockInfoSerde::from(block))
-            .collect())
+    async fn get_blocks(&self, depth: i32, view: ViewMode) -> Result<Vec<BlockInfoSerde>> {
+        if view == ViewMode::Full {
+            let blocks =
+                BlockAPI::get_blocks_full(&self.engine_cell, depth, self.api_max_blocks_limit)
+                    .await?;
+            Ok(blocks.into_iter().map(BlockInfoSerde::from).collect())
+        } else {
+            let blocks =
+                BlockAPI::get_blocks(&self.engine_cell, depth, self.api_max_blocks_limit).await?;
+            Ok(blocks
+                .into_iter()
+                .map(|block| BlockInfoSerde::from_light(LightBlockInfoSerde::from(block)))
+                .collect())
+        }
     }
 
-    async fn find_deploy(&self, deploy_id: String) -> Result<LightBlockInfoSerde> {
+    async fn find_deploy(&self, deploy_id: String, view: ViewMode) -> Result<DeployResponse> {
         let deploy_id_bytes =
             hex::decode(&deploy_id).map_err(|e| eyre!("Invalid deploy ID format: {}", e))?;
 
         let retry_interval_ms = find_deploy_retry_interval_ms();
         let max_attempts = find_deploy_max_attempts();
 
-        let mut attempt: u16 = 1;
-        loop {
-            match BlockAPI::find_deploy(&self.engine_cell, &deploy_id_bytes).await {
-                Ok(block) => return Ok(LightBlockInfoSerde::from(block)),
-                Err(err) => {
-                    let not_found = err.downcast_ref::<DeployNotFoundError>().is_some();
+        // Retry loop: deploy may not be visible in DAG immediately after submission
+        let light_block: LightBlockInfoSerde = {
+            let mut attempt: u16 = 1;
+            loop {
+                match BlockAPI::find_deploy(&self.engine_cell, &deploy_id_bytes).await {
+                    Ok(block) => break LightBlockInfoSerde::from(block),
+                    Err(err) => {
+                        let not_found = err.downcast_ref::<DeployNotFoundError>().is_some();
 
-                    if !not_found || attempt >= max_attempts {
-                        return Err(err);
+                        if !not_found || attempt >= max_attempts {
+                            return Err(err);
+                        }
+
+                        tracing::debug!(
+                            ?attempt,
+                            ?max_attempts,
+                            ?retry_interval_ms,
+                            ?deploy_id,
+                            "Waiting for deploy to become visible in block DAG"
+                        );
+                        sleep(Duration::from_millis(retry_interval_ms)).await;
+                        attempt += 1;
                     }
-
-                    tracing::debug!(
-                        ?attempt,
-                        ?max_attempts,
-                        ?retry_interval_ms,
-                        ?deploy_id,
-                        "Waiting for deploy to become visible in block DAG"
-                    );
-                    sleep(Duration::from_millis(retry_interval_ms)).await;
-                    attempt += 1;
                 }
             }
-        }
-    }
+        };
 
-    async fn find_deploy_detail(&self, deploy_id: String) -> Result<DeployDetailResponse> {
-        let light_block = self.find_deploy(deploy_id.clone()).await?;
-        let block_info = self.get_block(light_block.block_hash.clone()).await?;
+        // Always fetch full block to get deploy execution details
+        let block_info = self.get_block(light_block.block_hash.clone(), ViewMode::Full).await?;
 
-        let matching_deploy = block_info
-            .deploys
+        let deploys = block_info.deploys.as_ref().ok_or_else(|| eyre!(
+            "Block {} returned without deploys",
+            light_block.block_hash
+        ))?;
+
+        let deploy = deploys
             .iter()
             .find(|d| d.sig == deploy_id)
-            .cloned();
-
-        match matching_deploy {
-            Some(deploy) => Ok(DeployDetailResponse {
-                block_hash: light_block.block_hash,
-                block_number: light_block.block_number,
-                timestamp: light_block.timestamp,
-                deployer: deploy.deployer,
-                term: deploy.term,
-                cost: deploy.cost,
-                errored: deploy.errored,
-                system_deploy_error: deploy.system_deploy_error,
-                phlo_price: deploy.phlo_price,
-                phlo_limit: deploy.phlo_limit,
-                sig: deploy.sig,
-                sig_algorithm: deploy.sig_algorithm,
-                valid_after_block_number: deploy.valid_after_block_number,
-                transfers: deploy.transfers,
-            }),
-            None => Err(eyre!(
+            .ok_or_else(|| eyre!(
                 "Deploy {} found in block {} but not in deploy list",
-                deploy_id,
-                light_block.block_hash
-            )),
-        }
-    }
+                deploy_id, light_block.block_hash
+            ))?;
 
-    async fn find_deploy_minimal(&self, deploy_id: String) -> Result<DeployLookupResponse> {
-        let full = self.find_deploy(deploy_id).await?;
-        Ok(DeployLookupResponse::from(full))
+        let is_full = view == ViewMode::Full;
+
+        Ok(DeployResponse {
+            deploy_id,
+            block_hash: light_block.block_hash,
+            block_number: light_block.block_number,
+            timestamp: light_block.timestamp,
+            cost: deploy.cost,
+            errored: deploy.errored,
+            is_finalized: light_block.is_finalized,
+            deployer: if is_full { Some(deploy.deployer.clone()) } else { None },
+            term: if is_full { Some(deploy.term.clone()) } else { None },
+            system_deploy_error: if is_full { Some(deploy.system_deploy_error.clone()) } else { None },
+            phlo_price: if is_full { Some(deploy.phlo_price) } else { None },
+            phlo_limit: if is_full { Some(deploy.phlo_limit) } else { None },
+            sig_algorithm: if is_full { Some(deploy.sig_algorithm.clone()) } else { None },
+            valid_after_block_number: if is_full { Some(deploy.valid_after_block_number) } else { None },
+            transfers: if is_full { deploy.transfers.clone() } else { None },
+        })
     }
 
     async fn exploratory_deploy(
@@ -458,19 +558,30 @@ where
         &self,
         start_block_number: i64,
         end_block_number: i64,
-    ) -> Result<Vec<LightBlockInfoSerde>> {
-        let blocks = BlockAPI::get_blocks_by_heights(
-            &self.engine_cell,
-            start_block_number,
-            end_block_number,
-            self.api_max_blocks_limit,
-        )
-        .await?;
-
-        Ok(blocks
-            .into_iter()
-            .map(|block| LightBlockInfoSerde::from(block))
-            .collect())
+        view: ViewMode,
+    ) -> Result<Vec<BlockInfoSerde>> {
+        if view == ViewMode::Full {
+            let blocks = BlockAPI::get_blocks_by_heights_full(
+                &self.engine_cell,
+                start_block_number,
+                end_block_number,
+                self.api_max_blocks_limit,
+            )
+            .await?;
+            Ok(blocks.into_iter().map(BlockInfoSerde::from).collect())
+        } else {
+            let blocks = BlockAPI::get_blocks_by_heights(
+                &self.engine_cell,
+                start_block_number,
+                end_block_number,
+                self.api_max_blocks_limit,
+            )
+            .await?;
+            Ok(blocks
+                .into_iter()
+                .map(|block| BlockInfoSerde::from_light(LightBlockInfoSerde::from(block)))
+                .collect())
+        }
     }
 
     async fn is_finalized(&self, hash: String) -> Result<bool> {
@@ -491,8 +602,266 @@ where
         })
     }
 
-    async fn get_transaction(&self, hash: String) -> Result<TransactionResponse> {
-        self.cache_transaction_api.get_transaction(hash).await
+    async fn get_balance(&self, address: String, block_hash: Option<String>) -> Result<BalanceResponse> {
+        let term = format!(
+            r#"new return, rl(`rho:registry:lookup`), systemVaultCh, vaultCh, balanceCh in {{
+  rl!(`rho:vault:system`, *systemVaultCh) |
+  for (@(_, SystemVault) <- systemVaultCh) {{
+    @SystemVault!("findOrCreate", "{address}", *vaultCh) |
+    for (@either <- vaultCh) {{
+      match either {{
+        (true, vault) => {{
+          @vault!("balance", *balanceCh) |
+          for (@balance <- balanceCh) {{
+            return!(balance)
+          }}
+        }}
+        (false, errorMsg) => {{
+          return!(errorMsg)
+        }}
+      }}
+    }}
+  }}
+}}"#
+        );
+
+        let (resolved_hash, block_number) = self.resolve_block(block_hash).await?;
+
+        let (pars, _block, _cost) = BlockAPI::exploratory_deploy(
+            &self.engine_cell,
+            term,
+            Some(resolved_hash.clone()),
+            false,
+            self.dev_mode,
+        )
+        .await?;
+
+        let exprs: Vec<RhoExpr> = pars.into_iter().filter_map(expr_from_par_proto).collect();
+        let balance = match exprs.first() {
+            Some(RhoExpr::ExprInt { data }) => *data,
+            _ => return Err(eyre!("Unexpected balance result for address {}", address)),
+        };
+
+        Ok(BalanceResponse {
+            address,
+            balance,
+            block_number,
+            block_hash: resolved_hash,
+        })
+    }
+
+    async fn get_registry(&self, uri: String, block_hash: Option<String>) -> Result<RegistryResponse> {
+        let term = format!(
+            r#"new return, rl(`rho:registry:lookup`), ch in {{
+  rl!(`{uri}`, *ch) |
+  for (@val <- ch) {{
+    match val {{
+      (true, data) => {{ return!(data) }}
+      (false, _)   => {{ return!("not found") }}
+    }}
+  }}
+}}"#
+        );
+
+        let (resolved_hash, block_number) = self.resolve_block(block_hash).await?;
+
+        let (pars, _block, _cost) = BlockAPI::exploratory_deploy(
+            &self.engine_cell,
+            term,
+            Some(resolved_hash.clone()),
+            false,
+            self.dev_mode,
+        )
+        .await?;
+
+        let data: Vec<RhoExpr> = pars.into_iter().filter_map(expr_from_par_proto).collect();
+
+        Ok(RegistryResponse {
+            uri,
+            data,
+            block_number,
+            block_hash: resolved_hash,
+        })
+    }
+
+    async fn get_validators(&self, block_hash: Option<String>) -> Result<ValidatorsResponse> {
+        let term = r#"new return, rl(`rho:registry:lookup`), poSCh in {
+  rl!(`rho:system:pos`, *poSCh) |
+  for(@(_, PoS) <- poSCh) {
+    @PoS!("getBonds", *return)
+  }
+}"#
+        .to_string();
+
+        let (resolved_hash, block_number) = self.resolve_block(block_hash).await?;
+
+        let (pars, _block, _cost) = BlockAPI::exploratory_deploy(
+            &self.engine_cell,
+            term,
+            Some(resolved_hash.clone()),
+            false,
+            self.dev_mode,
+        )
+        .await?;
+
+        let exprs: Vec<RhoExpr> = pars.into_iter().filter_map(expr_from_par_proto).collect();
+
+        let mut validators = Vec::new();
+        let mut total_stake: i64 = 0;
+
+        // getBonds returns a Rholang map: {pubkey: stake, ...}
+        // ExprMap keys are already String (extracted by extract_key_from_expr)
+        if let Some(RhoExpr::ExprMap { data }) = exprs.first() {
+            for (public_key, value) in data {
+                let stake = match value {
+                    RhoExpr::ExprInt { data } => *data,
+                    other => return Err(eyre!(
+                        "Unexpected stake type for validator {}: {:?}",
+                        public_key, other
+                    )),
+                };
+                total_stake += stake;
+                validators.push(ValidatorInfo {
+                    public_key: public_key.clone(),
+                    stake,
+                });
+            }
+        }
+
+        Ok(ValidatorsResponse {
+            validators,
+            total_stake,
+            block_number,
+            block_hash: resolved_hash,
+        })
+    }
+
+    async fn get_epoch(&self, block_hash: Option<String>) -> Result<EpochResponse> {
+        let (resolved_hash, block_number) = self.resolve_block(block_hash).await?;
+
+        let epoch_length = self.epoch_length as i64;
+        let quarantine_length = self.quarantine_length as i64;
+
+        let current_epoch = if epoch_length > 0 { block_number / epoch_length } else { 0 };
+        let blocks_until_next_epoch = if epoch_length > 0 {
+            epoch_length - (block_number % epoch_length)
+        } else {
+            0
+        };
+
+        Ok(EpochResponse {
+            current_epoch,
+            epoch_length,
+            quarantine_length,
+            blocks_until_next_epoch,
+            last_finalized_block_number: block_number,
+            block_hash: resolved_hash,
+        })
+    }
+
+    async fn estimate_cost(&self, term: String, block_hash: Option<String>) -> Result<EstimateCostResponse> {
+        let (resolved_hash, block_number) = self.resolve_block(block_hash).await?;
+
+        let (_pars, _block, cost) = BlockAPI::exploratory_deploy(
+            &self.engine_cell,
+            term,
+            Some(resolved_hash.clone()),
+            false,
+            self.dev_mode,
+        )
+        .await?;
+
+        Ok(EstimateCostResponse {
+            cost,
+            block_number,
+            block_hash: resolved_hash,
+        })
+    }
+
+    async fn get_epoch_rewards(&self, block_hash: Option<String>) -> Result<EpochRewardsResponse> {
+        let term = r#"new return, rl(`rho:registry:lookup`), poSCh in {
+  rl!(`rho:system:pos`, *poSCh) |
+  for(@(_, PoS) <- poSCh) {
+    @PoS!("getCurrentEpochRewards", *return)
+  }
+}"#
+        .to_string();
+
+        let (resolved_hash, block_number) = self.resolve_block(block_hash).await?;
+
+        let (pars, _block, _cost) = BlockAPI::exploratory_deploy(
+            &self.engine_cell,
+            term,
+            Some(resolved_hash.clone()),
+            false,
+            self.dev_mode,
+        )
+        .await?;
+
+        let exprs: Vec<RhoExpr> = pars.into_iter().filter_map(expr_from_par_proto).collect();
+        let rewards = exprs.into_iter().next()
+            .ok_or_else(|| eyre!("No result from getCurrentEpochRewards"))?;
+
+        Ok(EpochRewardsResponse {
+            rewards,
+            block_number,
+            block_hash: resolved_hash,
+        })
+    }
+
+    async fn get_validator(&self, pubkey: String, block_hash: Option<String>) -> Result<ValidatorStatusResponse> {
+        let term = r#"new return, rl(`rho:registry:lookup`), poSCh in {
+  rl!(`rho:system:pos`, *poSCh) |
+  for(@(_, PoS) <- poSCh) {
+    @PoS!("getBonds", *return)
+  }
+}"#
+        .to_string();
+
+        let (resolved_hash, block_number) = self.resolve_block(block_hash).await?;
+
+        let (pars, _block, _cost) = BlockAPI::exploratory_deploy(
+            &self.engine_cell,
+            term,
+            Some(resolved_hash.clone()),
+            false,
+            self.dev_mode,
+        )
+        .await?;
+
+        let exprs: Vec<RhoExpr> = pars.into_iter().filter_map(expr_from_par_proto).collect();
+
+        let mut is_bonded = false;
+        let mut stake = None;
+
+        if let Some(RhoExpr::ExprMap { data }) = exprs.first() {
+            if let Some(value) = data.get(&pubkey) {
+                is_bonded = true;
+                if let RhoExpr::ExprInt { data } = value {
+                    stake = Some(*data);
+                }
+            }
+        }
+
+        Ok(ValidatorStatusResponse {
+            public_key: pubkey,
+            is_bonded,
+            stake,
+            block_number,
+            block_hash: resolved_hash,
+        })
+    }
+
+    async fn get_bond_status(&self, pubkey: String) -> Result<BondStatusResponse> {
+        let pubkey_bytes = hex::decode(&pubkey)
+            .map_err(|e| eyre!("Invalid public key hex: {}", e))?;
+
+        let is_bonded = BlockAPI::bond_status(&self.engine_cell, &pubkey_bytes).await?;
+
+        Ok(BondStatusResponse {
+            public_key: pubkey,
+            is_bonded,
+        })
     }
 }
 
@@ -500,43 +869,74 @@ where
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[schema(no_recursion)]
 pub enum RhoExpr {
-    /// Nested expressions (Par, Tuple, List and Set are converted to JSON list)
-    ExprPar {
-        data: Vec<RhoExpr>,
-    },
-    ExprTuple {
-        data: Vec<RhoExpr>,
-    },
-    ExprList {
-        data: Vec<RhoExpr>,
-    },
-    ExprSet {
-        data: Vec<RhoExpr>,
-    },
-    ExprMap {
-        data: HashMap<String, RhoExpr>,
-    },
+    // === Collections ===
+    ExprPar { data: Vec<RhoExpr> },
+    ExprTuple { data: Vec<RhoExpr> },
+    ExprList { data: Vec<RhoExpr> },
+    ExprSet { data: Vec<RhoExpr> },
+    ExprMap { data: HashMap<String, RhoExpr> },
 
-    /// Terminal expressions (here is the data)
-    ExprBool {
-        data: bool,
-    },
-    ExprInt {
-        data: i64,
-    },
-    ExprString {
-        data: String,
-    },
-    ExprUri {
-        data: String,
-    },
-    /// Binary data is encoded as base16 string
-    ExprBytes {
-        data: String,
-    },
-    ExprUnforg {
-        data: RhoUnforg,
-    },
+    // === Primitives ===
+    ExprBool { data: bool },
+    ExprInt { data: i64 },
+    ExprString { data: String },
+    ExprUri { data: String },
+    ExprBytes { data: String },
+
+    // === Extended numerics ===
+    ExprFloat { data: f64 },
+    ExprBigInt { data: String },
+    ExprBigRat { numerator: String, denominator: String },
+    ExprFixedPoint { value: String, scale: u32 },
+
+    // === Unforgeable names ===
+    ExprUnforg { data: RhoUnforg },
+
+    // === Bundle (with permissions) ===
+    ExprBundle { data: Box<RhoExpr>, read: bool, write: bool },
+
+    // === Unary operators ===
+    ExprNot { data: Box<RhoExpr> },
+    ExprNeg { data: Box<RhoExpr> },
+
+    // === Binary arithmetic ===
+    ExprPlus { left: Box<RhoExpr>, right: Box<RhoExpr> },
+    ExprMinus { left: Box<RhoExpr>, right: Box<RhoExpr> },
+    ExprMult { left: Box<RhoExpr>, right: Box<RhoExpr> },
+    ExprDiv { left: Box<RhoExpr>, right: Box<RhoExpr> },
+    ExprMod { left: Box<RhoExpr>, right: Box<RhoExpr> },
+
+    // === Comparison ===
+    ExprLt { left: Box<RhoExpr>, right: Box<RhoExpr> },
+    ExprLte { left: Box<RhoExpr>, right: Box<RhoExpr> },
+    ExprGt { left: Box<RhoExpr>, right: Box<RhoExpr> },
+    ExprGte { left: Box<RhoExpr>, right: Box<RhoExpr> },
+    ExprEq { left: Box<RhoExpr>, right: Box<RhoExpr> },
+    ExprNeq { left: Box<RhoExpr>, right: Box<RhoExpr> },
+
+    // === Logical ===
+    ExprAnd { left: Box<RhoExpr>, right: Box<RhoExpr> },
+    ExprOr { left: Box<RhoExpr>, right: Box<RhoExpr> },
+
+    // === String operations ===
+    ExprConcat { left: Box<RhoExpr>, right: Box<RhoExpr> },
+    ExprInterpolate { left: Box<RhoExpr>, right: Box<RhoExpr> },
+    ExprDiff { left: Box<RhoExpr>, right: Box<RhoExpr> },
+
+    // === Pattern matching ===
+    ExprMatches { target: Box<RhoExpr>, pattern: Box<RhoExpr> },
+
+    // === Method call ===
+    ExprMethod { target: Box<RhoExpr>, name: String, args: Vec<RhoExpr> },
+
+    // === Variable reference ===
+    ExprVar { index: i32 },
+
+    // === System ===
+    ExprSysAuthToken,
+
+    // === Catch-all for unknown/unhandled types ===
+    ExprUnknown { type_name: String },
 }
 
 /// Unforgeable name types
@@ -545,6 +945,7 @@ pub enum RhoUnforg {
     UnforgPrivate { data: String },
     UnforgDeploy { data: String },
     UnforgDeployer { data: String },
+    UnforgSysAuthToken,
 }
 
 // API request & response types
@@ -669,6 +1070,24 @@ pub struct ApiStatus {
     /// Decimal places used to display the native token (dust per token = 10^decimals).
     #[serde(rename = "nativeTokenDecimals")]
     pub native_token_decimals: u32,
+    /// Block number of the last finalized block. -1 if casper not yet initialized.
+    #[serde(rename = "lastFinalizedBlockNumber")]
+    pub last_finalized_block_number: i64,
+    /// Whether this node is a validator (can propose blocks).
+    #[serde(rename = "isValidator")]
+    pub is_validator: bool,
+    /// Whether this node is running in read-only mode.
+    #[serde(rename = "isReadOnly")]
+    pub is_read_only: bool,
+    /// Whether the node has completed initialization and entered running state.
+    #[serde(rename = "isReady")]
+    pub is_ready: bool,
+    /// Current epoch number (lastFinalizedBlockNumber / epochLength).
+    #[serde(rename = "currentEpoch")]
+    pub current_epoch: i64,
+    /// Blocks per epoch, from genesis configuration.
+    #[serde(rename = "epochLength")]
+    pub epoch_length: i32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -677,65 +1096,151 @@ pub struct VersionInfo {
     pub node: String,
 }
 
-/// Deploy detail response with execution info and block context
+/// Unified deploy response. Default (full) includes all fields.
+/// Summary view (`?view=summary`) omits Optional fields for lightweight polling.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct DeployDetailResponse {
+pub struct DeployResponse {
+    // === Always present (summary + full) ===
+    #[serde(rename = "deployId")]
+    pub deploy_id: String,
     #[serde(rename = "blockHash")]
     pub block_hash: String,
     #[serde(rename = "blockNumber")]
     pub block_number: i64,
     pub timestamp: i64,
-    pub deployer: String,
-    pub term: String,
     pub cost: u64,
     pub errored: bool,
-    #[serde(rename = "systemDeployError")]
-    pub system_deploy_error: String,
-    #[serde(rename = "phloPrice")]
-    pub phlo_price: i64,
-    #[serde(rename = "phloLimit")]
-    pub phlo_limit: i64,
-    pub sig: String,
-    #[serde(rename = "sigAlgorithm")]
-    pub sig_algorithm: String,
-    #[serde(rename = "validAfterBlockNumber")]
-    pub valid_after_block_number: i64,
-    pub transfers: Vec<TransferInfoSerde>,
+    #[serde(rename = "isFinalized")]
+    pub is_finalized: bool,
+
+    // === Full view only (omitted in summary) ===
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deployer: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub term: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", rename = "systemDeployError")]
+    pub system_deploy_error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", rename = "phloPrice")]
+    pub phlo_price: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none", rename = "phloLimit")]
+    pub phlo_limit: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none", rename = "sigAlgorithm")]
+    pub sig_algorithm: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", rename = "validAfterBlockNumber")]
+    pub valid_after_block_number: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transfers: Option<Vec<TransferInfoSerde>>,
 }
 
-/// Minimal deploy lookup response containing only essential fields
+/// View mode for deploy lookups.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ViewMode {
+    /// All fields populated (default).
+    Full,
+    /// Core fields only — for polling.
+    Summary,
+}
+
+/// Balance query response
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct DeployLookupResponse {
-    #[serde(rename = "blockHash")]
-    pub block_hash: String,
+pub struct BalanceResponse {
+    pub address: String,
+    pub balance: i64,
     #[serde(rename = "blockNumber")]
     pub block_number: i64,
-    pub timestamp: i64,
-    pub sender: String,
-    #[serde(rename = "seqNum")]
-    pub seq_num: i64,
-    pub sig: String,
-    #[serde(rename = "sigAlgorithm")]
-    pub sig_algorithm: String,
-    #[serde(rename = "shardId")]
-    pub shard_id: String,
-    pub version: i64,
+    #[serde(rename = "blockHash")]
+    pub block_hash: String,
 }
 
-impl From<LightBlockInfoSerde> for DeployLookupResponse {
-    fn from(info: LightBlockInfoSerde) -> Self {
-        Self {
-            block_hash: info.block_hash,
-            block_number: info.block_number,
-            timestamp: info.timestamp,
-            sender: info.sender,
-            seq_num: info.seq_num,
-            sig: info.sig,
-            sig_algorithm: info.sig_algorithm,
-            shard_id: info.shard_id,
-            version: info.version,
-        }
-    }
+/// Registry lookup response
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct RegistryResponse {
+    pub uri: String,
+    pub data: Vec<RhoExpr>,
+    #[serde(rename = "blockNumber")]
+    pub block_number: i64,
+    #[serde(rename = "blockHash")]
+    pub block_hash: String,
+}
+
+/// Validator info in the active set
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ValidatorInfo {
+    #[serde(rename = "publicKey")]
+    pub public_key: String,
+    pub stake: i64,
+}
+
+/// Active validator set response
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ValidatorsResponse {
+    pub validators: Vec<ValidatorInfo>,
+    #[serde(rename = "totalStake")]
+    pub total_stake: i64,
+    #[serde(rename = "blockNumber")]
+    pub block_number: i64,
+    #[serde(rename = "blockHash")]
+    pub block_hash: String,
+}
+
+/// Epoch info response
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct EpochResponse {
+    #[serde(rename = "currentEpoch")]
+    pub current_epoch: i64,
+    #[serde(rename = "epochLength")]
+    pub epoch_length: i64,
+    #[serde(rename = "quarantineLength")]
+    pub quarantine_length: i64,
+    #[serde(rename = "blocksUntilNextEpoch")]
+    pub blocks_until_next_epoch: i64,
+    #[serde(rename = "lastFinalizedBlockNumber")]
+    pub last_finalized_block_number: i64,
+    #[serde(rename = "blockHash")]
+    pub block_hash: String,
+}
+
+/// Cost estimation response
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct EstimateCostResponse {
+    pub cost: u64,
+    #[serde(rename = "blockNumber")]
+    pub block_number: i64,
+    #[serde(rename = "blockHash")]
+    pub block_hash: String,
+}
+
+/// Epoch rewards response
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct EpochRewardsResponse {
+    pub rewards: RhoExpr,
+    #[serde(rename = "blockNumber")]
+    pub block_number: i64,
+    #[serde(rename = "blockHash")]
+    pub block_hash: String,
+}
+
+/// Individual validator status response
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ValidatorStatusResponse {
+    #[serde(rename = "publicKey")]
+    pub public_key: String,
+    #[serde(rename = "isBonded")]
+    pub is_bonded: bool,
+    pub stake: Option<i64>,
+    #[serde(rename = "blockNumber")]
+    pub block_number: i64,
+    #[serde(rename = "blockHash")]
+    pub block_hash: String,
+}
+
+/// Bond status response (HTTP equivalent of gRPC bondStatus)
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct BondStatusResponse {
+    #[serde(rename = "publicKey")]
+    pub public_key: String,
+    #[serde(rename = "isBonded")]
+    pub is_bonded: bool,
 }
 
 // Error types
@@ -804,197 +1309,291 @@ use models::rhoapi::g_unforgeable::UnfInstance;
 use models::rhoapi::{Bundle, Expr, GDeployId, GDeployerId, GPrivate};
 use models::rhoapi::{GUnforgeable, Par};
 
-/// Convert RhoUnforg to protobuf GUnforgeable
-fn unforg_to_unforg_proto(unforg: RhoUnforg) -> UnfInstance {
-    match unforg {
+/// Convert RhoUnforg to protobuf GUnforgeable.
+/// Hex decode errors produce empty bytes with a warning log.
+fn unforg_to_unforg_proto(unforg: RhoUnforg) -> eyre::Result<UnfInstance> {
+    fn decode_hex(data: &str) -> eyre::Result<Vec<u8>> {
+        hex::decode(data).map_err(|e| eyre::eyre!("Invalid hex in unforgeable name '{}': {}", data, e))
+    }
+    Ok(match unforg {
         RhoUnforg::UnforgPrivate { data } => UnfInstance::GPrivateBody(GPrivate {
-            id: hex::decode(data).unwrap_or_default().into(),
+            id: decode_hex(&data)?.into(),
         }),
         RhoUnforg::UnforgDeploy { data } => UnfInstance::GDeployIdBody(GDeployId {
-            sig: hex::decode(data).unwrap_or_default().into(),
+            sig: decode_hex(&data)?.into(),
         }),
         RhoUnforg::UnforgDeployer { data } => UnfInstance::GDeployerIdBody(GDeployerId {
-            public_key: hex::decode(data).unwrap_or_default().into(),
+            public_key: decode_hex(&data)?.into(),
         }),
-    }
+        RhoUnforg::UnforgSysAuthToken => {
+            use models::rhoapi::GSysAuthToken;
+            UnfInstance::GSysAuthTokenBody(GSysAuthToken {})
+        }
+    })
 }
 
-/// Convert DataAtNameRequest to Par
-fn to_par(rho_unforg: RhoUnforg) -> Par {
-    Par {
+/// Convert DataAtNameRequest to Par. Returns error if hex decode fails.
+fn to_par(rho_unforg: RhoUnforg) -> eyre::Result<Par> {
+    Ok(Par {
         unforgeables: vec![GUnforgeable {
-            unf_instance: Some(unforg_to_unforg_proto(rho_unforg)),
+            unf_instance: Some(unforg_to_unforg_proto(rho_unforg)?),
         }],
         ..Default::default()
-    }
+    })
 }
 
 /// Convert Par to RhoExpr - equivalent to Scala's exprFromParProto function
 fn expr_from_par_proto(par: Par) -> Option<RhoExpr> {
+    let has_process_fields = !par.sends.is_empty()
+        || !par.receives.is_empty()
+        || !par.news.is_empty()
+        || !par.matches.is_empty()
+        || !par.connectives.is_empty();
+
     let exprs = par.exprs.into_iter().filter_map(expr_from_expr_proto);
-
     let unforg_exprs = par.unforgeables.into_iter().filter_map(unforg_from_proto);
-
     let bundle_exprs = par.bundles.into_iter().filter_map(expr_from_bundle_proto);
 
     let all_exprs: Vec<RhoExpr> = exprs.chain(unforg_exprs).chain(bundle_exprs).collect();
 
-    // Implements semantic of Par with Unit: P | Nil ==> P
     if all_exprs.len() == 1 {
         all_exprs.into_iter().next()
     } else if all_exprs.is_empty() {
-        None
+        if has_process_fields {
+            // Par has process-level constructs (sends, receives, etc.) but no data expressions
+            Some(RhoExpr::ExprUnknown { type_name: "Process".to_string() })
+        } else {
+            None // Truly empty Par (Nil)
+        }
     } else {
         Some(RhoExpr::ExprPar { data: all_exprs })
     }
 }
 
-/// Convert Expr to RhoExpr - equivalent to Scala's exprFromExprProto function
+/// Convert Expr to RhoExpr — handles all Rholang expression types.
 fn expr_from_expr_proto(expr: Expr) -> Option<RhoExpr> {
     use models::rhoapi::expr::ExprInstance;
+    use num_bigint::BigInt;
 
-    match expr.expr_instance? {
-        // Primitive types
-        ExprInstance::GBool(value) => Some(RhoExpr::ExprBool { data: value }),
-        ExprInstance::GInt(value) => Some(RhoExpr::ExprInt { data: value }),
-        ExprInstance::GString(value) => Some(RhoExpr::ExprString { data: value }),
-        ExprInstance::GUri(value) => Some(RhoExpr::ExprUri { data: value }),
-        ExprInstance::GByteArray(bytes) => {
-            // Binary data as base16 string
-            Some(RhoExpr::ExprBytes {
-                data: hex::encode(&bytes),
-            })
+    let instance = expr.expr_instance?;
+    Some(match instance {
+        // Primitives
+        ExprInstance::GBool(v) => RhoExpr::ExprBool { data: v },
+        ExprInstance::GInt(v) => RhoExpr::ExprInt { data: v },
+        ExprInstance::GString(v) => RhoExpr::ExprString { data: v },
+        ExprInstance::GUri(v) => RhoExpr::ExprUri { data: v },
+        ExprInstance::GByteArray(bytes) => RhoExpr::ExprBytes { data: hex::encode(&bytes) },
+
+        // Extended numerics
+        ExprInstance::GDouble(bits) => RhoExpr::ExprFloat { data: f64::from_bits(bits) },
+        ExprInstance::GBigInt(bytes) => {
+            let n = BigInt::from_signed_bytes_be(&bytes);
+            RhoExpr::ExprBigInt { data: n.to_string() }
         }
-        // Tuple
+        ExprInstance::GBigRat(rat) => {
+            let num = BigInt::from_signed_bytes_be(&rat.numerator);
+            let den = BigInt::from_signed_bytes_be(&rat.denominator);
+            RhoExpr::ExprBigRat { numerator: num.to_string(), denominator: den.to_string() }
+        }
+        ExprInstance::GFixedPoint(fp) => {
+            let unscaled = BigInt::from_signed_bytes_be(&fp.unscaled);
+            RhoExpr::ExprFixedPoint { value: unscaled.to_string(), scale: fp.scale }
+        }
+
+        // Collections
         ExprInstance::ETupleBody(tuple) => {
-            let data: Vec<RhoExpr> = tuple
-                .ps
-                .into_iter()
-                .filter_map(expr_from_par_proto)
-                .collect();
-            Some(RhoExpr::ExprTuple { data })
+            RhoExpr::ExprTuple { data: tuple.ps.into_iter().filter_map(expr_from_par_proto).collect() }
         }
-        // List
         ExprInstance::EListBody(list) => {
-            let data: Vec<RhoExpr> = list
-                .ps
-                .into_iter()
-                .filter_map(expr_from_par_proto)
-                .collect();
-            Some(RhoExpr::ExprList { data })
+            RhoExpr::ExprList { data: list.ps.into_iter().filter_map(expr_from_par_proto).collect() }
         }
-        // Set
         ExprInstance::ESetBody(set) => {
-            let data: Vec<RhoExpr> = set.ps.into_iter().filter_map(expr_from_par_proto).collect();
-            Some(RhoExpr::ExprSet { data })
+            RhoExpr::ExprSet { data: set.ps.into_iter().filter_map(expr_from_par_proto).collect() }
         }
-        // Map
         ExprInstance::EMapBody(map) => {
             let mut data = HashMap::new();
             for kv in map.kvs {
                 if let (Some(key_par), Some(value_par)) = (kv.key, kv.value) {
-                    let key_expr = expr_from_par_proto(key_par);
-                    let value_expr = expr_from_par_proto(value_par);
-                    if let (Some(key_expr), Some(value_expr)) = (key_expr, value_expr) {
-                        if let Some(key) = extract_key_from_expr(&key_expr) {
-                            data.insert(key, value_expr);
-                        }
+                    if let (Some(key_expr), Some(value_expr)) = (expr_from_par_proto(key_par), expr_from_par_proto(value_par)) {
+                        let key = extract_key_from_expr(&key_expr);
+                        data.insert(key, value_expr);
                     }
                 }
             }
-            Some(RhoExpr::ExprMap { data })
+            RhoExpr::ExprMap { data }
         }
-        _ => None, // Other expression types not handled in the original Scala
-    }
+        ExprInstance::EPathmapBody(pm) => {
+            RhoExpr::ExprList { data: pm.ps.into_iter().filter_map(expr_from_par_proto).collect() }
+        }
+        ExprInstance::EZipperBody(z) => {
+            let pathmap = z.pathmap.map(|pm| {
+                RhoExpr::ExprList { data: pm.ps.into_iter().filter_map(expr_from_par_proto).collect() }
+            });
+            RhoExpr::ExprTuple {
+                data: vec![
+                    pathmap.unwrap_or(RhoExpr::ExprList { data: vec![] }),
+                    RhoExpr::ExprList {
+                        data: z.current_path.into_iter().map(|b| RhoExpr::ExprBytes { data: hex::encode(&b) }).collect(),
+                    },
+                ],
+            }
+        }
+
+        // Unary operators
+        ExprInstance::ENotBody(op) => {
+            RhoExpr::ExprNot { data: Box::new(par_to_expr(op.p)) }
+        }
+        ExprInstance::ENegBody(op) => {
+            RhoExpr::ExprNeg { data: Box::new(par_to_expr(op.p)) }
+        }
+
+        // Binary arithmetic
+        ExprInstance::EPlusBody(op) => {
+            RhoExpr::ExprPlus { left: Box::new(par_to_expr(op.p1)), right: Box::new(par_to_expr(op.p2)) }
+        }
+        ExprInstance::EMinusBody(op) => {
+            RhoExpr::ExprMinus { left: Box::new(par_to_expr(op.p1)), right: Box::new(par_to_expr(op.p2)) }
+        }
+        ExprInstance::EMultBody(op) => {
+            RhoExpr::ExprMult { left: Box::new(par_to_expr(op.p1)), right: Box::new(par_to_expr(op.p2)) }
+        }
+        ExprInstance::EDivBody(op) => {
+            RhoExpr::ExprDiv { left: Box::new(par_to_expr(op.p1)), right: Box::new(par_to_expr(op.p2)) }
+        }
+        ExprInstance::EModBody(op) => {
+            RhoExpr::ExprMod { left: Box::new(par_to_expr(op.p1)), right: Box::new(par_to_expr(op.p2)) }
+        }
+
+        // Comparison
+        ExprInstance::ELtBody(op) => {
+            RhoExpr::ExprLt { left: Box::new(par_to_expr(op.p1)), right: Box::new(par_to_expr(op.p2)) }
+        }
+        ExprInstance::ELteBody(op) => {
+            RhoExpr::ExprLte { left: Box::new(par_to_expr(op.p1)), right: Box::new(par_to_expr(op.p2)) }
+        }
+        ExprInstance::EGtBody(op) => {
+            RhoExpr::ExprGt { left: Box::new(par_to_expr(op.p1)), right: Box::new(par_to_expr(op.p2)) }
+        }
+        ExprInstance::EGteBody(op) => {
+            RhoExpr::ExprGte { left: Box::new(par_to_expr(op.p1)), right: Box::new(par_to_expr(op.p2)) }
+        }
+        ExprInstance::EEqBody(op) => {
+            RhoExpr::ExprEq { left: Box::new(par_to_expr(op.p1)), right: Box::new(par_to_expr(op.p2)) }
+        }
+        ExprInstance::ENeqBody(op) => {
+            RhoExpr::ExprNeq { left: Box::new(par_to_expr(op.p1)), right: Box::new(par_to_expr(op.p2)) }
+        }
+
+        // Logical
+        ExprInstance::EAndBody(op) => {
+            RhoExpr::ExprAnd { left: Box::new(par_to_expr(op.p1)), right: Box::new(par_to_expr(op.p2)) }
+        }
+        ExprInstance::EOrBody(op) => {
+            RhoExpr::ExprOr { left: Box::new(par_to_expr(op.p1)), right: Box::new(par_to_expr(op.p2)) }
+        }
+
+        // String operations
+        ExprInstance::EPlusPlusBody(op) => {
+            RhoExpr::ExprConcat { left: Box::new(par_to_expr(op.p1)), right: Box::new(par_to_expr(op.p2)) }
+        }
+        ExprInstance::EPercentPercentBody(op) => {
+            RhoExpr::ExprInterpolate { left: Box::new(par_to_expr(op.p1)), right: Box::new(par_to_expr(op.p2)) }
+        }
+        ExprInstance::EMinusMinusBody(op) => {
+            RhoExpr::ExprDiff { left: Box::new(par_to_expr(op.p1)), right: Box::new(par_to_expr(op.p2)) }
+        }
+
+        // Pattern matching
+        ExprInstance::EMatchesBody(op) => {
+            RhoExpr::ExprMatches { target: Box::new(par_to_expr(op.target)), pattern: Box::new(par_to_expr(op.pattern)) }
+        }
+
+        // Method call
+        ExprInstance::EMethodBody(method) => {
+            RhoExpr::ExprMethod {
+                target: Box::new(par_to_expr(method.target)),
+                name: method.method_name,
+                args: method.arguments.into_iter().filter_map(expr_from_par_proto).collect(),
+            }
+        }
+
+        // Variable
+        ExprInstance::EVarBody(var) => {
+            let index = var.v.and_then(|v| v.var_instance).map(|vi| match vi {
+                models::rhoapi::var::VarInstance::BoundVar(i) => i,
+                models::rhoapi::var::VarInstance::FreeVar(i) => i,
+                models::rhoapi::var::VarInstance::Wildcard(_) => -1,
+            }).unwrap_or(-1);
+            RhoExpr::ExprVar { index }
+        }
+    })
 }
 
-/// Convert GUnforgeable to RhoExpr - equivalent to Scala's unforgFromProto function
+/// Convert an optional Par to RhoExpr, falling back to ExprUnknown for None.
+fn par_to_expr(par: Option<Par>) -> RhoExpr {
+    par.and_then(expr_from_par_proto)
+        .unwrap_or(RhoExpr::ExprUnknown { type_name: "Nil".to_string() })
+}
+
+/// Convert GUnforgeable to RhoExpr.
 fn unforg_from_proto(unforg: GUnforgeable) -> Option<RhoExpr> {
     use models::rhoapi::g_unforgeable::UnfInstance;
 
-    match unforg.unf_instance? {
-        UnfInstance::GPrivateBody(private) => Some(RhoExpr::ExprUnforg {
+    Some(match unforg.unf_instance? {
+        UnfInstance::GPrivateBody(private) => RhoExpr::ExprUnforg {
             data: RhoUnforg::UnforgPrivate {
                 data: hex::encode(&private.id),
             },
-        }),
-        UnfInstance::GDeployIdBody(deploy_id) => Some(RhoExpr::ExprUnforg {
+        },
+        UnfInstance::GDeployIdBody(deploy_id) => RhoExpr::ExprUnforg {
             data: RhoUnforg::UnforgDeploy {
                 data: hex::encode(&deploy_id.sig),
             },
-        }),
-        UnfInstance::GDeployerIdBody(deployer_id) => Some(RhoExpr::ExprUnforg {
+        },
+        UnfInstance::GDeployerIdBody(deployer_id) => RhoExpr::ExprUnforg {
             data: RhoUnforg::UnforgDeployer {
                 data: hex::encode(&deployer_id.public_key),
             },
-        }),
-        _ => None, // Other unforgeable types not handled in the original Scala
-    }
-}
-
-/// Convert Bundle to RhoExpr - equivalent to Scala's exprFromBundleProto function
-fn expr_from_bundle_proto(bundle: Bundle) -> Option<RhoExpr> {
-    if let Some(body) = bundle.body {
-        expr_from_par_proto(body)
-    } else {
-        None
-    }
-}
-
-/// Extract a string key from a RhoExpr for map keys - equivalent to Scala's key extraction logic
-fn extract_key_from_expr(expr: &RhoExpr) -> Option<String> {
-    match expr {
-        RhoExpr::ExprString { data } => Some(data.clone()),
-        RhoExpr::ExprInt { data } => Some(data.to_string()),
-        RhoExpr::ExprBool { data } => Some(data.to_string()),
-        RhoExpr::ExprUri { data } => Some(data.clone()),
-        RhoExpr::ExprUnforg { data } => match data {
-            RhoUnforg::UnforgPrivate { data } => Some(data.clone()),
-            RhoUnforg::UnforgDeploy { data } => Some(data.clone()),
-            RhoUnforg::UnforgDeployer { data } => Some(data.clone()),
         },
-        RhoExpr::ExprBytes { data } => Some(data.clone()),
-        _ => None,
+        UnfInstance::GSysAuthTokenBody(_) => RhoExpr::ExprUnforg {
+            data: RhoUnforg::UnforgSysAuthToken,
+        },
+    })
+}
+
+/// Convert Bundle to RhoExpr, preserving read/write permissions.
+fn expr_from_bundle_proto(bundle: Bundle) -> Option<RhoExpr> {
+    let body_expr = bundle.body.and_then(expr_from_par_proto)
+        .unwrap_or(RhoExpr::ExprUnknown { type_name: "Nil".to_string() });
+    Some(RhoExpr::ExprBundle {
+        data: Box::new(body_expr),
+        read: bundle.read_flag,
+        write: bundle.write_flag,
+    })
+}
+
+/// Extract a string key from a RhoExpr for map keys.
+/// Primitive types use natural string representation; complex types use JSON serialization.
+fn extract_key_from_expr(expr: &RhoExpr) -> String {
+    match expr {
+        RhoExpr::ExprString { data } => data.clone(),
+        RhoExpr::ExprInt { data } => data.to_string(),
+        RhoExpr::ExprBool { data } => data.to_string(),
+        RhoExpr::ExprFloat { data } => data.to_string(),
+        RhoExpr::ExprBigInt { data } => data.clone(),
+        RhoExpr::ExprUri { data } => data.clone(),
+        RhoExpr::ExprBytes { data } => data.clone(),
+        RhoExpr::ExprUnforg { data } => match data {
+            RhoUnforg::UnforgPrivate { data } => data.clone(),
+            RhoUnforg::UnforgDeploy { data } => data.clone(),
+            RhoUnforg::UnforgDeployer { data } => data.clone(),
+            RhoUnforg::UnforgSysAuthToken => "SysAuthToken".to_string(),
+        },
+        // Complex types: serialize to JSON string
+        other => serde_json::to_string(other).unwrap_or_else(|_| format!("{:?}", other)),
     }
 }
 
-/// Convert (Vec<DataWithBlockInfo>, i32) to DataAtNameResponse
-/// Equivalent to Scala's toDataAtNameResponse function
-fn to_data_at_name_response(req: (Vec<DataWithBlockInfo>, i32)) -> DataAtNameResponse {
-    let (dbs, length) = req;
-
-    let exprs_with_block: Vec<RhoExprWithBlock> = dbs
-        .into_iter()
-        .rev() // Reverse to match Scala's foldLeft behavior (+: prepends)
-        .map(|data| {
-            // Convert post_block_data (Vec<Par>) to Vec<RhoExpr> using expr_from_par_proto
-            let exprs: Vec<RhoExpr> = data
-                .post_block_data
-                .into_iter()
-                .filter_map(expr_from_par_proto)
-                .collect();
-
-            // Implements semantic of Par with Unit: P | Nil ==> P
-            let expr = if exprs.len() == 1 {
-                exprs.into_iter().next().unwrap()
-            } else {
-                RhoExpr::ExprPar { data: exprs }
-            };
-
-            // Convert LightBlockInfo to LightBlockInfoSerde
-            let block = data
-                .block
-                .map(|block_info| LightBlockInfoSerde::from(block_info))
-                .unwrap_or_default();
-            RhoExprWithBlock { expr, block }
-        })
-        .collect();
-
-    DataAtNameResponse {
-        exprs: exprs_with_block,
-        length,
-    }
-}
 
 /// Convert (Vec<Par>, LightBlockInfo) to RhoDataResponse
 /// Equivalent to Scala's toRhoDataResponse function
@@ -1023,211 +1622,75 @@ mod tests {
     };
 
     #[test]
-    fn test_deploy_lookup_response_from_light_block_info() {
-        let light_block = LightBlockInfoSerde {
-            block_hash: "7bf8abc123".to_string(),
-            sender: "0487def456".to_string(),
-            seq_num: 17453,
-            sig: "3044abcdef".to_string(),
-            sig_algorithm: "secp256k1".to_string(),
-            shard_id: "root".to_string(),
-            extra_bytes: vec![],
-            version: 1,
-            timestamp: 1770028092477,
-            header_extra_bytes: vec![],
-            parents_hash_list: vec!["parent1".to_string(), "parent2".to_string()],
-            block_number: 52331,
-            pre_state_hash: "preState123".to_string(),
-            post_state_hash: "postState456".to_string(),
-            body_extra_bytes: vec![],
-            bonds: vec![
-                super::super::serde_types::light_block_info::BondInfoJson {
-                    validator: "validator1".to_string(),
-                    stake: 100,
-                },
-                super::super::serde_types::light_block_info::BondInfoJson {
-                    validator: "validator2".to_string(),
-                    stake: 200,
-                },
-            ],
-            block_size: "4096".to_string(),
-            deploy_count: 5,
-            fault_tolerance: 0.5,
-            justifications: vec![
-                super::super::serde_types::light_block_info::JustificationInfoJson {
-                    validator: "validator1".to_string(),
-                    latest_block_hash: "latestBlockHash1".to_string(),
-                },
-            ],
-            rejected_deploys: vec![],
-        };
-
-        let result = DeployLookupResponse::from(light_block);
-
-        assert_eq!(result.block_hash, "7bf8abc123");
-        assert_eq!(result.block_number, 52331);
-        assert_eq!(result.timestamp, 1770028092477);
-        assert_eq!(result.sender, "0487def456");
-        assert_eq!(result.seq_num, 17453);
-        assert_eq!(result.sig, "3044abcdef");
-        assert_eq!(result.sig_algorithm, "secp256k1");
-        assert_eq!(result.shard_id, "root");
-        assert_eq!(result.version, 1);
-    }
-
-    #[test]
-    fn test_deploy_lookup_response_excludes_heavy_fields() {
-        let response = DeployLookupResponse {
-            block_hash: "hash".to_string(),
-            block_number: 1,
-            timestamp: 123,
-            sender: "sender".to_string(),
-            seq_num: 1,
-            sig: "sig".to_string(),
-            sig_algorithm: "secp256k1".to_string(),
-            shard_id: "root".to_string(),
-            version: 1,
+    fn test_deploy_response_full_view_includes_all_fields() {
+        let response = DeployResponse {
+            deploy_id: "abc123".to_string(),
+            block_hash: "hash1".to_string(),
+            block_number: 100,
+            timestamp: 1700000000000,
+            cost: 500,
+            errored: false,
+            is_finalized: true,
+            deployer: Some("deployer1".to_string()),
+            term: Some("new ret in { ret!(42) }".to_string()),
+            system_deploy_error: Some(String::new()),
+            phlo_price: Some(10),
+            phlo_limit: Some(100000),
+            sig_algorithm: Some("secp256k1".to_string()),
+            valid_after_block_number: Some(0),
+            transfers: Some(vec![]),
         };
 
         let json = serde_json::to_value(&response).unwrap();
 
-        // Should contain only the 9 minimal fields
-        assert!(json.get("blockHash").is_some());
-        assert!(json.get("blockNumber").is_some());
-        assert!(json.get("timestamp").is_some());
-        assert!(json.get("sender").is_some());
-        assert!(json.get("seqNum").is_some());
-        assert!(json.get("sig").is_some());
-        assert!(json.get("sigAlgorithm").is_some());
-        assert!(json.get("shardId").is_some());
-        assert!(json.get("version").is_some());
-
-        // Should NOT contain heavy fields
-        assert!(json.get("bonds").is_none());
-        assert!(json.get("justifications").is_none());
-        assert!(json.get("parentsHashList").is_none());
-        assert!(json.get("preStateHash").is_none());
-        assert!(json.get("postStateHash").is_none());
-        assert!(json.get("faultTolerance").is_none());
-        assert!(json.get("deployCount").is_none());
-        assert!(json.get("blockSize").is_none());
+        assert_eq!(json["deployId"], "abc123");
+        assert_eq!(json["blockHash"], "hash1");
+        assert_eq!(json["blockNumber"], 100);
+        assert_eq!(json["cost"], 500);
+        assert_eq!(json["isFinalized"], true);
+        assert!(json.get("deployer").is_some());
+        assert!(json.get("term").is_some());
+        assert!(json.get("phloPrice").is_some());
+        assert!(json.get("phloLimit").is_some());
+        assert!(json.get("transfers").is_some());
     }
 
     #[test]
-    fn test_deploy_lookup_response_handles_empty_string_fields() {
-        let mut light_block = LightBlockInfoSerde {
-            block_hash: "7bf8abc123".to_string(),
-            sender: "0487def456".to_string(),
-            seq_num: 17453,
-            sig: "3044abcdef".to_string(),
-            sig_algorithm: "secp256k1".to_string(),
-            shard_id: "root".to_string(),
-            extra_bytes: vec![],
-            version: 1,
-            timestamp: 1770028092477,
-            header_extra_bytes: vec![],
-            parents_hash_list: vec![],
-            block_number: 52331,
-            pre_state_hash: String::new(),
-            post_state_hash: String::new(),
-            body_extra_bytes: vec![],
-            bonds: vec![],
-            block_size: String::new(),
-            deploy_count: 0,
-            fault_tolerance: 0.0,
-            justifications: vec![],
-            rejected_deploys: vec![],
-        };
-        light_block.block_hash = String::new();
-        light_block.sender = String::new();
-        light_block.sig = String::new();
-        light_block.sig_algorithm = String::new();
-        light_block.shard_id = String::new();
-
-        let result = DeployLookupResponse::from(light_block);
-
-        assert_eq!(result.block_hash, "");
-        assert_eq!(result.sender, "");
-        assert_eq!(result.sig, "");
-        assert_eq!(result.sig_algorithm, "");
-        assert_eq!(result.shard_id, "");
-    }
-
-    #[test]
-    fn test_deploy_lookup_response_handles_zero_numeric_fields() {
-        let light_block = LightBlockInfoSerde {
-            block_hash: "hash".to_string(),
-            sender: "sender".to_string(),
-            seq_num: 0,
-            sig: "sig".to_string(),
-            sig_algorithm: "secp256k1".to_string(),
-            shard_id: "root".to_string(),
-            extra_bytes: vec![],
-            version: 0,
-            timestamp: 0,
-            header_extra_bytes: vec![],
-            parents_hash_list: vec![],
-            block_number: 0,
-            pre_state_hash: String::new(),
-            post_state_hash: String::new(),
-            body_extra_bytes: vec![],
-            bonds: vec![],
-            block_size: String::new(),
-            deploy_count: 0,
-            fault_tolerance: 0.0,
-            justifications: vec![],
-            rejected_deploys: vec![],
+    fn test_deploy_response_summary_view_omits_optional_fields() {
+        let response = DeployResponse {
+            deploy_id: "abc123".to_string(),
+            block_hash: "hash1".to_string(),
+            block_number: 100,
+            timestamp: 1700000000000,
+            cost: 500,
+            errored: false,
+            is_finalized: true,
+            deployer: None,
+            term: None,
+            system_deploy_error: None,
+            phlo_price: None,
+            phlo_limit: None,
+            sig_algorithm: None,
+            valid_after_block_number: None,
+            transfers: None,
         };
 
-        let result = DeployLookupResponse::from(light_block);
+        let json = serde_json::to_value(&response).unwrap();
 
-        assert_eq!(result.block_number, 0);
-        assert_eq!(result.timestamp, 0);
-        assert_eq!(result.seq_num, 0);
-        assert_eq!(result.version, 0);
-    }
+        // Core fields present
+        assert_eq!(json["deployId"], "abc123");
+        assert_eq!(json["blockHash"], "hash1");
+        assert_eq!(json["cost"], 500);
+        assert_eq!(json["isFinalized"], true);
 
-    #[test]
-    fn test_deploy_lookup_response_correct_regardless_of_bonds_list_size() {
-        let large_bonds: Vec<super::super::serde_types::light_block_info::BondInfoJson> = (1
-            ..=1000)
-            .map(
-                |i| super::super::serde_types::light_block_info::BondInfoJson {
-                    validator: format!("validator{}", i),
-                    stake: i,
-                },
-            )
-            .collect();
-
-        let light_block = LightBlockInfoSerde {
-            block_hash: "7bf8abc123".to_string(),
-            sender: "0487def456".to_string(),
-            seq_num: 17453,
-            sig: "3044abcdef".to_string(),
-            sig_algorithm: "secp256k1".to_string(),
-            shard_id: "root".to_string(),
-            extra_bytes: vec![],
-            version: 1,
-            timestamp: 1770028092477,
-            header_extra_bytes: vec![],
-            parents_hash_list: vec![],
-            block_number: 52331,
-            pre_state_hash: String::new(),
-            post_state_hash: String::new(),
-            body_extra_bytes: vec![],
-            bonds: large_bonds,
-            block_size: String::new(),
-            deploy_count: 0,
-            fault_tolerance: 0.0,
-            justifications: vec![],
-            rejected_deploys: vec![],
-        };
-
-        let result = DeployLookupResponse::from(light_block);
-
-        // Response should be the same regardless of bonds size
-        assert_eq!(result.block_hash, "7bf8abc123");
-        assert_eq!(result.block_number, 52331);
+        // Optional fields omitted
+        assert!(json.get("deployer").is_none());
+        assert!(json.get("term").is_none());
+        assert!(json.get("phloPrice").is_none());
+        assert!(json.get("phloLimit").is_none());
+        assert!(json.get("sigAlgorithm").is_none());
+        assert!(json.get("validAfterBlockNumber").is_none());
+        assert!(json.get("transfers").is_none());
     }
 
     #[test]
@@ -1561,20 +2024,30 @@ mod tests {
                 }],
                 ..Default::default()
             }),
-            ..Default::default()
+            write_flag: true,
+            read_flag: false,
         };
         let result = expr_from_bundle_proto(bundle);
-        assert!(matches!(result, Some(RhoExpr::ExprString { data }) if data == "bundle_content"));
+        assert!(matches!(
+            result,
+            Some(RhoExpr::ExprBundle { ref data, write: true, read: false })
+            if matches!(data.as_ref(), RhoExpr::ExprString { data } if data == "bundle_content")
+        ));
     }
 
     #[test]
     fn test_expr_from_bundle_proto_empty() {
         let bundle = Bundle {
             body: None,
-            ..Default::default()
+            write_flag: false,
+            read_flag: true,
         };
         let result = expr_from_bundle_proto(bundle);
-        assert!(result.is_none());
+        // Empty body bundle returns ExprBundle with ExprUnknown body
+        assert!(matches!(
+            result,
+            Some(RhoExpr::ExprBundle { read: true, write: false, .. })
+        ));
     }
 
     #[test]
@@ -1583,30 +2056,27 @@ mod tests {
         let expr = RhoExpr::ExprString {
             data: "hello".to_string(),
         };
-        assert_eq!(extract_key_from_expr(&expr), Some("hello".to_string()));
+        assert_eq!(extract_key_from_expr(&expr), "hello");
 
         // Test int key
         let expr = RhoExpr::ExprInt { data: 42 };
-        assert_eq!(extract_key_from_expr(&expr), Some("42".to_string()));
+        assert_eq!(extract_key_from_expr(&expr), "42");
 
         // Test bool key
         let expr = RhoExpr::ExprBool { data: true };
-        assert_eq!(extract_key_from_expr(&expr), Some("true".to_string()));
+        assert_eq!(extract_key_from_expr(&expr), "true");
 
         // Test URI key
         let expr = RhoExpr::ExprUri {
             data: "rho:io:stdout".to_string(),
         };
-        assert_eq!(
-            extract_key_from_expr(&expr),
-            Some("rho:io:stdout".to_string())
-        );
+        assert_eq!(extract_key_from_expr(&expr), "rho:io:stdout");
 
         // Test bytes key
         let expr = RhoExpr::ExprBytes {
             data: "010203".to_string(),
         };
-        assert_eq!(extract_key_from_expr(&expr), Some("010203".to_string()));
+        assert_eq!(extract_key_from_expr(&expr), "010203");
 
         // Test unforgeable keys
         let expr = RhoExpr::ExprUnforg {
@@ -1614,10 +2084,11 @@ mod tests {
                 data: "private".to_string(),
             },
         };
-        assert_eq!(extract_key_from_expr(&expr), Some("private".to_string()));
+        assert_eq!(extract_key_from_expr(&expr), "private");
 
-        // Test unsupported key type
+        // Test complex key type — serialized to JSON
         let expr = RhoExpr::ExprPar { data: vec![] };
-        assert!(extract_key_from_expr(&expr).is_none());
+        let key = extract_key_from_expr(&expr);
+        assert!(!key.is_empty(), "complex keys should serialize to non-empty string");
     }
 }

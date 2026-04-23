@@ -8,21 +8,23 @@ use serde::Deserialize;
 
 use crate::rust::{
     api::{
-        serde_types::{block_info::BlockInfoSerde, light_block_info::LightBlockInfoSerde},
+        serde_types::block_info::BlockInfoSerde,
         web_api::{
-            DataAtNameByBlockHashRequest, DeployDetailResponse, DeployLookupResponse, PrepareRequest, PrepareResponse,
+            DataAtNameByBlockHashRequest, DeployResponse, PrepareRequest, PrepareResponse,
             RhoDataResponse,
         },
     },
-    web::{
-        shared_handlers::{self, AppError, AppState},
-        transaction::TransactionResponse,
-    },
+    web::shared_handlers::{self, AppError, AppState},
 };
 
 #[derive(Debug, Deserialize)]
 pub struct ViewQuery {
     pub view: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct BlockHashQuery {
+    pub block_hash: Option<String>,
 }
 
 pub struct WebApiRoutes;
@@ -42,7 +44,6 @@ impl WebApiRoutes {
                 "/explore-deploy-by-block-hash",
                 post(shared_handlers::explore_deploy_by_block_hash_handler),
             )
-            .route("/data-at-name", post(shared_handlers::data_at_name_handler))
             .route(
                 "/data-at-name-by-block-hash",
                 post(data_at_name_by_block_hash_handler),
@@ -58,7 +59,14 @@ impl WebApiRoutes {
                 "/deploy-finalization-status/{deploy_sig_hex}",
                 get(deploy_finalization_status_handler),
             )
-            .route("/transactions/{hash}", get(get_transaction_handler))
+            .route("/balance/{address}", get(balance_handler))
+            .route("/registry/{uri}", get(registry_handler))
+            .route("/validators", get(validators_handler))
+            .route("/validator/{pubkey}", get(validator_handler))
+            .route("/epoch", get(epoch_handler))
+            .route("/epoch/rewards", get(epoch_rewards_handler))
+            .route("/estimate-cost", post(estimate_cost_handler))
+            .route("/bond-status/{pubkey}", get(bond_status_handler))
     }
 }
 
@@ -122,14 +130,26 @@ pub async fn data_at_name_by_block_hash_handler(
 #[utoipa::path(
     get,
     path = "/api/last-finalized-block",
+    params(
+        ("view" = Option<String>, Query, description = "Response view: 'full' (default) includes deploys, 'summary' block header only"),
+    ),
     responses(
         (status = 200, description = "Last finalized block", body = BlockInfoSerde),
         (status = 400, description = "Bad request or block not found")
     ),
     tag = "WebAPI"
 )]
-pub async fn last_finalized_block_handler(State(app_state): State<AppState>) -> Response {
-    match app_state.web_api.last_finalized_block().await {
+pub async fn last_finalized_block_handler(
+    State(app_state): State<AppState>,
+    Query(query): Query<ViewQuery>,
+) -> Response {
+    use crate::rust::api::web_api::ViewMode;
+
+    let view = match query.view.as_deref() {
+        Some("summary") => ViewMode::Summary,
+        _ => ViewMode::Full,
+    };
+    match app_state.web_api.last_finalized_block(view).await {
         Ok(response) => Json(response).into_response(),
         Err(e) => AppError(e).into_response(),
     }
@@ -141,9 +161,10 @@ pub async fn last_finalized_block_handler(State(app_state): State<AppState>) -> 
     params(
         ("start" = i64, Path, description = "Start block height"),
         ("end" = i64, Path, description = "End block height"),
+        ("view" = Option<String>, Query, description = "Response view: 'summary' (default) block headers only, 'full' includes deploys"),
     ),
     responses(
-        (status = 200, description = "Blocks by height range", body = Vec<LightBlockInfoSerde>),
+        (status = 200, description = "Blocks by height range", body = Vec<BlockInfoSerde>),
         (status = 400, description = "Bad request or invalid height range")
     ),
     tag = "WebAPI"
@@ -151,8 +172,15 @@ pub async fn last_finalized_block_handler(State(app_state): State<AppState>) -> 
 pub async fn get_blocks_by_heights_handler(
     State(app_state): State<AppState>,
     Path((start, end)): Path<(i64, i64)>,
+    Query(query): Query<ViewQuery>,
 ) -> Response {
-    match app_state.web_api.get_blocks_by_heights(start, end).await {
+    use crate::rust::api::web_api::ViewMode;
+
+    let view = match query.view.as_deref() {
+        Some("full") => ViewMode::Full,
+        _ => ViewMode::Summary,
+    };
+    match app_state.web_api.get_blocks_by_heights(start, end, view).await {
         Ok(response) => Json(response).into_response(),
         Err(e) => AppError(e).into_response(),
     }
@@ -163,9 +191,10 @@ pub async fn get_blocks_by_heights_handler(
     path = "/api/blocks/{depth}",
     params(
         ("depth" = i32, Path, description = "Block depth"),
+        ("view" = Option<String>, Query, description = "Response view: 'summary' (default) block headers only, 'full' includes deploys"),
     ),
     responses(
-        (status = 200, description = "Blocks by depth", body = Vec<LightBlockInfoSerde>),
+        (status = 200, description = "Blocks by depth", body = Vec<BlockInfoSerde>),
         (status = 400, description = "Bad request or invalid depth")
     ),
     tag = "WebAPI"
@@ -173,8 +202,15 @@ pub async fn get_blocks_by_heights_handler(
 pub async fn get_blocks_by_depth_handler(
     State(app_state): State<AppState>,
     Path(depth): Path<i32>,
+    Query(query): Query<ViewQuery>,
 ) -> Response {
-    match app_state.web_api.get_blocks(depth).await {
+    use crate::rust::api::web_api::ViewMode;
+
+    let view = match query.view.as_deref() {
+        Some("full") => ViewMode::Full,
+        _ => ViewMode::Summary,
+    };
+    match app_state.web_api.get_blocks(depth, view).await {
         Ok(response) => Json(response).into_response(),
         Err(e) => AppError(e).into_response(),
     }
@@ -185,13 +221,12 @@ pub async fn get_blocks_by_depth_handler(
     path = "/api/deploy/{deploy_id}",
     params(
         ("deploy_id" = String, Path, description = "Deploy ID"),
-        ("view" = Option<String>, Query, description = "Response view: 'detail' (default) returns deploy execution info, 'block' returns containing block, 'minimal' returns block metadata only"),
+        ("view" = Option<String>, Query, description = "Response view: 'full' (default) returns all fields, 'summary' returns core fields only"),
     ),
     responses(
-        (status = 200, description = "Deploy execution details (default or ?view=detail)", body = DeployDetailResponse),
-        (status = 200, description = "Containing block (?view=block)", body = LightBlockInfoSerde),
-        (status = 200, description = "Block metadata only (?view=minimal)", body = DeployLookupResponse),
-        (status = 400, description = "Bad request or deploy not found")
+        (status = 200, description = "Deploy information", body = DeployResponse),
+        (status = 404, description = "Deploy not found"),
+        (status = 400, description = "Bad request")
     ),
     tag = "WebAPI"
 )]
@@ -200,19 +235,22 @@ pub async fn find_deploy_handler(
     Path(deploy_id): Path<String>,
     Query(query): Query<ViewQuery>,
 ) -> Response {
-    match query.view.as_deref() {
-        Some("detail") => match app_state.web_api.find_deploy_detail(deploy_id).await {
-            Ok(response) => Json(response).into_response(),
-            Err(e) => AppError(e).into_response(),
-        },
-        Some("minimal") => match app_state.web_api.find_deploy_minimal(deploy_id).await {
-            Ok(response) => Json(response).into_response(),
-            Err(e) => AppError(e).into_response(),
-        },
-        _ => match app_state.web_api.find_deploy(deploy_id).await {
-            Ok(response) => Json(response).into_response(),
-            Err(e) => AppError(e).into_response(),
-        },
+    use crate::rust::api::web_api::ViewMode;
+
+    let view = match query.view.as_deref() {
+        Some("summary") => ViewMode::Summary,
+        _ => ViewMode::Full,
+    };
+
+    match app_state.web_api.find_deploy(deploy_id, view).await {
+        Ok(response) => Json(response).into_response(),
+        Err(e) => {
+            if e.downcast_ref::<casper::rust::api::block_api::DeployNotFoundError>().is_some() {
+                (axum::http::StatusCode::NOT_FOUND, format!("{}", e)).into_response()
+            } else {
+                AppError(e).into_response()
+            }
+        }
     }
 }
 
@@ -237,6 +275,8 @@ pub async fn is_finalized_handler(
         Err(e) => AppError(e).into_response(),
     }
 }
+
+use crate::rust::api::web_api::{BalanceResponse, RegistryResponse, ValidatorsResponse, EpochResponse};
 
 #[utoipa::path(
     get,
@@ -266,21 +306,188 @@ pub async fn deploy_finalization_status_handler(
 
 #[utoipa::path(
     get,
-    path = "/api/transactions/{hash}",
+    path = "/api/balance/{address}",
     params(
-        ("hash" = String, Path, description = "Transaction hash"),
+        ("address" = String, Path, description = "Wallet address (hex public key)"),
+        ("block_hash" = Option<String>, Query, description = "Block hash to query against (defaults to LFB)"),
     ),
     responses(
-        (status = 200, description = "Transaction information", body = TransactionResponse),
-        (status = 400, description = "Bad request or transaction not found")
+        (status = 200, description = "Balance for address", body = BalanceResponse),
+        (status = 400, description = "Bad request or address not found")
     ),
-    tag = "WebAPI"
+    tag = "Query"
 )]
-pub async fn get_transaction_handler(
+pub async fn balance_handler(
     State(app_state): State<AppState>,
-    Path(hash): Path<String>,
+    Path(address): Path<String>,
+    Query(query): Query<BlockHashQuery>,
 ) -> Response {
-    match app_state.web_api.get_transaction(hash).await {
+    match app_state.web_api.get_balance(address, query.block_hash).await {
+        Ok(response) => Json(response).into_response(),
+        Err(e) => AppError(e).into_response(),
+    }
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/registry/{uri}",
+    params(
+        ("uri" = String, Path, description = "Registry URI (e.g. rho:id:...)"),
+        ("block_hash" = Option<String>, Query, description = "Block hash to query against (defaults to LFB)"),
+    ),
+    responses(
+        (status = 200, description = "Registry entry", body = RegistryResponse),
+        (status = 400, description = "Bad request or URI not found")
+    ),
+    tag = "Query"
+)]
+pub async fn registry_handler(
+    State(app_state): State<AppState>,
+    Path(uri): Path<String>,
+    Query(query): Query<BlockHashQuery>,
+) -> Response {
+    match app_state.web_api.get_registry(uri, query.block_hash).await {
+        Ok(response) => Json(response).into_response(),
+        Err(e) => AppError(e).into_response(),
+    }
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/validators",
+    params(
+        ("block_hash" = Option<String>, Query, description = "Block hash to query against (defaults to LFB)"),
+    ),
+    responses(
+        (status = 200, description = "Active validator set", body = ValidatorsResponse),
+        (status = 400, description = "Bad request")
+    ),
+    tag = "Query"
+)]
+pub async fn validators_handler(
+    State(app_state): State<AppState>,
+    Query(query): Query<BlockHashQuery>,
+) -> Response {
+    match app_state.web_api.get_validators(query.block_hash).await {
+        Ok(response) => Json(response).into_response(),
+        Err(e) => AppError(e).into_response(),
+    }
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/epoch",
+    params(
+        ("block_hash" = Option<String>, Query, description = "Block hash to query against (defaults to LFB)"),
+    ),
+    responses(
+        (status = 200, description = "Current epoch info", body = EpochResponse),
+        (status = 400, description = "Bad request")
+    ),
+    tag = "Query"
+)]
+pub async fn epoch_handler(
+    State(app_state): State<AppState>,
+    Query(query): Query<BlockHashQuery>,
+) -> Response {
+    match app_state.web_api.get_epoch(query.block_hash).await {
+        Ok(response) => Json(response).into_response(),
+        Err(e) => AppError(e).into_response(),
+    }
+}
+
+use crate::rust::api::web_api::{
+    EstimateCostResponse, EpochRewardsResponse, ValidatorStatusResponse,
+    BondStatusResponse as BondStatusResp, SimpleExploreDeployRequest,
+};
+
+#[utoipa::path(
+    post,
+    path = "/api/estimate-cost",
+    request_body = SimpleExploreDeployRequest,
+    params(
+        ("block_hash" = Option<String>, Query, description = "Block hash to query against (defaults to LFB)"),
+    ),
+    responses(
+        (status = 200, description = "Estimated phlogiston cost", body = EstimateCostResponse),
+        (status = 400, description = "Bad request or parse error")
+    ),
+    tag = "Query"
+)]
+pub async fn estimate_cost_handler(
+    State(app_state): State<AppState>,
+    Query(query): Query<BlockHashQuery>,
+    Json(request): Json<SimpleExploreDeployRequest>,
+) -> Response {
+    match app_state.web_api.estimate_cost(request.term, query.block_hash).await {
+        Ok(response) => Json(response).into_response(),
+        Err(e) => AppError(e).into_response(),
+    }
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/epoch/rewards",
+    params(
+        ("block_hash" = Option<String>, Query, description = "Block hash to query against (defaults to LFB)"),
+    ),
+    responses(
+        (status = 200, description = "Current epoch rewards", body = EpochRewardsResponse),
+        (status = 400, description = "Bad request")
+    ),
+    tag = "Query"
+)]
+pub async fn epoch_rewards_handler(
+    State(app_state): State<AppState>,
+    Query(query): Query<BlockHashQuery>,
+) -> Response {
+    match app_state.web_api.get_epoch_rewards(query.block_hash).await {
+        Ok(response) => Json(response).into_response(),
+        Err(e) => AppError(e).into_response(),
+    }
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/validator/{pubkey}",
+    params(
+        ("pubkey" = String, Path, description = "Validator public key (hex)"),
+        ("block_hash" = Option<String>, Query, description = "Block hash to query against (defaults to LFB)"),
+    ),
+    responses(
+        (status = 200, description = "Validator status", body = ValidatorStatusResponse),
+        (status = 400, description = "Bad request")
+    ),
+    tag = "Query"
+)]
+pub async fn validator_handler(
+    State(app_state): State<AppState>,
+    Path(pubkey): Path<String>,
+    Query(query): Query<BlockHashQuery>,
+) -> Response {
+    match app_state.web_api.get_validator(pubkey, query.block_hash).await {
+        Ok(response) => Json(response).into_response(),
+        Err(e) => AppError(e).into_response(),
+    }
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/bond-status/{pubkey}",
+    params(
+        ("pubkey" = String, Path, description = "Validator public key (hex)"),
+    ),
+    responses(
+        (status = 200, description = "Bond status", body = BondStatusResp),
+        (status = 400, description = "Bad request or invalid public key")
+    ),
+    tag = "Query"
+)]
+pub async fn bond_status_handler(
+    State(app_state): State<AppState>,
+    Path(pubkey): Path<String>,
+) -> Response {
+    match app_state.web_api.get_bond_status(pubkey).await {
         Ok(response) => Json(response).into_response(),
         Err(e) => AppError(e).into_response(),
     }
@@ -294,58 +501,34 @@ mod tests {
     use std::sync::Arc;
     use tower::ServiceExt;
 
-    use crate::rust::api::{
-        serde_types::light_block_info::{
-            BondInfoJson, JustificationInfoJson, LightBlockInfoSerde,
-        },
-        web_api::{
-            ApiStatus, DataAtNameByBlockHashRequest, DataAtNameRequest, DataAtNameResponse,
-            DeployLookupResponse, DeployRequest, RhoDataResponse, WebApi,
-        },
+    use crate::rust::api::web_api::{
+        ApiStatus, DataAtNameByBlockHashRequest,
+        DeployRequest, DeployResponse, ViewMode, RhoDataResponse, WebApi,
     };
-    use crate::rust::web::transaction::TransactionResponse;
 
-    fn sample_light_block_info() -> LightBlockInfoSerde {
-        LightBlockInfoSerde {
+    /// Stub WebApi that returns sample DeployResponse for testing.
+    struct StubWebApi;
+
+    fn sample_deploy_response(view: ViewMode) -> DeployResponse {
+        let is_full = view == ViewMode::Full;
+        DeployResponse {
+            deploy_id: "abc123def".to_string(),
             block_hash: "7bf8abc123".to_string(),
-            sender: "0487def456".to_string(),
-            seq_num: 17453,
-            sig: "3044abcdef".to_string(),
-            sig_algorithm: "secp256k1".to_string(),
-            shard_id: "root".to_string(),
-            extra_bytes: vec![],
-            version: 1,
-            timestamp: 1770028092477,
-            header_extra_bytes: vec![],
-            parents_hash_list: vec!["parent1hash".to_string(), "parent2hash".to_string()],
             block_number: 52331,
-            pre_state_hash: "preState123".to_string(),
-            post_state_hash: "postState456".to_string(),
-            body_extra_bytes: vec![],
-            bonds: vec![
-                BondInfoJson {
-                    validator: "validator1".to_string(),
-                    stake: 100,
-                },
-                BondInfoJson {
-                    validator: "validator2".to_string(),
-                    stake: 200,
-                },
-            ],
-            block_size: "4096".to_string(),
-            deploy_count: 5,
-            fault_tolerance: 0.5,
-            justifications: vec![JustificationInfoJson {
-                validator: "validator1".to_string(),
-                latest_block_hash: "latestBlockHash1".to_string(),
-            }],
-            rejected_deploys: vec![],
+            timestamp: 1770028092477,
+            cost: 100,
+            errored: false,
+            is_finalized: true,
+            deployer: if is_full { Some("0487def456".to_string()) } else { None },
+            term: if is_full { Some("new ret in { ret!(42) }".to_string()) } else { None },
+            system_deploy_error: if is_full { Some(String::new()) } else { None },
+            phlo_price: if is_full { Some(10) } else { None },
+            phlo_limit: if is_full { Some(100000) } else { None },
+            sig_algorithm: if is_full { Some("secp256k1".to_string()) } else { None },
+            valid_after_block_number: if is_full { Some(0) } else { None },
+            transfers: if is_full { Some(vec![]) } else { None },
         }
     }
-
-    /// Stub WebApi that only implements find_deploy and find_deploy_minimal.
-    /// Mirrors the Scala stubWebApi in WebApiRoutesDeploySpec.
-    struct StubWebApi;
 
     #[async_trait::async_trait]
     impl WebApi for StubWebApi {
@@ -361,12 +544,6 @@ mod tests {
         async fn deploy(&self, _: DeployRequest) -> eyre::Result<String> {
             unimplemented!()
         }
-        async fn listen_for_data_at_name(
-            &self,
-            _: DataAtNameRequest,
-        ) -> eyre::Result<DataAtNameResponse> {
-            unimplemented!()
-        }
         async fn get_data_at_par(
             &self,
             _: DataAtNameByBlockHashRequest,
@@ -375,26 +552,26 @@ mod tests {
         }
         async fn last_finalized_block(
             &self,
+            _: ViewMode,
         ) -> eyre::Result<crate::rust::api::serde_types::block_info::BlockInfoSerde> {
             unimplemented!()
         }
         async fn get_block(
             &self,
             _: String,
+            _: ViewMode,
         ) -> eyre::Result<crate::rust::api::serde_types::block_info::BlockInfoSerde> {
             unimplemented!()
         }
-        async fn get_blocks(&self, _: i32) -> eyre::Result<Vec<LightBlockInfoSerde>> {
+        async fn get_blocks(
+            &self,
+            _: i32,
+            _: ViewMode,
+        ) -> eyre::Result<Vec<crate::rust::api::serde_types::block_info::BlockInfoSerde>> {
             unimplemented!()
         }
-        async fn find_deploy(&self, _: String) -> eyre::Result<LightBlockInfoSerde> {
-            Ok(sample_light_block_info())
-        }
-        async fn find_deploy_detail(&self, _: String) -> eyre::Result<DeployDetailResponse> {
-            unimplemented!()
-        }
-        async fn find_deploy_minimal(&self, _: String) -> eyre::Result<DeployLookupResponse> {
-            Ok(DeployLookupResponse::from(sample_light_block_info()))
+        async fn find_deploy(&self, _: String, view: ViewMode) -> eyre::Result<DeployResponse> {
+            Ok(sample_deploy_response(view))
         }
         async fn exploratory_deploy(
             &self,
@@ -408,7 +585,8 @@ mod tests {
             &self,
             _: i64,
             _: i64,
-        ) -> eyre::Result<Vec<LightBlockInfoSerde>> {
+            _: ViewMode,
+        ) -> eyre::Result<Vec<crate::rust::api::serde_types::block_info::BlockInfoSerde>> {
             unimplemented!()
         }
         async fn is_finalized(&self, _: String) -> eyre::Result<bool> {
@@ -420,29 +598,44 @@ mod tests {
         ) -> eyre::Result<crate::rust::api::web_api::DeployFinalizationStatusJson> {
             unimplemented!()
         }
-        async fn get_transaction(&self, _: String) -> eyre::Result<TransactionResponse> {
+        async fn get_balance(&self, _: String, _: Option<String>) -> eyre::Result<crate::rust::api::web_api::BalanceResponse> {
+            unimplemented!()
+        }
+        async fn get_registry(&self, _: String, _: Option<String>) -> eyre::Result<crate::rust::api::web_api::RegistryResponse> {
+            unimplemented!()
+        }
+        async fn get_validators(&self, _: Option<String>) -> eyre::Result<crate::rust::api::web_api::ValidatorsResponse> {
+            unimplemented!()
+        }
+        async fn get_epoch(&self, _: Option<String>) -> eyre::Result<crate::rust::api::web_api::EpochResponse> {
+            unimplemented!()
+        }
+        async fn estimate_cost(&self, _: String, _: Option<String>) -> eyre::Result<crate::rust::api::web_api::EstimateCostResponse> {
+            unimplemented!()
+        }
+        async fn get_epoch_rewards(&self, _: Option<String>) -> eyre::Result<crate::rust::api::web_api::EpochRewardsResponse> {
+            unimplemented!()
+        }
+        async fn get_validator(&self, _: String, _: Option<String>) -> eyre::Result<crate::rust::api::web_api::ValidatorStatusResponse> {
+            unimplemented!()
+        }
+        async fn get_bond_status(&self, _: String) -> eyre::Result<crate::rust::api::web_api::BondStatusResponse> {
             unimplemented!()
         }
     }
 
-    /// Test-only handler that mirrors find_deploy_handler but uses Arc<dyn WebApi> as state
-    /// instead of AppState (which requires BlockReportAPI, RPConfCell, etc.).
-    /// This is equivalent to the Scala approach where WebApiRoutes.service(stubWebApi)
-    /// takes only a WebApi instance.
     async fn test_find_deploy_handler(
         State(web_api): State<Arc<dyn WebApi + Send + Sync>>,
         Path(deploy_id): Path<String>,
         Query(query): Query<ViewQuery>,
     ) -> Response {
-        match query.view.as_deref() {
-            Some("minimal") => match web_api.find_deploy_minimal(deploy_id).await {
-                Ok(response) => Json(response).into_response(),
-                Err(e) => AppError(e).into_response(),
-            },
-            _ => match web_api.find_deploy(deploy_id).await {
-                Ok(response) => Json(response).into_response(),
-                Err(e) => AppError(e).into_response(),
-            },
+        let view = match query.view.as_deref() {
+            Some("summary") => ViewMode::Summary,
+            _ => ViewMode::Full,
+        };
+        match web_api.find_deploy(deploy_id, view).await {
+            Ok(response) => Json(response).into_response(),
+            Err(e) => AppError(e).into_response(),
         }
     }
 
@@ -459,7 +652,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_find_deploy_returns_full_response_without_view_param() {
+    async fn test_find_deploy_returns_full_response_by_default() {
         let app = test_router();
 
         let request: axum::http::Request<Body> = axum::http::Request::builder()
@@ -473,24 +666,30 @@ mod tests {
         let body = body_to_string(response.into_body()).await;
         let json: serde_json::Value = serde_json::from_str(&body).unwrap();
 
-        // Full response should contain block-level fields
+        // Core fields always present
+        assert_eq!(json["deployId"], "abc123def");
         assert_eq!(json["blockHash"], "7bf8abc123");
         assert_eq!(json["blockNumber"], 52331);
         assert_eq!(json["timestamp"], 1770028092477i64);
-        // Should contain fields that minimal view excludes
-        assert_eq!(json["preStateHash"], "preState123");
-        assert_eq!(json["postStateHash"], "postState456");
-        assert!(json.get("bonds").is_some());
-        assert!(json.get("justifications").is_some());
-        assert!(json.get("parentsHashList").is_some());
+        assert_eq!(json["cost"], 100);
+        assert_eq!(json["errored"], false);
+        assert_eq!(json["isFinalized"], true);
+
+        // Full view includes deploy execution details
+        assert_eq!(json["deployer"], "0487def456");
+        assert!(json.get("term").is_some());
+        assert!(json.get("phloPrice").is_some());
+        assert!(json.get("phloLimit").is_some());
+        assert!(json.get("sigAlgorithm").is_some());
+        assert!(json.get("transfers").is_some());
     }
 
     #[tokio::test]
-    async fn test_find_deploy_returns_minimal_response_with_view_minimal() {
+    async fn test_find_deploy_returns_summary_response() {
         let app = test_router();
 
         let request: axum::http::Request<Body> = axum::http::Request::builder()
-            .uri("/deploy/abc123def?view=minimal")
+            .uri("/deploy/abc123def?view=summary")
             .body(Body::empty())
             .unwrap();
         let response = app.oneshot(request).await.unwrap();
@@ -500,30 +699,24 @@ mod tests {
         let body = body_to_string(response.into_body()).await;
         let json: serde_json::Value = serde_json::from_str(&body).unwrap();
 
-        // Minimal response should contain only deploy-centric fields
+        // Core fields present
+        assert_eq!(json["deployId"], "abc123def");
         assert_eq!(json["blockHash"], "7bf8abc123");
         assert_eq!(json["blockNumber"], 52331);
-        assert_eq!(json["timestamp"], 1770028092477i64);
-        assert_eq!(json["sender"], "0487def456");
-        assert_eq!(json["seqNum"], 17453);
-        assert_eq!(json["sig"], "3044abcdef");
-        assert_eq!(json["sigAlgorithm"], "secp256k1");
-        assert_eq!(json["shardId"], "root");
-        assert_eq!(json["version"], 1);
+        assert_eq!(json["cost"], 100);
+        assert_eq!(json["isFinalized"], true);
 
-        // Should NOT contain block-level fields
-        assert!(json.get("bonds").is_none());
-        assert!(json.get("justifications").is_none());
-        assert!(json.get("parentsHashList").is_none());
-        assert!(json.get("preStateHash").is_none());
-        assert!(json.get("postStateHash").is_none());
-        assert!(json.get("faultTolerance").is_none());
-        assert!(json.get("deployCount").is_none());
-        assert!(json.get("blockSize").is_none());
+        // Full-only fields omitted
+        assert!(json.get("deployer").is_none());
+        assert!(json.get("term").is_none());
+        assert!(json.get("phloPrice").is_none());
+        assert!(json.get("phloLimit").is_none());
+        assert!(json.get("sigAlgorithm").is_none());
+        assert!(json.get("transfers").is_none());
     }
 
     #[tokio::test]
-    async fn test_find_deploy_returns_full_response_with_unknown_view() {
+    async fn test_find_deploy_unknown_view_defaults_to_full() {
         let app = test_router();
 
         let request: axum::http::Request<Body> = axum::http::Request::builder()
@@ -537,8 +730,8 @@ mod tests {
         let body = body_to_string(response.into_body()).await;
         let json: serde_json::Value = serde_json::from_str(&body).unwrap();
 
-        // Unknown view value should fall back to full response
-        assert!(json.get("bonds").is_some());
-        assert!(json.get("justifications").is_some());
+        // Unknown view falls back to full
+        assert!(json.get("deployer").is_some());
+        assert!(json.get("term").is_some());
     }
 }

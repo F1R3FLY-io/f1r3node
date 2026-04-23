@@ -1844,6 +1844,8 @@ fn block_event(
     block: &BlockMessage,
 ) -> (
     String,
+    i64,
+    i64,
     Vec<String>,
     Vec<(String, String)>,
     Vec<DeployEvent>,
@@ -1885,11 +1887,15 @@ fn block_event(
         })
         .collect::<Vec<_>>();
 
+    let block_number = block.body.state.block_number;
+    let timestamp = block.header.timestamp;
     let creator = hex::encode(block.sender.clone());
     let seq_num = block.seq_num;
 
     (
         block_hash,
+        block_number,
+        timestamp,
         parent_hashes,
         justification_hashes,
         deploys,
@@ -1900,10 +1906,12 @@ fn block_event(
 
 /// Create BlockCreated event for a block.
 pub fn created_event(block: &BlockMessage) -> F1r3flyEvent {
-    let (block_hash, parent_hashes, justification_hashes, deploys, creator, seq_num) =
+    let (block_hash, block_number, timestamp, parent_hashes, justification_hashes, deploys, creator, seq_num) =
         block_event(block);
     F1r3flyEvent::block_created(
         block_hash,
+        block_number,
+        timestamp,
         parent_hashes,
         justification_hashes,
         deploys,
@@ -1914,10 +1922,12 @@ pub fn created_event(block: &BlockMessage) -> F1r3flyEvent {
 
 /// Create BlockAdded event for a block.
 pub fn added_event(block: &BlockMessage) -> F1r3flyEvent {
-    let (block_hash, parent_hashes, justification_hashes, deploys, creator, seq_num) =
+    let (block_hash, block_number, timestamp, parent_hashes, justification_hashes, deploys, creator, seq_num) =
         block_event(block);
     F1r3flyEvent::block_added(
         block_hash,
+        block_number,
+        timestamp,
         parent_hashes,
         justification_hashes,
         deploys,
@@ -1928,10 +1938,12 @@ pub fn added_event(block: &BlockMessage) -> F1r3flyEvent {
 
 /// Create BlockFinalised event for a block.
 pub fn finalised_event(block: &BlockMessage) -> F1r3flyEvent {
-    let (block_hash, parent_hashes, justification_hashes, deploys, creator, seq_num) =
+    let (block_hash, block_number, timestamp, parent_hashes, justification_hashes, deploys, creator, seq_num) =
         block_event(block);
     F1r3flyEvent::block_finalised(
         block_hash,
+        block_number,
+        timestamp,
         parent_hashes,
         justification_hashes,
         deploys,

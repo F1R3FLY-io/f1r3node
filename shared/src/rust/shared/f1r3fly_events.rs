@@ -143,6 +143,8 @@ mod tests {
     fn create_block_finalised_event() -> F1r3flyEvent {
         F1r3flyEvent::block_finalised(
             "hash123".to_string(),
+            100,
+            1700000000000,
             vec!["parent1".to_string()],
             vec![("j1".to_string(), "j2".to_string())],
             vec![create_test_deploy_event("deploy1")],
@@ -154,6 +156,8 @@ mod tests {
     fn create_block_created_event() -> F1r3flyEvent {
         F1r3flyEvent::block_created(
             "hash456".to_string(),
+            200,
+            1700000001000,
             vec!["parent1".to_string(), "parent2".to_string()],
             vec![("j1".to_string(), "j2".to_string())],
             vec![create_test_deploy_event("deploy1")],
@@ -165,6 +169,8 @@ mod tests {
     fn create_block_added_event() -> F1r3flyEvent {
         F1r3flyEvent::block_added(
             "hash789".to_string(),
+            300,
+            1700000002000,
             vec!["parent3".to_string()],
             vec![("j3".to_string(), "j4".to_string())],
             vec![

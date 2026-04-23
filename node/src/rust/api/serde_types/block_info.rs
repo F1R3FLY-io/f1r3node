@@ -15,18 +15,21 @@ use crate::rust::api::serde_types::{
 pub struct BlockInfoSerde {
     #[serde(rename = "blockInfo")]
     pub block_info: LightBlockInfoSerde,
-    pub deploys: Vec<DeployInfoSerde>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deploys: Option<Vec<DeployInfoSerde>>,
 }
 
 impl From<BlockInfo> for BlockInfoSerde {
     fn from(block: BlockInfo) -> Self {
         Self {
             block_info: block.block_info.unwrap_or_default().into(),
-            deploys: block
-                .deploys
-                .iter()
-                .map(|d| DeployInfoSerde::from(d.clone()))
-                .collect(),
+            deploys: Some(
+                block
+                    .deploys
+                    .iter()
+                    .map(|d| DeployInfoSerde::from(d.clone()))
+                    .collect(),
+            ),
         }
     }
 }
@@ -37,8 +40,9 @@ impl From<BlockInfoSerde> for BlockInfo {
             block_info: Some(json.block_info.into()),
             deploys: json
                 .deploys
+                .unwrap_or_default()
                 .into_iter()
-                .map(|d| DeployInfo::from(d))
+                .map(DeployInfo::from)
                 .collect(),
         }
     }
@@ -64,7 +68,17 @@ impl Default for BlockInfoSerde {
     fn default() -> Self {
         Self {
             block_info: LightBlockInfoSerde::default(),
-            deploys: Vec::new(),
+            deploys: None,
+        }
+    }
+}
+
+impl BlockInfoSerde {
+    /// Create a summary view (block info only, no deploys).
+    pub fn from_light(light: LightBlockInfoSerde) -> Self {
+        Self {
+            block_info: light,
+            deploys: None,
         }
     }
 }
