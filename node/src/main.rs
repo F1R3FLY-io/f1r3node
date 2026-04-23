@@ -221,13 +221,6 @@ fn run_cli(options: Options, rt: &Runtime) -> Result<()> {
                 rt.block_on(DeployRuntime::bond_status(&mut deploy_client, &public_key));
                 Ok(())
             }
-            OptionsSubCommand::DataAtName { name } => {
-                rt.block_on(DeployRuntime::listen_for_data_at_name(
-                    &mut deploy_client,
-                    name,
-                ));
-                Ok(())
-            }
             OptionsSubCommand::ContAtName { names } => {
                 rt.block_on(DeployRuntime::listen_for_continuation_at_name(
                     &mut deploy_client,

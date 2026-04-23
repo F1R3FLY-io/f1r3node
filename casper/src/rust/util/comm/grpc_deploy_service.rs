@@ -3,12 +3,12 @@ use models::casper::v1::deploy_service_client::DeployServiceClient;
 use models::casper::v1::{
     block_info_response, block_response, bond_status_response, continuation_at_name_response,
     deploy_response, find_deploy_response, is_finalized_response, last_finalized_block_response,
-    listening_name_data_response, machine_verify_response, rho_data_response, status_response,
-    visualize_blocks_response, ListeningNameDataPayload, RhoDataPayload,
+    machine_verify_response, rho_data_response, status_response,
+    visualize_blocks_response, RhoDataPayload,
 };
 use models::casper::{
     BlockQuery, BlocksQuery, BondStatusQuery, ContinuationAtNameQuery, ContinuationsWithBlockInfo,
-    DataAtNameByBlockQuery, DataAtNameQuery, DataWithBlockInfo, FindDeployQuery, IsFinalizedQuery,
+    DataAtNameByBlockQuery, FindDeployQuery, IsFinalizedQuery,
     LastFinalizedBlockQuery, LightBlockInfo, MachineVerifyQuery, VisualizeDagQuery,
 };
 use models::rhoapi::Par;
@@ -25,10 +25,6 @@ pub trait DeployService {
     async fn visualize_dag(&mut self, q: VisualizeDagQuery) -> ServiceResult<String>;
     async fn machine_verifiable_dag(&mut self, q: MachineVerifyQuery) -> ServiceResult<String>;
     async fn find_deploy(&mut self, q: FindDeployQuery) -> ServiceResult<String>;
-    async fn listen_for_data_at_name(
-        &mut self,
-        q: DataAtNameQuery,
-    ) -> ServiceResult<Vec<DataWithBlockInfo>>;
     async fn listen_for_continuation_at_name(
         &mut self,
         q: ContinuationAtNameQuery,
@@ -73,13 +69,6 @@ impl DeployService for GrpcDeployService {
 
     async fn find_deploy(&mut self, q: FindDeployQuery) -> ServiceResult<String> {
         self.find_deploy_impl(q).await
-    }
-
-    async fn listen_for_data_at_name(
-        &mut self,
-        q: DataAtNameQuery,
-    ) -> ServiceResult<Vec<DataWithBlockInfo>> {
-        self.listen_for_data_at_name_impl(q).await
     }
 
     async fn listen_for_continuation_at_name(
@@ -229,26 +218,6 @@ impl GrpcDeployService {
         use std::fmt::Write as _;
         let _ = writeln!(out, "count: {count}");
         Ok(out)
-    }
-
-    async fn listen_for_data_at_name_impl(
-        &mut self,
-        q: DataAtNameQuery,
-    ) -> ServiceResult<Vec<DataWithBlockInfo>> {
-        let resp = self
-            .client
-            .listen_for_data_at_name(q)
-            .await
-            .map_err(error_to_vec)?;
-
-        match resp.into_inner().message {
-            Some(listening_name_data_response::Message::Error(err)) => Err(error_to_vec(err)),
-            Some(listening_name_data_response::Message::Payload(ListeningNameDataPayload {
-                block_info,
-                ..
-            })) => Ok(block_info),
-            None => Err(vec!["empty ListeningNameDataResponse.message".into()]),
-        }
     }
 
     async fn listen_for_continuation_at_name_impl(

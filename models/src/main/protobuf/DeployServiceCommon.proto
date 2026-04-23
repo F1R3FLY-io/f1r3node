@@ -124,6 +124,7 @@ message DeployInfo{
   bool errored                = 11;
   string systemDeployError    = 12;
   repeated TransferInfo transfers = 13;
+  bool transfersAvailable         = 14; // true when transfers were extracted (readonly), false on validators
 }
 
 message LightBlockInfo {
@@ -156,6 +157,7 @@ message LightBlockInfo {
 
   repeated JustificationInfo justifications   = 20;
   repeated RejectedDeployInfo rejectedDeploys = 21;
+  bool isFinalized                            = 22;
 }
 
 message RejectedDeployInfo{
@@ -257,9 +259,15 @@ message Status {
   repeated PeerInfo peerList  = 8;  // Detailed peer list
   // Native token metadata baked into genesis state. Queryable on-chain via
   // the TokenMetadata contract at `rho:system:tokenMetadata`.
-  string nativeTokenName      = 9;
-  string nativeTokenSymbol    = 10;
-  uint32 nativeTokenDecimals  = 11;
+  string nativeTokenName             = 9;
+  string nativeTokenSymbol           = 10;
+  uint32 nativeTokenDecimals         = 11;
+  int64  lastFinalizedBlockNumber    = 12;
+  bool   isValidator                 = 13;
+  bool   isReadOnly                  = 14;
+  bool   isReady                     = 15;
+  int64  currentEpoch                = 16;
+  int32  epochLength                 = 17;
 }
 
 message VersionInfo {

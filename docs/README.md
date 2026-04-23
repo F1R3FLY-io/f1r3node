@@ -125,9 +125,10 @@ The native token's name, symbol, and decimals are configured before genesis and 
 
 | Document | Description |
 |----------|-------------|
-| [WebSocket Events](./node/websocket-events.md) | `/ws/events` endpoint: 9 event types, startup replay, payload schemas |
+| [API Reference](./node/api-reference.md) | Complete HTTP REST + gRPC endpoint reference with parameters and curl examples |
+| [WebSocket Events](./node/websocket-events.md) | `/ws/events` endpoint: 10 event types, startup replay, payload schemas |
 | [Docker Setup](../docker/README.md) | Docker compose for shard, standalone, monitoring |
-| [RNode API](./rnode-api/) | Protocol Buffer API documentation |
+| [RNode API](./rnode-api/) | Protocol Buffer API documentation (legacy Scala reference) |
 | [LFS Requester Architecture](./plans/lfs_tuple_space_requester_concurrency_architecture.md) | LFS tuple space concurrency design |
 | [Whiteblock Test Plan](./whiteblock/whiteblock-test-plan.md) | Network testing plan |
 

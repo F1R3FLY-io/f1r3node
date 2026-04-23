@@ -800,7 +800,7 @@ Use `DoDeploy` to queue deployments of Rholang code and then
 `createBlock` to make a new block with the results of running them
 all.
 
-To get results back, use `getDataAtName` (recommended) or `listenForDataAtName` (deprecated).
+To get results back, use `getDataAtName`.
 
 | Method Name | Request Type | Response Type | Description |
 | ----------- | ------------ | ------------- | ------------|
@@ -809,7 +809,6 @@ To get results back, use `getDataAtName` (recommended) or `listenForDataAtName` 
 | getBlock | [BlockQuery](#coop.rchain.casper.protocol.BlockQuery) | [BlockQueryResponse](#coop.rchain.casper.protocol.BlockQuery) | Get details about a particular block. |
 | showMainChain | [BlocksQuery](#coop.rchain.casper.protocol.BlocksQuery) | [LightBlockInfo](#coop.rchain.casper.protocol.BlocksQuery) |  |
 | getBlocks | [BlocksQuery](#coop.rchain.casper.protocol.BlocksQuery) | [LightBlockInfo](#coop.rchain.casper.protocol.BlocksQuery) | Get a summary of blocks on the blockchain. |
-| listenForDataAtName | [DataAtNameQuery](#coop.rchain.casper.protocol.DataAtNameQuery) | [ListeningNameDataResponse](#coop.rchain.casper.protocol.DataAtNameQuery) | Find data sent to a name. |
 | listenForContinuationAtName | [ContinuationAtNameQuery](#coop.rchain.casper.protocol.ContinuationAtNameQuery) | [ListeningNameContinuationResponse](#coop.rchain.casper.protocol.ContinuationAtNameQuery) | Find processes receiving on a name. |
 | findBlockWithDeploy | [FindDeployInBlockQuery](#coop.rchain.casper.protocol.FindDeployInBlockQuery) | [BlockQueryResponse](#coop.rchain.casper.protocol.FindDeployInBlockQuery) | Find block from a deploy. |
 | previewPrivateNames | [PrivateNamePreviewQuery](#coop.rchain.casper.protocol.PrivateNamePreviewQuery) | [PrivateNamePreviewResponse](#coop.rchain.casper.protocol.PrivateNamePreviewQuery) | Preview new top-level unforgeable names (for example, to compute signatures over them). |

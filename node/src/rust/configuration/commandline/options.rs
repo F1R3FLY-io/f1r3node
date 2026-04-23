@@ -11,7 +11,7 @@ use humantime::parse_duration;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use super::converters::{NameConverter, PrivateKeyConverter, PublicKeyConverter, VecNameConverter};
+use super::converters::{PrivateKeyConverter, PublicKeyConverter, VecNameConverter};
 
 pub const GRPC_INTERNAL_PORT: u16 = 40402;
 pub const GRPC_EXTERNAL_PORT: u16 = 40401;
@@ -89,10 +89,6 @@ pub enum OptionsSubCommand {
     BondStatus {
         #[arg(value_parser = ValueParser::new(PublicKeyConverter::parse))]
         public_key: PublicKey,
-    },
-    DataAtName {
-        #[arg(value_parser = ValueParser::new(|s: &str| NameConverter::parse_with_type("pub", s)))]
-        name: Name,
     },
     ContAtName {
         #[arg(value_parser = ValueParser::new(VecNameConverter::parse))]

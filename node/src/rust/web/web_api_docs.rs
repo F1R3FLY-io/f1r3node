@@ -5,15 +5,6 @@ use utoipa::OpenApi;
 use crate::rust::web::{admin_web_api_routes, shared_handlers, status_info};
 
 /// Public API OpenAPI documentation
-///
-/// This schema includes the following endpoints:
-/// - GET /status - Get API status
-/// - POST /deploy - Deploy a contract
-/// - POST /explore-deploy - Perform exploratory deploy
-/// - POST /explore-deploy-by-block-hash - Exploratory deploy at specific block
-/// - POST /data-at-name - Listen for data at name
-/// - GET /blocks - Get recent blocks
-/// - GET /block/{hash} - Get block by hash
 #[derive(OpenApi)]
 #[openapi(
     paths(
@@ -21,7 +12,6 @@ use crate::rust::web::{admin_web_api_routes, shared_handlers, status_info};
         shared_handlers::deploy_handler,
         shared_handlers::explore_deploy_handler,
         shared_handlers::explore_deploy_by_block_hash_handler,
-        shared_handlers::data_at_name_handler,
         shared_handlers::get_blocks_handler,
         shared_handlers::get_block_handler,
     ),
@@ -34,9 +24,6 @@ use crate::rust::web::{admin_web_api_routes, shared_handlers, status_info};
 pub struct PublicApi;
 
 /// Admin API OpenAPI documentation
-///
-/// This schema includes all public endpoints plus:
-/// - POST /propose - Propose a new block (admin only)
 #[derive(OpenApi)]
 #[openapi(
     paths(
@@ -44,7 +31,6 @@ pub struct PublicApi;
         shared_handlers::deploy_handler,
         shared_handlers::explore_deploy_handler,
         shared_handlers::explore_deploy_by_block_hash_handler,
-        shared_handlers::data_at_name_handler,
         shared_handlers::get_blocks_handler,
         shared_handlers::get_block_handler,
         admin_web_api_routes::propose_handler,

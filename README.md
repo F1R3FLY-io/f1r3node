@@ -374,6 +374,10 @@ Detailed architecture and API documentation for each crate is available in [docs
 | [node](docs/node/) | Binary entry point, gRPC/HTTP servers, CLI, diagnostics |
 | [graphz](docs/graphz/) | Graphviz DOT generation |
 
+**API & Events:**
+- [API Reference](docs/node/api-reference.md) — Complete HTTP REST + gRPC endpoint reference with parameters and curl examples
+- [WebSocket Events](docs/node/websocket-events.md) — Real-time event streaming, 10 event types, startup replay
+
 **Cross-cutting:** [Data Flows](docs/data-flows/) | [Patterns & Conventions](docs/patterns/)
 
 **Rholang Language:**
