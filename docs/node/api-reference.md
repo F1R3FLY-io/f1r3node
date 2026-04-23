@@ -539,6 +539,46 @@ Proto definitions: `models/src/main/protobuf/DeployServiceV1.proto`, `ProposeSer
 
 ---
 
+## Error Responses
+
+All HTTP endpoints return errors with the same shape:
+
+- **Status code:** `400 Bad Request`
+- **Content-Type:** `text/plain; charset=utf-8`
+- **Body:** `Something went wrong: <message>`
+
+The message is not structured JSON. Clients should match on the HTTP status code and parse the message string if they need to distinguish error types.
+
+### Readonly-only endpoints on validators
+
+These endpoints use exploratory deploy internally and are rejected on validator nodes:
+
+- `POST /api/explore-deploy`
+- `POST /api/explore-deploy-by-block-hash`
+- `POST /api/estimate-cost`
+- `GET /api/balance/{address}`
+- `GET /api/registry/{uri}`
+- `GET /api/validators`
+- `GET /api/validator/{pubkey}`
+- `GET /api/epoch/rewards`
+
+When called on a validator they return:
+
+```
+HTTP/1.1 400 Bad Request
+Content-Type: text/plain; charset=utf-8
+
+Something went wrong: Exploratory deploy can only be executed on read-only RNode.
+```
+
+Clients should route these requests to a readonly node (typically port 40453 in standard shard deployments). `GET /api/status` exposes `isValidator` and `isReadOnly` so clients can pick a target dynamically.
+
+### Not-found errors
+
+`GET /api/block/{hash}` returns `404 Not Found` with a plain text body when the hash doesn't exist in the local store. Other block lookups surface missing data as `400 Bad Request` with an explanatory message.
+
+---
+
 ## Transfer Behavior
 
 | Node type | `transfers` on deploy responses | `TransfersAvailable` WebSocket event |
