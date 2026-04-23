@@ -20,7 +20,10 @@ use rspace_plus_plus::rspace::{
 use shared::rust::hashable_set::HashableSet;
 
 use super::{conflict_set_merger, deploy_chain_index::DeployChainIndex};
-use crate::rust::{errors::CasperError, system_deploy::is_system_deploy_id};
+use crate::rust::{
+    errors::CasperError,
+    system_deploy::{is_slash_deploy_id, is_system_deploy_id},
+};
 
 pub fn cost_optimal_rejection_alg() -> impl Fn(&DeployChainIndex) -> u64 {
     |deploy_chain_index: &DeployChainIndex| {
@@ -73,7 +76,14 @@ pub fn merge(
     rejection_cost_f: impl Fn(&DeployChainIndex) -> u64,
     scope: Option<HashSet<BlockHash>>,
     disable_late_block_filtering: bool,
-) -> Result<(Blake2b256Hash, Vec<(Bytes, BlockHash)>), CasperError> {
+) -> Result<
+    (
+        Blake2b256Hash,
+        Vec<(Bytes, BlockHash)>,
+        Vec<(Bytes, BlockHash)>,
+    ),
+    CasperError,
+> {
     // Blocks to merge are all blocks in scope that are NOT the LFB or its ancestors.
     // This includes:
     // 1. Descendants of LFB (blocks built on top of LFB)
@@ -481,10 +491,14 @@ pub fn merge(
 
     let rejected = resolved.rejected;
 
-    // Extract (rejected deploy ID, source block hash) pairs. System deploy IDs
-    // are filtered out; callers need only user-deploy IDs for buffering and
-    // downstream tracking.
-    let mut rejected_deploys: Vec<(Bytes, BlockHash)> = rejected
+    // Extract (rejected deploy ID, source block hash) pairs, split by kind.
+    // User deploys feed the rejected-deploy buffer for re-proposal. Slash
+    // deploys feed the block creator's dedup step so that the slash effect
+    // persists in the merge block's body regardless of cost-optimal rejection
+    // of the source chain. Non-slash system deploys (close block, heartbeat)
+    // are intentionally dropped here — they are atomic with their containing
+    // block and have no recovery semantics.
+    let all_pairs: Vec<(Bytes, BlockHash)> = rejected
         .0
         .iter()
         .flat_map(|chain| {
@@ -495,36 +509,56 @@ pub fn merge(
                 .iter()
                 .map(move |deploy| (deploy.deploy_id.clone(), src.clone()))
         })
-        .filter(|(id, _)| !is_system_deploy_id(id))
         .collect();
 
-    // Sort rejected pairs for deterministic ordering across validators.
-    rejected_deploys.sort();
+    let mut rejected_user_deploys: Vec<(Bytes, BlockHash)> = all_pairs
+        .iter()
+        .filter(|(id, _)| !is_system_deploy_id(id))
+        .cloned()
+        .collect();
+    let mut rejected_slashes: Vec<(Bytes, BlockHash)> = all_pairs
+        .into_iter()
+        .filter(|(id, _)| is_slash_deploy_id(id))
+        .collect();
 
-    // Log merge summary at debug level
+    // Deterministic ordering across validators.
+    rejected_user_deploys.sort();
+    rejected_slashes.sort();
+
     tracing::debug!(
-        "DagMerger.merge: LFB={}, scope={}, actual={}, late={}, rejected={}",
+        "DagMerger.merge: LFB={}, scope={}, actual={}, late={}, rejected_user={}, rejected_slash={}",
         hex::encode(&lfb[..std::cmp::min(8, lfb.len())]),
         scope
             .as_ref()
             .map_or("ALL".to_string(), |s| s.len().to_string()),
         actual_blocks.len(),
         late_blocks.len(),
-        rejected_deploys.len()
+        rejected_user_deploys.len(),
+        rejected_slashes.len(),
     );
 
-    // Log rejected deploys at info level only if there are any
-    if !rejected_deploys.is_empty() {
-        let rejected_str: Vec<_> = rejected_deploys
+    if !rejected_user_deploys.is_empty() {
+        let rejected_str: Vec<_> = rejected_user_deploys
             .iter()
             .map(|(sig, _)| hex::encode(&sig[..std::cmp::min(8, sig.len())]))
             .collect();
         tracing::info!(
-            "DagMerger rejected {} deploys: {}",
-            rejected_deploys.len(),
+            "DagMerger rejected {} user deploys: {}",
+            rejected_user_deploys.len(),
+            rejected_str.join(", ")
+        );
+    }
+    if !rejected_slashes.is_empty() {
+        let rejected_str: Vec<_> = rejected_slashes
+            .iter()
+            .map(|(sig, _)| hex::encode(&sig[..std::cmp::min(8, sig.len())]))
+            .collect();
+        tracing::info!(
+            "DagMerger rejected {} slashes: {}",
+            rejected_slashes.len(),
             rejected_str.join(", ")
         );
     }
 
-    Ok((new_state, rejected_deploys))
+    Ok((new_state, rejected_user_deploys, rejected_slashes))
 }

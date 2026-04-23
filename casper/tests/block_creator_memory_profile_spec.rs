@@ -557,10 +557,18 @@ async fn run_block_creator_phase_split_memory_profile() {
 
         let rss_before = vm_rss_kb();
 
-        let (pre_state_hash, _rejected) = if skip_parents_compute {
+        let (pre_state_hash, _rejected, _rejected_slashes) = if skip_parents_compute {
             match snapshot.parents.first() {
-                Some(parent) => (parent.body.state.post_state_hash.clone(), Vec::new()),
-                None => (RuntimeManager::empty_state_hash_fixed(), Vec::new()),
+                Some(parent) => (
+                    parent.body.state.post_state_hash.clone(),
+                    Vec::new(),
+                    Vec::new(),
+                ),
+                None => (
+                    RuntimeManager::empty_state_hash_fixed(),
+                    Vec::new(),
+                    Vec::new(),
+                ),
             }
         } else {
             match compute_parents_post_state(

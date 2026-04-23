@@ -40,7 +40,7 @@ use crate::rust::errors::CasperError;
 use crate::rust::merging::block_index::BlockIndex;
 use crate::rust::metrics_constants::{
     BLOCK_INDEX_CACHE_SIZE_METRIC, CASPER_METRICS_SOURCE, PARENTS_POST_STATE_CACHE_SIZE_METRIC,
-    RUNTIME_SPAWN_TIME_METRIC, RUNTIME_SPAWN_REPLAY_TIME_METRIC,
+    RUNTIME_SPAWN_REPLAY_TIME_METRIC, RUNTIME_SPAWN_TIME_METRIC,
 };
 use crate::rust::rholang::replay_runtime::ReplayRuntimeOps;
 use crate::rust::rholang::runtime::RuntimeOps;
@@ -91,7 +91,11 @@ pub struct ParentsPostStateCacheKey {
     pub disable_late_block_filtering: bool,
 }
 
-pub type ParentsPostStateCacheVal = (StateHash, Vec<prost::bytes::Bytes>);
+pub type ParentsPostStateCacheVal = (
+    StateHash,
+    Vec<prost::bytes::Bytes>,
+    Vec<crate::rust::merging::rejected_slash::RejectedSlash>,
+);
 
 impl RuntimeManager {
     const MAX_BLOCK_INDEX_CACHE_ENTRIES: usize = 128;
@@ -404,9 +408,8 @@ impl RuntimeManager {
         CasperError,
     > {
         let mem_profile_enabled = crate::rust::util::rholang::mem_profiler::mem_profile_enabled();
-        let read_vm_rss_kb = || -> Option<usize> {
-            crate::rust::util::rholang::mem_profiler::read_vm_rss_kb()
-        };
+        let read_vm_rss_kb =
+            || -> Option<usize> { crate::rust::util::rholang::mem_profiler::read_vm_rss_kb() };
         let mut rss_baseline = if mem_profile_enabled {
             read_vm_rss_kb()
         } else {
@@ -612,20 +615,20 @@ impl RuntimeManager {
                         );
                         // Continue to full replay path for validation.
                     } else {
-                    let pre_state_hash = Blake2b256Hash::from_bytes_prost(start_hash);
-                    let post_state_hash = Blake2b256Hash::from_bytes_prost(&cached_post);
-                    self.save_mergeable_channels(
-                        post_state_hash,
-                        sender.bytes.clone(),
-                        seq_num,
-                        Vec::new(),
-                        &pre_state_hash,
-                    )?;
-                    tracing::warn!(
+                        let pre_state_hash = Blake2b256Hash::from_bytes_prost(start_hash);
+                        let post_state_hash = Blake2b256Hash::from_bytes_prost(&cached_post);
+                        self.save_mergeable_channels(
+                            post_state_hash,
+                            sender.bytes.clone(),
+                            seq_num,
+                            Vec::new(),
+                            &pre_state_hash,
+                        )?;
+                        tracing::warn!(
                         "[CACHE] StateHashCache hit without mergeable entry for empty block (seq={}); synthesized empty mergeable metadata",
                         seq_num
                     );
-                    return Ok(cached_post);
+                        return Ok(cached_post);
                     }
                 }
 
@@ -724,7 +727,10 @@ impl RuntimeManager {
 
         let max_entries = Self::max_active_validators_cache_entries();
         if self.active_validators_cache.len() >= max_entries {
-            Self::evict_fifo_entry(&self.active_validators_cache, &self.active_validators_cache_order);
+            Self::evict_fifo_entry(
+                &self.active_validators_cache,
+                &self.active_validators_cache_order,
+            );
         }
         self.active_validators_cache
             .insert(start_hash.clone(), computed.clone());
@@ -767,7 +773,9 @@ impl RuntimeManager {
     pub async fn get_data(&self, hash: StateHash, channel: &Par) -> Result<Vec<Par>, CasperError> {
         let mut runtime = self.spawn_runtime().await;
 
-        runtime.reset(&Blake2b256Hash::from_bytes_prost(&hash)).await?;
+        runtime
+            .reset(&Blake2b256Hash::from_bytes_prost(&hash))
+            .await?;
 
         let runtime_ops = RuntimeOps::new(runtime);
         let computed = runtime_ops.get_data_par(channel).await;
@@ -781,7 +789,9 @@ impl RuntimeManager {
     ) -> Result<Vec<(Vec<BindPattern>, Par)>, CasperError> {
         let mut runtime = self.spawn_runtime().await;
 
-        runtime.reset(&Blake2b256Hash::from_bytes_prost(&hash)).await?;
+        runtime
+            .reset(&Blake2b256Hash::from_bytes_prost(&hash))
+            .await?;
 
         let runtime_ops = RuntimeOps::new(runtime);
         let computed = runtime_ops.get_continuation_par(channels).await;
@@ -1007,12 +1017,14 @@ impl RuntimeManager {
         pre_state_hash: &Blake2b256Hash,
     ) -> Result<Vec<NumberChannelsDiff>, CasperError> {
         let history_repo = self.history_repo.clone();
-        let reader = history_repo.get_history_reader(pre_state_hash).map_err(|e| {
-            CasperError::RuntimeError(format!(
-                "Failed to get history reader for pre-state hash: {:?}",
-                e
-            ))
-        })?;
+        let reader = history_repo
+            .get_history_reader(pre_state_hash)
+            .map_err(|e| {
+                CasperError::RuntimeError(format!(
+                    "Failed to get history reader for pre-state hash: {:?}",
+                    e
+                ))
+            })?;
 
         // Build a one-shot base-value map to avoid repeatedly creating history readers per key.
         let unique_channels = channels_data
@@ -1022,7 +1034,10 @@ impl RuntimeManager {
         let mut initial_values: BTreeMap<Blake2b256Hash, i64> = BTreeMap::new();
         for ch in unique_channels {
             let data = reader.get_data(&ch).map_err(|e| {
-                CasperError::RuntimeError(format!("Error getting data for channel {:?}: {:?}", ch, e))
+                CasperError::RuntimeError(format!(
+                    "Error getting data for channel {:?}: {:?}",
+                    ch, e
+                ))
             })?;
             if data.len() > 1 {
                 return Err(CasperError::RuntimeError(format!(

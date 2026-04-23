@@ -119,7 +119,8 @@ pub fn resolve_conflicts<R: Clone + Eq + std::hash::Hash + PartialOrd + Ord>(
     metrics::histogram!(
         crate::rust::metrics_constants::DAG_MERGE_BRANCHES_TIME_METRIC,
         "source" => crate::rust::metrics_constants::MERGING_METRICS_SOURCE
-    ).record(branches_time.as_secs_f64());
+    )
+    .record(branches_time.as_secs_f64());
 
     // Compute relation map for conflicting branches with timing
     use rspace_plus_plus::rspace::merger::merging_logic::compute_relation_map;
@@ -129,7 +130,8 @@ pub fn resolve_conflicts<R: Clone + Eq + std::hash::Hash + PartialOrd + Ord>(
     metrics::histogram!(
         crate::rust::metrics_constants::DAG_MERGE_CONFLICTS_MAP_TIME_METRIC,
         "source" => crate::rust::metrics_constants::MERGING_METRICS_SOURCE
-    ).record(conflicts_map_time.as_secs_f64());
+    )
+    .record(conflicts_map_time.as_secs_f64());
 
     // Compute rejection options that leave only non-conflicting branches with timing
     use rspace_plus_plus::rspace::merger::merging_logic::compute_rejection_options;
@@ -138,7 +140,8 @@ pub fn resolve_conflicts<R: Clone + Eq + std::hash::Hash + PartialOrd + Ord>(
     metrics::histogram!(
         crate::rust::metrics_constants::DAG_MERGE_REJECTION_OPTIONS_TIME_METRIC,
         "source" => crate::rust::metrics_constants::MERGING_METRICS_SOURCE
-    ).record(rejection_options_time.as_secs_f64());
+    )
+    .record(rejection_options_time.as_secs_f64());
 
     // Get base mergeable channel results
     let channel_reads_start = Instant::now();
@@ -179,7 +182,8 @@ pub fn resolve_conflicts<R: Clone + Eq + std::hash::Hash + PartialOrd + Ord>(
     metrics::histogram!(
         "dag.merge.channel-reads.time",
         "source" => crate::rust::metrics_constants::MERGING_METRICS_SOURCE
-    ).record(channel_reads_start.elapsed().as_secs_f64());
+    )
+    .record(channel_reads_start.elapsed().as_secs_f64());
 
     // Get merged result rejection options
     let rejection_options_with_overflow = get_merged_result_rejection(
@@ -309,7 +313,8 @@ where
     metrics::histogram!(
         "dag.merge.combine-changes.time",
         "source" => crate::rust::metrics_constants::MERGING_METRICS_SOURCE
-    ).record(combine_all_changes_time.as_secs_f64());
+    )
+    .record(combine_all_changes_time.as_secs_f64());
 
     let combined_datums_count = all_changes.datums_changes.len();
     let combined_conts_count = all_changes.cont_changes.len();

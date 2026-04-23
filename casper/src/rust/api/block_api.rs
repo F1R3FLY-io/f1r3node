@@ -1495,7 +1495,7 @@ impl BlockAPI {
                             parents.len()
                         );
                         let runtime_guard = runtime_manager.lock().await;
-                        let (merged_state_hash, _rejected) =
+                        let (merged_state_hash, _rejected, _rejected_slashes) =
                             crate::rust::util::rholang::interpreter_util::compute_parents_post_state(
                                 casper.block_store(),
                                 parents.clone(),

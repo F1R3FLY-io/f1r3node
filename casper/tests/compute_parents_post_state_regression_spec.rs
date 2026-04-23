@@ -316,7 +316,7 @@ async fn run_compute_parents_post_state_finalized_skew_regression() {
     );
     snapshot_without_skew.dag.last_finalized_block_hash = genesis_block.block_hash.clone();
 
-    let (state_without_skew, rejected_without_skew) = compute_parents_post_state(
+    let (state_without_skew, rejected_without_skew, _rejected_slashes) = compute_parents_post_state(
         &block_store,
         parents.clone(),
         &snapshot_without_skew,
@@ -341,7 +341,7 @@ async fn run_compute_parents_post_state_finalized_skew_regression() {
         .finalized_blocks_set
         .insert(b1.block_hash.clone());
 
-    let (state_with_skew, rejected_with_skew) = compute_parents_post_state(
+    let (state_with_skew, rejected_with_skew, _rejected_slashes) = compute_parents_post_state(
         &block_store,
         parents,
         &snapshot_with_skew,

@@ -108,7 +108,7 @@ pub async fn validate_block_checkpoint(
     );
 
     match computed_parents_info {
-        Ok((computed_pre_state_hash, rejected_deploys)) => {
+        Ok((computed_pre_state_hash, rejected_deploys, _rejected_slashes)) => {
             let rejected_deploy_ids: HashSet<_> = rejected_deploys.iter().cloned().collect();
             let block_rejected_deploy_sigs: HashSet<_> = block
                 .body
@@ -578,7 +578,7 @@ pub async fn compute_deploys_checkpoint(
         rejected_deploy_buffer,
     )?;
     let parents_ms = parents_started.elapsed().as_millis();
-    let (pre_state_hash, rejected_deploys) = computed_parents_info;
+    let (pre_state_hash, rejected_deploys, _rejected_slashes) = computed_parents_info;
 
     // Compute state and bonds using one spawned runtime
     let compute_state_started = std::time::Instant::now();
@@ -627,7 +627,14 @@ pub fn compute_parents_post_state(
     runtime_manager: &RuntimeManager,
     disable_late_block_filtering_override: Option<bool>,
     rejected_deploy_buffer: Option<&std::sync::Arc<std::sync::Mutex<block_storage::rust::deploy::key_value_rejected_deploy_buffer::KeyValueRejectedDeployBuffer>>>,
-) -> Result<(StateHash, Vec<Bytes>), CasperError> {
+) -> Result<
+    (
+        StateHash,
+        Vec<Bytes>,
+        Vec<crate::rust::merging::rejected_slash::RejectedSlash>,
+    ),
+    CasperError,
+> {
     let total_started = std::time::Instant::now();
     const MAX_PARENT_MERGE_SCOPE_BLOCKS: usize = 512;
     const MAX_LCA_DISTANCE_BLOCKS: i64 = 256;
@@ -644,7 +651,7 @@ pub fn compute_parents_post_state(
                 "compute_parents_post_state timing: path=genesis, parents=0, total_ms={}",
                 total_started.elapsed().as_millis()
             );
-            Ok((state, Vec::new()))
+            Ok((state, Vec::new(), Vec::new()))
         }
 
         // For single parent, get its post state hash
@@ -656,7 +663,7 @@ pub fn compute_parents_post_state(
                 "compute_parents_post_state timing: path=single_parent, parents=1, total_ms={}",
                 total_started.elapsed().as_millis()
             );
-            Ok((state, Vec::new()))
+            Ok((state, Vec::new(), Vec::new()))
         }
 
         // Multiple parents - we might want to take some data from the parent with the most stake,
@@ -690,7 +697,7 @@ pub fn compute_parents_post_state(
                         cache_lookup_started.elapsed().as_millis(),
                         total_started.elapsed().as_millis()
                     );
-                    return Ok((state, Vec::new()));
+                    return Ok((state, Vec::new(), Vec::new()));
                 }
             }
 
@@ -729,7 +736,7 @@ pub fn compute_parents_post_state(
                             cache_lookup_started.elapsed().as_millis(),
                             total_started.elapsed().as_millis()
                         );
-                        return Ok((state, Vec::new()));
+                        return Ok((state, Vec::new(), Vec::new()));
                     }
                 }
             }
@@ -744,14 +751,15 @@ pub fn compute_parents_post_state(
                 snapshot_lfb_hash: s.last_finalized_block.clone(),
                 disable_late_block_filtering,
             };
-            if let Some((cached_state, cached_rejected)) =
+            if let Some((cached_state, cached_rejected, cached_slashes)) =
                 runtime_manager.get_cached_parents_post_state(&cache_key)
             {
                 tracing::debug!(
                     target: "f1r3fly.compute_parents_post_state.cache",
-                    "compute_parents_post_state cache hit: parents={}, rejected_deploys={}",
+                    "compute_parents_post_state cache hit: parents={}, rejected_deploys={}, rejected_slashes={}",
                     cache_key.sorted_parent_hashes.len(),
-                    cached_rejected.len()
+                    cached_rejected.len(),
+                    cached_slashes.len()
                 );
                 tracing::debug!(
                     target: "f1r3fly.compute_parents_post_state.timing",
@@ -760,7 +768,7 @@ pub fn compute_parents_post_state(
                     cache_lookup_started.elapsed().as_millis(),
                     total_started.elapsed().as_millis()
                 );
-                return Ok((cached_state, cached_rejected));
+                return Ok((cached_state, cached_rejected, cached_slashes));
             }
             let cache_lookup_ms = cache_lookup_started.elapsed().as_millis();
 
@@ -1034,8 +1042,10 @@ pub fn compute_parents_post_state(
                     fallback_parent.body.state.block_number
                 );
                 let fallback_state = proto_util::post_state_hash(fallback_parent);
-                runtime_manager
-                    .put_cached_parents_post_state(cache_key, (fallback_state.clone(), Vec::new()));
+                runtime_manager.put_cached_parents_post_state(
+                    cache_key,
+                    (fallback_state.clone(), Vec::new(), Vec::new()),
+                );
                 tracing::debug!(
                     target: "f1r3fly.compute_parents_post_state.timing",
                     "compute_parents_post_state timing: path=fallback_latest_parent, parents={}, cache_lookup_ms={}, collect_ancestors_ms={}, flatten_visible_ms={}, lca_ms={}, visible_blocks={}, lca_distance={}, total_ms={}",
@@ -1048,7 +1058,7 @@ pub fn compute_parents_post_state(
                     lca_distance,
                     total_started.elapsed().as_millis()
                 );
-                return Ok((fallback_state, Vec::new()));
+                return Ok((fallback_state, Vec::new(), Vec::new()));
             }
 
             // Use DagMerger to merge parent states with scope
@@ -1068,7 +1078,7 @@ pub fn compute_parents_post_state(
             )?;
             let merge_ms = merge_started.elapsed().as_millis();
 
-            let (state, rejected_pairs) = merger_result;
+            let (state, rejected_user_pairs, rejected_slash_pairs) = merger_result;
 
             // Populate the rejected-deploy buffer from (sig, source_block_hash) pairs.
             // Looking up the `Signed<DeployData>` from the block store lets the block
@@ -1076,9 +1086,9 @@ pub fn compute_parents_post_state(
             // source block at most once keeps the cost proportional to the number of
             // distinct rejected-from blocks.
             if let Some(buffer) = rejected_deploy_buffer {
-                if !rejected_pairs.is_empty() {
+                if !rejected_user_pairs.is_empty() {
                     let mut by_block: HashMap<BlockHash, Vec<Bytes>> = HashMap::new();
-                    for (sig, src_block) in &rejected_pairs {
+                    for (sig, src_block) in &rejected_user_pairs {
                         by_block
                             .entry(src_block.clone())
                             .or_default()
@@ -1127,8 +1137,68 @@ pub fn compute_parents_post_state(
                 }
             }
 
+            // Recover rejected-slash metadata by reading each source block's
+            // system_deploys once. The block creator uses these to dedup
+            // slashes into the merge block's body; without this the slash
+            // effect would be lost to cost-optimal rejection.
+            let rejected_slashes: Vec<crate::rust::merging::rejected_slash::RejectedSlash> =
+                if rejected_slash_pairs.is_empty() {
+                    Vec::new()
+                } else {
+                    let mut by_block: HashMap<BlockHash, Vec<Bytes>> = HashMap::new();
+                    for (sig, src_block) in &rejected_slash_pairs {
+                        by_block
+                            .entry(src_block.clone())
+                            .or_default()
+                            .push(sig.clone());
+                    }
+                    let mut out = Vec::new();
+                    for (src_block, _sigs) in by_block {
+                        match block_store.get(&src_block) {
+                            Ok(Some(block)) => {
+                                for psd in &block.body.system_deploys {
+                                    if let models::rust::casper::protocol::casper_message::ProcessedSystemDeploy::Succeeded {
+                                    system_deploy:
+                                        models::rust::casper::protocol::casper_message::SystemDeployData::Slash {
+                                            invalid_block_hash,
+                                            issuer_public_key,
+                                        },
+                                    ..
+                                } = psd
+                                {
+                                    out.push(
+                                        crate::rust::merging::rejected_slash::RejectedSlash {
+                                            invalid_block_hash: invalid_block_hash.clone(),
+                                            issuer_public_key: issuer_public_key.clone(),
+                                            source_block_hash: src_block.clone(),
+                                        },
+                                    );
+                                }
+                                }
+                            }
+                            Ok(None) => {
+                                tracing::warn!(
+                                    "RejectedSlash extract: source block {} not in store",
+                                    PrettyPrinter::build_string_bytes(&src_block)
+                                );
+                            }
+                            Err(err) => {
+                                tracing::warn!(
+                                    "RejectedSlash extract: failed to load {}: {}",
+                                    PrettyPrinter::build_string_bytes(&src_block),
+                                    err
+                                );
+                            }
+                        }
+                    }
+                    out
+                };
+
             // Strip block hashes; the cache and callers only need the deploy sigs.
-            let rejected: Vec<Bytes> = rejected_pairs.into_iter().map(|(sig, _)| sig).collect();
+            let rejected: Vec<Bytes> = rejected_user_pairs
+                .into_iter()
+                .map(|(sig, _)| sig)
+                .collect();
 
             let computed_state = prost::bytes::Bytes::copy_from_slice(&state.bytes());
             if used_snapshot_lfb_fallback {
@@ -1139,12 +1209,16 @@ pub fn compute_parents_post_state(
             } else {
                 runtime_manager.put_cached_parents_post_state(
                     cache_key,
-                    (computed_state.clone(), rejected.clone()),
+                    (
+                        computed_state.clone(),
+                        rejected.clone(),
+                        rejected_slashes.clone(),
+                    ),
                 );
             }
             tracing::debug!(
                 target: "f1r3fly.compute_parents_post_state.timing",
-                "compute_parents_post_state timing: path=merged, parents={}, cache_lookup_ms={}, collect_ancestors_ms={}, flatten_visible_ms={}, lca_ms={}, merge_ms={}, visible_blocks={}, rejected_deploys={}, total_ms={}",
+                "compute_parents_post_state timing: path=merged, parents={}, cache_lookup_ms={}, collect_ancestors_ms={}, flatten_visible_ms={}, lca_ms={}, merge_ms={}, visible_blocks={}, rejected_deploys={}, rejected_slashes={}, total_ms={}",
                 parents.len(),
                 cache_lookup_ms,
                 collect_ancestors_ms,
@@ -1153,9 +1227,10 @@ pub fn compute_parents_post_state(
                 merge_ms,
                 visible_blocks_len,
                 rejected.len(),
+                rejected_slashes.len(),
                 total_started.elapsed().as_millis()
             );
-            Ok((computed_state, rejected))
+            Ok((computed_state, rejected, rejected_slashes))
         }
     }
 }

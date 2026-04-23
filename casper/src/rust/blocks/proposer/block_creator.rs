@@ -546,11 +546,56 @@ pub async fn create(
         }
     }
 
+    // Merge the parents once up front to discover slashes that were rejected
+    // by cost-optimal resolution. The result is cached so the downstream
+    // compute_deploys_checkpoint call below hits the cache. Rejected slashes
+    // are re-issued by this proposer (below) so the slash effect lands in
+    // the merge block regardless of the merge's rejection decision.
+    let merge_pre_info = interpreter_util::compute_parents_post_state(
+        block_store,
+        parents.clone(),
+        casper_snapshot,
+        runtime_manager,
+        None,
+        Some(&rejected_deploy_buffer),
+    )?;
+    let (_pre_state, _rejected_user_sigs, rejected_slashes) = merge_pre_info;
+
+    // Union own slashes with merge-rejected slashes, dedup by
+    // (invalid_block_hash, issuer_public_key). Own detections take priority
+    // and the dedup set drops any merge-rejected slash that is already
+    // covered by prepare_slashing_deploys.
+    let own_slash_keys = slashing_deploys
+        .iter()
+        .map(|sd| (sd.invalid_block_hash.clone(), sd.pk.bytes.to_vec()));
+    let recovered_rejected_slashes =
+        crate::rust::merging::rejected_slash::filter_recoverable(rejected_slashes, own_slash_keys);
+
     // Make sure closeBlock is the last system Deploy
     let mut system_deploys_converted: Vec<SystemDeployEnum> = Vec::new();
 
-    // Add slashing deploys
+    // Add own-detected slashes
     for slash_deploy in slashing_deploys {
+        system_deploys_converted.push(SystemDeployEnum::Slash(slash_deploy));
+    }
+
+    // Re-issue slashes that the merge dropped. The proposer signs these
+    // under its own identity, matching the existing slashing convention.
+    let self_id = Bytes::copy_from_slice(&validator_identity.public_key.bytes);
+    for rs in &recovered_rejected_slashes {
+        let slash_deploy = SlashDeploy {
+            invalid_block_hash: rs.invalid_block_hash.clone(),
+            pk: validator_identity.public_key.clone(),
+            initial_rand: system_deploy_util::generate_slash_deploy_random_seed(
+                self_id.clone(),
+                next_seq_num,
+            ),
+        };
+        tracing::info!(
+            "Recovering merge-rejected slash: invalid_block={}, original_issuer={}",
+            pretty_printer::PrettyPrinter::build_string_bytes(&rs.invalid_block_hash),
+            hex::encode(&rs.issuer_public_key.bytes)
+        );
         system_deploys_converted.push(SystemDeployEnum::Slash(slash_deploy));
     }
 
