@@ -2,6 +2,8 @@
 
 Exploratory deploy executes Rholang code in a read-only context against a specific block's post-state. No block is created, no phlo is consumed. Available only on readonly nodes.
 
+Results are returned as `RhoExpr` values — see [Rholang Type System (RhoExpr)](README.md#rholang-type-system-rhoexpr) for the complete type mapping. All Rholang types are supported including extended numerics (BigInt, BigRat, FixedPoint), operators, and method calls.
+
 ## Return Channel Convention
 
 The runtime reads results from the **first unforgeable name** created by the deploy's RNG (`GPrivate`), NOT from `rho:system:deployId` (`GDeployId`). This is by design in both Scala and Rust (see `RuntimeSyntax.scala:517-518`).

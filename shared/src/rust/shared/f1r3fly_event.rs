@@ -3,6 +3,16 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Transfer event within a deploy.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct TransferEvent {
+    pub from_addr: String,
+    pub to_addr: String,
+    pub amount: i64,
+    pub success: bool,
+}
+
 /// Deploy event information included in block events.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -15,6 +25,11 @@ pub struct DeployEvent {
     pub deployer: String,
     /// Whether the deploy execution failed
     pub errored: bool,
+    /// Transfers extracted from this deploy.
+    /// None on BlockCreated/BlockAdded (not yet available).
+    /// Populated on BlockFinalised only when transfers are enriched.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transfers: Option<Vec<TransferEvent>>,
 }
 
 impl DeployEvent {
@@ -24,8 +39,17 @@ impl DeployEvent {
             cost,
             deployer,
             errored,
+            transfers: None,
         }
     }
+}
+
+/// Per-deploy transfer data for the TransfersAvailable event.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct DeployTransfers {
+    pub deploy_id: String,
+    pub transfers: Vec<TransferEvent>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -34,6 +58,7 @@ pub enum F1r3flyEvent {
     BlockCreated(BlockCreated),
     BlockAdded(BlockAdded),
     BlockFinalised(BlockFinalised),
+    TransfersAvailable(TransfersAvailable),
     SentUnapprovedBlock(SentUnapprovedBlockData),
     SentApprovedBlock(SentApprovedBlockData),
     BlockApprovalReceived(BlockApprovalReceived),
@@ -46,6 +71,8 @@ pub enum F1r3flyEvent {
 #[serde(rename_all = "kebab-case")]
 pub struct BlockCreated {
     pub block_hash: String,
+    pub block_number: i64,
+    pub timestamp: i64,
     pub parent_hashes: Vec<String>,
     pub justification_hashes: Vec<(String, String)>,
     pub deploys: Vec<DeployEvent>,
@@ -58,6 +85,8 @@ pub struct BlockCreated {
 #[serde(rename_all = "kebab-case")]
 pub struct BlockAdded {
     pub block_hash: String,
+    pub block_number: i64,
+    pub timestamp: i64,
     pub parent_hashes: Vec<String>,
     pub justification_hashes: Vec<(String, String)>,
     pub deploys: Vec<DeployEvent>,
@@ -71,12 +100,25 @@ pub struct BlockAdded {
 #[serde(rename_all = "kebab-case")]
 pub struct BlockFinalised {
     pub block_hash: String,
+    pub block_number: i64,
+    pub timestamp: i64,
     pub parent_hashes: Vec<String>,
     pub justification_hashes: Vec<(String, String)>,
     pub deploys: Vec<DeployEvent>,
     pub creator: String,
     #[serde(rename = "seq-num")]
     pub seq_number: i32,
+}
+
+/// Emitted after BlockFinalised when transfer extraction completes.
+/// Clients that need transfer data listen for this event.
+/// Only emitted on readonly nodes (validators cannot extract transfers).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct TransfersAvailable {
+    pub block_hash: String,
+    pub block_number: i64,
+    pub deploys: Vec<DeployTransfers>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -119,6 +161,8 @@ pub struct NodeStarted {
 impl F1r3flyEvent {
     pub fn block_created(
         block_hash: String,
+        block_number: i64,
+        timestamp: i64,
         parent_hashes: Vec<String>,
         justification_hashes: Vec<(String, String)>,
         deploys: Vec<DeployEvent>,
@@ -127,6 +171,8 @@ impl F1r3flyEvent {
     ) -> Self {
         Self::BlockCreated(BlockCreated {
             block_hash,
+            block_number,
+            timestamp,
             parent_hashes,
             justification_hashes,
             deploys,
@@ -137,6 +183,8 @@ impl F1r3flyEvent {
 
     pub fn block_added(
         block_hash: String,
+        block_number: i64,
+        timestamp: i64,
         parent_hashes: Vec<String>,
         justification_hashes: Vec<(String, String)>,
         deploys: Vec<DeployEvent>,
@@ -145,6 +193,8 @@ impl F1r3flyEvent {
     ) -> Self {
         Self::BlockAdded(BlockAdded {
             block_hash,
+            block_number,
+            timestamp,
             parent_hashes,
             justification_hashes,
             deploys,
@@ -155,6 +205,8 @@ impl F1r3flyEvent {
 
     pub fn block_finalised(
         block_hash: String,
+        block_number: i64,
+        timestamp: i64,
         parent_hashes: Vec<String>,
         justification_hashes: Vec<(String, String)>,
         deploys: Vec<DeployEvent>,
@@ -163,11 +215,25 @@ impl F1r3flyEvent {
     ) -> Self {
         Self::BlockFinalised(BlockFinalised {
             block_hash,
+            block_number,
+            timestamp,
             parent_hashes,
             justification_hashes,
             deploys,
             creator,
             seq_number,
+        })
+    }
+
+    pub fn transfers_available(
+        block_hash: String,
+        block_number: i64,
+        deploys: Vec<DeployTransfers>,
+    ) -> Self {
+        Self::TransfersAvailable(TransfersAvailable {
+            block_hash,
+            block_number,
+            deploys,
         })
     }
 

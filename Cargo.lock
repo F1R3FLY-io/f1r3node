@@ -2922,6 +2922,7 @@ dependencies = [
  "metrics-exporter-influx",
  "metrics-exporter-prometheus",
  "models",
+ "num-bigint",
  "opentelemetry 0.20.0",
  "opentelemetry-zipkin",
  "opentelemetry_sdk 0.20.0",

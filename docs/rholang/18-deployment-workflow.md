@@ -79,10 +79,14 @@ curl -X POST http://localhost:40403/api/deploy \
 
 ```bash
 curl http://localhost:40403/api/deploy/$DEPLOY_ID
-curl http://localhost:40403/api/deploy/$DEPLOY_ID?view=detail
+curl http://localhost:40403/api/deploy/$DEPLOY_ID?view=summary
 ```
 
-The `detail` view includes: `errored`, `cost`, `blockNumber`, `systemDeployError`.
+**Views:**
+- **`full`** (default): all fields — `deployId`, `blockHash`, `blockNumber`, `timestamp`, `cost`, `errored`, `isFinalized`, `deployer`, `term`, `systemDeployError`, `phloPrice`, `phloLimit`, `sigAlgorithm`, `validAfterBlockNumber`, `transfers`
+- **`summary`**: core fields only — `deployId`, `blockHash`, `blockNumber`, `timestamp`, `cost`, `errored`, `isFinalized`. For lightweight polling.
+
+**Transfers:** The `transfers` field is `null` on validator nodes (block replay unavailable) and a populated array on readonly nodes. `null` means transfers can't be extracted on this node type — query a readonly node for transfer details.
 
 ### Exploratory Deploy
 
@@ -94,12 +98,12 @@ curl -X POST http://localhost:40403/api/explore-deploy \
 
 Response includes the phlogiston cost.
 
-### Get Data at Name
+### Get Data at Name by Block Hash
 
 ```bash
-curl -X POST http://localhost:40403/api/data-at-name \
+curl -X POST http://localhost:40403/api/data-at-name-by-block-hash \
   -H 'Content-Type: application/json' \
-  -d '{"name": {"UnforgPrivate": {"data": "..."}}, "depth": 1}'
+  -d '{"par": {"unforgeables": [{"g_private_body": {"id": "..."}}]}, "blockHash": "abc123...", "usePreStateHash": false}'
 ```
 
 ## gRPC API
