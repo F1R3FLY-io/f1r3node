@@ -174,7 +174,7 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
 
 # Labels (matching build.sbt)
 LABEL maintainer="F1r3fly.io LCA https://f1r3fly.io/"
-LABEL version="0.4.12"
+LABEL version="0.4.13"
 
 # Switch to daemon user (matching build.sbt: daemonUser in Docker := "daemon")
 USER daemon

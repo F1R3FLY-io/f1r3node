@@ -4,6 +4,40 @@ All notable changes to the Rust implementation of F1r3node will be documented in
 This changelog is automatically generated from conventional commits.
 
 
+## [v0.4.13] - 2026-04-23
+
+### Bug Fixes
+
+- hex decode block hashes in getEventByHash and proactive cache warming
+- LFB endpoint returns consistent FT with get_block
+- complete RhoExpr type coverage, eliminate all silent drops
+- add cost to deploy minimal view, fix transfers on readonly
+
+### CI
+
+- bump system-integration to 2ace29f (API redesign test fixes)
+
+### Documentation
+
+- document HTTP error response format and readonly-only endpoints
+
+### Features
+
+- remove dead endpoints, add query APIs, complete API reference
+- high-level query endpoints for balance, registry, validators, epoch
+- consistent view params across all block and deploy endpoints
+- isFinalized on blocks, unified status, enriched WebSocket events
+
+### Miscellaneous
+
+- untrack TODO.md
+
+### Refactoring
+
+- unified DeployResponse with full/summary views
+- simplify transfer extraction pipeline
+
+
 ## [v0.4.12] - 2026-04-20
 
 ### Bug Fixes
