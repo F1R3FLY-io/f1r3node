@@ -10,7 +10,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use casper::rust::api::block_api::BlockAPI;
-use casper::rust::api::deploy_finalization_status::DeployFinalizationState;
+use casper::rust::api::deploy_finalization_status::{self, DeployFinalizationState};
+use casper::rust::casper::MultiParentCasper;
 use casper::rust::engine::engine_cell::EngineCell;
 use casper::rust::engine::engine_with_casper::EngineWithCasper;
 use casper::rust::multi_parent_casper_impl::MultiParentCasperImpl;
@@ -32,10 +33,8 @@ impl TestContext {
                 .collect()
         }
 
-        let parameters = GenesisBuilder::build_genesis_parameters_with_defaults(
-            Some(bonds_function),
-            None,
-        );
+        let parameters =
+            GenesisBuilder::build_genesis_parameters_with_defaults(Some(bonds_function), None);
         let genesis = GenesisBuilder::new()
             .build_genesis_with_parameters(Some(parameters))
             .await
@@ -97,4 +96,34 @@ async fn unknown_sig_returns_pending_with_empty_fields() {
         "unknown sig must have no latest_block_hash, got {:?}",
         status.latest_block_hash
     );
+}
+
+/// Calls the pure `resolve` function directly (bypassing the async
+/// `BlockAPI` wrapper) to confirm it is callable from non-engine-cell
+/// contexts. This path is what the catchup gate in
+/// `compute_parents_post_state` uses — the gate is not invoked in this
+/// single-node test, but the pure-function signature contract is.
+#[tokio::test]
+async fn resolve_pure_function_returns_pending_for_unknown_sig() {
+    let ctx = TestContext::new().await;
+    let nodes = TestNode::create_network(ctx.genesis.clone(), 1, None, None, None, None)
+        .await
+        .unwrap();
+
+    let dag = nodes[0]
+        .casper
+        .block_dag()
+        .await
+        .expect("fetch dag representation");
+    let block_store = nodes[0].casper.block_store();
+    let deploy_lifespan = nodes[0].casper.casper_shard_conf().deploy_lifespan;
+
+    let unknown_sig = vec![0xBB; 32];
+    let status =
+        deploy_finalization_status::resolve(&dag, block_store, deploy_lifespan, &unknown_sig)
+            .expect("resolve should not fail for unknown sig");
+
+    assert_eq!(status.state, DeployFinalizationState::Pending);
+    assert_eq!(status.rejection_count, 0);
+    assert!(status.latest_block_hash.is_none());
 }

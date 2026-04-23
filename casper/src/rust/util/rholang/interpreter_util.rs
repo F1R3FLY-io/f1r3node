@@ -43,6 +43,43 @@ pub fn mk_term(rho: &str, normalizer_env: HashMap<String, Par>) -> Result<Par, I
     Compiler::source_to_adt_with_normalizer_env(rho, normalizer_env)
 }
 
+/// Returns `true` if the given user-deploy sig should be admitted to the
+/// rejected-deploy buffer. Terminal states (Finalized / Failed / Expired)
+/// mean the sig has already been resolved in the local canonical view and
+/// must not be re-proposed — re-proposal would either waste a slot or, in
+/// the catchup case, cause re-execution of already-canonical work against
+/// a different pre-state. Resolver errors are treated conservatively as
+/// "do not admit" so that transient failures do not open the re-execution
+/// hazard; the sig will be retried on the next merge rejection if still
+/// live.
+fn should_admit_to_rejected_buffer(
+    dag: &block_storage::rust::dag::block_dag_key_value_storage::KeyValueDagRepresentation,
+    block_store: &KeyValueBlockStore,
+    deploy_lifespan: i64,
+    sig: &Bytes,
+) -> bool {
+    use crate::rust::api::deploy_finalization_status::{resolve, DeployFinalizationState};
+    match resolve(dag, block_store, deploy_lifespan, sig) {
+        Ok(status) if status.state == DeployFinalizationState::Pending => true,
+        Ok(status) => {
+            tracing::debug!(
+                "RejectedDeployBuffer populate: skipping sig {} (state={:?}) — already resolved in canonical view",
+                hex::encode(sig),
+                status.state
+            );
+            false
+        }
+        Err(err) => {
+            tracing::warn!(
+                "RejectedDeployBuffer populate: status check failed for sig {}: {} — skipping",
+                hex::encode(sig),
+                err
+            );
+            false
+        }
+    }
+}
+
 fn with_ancestors_capped(
     dag: &KeyValueDagRepresentation,
     block_hash: &BlockHash,
@@ -1085,6 +1122,14 @@ pub fn compute_parents_post_state(
             // creator re-propose these deploys in a subsequent block. Fetching each
             // source block at most once keeps the cost proportional to the number of
             // distinct rejected-from blocks.
+            //
+            // Catchup gate: before admitting a deploy to the buffer, check its
+            // current finalization status against the local DAG view. Skip any
+            // sig whose state is terminal (Finalized / Failed / Expired) — such
+            // sigs have been resolved elsewhere, and re-proposing them would at
+            // best waste proposal slots and at worst cause a catching-up
+            // validator to re-execute already-canonical work against a
+            // different pre-state.
             if let Some(buffer) = rejected_deploy_buffer {
                 if !rejected_user_pairs.is_empty() {
                     let mut by_block: HashMap<BlockHash, Vec<Bytes>> = HashMap::new();
@@ -1100,7 +1145,14 @@ pub fn compute_parents_post_state(
                         match block_store.get(&src_block) {
                             Ok(Some(block)) => {
                                 for pd in &block.body.deploys {
-                                    if sig_set.contains(&pd.deploy.sig) {
+                                    if sig_set.contains(&pd.deploy.sig)
+                                        && should_admit_to_rejected_buffer(
+                                            &s.dag,
+                                            block_store,
+                                            s.on_chain_state.shard_conf.deploy_lifespan,
+                                            &pd.deploy.sig,
+                                        )
+                                    {
                                         deploys_to_buffer.push(pd.deploy.clone());
                                     }
                                 }
