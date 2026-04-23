@@ -162,15 +162,6 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
             .filter(|(validator, _)| !invalid_latest_msgs.contains_key(*validator))
             .map(|(validator, hash): (&Validator, &BlockHash)| (validator.clone(), hash.clone()))
             .collect();
-        let valid_latest_metas: HashMap<Validator, models::rust::block_metadata::BlockMetadata> =
-            valid_latest_msgs
-                .iter()
-                .filter_map(|(validator, hash): (&Validator, &BlockHash)| {
-                    dag.lookup_unsafe(hash)
-                        .ok()
-                        .map(|meta| (validator.clone(), meta))
-                })
-                .collect();
         // Deduplicate: multiple validators may have the same latest block (e.g., genesis)
         let unique_parent_hashes: HashSet<BlockHash> =
             valid_latest_msgs.values().cloned().collect();
@@ -323,25 +314,22 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
             )
             .await?;
 
-        // We ensure that only the justifications given in the block are those
-        // which are bonded validators in the chosen parent. This is safe because
-        // any latest message not from a bonded validator will not change the
-        // final fork-choice.
+        // Justifications include the latest message from every bonded validator,
+        // including those whose latest message is invalid. Parent selection
+        // filters invalid-latest validators (see valid_latest_msgs above), but
+        // justifications are the creator's observed view of the DAG and must
+        // reflect all validators to satisfy the `justification_follows`
+        // invariant (justified_validators == bonded_validators).
         let justifications = {
             let bonded_validators = &on_chain_state.bonds_map;
 
-            valid_latest_metas
+            latest_msgs_hashes
                 .iter()
                 .filter(|(validator, _)| bonded_validators.contains_key(*validator))
-                .map(
-                    |(validator, block_metadata): (
-                        &Validator,
-                        &models::rust::block_metadata::BlockMetadata,
-                    )| Justification {
-                        validator: validator.clone(),
-                        latest_block_hash: block_metadata.block_hash.clone(),
-                    },
-                )
+                .map(|(validator, block_hash): (&Validator, &BlockHash)| Justification {
+                    validator: validator.clone(),
+                    latest_block_hash: block_hash.clone(),
+                })
                 .collect::<dashmap::DashSet<_>>()
         };
 
@@ -349,14 +337,16 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
         let parent_metas = dag.lookups_unsafe(parent_hashes)?;
         let max_block_num = proto_util::max_block_number_metadata(&parent_metas);
 
-        let max_seq_nums = valid_latest_metas
+        // max_seq_nums reads every validator's latest message, not just the
+        // valid-latest subset. Validators whose latest is invalid still have a
+        // recorded sequence number that must be accounted for downstream.
+        let max_seq_nums = latest_msgs_hashes
             .iter()
-            .map(
-                |(validator, block_metadata): (
-                    &Validator,
-                    &models::rust::block_metadata::BlockMetadata,
-                )| (validator.clone(), block_metadata.sequence_number as u64),
-            )
+            .filter_map(|(validator, hash): (&Validator, &BlockHash)| {
+                dag.lookup_unsafe(hash)
+                    .ok()
+                    .map(|meta| (validator.clone(), meta.sequence_number as u64))
+            })
             .collect::<dashmap::DashMap<_, _>>();
 
         let (deploys_in_scope, rejected_in_scope) = {
