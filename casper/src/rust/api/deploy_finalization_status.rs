@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use block_storage::rust::{
     dag::block_dag_key_value_storage::KeyValueDagRepresentation,
     key_value_block_store::KeyValueBlockStore,
@@ -139,10 +141,11 @@ pub fn resolve(
             )
         })?;
 
-    // Walk the finalized chain from LFB backward for deploy_lifespan
-    // blocks. This window is bounded and matches the deploy's window
-    // of validity, so any canonical-state event for the deploy must
-    // be in scope.
+    // Walk the set of finalized ancestors of LFB through all parents
+    // (main + secondary), bounded by deploy_lifespan depth. A linear
+    // main-parent walk is insufficient: in a multi-parent DAG a block's
+    // deploys can reach canonical state via a secondary-parent merge,
+    // and that block will not appear on the main-parent chain from LFB.
     let lfb_hash = dag.last_finalized_block();
     let lfb_height = dag.block_number(&lfb_hash).ok_or_else(|| {
         eyre::eyre!(
@@ -151,41 +154,45 @@ pub fn resolve(
         )
     })?;
     let scan_floor = (lfb_height - deploy_lifespan).max(0);
-    let mut chain_hashes = vec![lfb_hash.clone()];
-    chain_hashes.extend(
-        dag.main_parent_chain(lfb_hash, scan_floor)
-            .map_err(|e| eyre::eyre!("main_parent_chain failed: {}", e))?,
-    );
 
-    // Collect events (highest block_number first, since we walked from LFB).
+    // Event tallies.
     let mut rejection_count: u32 = 0;
     let mut has_failed_finalized = false;
     let mut clean_finalized_height: Option<i64> = None;
     let mut latest_event: Option<(i64, BlockHash)> = None;
-
-    // Track latest rejection height seen. A clean inclusion gets
-    // invalidated if a rejection at a strictly higher height is observed.
+    // A clean inclusion is invalidated if a rejection at a strictly
+    // higher height is observed (rejected-deploy recovery mechanism).
     let mut latest_rejected_finalized_height: Option<i64> = None;
 
-    for candidate_hash in &chain_hashes {
-        let height = match dag.block_number(candidate_hash) {
+    // BFS from LFB through every parent slot. `visited` deduplicates the
+    // frontier because multi-parent ancestries share common ancestors.
+    let mut visited: HashSet<BlockHash> = HashSet::new();
+    let mut frontier: Vec<BlockHash> = vec![lfb_hash.clone()];
+    while let Some(candidate_hash) = frontier.pop() {
+        if !visited.insert(candidate_hash.clone()) {
+            continue;
+        }
+        let height = match dag.block_number(&candidate_hash) {
             Some(h) => h,
             None => {
                 tracing::debug!(
                     "deploy_finalization_status: no block_number for candidate {} — \
                      skipping (likely cleanup race or partial DAG)",
-                    PrettyPrinter::build_string_bytes(candidate_hash)
+                    PrettyPrinter::build_string_bytes(&candidate_hash)
                 );
                 continue;
             }
         };
-        let candidate_block = match block_store.get(candidate_hash) {
+        if height < scan_floor {
+            continue;
+        }
+        let candidate_block = match block_store.get(&candidate_hash) {
             Ok(Some(b)) => b,
             Ok(None) => {
                 tracing::warn!(
-                    "deploy_finalization_status: canonical-chain block {} absent from store — \
+                    "deploy_finalization_status: finalized-ancestor block {} absent from store — \
                      scan may miss deploy events in this block",
-                    PrettyPrinter::build_string_bytes(candidate_hash)
+                    PrettyPrinter::build_string_bytes(&candidate_hash)
                 );
                 continue;
             }
@@ -193,12 +200,20 @@ pub fn resolve(
                 tracing::warn!(
                     "deploy_finalization_status: block_store.get failed for {}: {} — \
                      continuing scan; result may be incomplete",
-                    PrettyPrinter::build_string_bytes(candidate_hash),
+                    PrettyPrinter::build_string_bytes(&candidate_hash),
                     e
                 );
                 continue;
             }
         };
+
+        // Enqueue every parent slot. Main-parent-only walks miss blocks
+        // that reached canonical state via secondary-parent merging.
+        for parent in &candidate_block.header.parents_hash_list {
+            if !visited.contains(parent) {
+                frontier.push(parent.clone());
+            }
+        }
 
         let mut seen_here = false;
         for pd in &candidate_block.body.deploys {

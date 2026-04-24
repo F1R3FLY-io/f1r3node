@@ -127,3 +127,151 @@ async fn resolve_pure_function_returns_pending_for_unknown_sig() {
     assert_eq!(status.rejection_count, 0);
     assert!(status.latest_block_hash.is_none());
 }
+
+/// Regression test for the resolver's multi-parent DAG coverage.
+///
+/// Builds a minimal multi-parent DAG:
+///
+/// ```text
+///     genesis (h=0)
+///       |   |
+///       A   B       both at h=1, children of genesis
+///       |   |
+///        \ /
+///         C         at h=2, parents=[A, B] with A as main-parent; LFB
+/// ```
+///
+/// The deploy sig under test lives only in `B.body.deploys`. B reaches
+/// canonical state via C's secondary-parent slot, not via the main-parent
+/// chain from C.
+///
+/// A main-parent-only walk (`dag.main_parent_chain(C, _)`) visits
+/// `C → A → genesis` and never touches B, so it misses the sig and the
+/// resolver reports `Pending`. A BFS over all parents visits B through C's
+/// secondary slot, finds the sig in `body.deploys`, and reports `Finalized`.
+///
+/// This test exists to keep the BFS semantics (over `parents_hash_list`, not
+/// just `main_parent`) locked in.
+#[tokio::test]
+async fn resolve_finds_sig_in_secondary_parent_branch() {
+    use crate::util::rholang::resources::{
+        block_dag_storage_from_dyn, mk_test_rnode_store_manager_from_genesis,
+    };
+    use block_storage::rust::key_value_block_store::KeyValueBlockStore;
+    use casper::rust::util::construct_deploy;
+    use models::rust::block_implicits;
+    use models::rust::casper::protocol::casper_message::ProcessedDeploy;
+
+    let ctx = TestContext::new().await;
+    let genesis_block = ctx.genesis.genesis_block.clone();
+    let genesis_hash = genesis_block.block_hash.clone();
+
+    let mut kvm = mk_test_rnode_store_manager_from_genesis(&ctx.genesis);
+    let block_store = KeyValueBlockStore::create_from_kvm(&mut *kvm)
+        .await
+        .expect("block store");
+    let dag_storage = block_dag_storage_from_dyn(&mut *kvm)
+        .await
+        .expect("dag storage");
+
+    block_store
+        .put_block_message(&genesis_block)
+        .expect("store genesis");
+    dag_storage
+        .insert(&genesis_block, false, true)
+        .expect("dag genesis");
+
+    let deploy_b =
+        construct_deploy::source_deploy_now_full("Nil".to_string(), None, None, None, None, None)
+            .expect("construct deploy_b");
+    let deploy_b_sig = deploy_b.sig.to_vec();
+
+    // Block A: empty-body sibling of genesis at h=1.
+    let block_a = block_implicits::get_random_block(
+        Some(1),
+        Some(1),
+        None,
+        None,
+        None,
+        None,
+        Some(0),
+        Some(vec![genesis_hash.clone()]),
+        Some(Vec::new()),
+        Some(Vec::new()),
+        Some(Vec::new()),
+        Some(genesis_block.body.state.bonds.clone()),
+        Some(genesis_block.shard_id.clone()),
+        None,
+    );
+    // Block B: sibling of A at h=1, carries deploy_b in body.deploys.
+    let block_b = block_implicits::get_random_block(
+        Some(1),
+        Some(2),
+        None,
+        None,
+        None,
+        None,
+        Some(0),
+        Some(vec![genesis_hash.clone()]),
+        Some(Vec::new()),
+        Some(vec![ProcessedDeploy::empty(deploy_b)]),
+        Some(Vec::new()),
+        Some(genesis_block.body.state.bonds.clone()),
+        Some(genesis_block.shard_id.clone()),
+        None,
+    );
+    // Block C: merge of [A, B] with A as main parent.
+    let block_c = block_implicits::get_random_block(
+        Some(2),
+        Some(1),
+        None,
+        None,
+        None,
+        None,
+        Some(0),
+        Some(vec![block_a.block_hash.clone(), block_b.block_hash.clone()]),
+        Some(Vec::new()),
+        Some(Vec::new()),
+        Some(Vec::new()),
+        Some(genesis_block.body.state.bonds.clone()),
+        Some(genesis_block.shard_id.clone()),
+        None,
+    );
+
+    block_store.put_block_message(&block_a).expect("store A");
+    block_store.put_block_message(&block_b).expect("store B");
+    block_store.put_block_message(&block_c).expect("store C");
+    dag_storage
+        .insert(&block_a, false, false)
+        .expect("dag insert A");
+    dag_storage
+        .insert(&block_b, false, false)
+        .expect("dag insert B");
+    dag_storage
+        .insert(&block_c, false, false)
+        .expect("dag insert C");
+
+    // Promote C to LFB so the resolver's scan starts there. The DAG state
+    // normally bumps LFB only via the finalization pipeline; for this unit
+    // test we overwrite the representation's field directly.
+    let mut dag = dag_storage.get_representation();
+    dag.last_finalized_block_hash = block_c.block_hash.clone();
+
+    let deploy_lifespan = 50i64;
+    let status =
+        deploy_finalization_status::resolve(&dag, &block_store, deploy_lifespan, &deploy_b_sig)
+            .expect("resolve should not fail");
+
+    assert_eq!(
+        status.state,
+        DeployFinalizationState::Finalized,
+        "sig in secondary-parent ancestor of LFB should be Finalized; got {:?}",
+        status.state
+    );
+    assert_eq!(
+        status.latest_block_hash.as_ref(),
+        Some(&block_b.block_hash),
+        "latest_block_hash must point at B (the block actually containing the sig)"
+    );
+    assert_eq!(status.rejection_count, 0);
+}
