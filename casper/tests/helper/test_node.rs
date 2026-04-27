@@ -759,6 +759,12 @@ impl TestNode {
         max_parent_depth: Option<i32>,
         with_read_only_size: Option<usize>,
     ) -> Result<Vec<TestNode>, CasperError> {
+        // Initialize the shared tracing subscriber once per test process.
+        // Without this, tracing calls in production code are silently
+        // dropped during tests, defeating diagnostic intent. Tests opt
+        // in by going through create_network; RUST_LOG is honored.
+        crate::init_logger();
+
         let test_network = TestNetwork::empty();
 
         // Take the required number of validator keys
