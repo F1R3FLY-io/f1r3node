@@ -158,11 +158,15 @@ pub fn resolve(
     // Event tallies.
     let mut rejection_count: u32 = 0;
     let mut has_failed_finalized = false;
-    let mut clean_finalized_height: Option<i64> = None;
+    // Track the highest-block-number clean inclusion together with its
+    // block hash so we can do an ancestry comparison against rejections
+    // in the post-loop invalidation step. A clean inclusion is
+    // invalidated only when a rejection lands in a CANONICAL DESCENDANT
+    // of the clean block — sibling rejections at the same or higher
+    // height on a different chain do not invalidate.
+    let mut clean_finalized_event: Option<(i64, BlockHash)> = None;
     let mut latest_event: Option<(i64, BlockHash)> = None;
-    // A clean inclusion is invalidated if a rejection at a strictly
-    // higher height is observed (rejected-deploy recovery mechanism).
-    let mut latest_rejected_finalized_height: Option<i64> = None;
+    let mut latest_rejected_event: Option<(i64, BlockHash)> = None;
 
     // BFS from LFB through every parent slot. `visited` deduplicates the
     // frontier because multi-parent ancestries share common ancestors.
@@ -221,8 +225,12 @@ pub fn resolve(
                 seen_here = true;
                 if pd.is_failed {
                     has_failed_finalized = true;
-                } else if clean_finalized_height.map(|h| height > h).unwrap_or(true) {
-                    clean_finalized_height = Some(height);
+                } else if clean_finalized_event
+                    .as_ref()
+                    .map(|(h, _)| height > *h)
+                    .unwrap_or(true)
+                {
+                    clean_finalized_event = Some((height, candidate_hash.clone()));
                 }
                 break;
             }
@@ -231,11 +239,12 @@ pub fn resolve(
             if rd.sig == sig_bytes {
                 seen_here = true;
                 rejection_count = rejection_count.saturating_add(1);
-                if latest_rejected_finalized_height
-                    .map(|h| height > h)
+                if latest_rejected_event
+                    .as_ref()
+                    .map(|(h, _)| height > *h)
                     .unwrap_or(true)
                 {
-                    latest_rejected_finalized_height = Some(height);
+                    latest_rejected_event = Some((height, candidate_hash.clone()));
                 }
                 break;
             }
@@ -250,17 +259,38 @@ pub fn resolve(
         }
     }
 
-    // Rejection after a clean inclusion invalidates that inclusion:
-    // the rejected-deploy recovery mechanism means the deploy may
-    // still land in a later block. Report `Pending` so the client
-    // keeps polling.
-    if let (Some(clean_h), Some(reject_h)) =
-        (clean_finalized_height, latest_rejected_finalized_height)
+    // A rejection invalidates a clean inclusion only when the
+    // rejection block is a CANONICAL-CHAIN DESCENDANT of the clean
+    // block. Two reasons height alone is wrong:
+    //
+    //  1. Multi-parent DAGs: blocks at the same height can be siblings
+    //     on separate chains. A rejection in a sibling at the same or
+    //     higher height does not affect the deploy's effects in a
+    //     canonical block on a different chain.
+    //  2. Recovery cycles via the rejected-deploy buffer produce
+    //     rejection events in non-canonical sibling blocks (validators
+    //     racing to recover the same deploy). Counting these as "after"
+    //     the clean inclusion creates a positive feedback loop where
+    //     the deploy stays Pending while the buffer keeps re-proposing.
+    //
+    // `is_in_main_chain(ancestor, descendant)` walks main parents from
+    // `descendant` down to `ancestor`'s height and checks for landing
+    // on `ancestor`. If true, the rejection block is a canonical
+    // descendant of the clean block. Same-block (clean and rejection
+    // in the SAME block — e.g., a recovery proposal whose merge step
+    // also dedup-rejected an older copy in scope) is not a "descendant"
+    // and must not invalidate.
+    let mut clean_finalized_height: Option<i64> = clean_finalized_event.as_ref().map(|(h, _)| *h);
+    if let (Some((_, clean_block)), Some((_, reject_block))) =
+        (&clean_finalized_event, &latest_rejected_event)
     {
-        if reject_h > clean_h {
+        let reject_is_canonical_descendant = clean_block != reject_block
+            && dag.is_in_main_chain(clean_block, reject_block).unwrap_or(false);
+        if reject_is_canonical_descendant {
             clean_finalized_height = None;
         }
     }
+    let _ = clean_finalized_event;
 
     // Also account for latest_block_hash via the first-seen lookup —
     // covers the case where the sig lives only in a non-finalized
