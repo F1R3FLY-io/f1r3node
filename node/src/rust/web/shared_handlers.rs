@@ -3,20 +3,20 @@ use std::time::{Duration, Instant};
 
 use crate::rust::api::{
     admin_web_api::AdminWebApi,
-    serde_types::{block_info::BlockInfoSerde, light_block_info::LightBlockInfoSerde},
+    serde_types::block_info::BlockInfoSerde,
     web_api::{
-        DataAtNameRequest, DataAtNameResponse, DeployRequest, ExploreDeployRequest,
-        RhoDataResponse, SimpleExploreDeployRequest, WebApi,
+        DeployRequest, ExploreDeployRequest,
+        RhoDataResponse, SimpleExploreDeployRequest, ViewMode, WebApi,
     },
 };
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Json, Response},
 };
 use casper::rust::api::block_report_api::BlockReportAPI;
 use comm::rust::{discovery::node_discovery::NodeDiscovery, rp::connect::ConnectionsCell};
-use shared::rust::shared::f1r3fly_events::EventStream;
+use shared::rust::shared::f1r3fly_events::{EventStream, StartupBuffer};
 use tracing::warn;
 
 #[derive(Clone)]
@@ -28,6 +28,7 @@ pub struct AppState {
     pub connections_cell: Arc<ConnectionsCell>,
     pub node_discovery: Arc<dyn NodeDiscovery + Send + Sync + 'static>,
     pub event_stream: Arc<EventStream>,
+    pub startup_events: StartupBuffer,
 }
 
 impl AppState {
@@ -39,6 +40,7 @@ impl AppState {
         connections_cell: Arc<ConnectionsCell>,
         node_discovery: Arc<dyn NodeDiscovery + Send + Sync + 'static>,
         event_consumer: Arc<EventStream>,
+        startup_events: StartupBuffer,
     ) -> Self {
         Self {
             admin_web_api,
@@ -48,6 +50,7 @@ impl AppState {
             connections_cell,
             node_discovery,
             event_stream: event_consumer,
+            startup_events,
         }
     }
 }
@@ -177,37 +180,26 @@ pub async fn explore_deploy_by_block_hash_handler(
 }
 
 #[utoipa::path(
-    post,
-    path = "/data-at-name",
-    request_body = DataAtNameRequest,
-    responses(
-        (status = 200, description = "Data retrieval successful", body = DataAtNameResponse),
-        (status = 400, description = "Invalid name or depth parameter"),
-    ),
-    tag = "Data"
-)]
-pub async fn data_at_name_handler(
-    State(app_state): State<AppState>,
-    Json(request): Json<DataAtNameRequest>,
-) -> Response {
-    tracing::warn!("/data-at-name is deprecated, use /data-at-name-by-block-hash instead");
-    match app_state.web_api.listen_for_data_at_name(request).await {
-        Ok(response) => Json(response).into_response(),
-        Err(e) => AppError(e).into_response(),
-    }
-}
-
-#[utoipa::path(
     get,
     path = "/blocks",
+    params(
+        ("view" = Option<String>, Query, description = "Response view: 'summary' (default) block headers only, 'full' includes deploys"),
+    ),
     responses(
-        (status = 200, description = "Blocks retrieved successfully", body = Vec<LightBlockInfoSerde>),
+        (status = 200, description = "Blocks retrieved successfully", body = Vec<BlockInfoSerde>),
         (status = 400, description = "Error retrieving blocks"),
     ),
     tag = "Blocks"
 )]
-pub async fn get_blocks_handler(State(app_state): State<AppState>) -> Response {
-    match app_state.web_api.get_blocks(1).await {
+pub async fn get_blocks_handler(
+    State(app_state): State<AppState>,
+    Query(query): Query<crate::rust::web::web_api_routes::ViewQuery>,
+) -> Response {
+    let view = match query.view.as_deref() {
+        Some("full") => ViewMode::Full,
+        _ => ViewMode::Summary,
+    };
+    match app_state.web_api.get_blocks(1, view).await {
         Ok(response) => Json(response).into_response(),
         Err(e) => AppError(e).into_response(),
     }
@@ -217,7 +209,8 @@ pub async fn get_blocks_handler(State(app_state): State<AppState>) -> Response {
     get,
     path = "/block/{hash}",
     params(
-        ("hash" = String, Path, description = "Block hash in hex format")
+        ("hash" = String, Path, description = "Block hash in hex format"),
+        ("view" = Option<String>, Query, description = "Response view: 'full' (default) includes deploys, 'summary' block header only"),
     ),
     responses(
         (status = 200, description = "Block information retrieved successfully", body = BlockInfoSerde),
@@ -228,8 +221,13 @@ pub async fn get_blocks_handler(State(app_state): State<AppState>) -> Response {
 pub async fn get_block_handler(
     State(app_state): State<AppState>,
     Path(hash): Path<String>,
+    Query(query): Query<crate::rust::web::web_api_routes::ViewQuery>,
 ) -> Response {
-    match app_state.web_api.get_block(hash).await {
+    let view = match query.view.as_deref() {
+        Some("summary") => ViewMode::Summary,
+        _ => ViewMode::Full,
+    };
+    match app_state.web_api.get_block(hash, view).await {
         Ok(response) => Json(response).into_response(),
         Err(e) => AppError(e).into_response(),
     }

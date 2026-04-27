@@ -152,6 +152,6 @@ pub async fn create_runtimes_with_services(
     (
         rho_runtime,
         replay_rho_runtime,
-        space.history_repository.clone(),
+        space.get_history_repository(),
     )
 }

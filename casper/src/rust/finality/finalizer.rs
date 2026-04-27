@@ -140,9 +140,9 @@ impl Finalizer {
         curr_lfb_height: i64,
         mut new_lfb_found_effect: F,
         finalizer_conf: &crate::rust::casper_conf::FinalizerConf,
-    ) -> Result<Option<BlockHash>, KvStoreError>
+    ) -> Result<Option<(BlockHash, f32)>, KvStoreError>
     where
-        F: FnMut(BlockHash) -> Fut,
+        F: FnMut((BlockHash, f32)) -> Fut,
         Fut: std::future::Future<Output = Result<(), KvStoreError>>,
     {
         let total_started = std::time::Instant::now();
@@ -355,7 +355,7 @@ impl Finalizer {
         let mut upper_bound_pruned_count: usize = 0;
         let mut upper_bound_passed_count: usize = 0;
         let mut max_ft_upper_bound: f64 = f64::MIN;
-        let mut lfb_result: Option<BlockHash> = None;
+        let mut lfb_result: Option<(BlockHash, f32)> = None;
         for (message, message_weight_map, agreeing_weight_map) in capped_agreements {
             if total_started.elapsed() >= work_budget {
                 budget_exhausted = true;
@@ -405,11 +405,12 @@ impl Finalizer {
 
             if fault_tolerance > fault_tolerance_threshold {
                 let lfb_hash = message.block_hash.clone();
+                let ft_value = fault_tolerance as f32;
                 // Only process blocks that aren't already finalized
                 if !dag.is_finalized(&lfb_hash) {
-                    new_lfb_found_effect(lfb_hash.clone()).await?;
+                    new_lfb_found_effect((lfb_hash.clone(), ft_value)).await?;
                 }
-                lfb_result = Some(lfb_hash);
+                lfb_result = Some((lfb_hash, ft_value));
                 break;
             } else {
                 tracing::debug!(

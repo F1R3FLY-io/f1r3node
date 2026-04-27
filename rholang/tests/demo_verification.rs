@@ -14,7 +14,7 @@ async fn execute(
     runtime.evaluate_with_term(term).await
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_demo_scenario() {
     with_runtime("demo-verification-", |mut runtime| async move {
         // Initial database

@@ -1487,7 +1487,7 @@ async fn compute_last_finalized_block(
     let finalization_in_progress_for_effect = finalization_in_progress.clone();
 
     // Create simple finalization effect closure
-    let new_lfb_found_effect = move |new_lfb: BlockHash| {
+    let new_lfb_found_effect = move |(new_lfb, ft_value): (BlockHash, f32)| {
         let block_dag_storage = block_dag_storage_for_effect.clone();
         let block_store = block_store_for_effect.clone();
         let deploy_storage = deploy_storage_for_effect.clone();
@@ -1497,7 +1497,7 @@ async fn compute_last_finalized_block(
         async move {
             let effect_started = std::time::Instant::now();
             block_dag_storage
-                .record_directly_finalized(new_lfb.clone(), |finalized_set: &HashSet<BlockHash>| {
+                .record_directly_finalized(new_lfb.clone(), ft_value, |finalized_set: &HashSet<BlockHash>| {
                     let finalized_set = finalized_set.clone();
                     let block_store = block_store.clone();
                     let deploy_storage = deploy_storage.clone();
@@ -1601,7 +1601,9 @@ async fn compute_last_finalized_block(
     let new_lfb_found = new_finalized_hash_opt.is_some();
 
     // Get the final LFB hash (either new or existing)
-    let final_lfb_hash = new_finalized_hash_opt.unwrap_or(last_finalized_block_hash);
+    let final_lfb_hash = new_finalized_hash_opt
+        .map(|(hash, _ft)| hash)
+        .unwrap_or(last_finalized_block_hash);
 
     // Return the finalized block
     let read_started = std::time::Instant::now();
@@ -1781,6 +1783,8 @@ fn block_event(
     block: &BlockMessage,
 ) -> (
     String,
+    i64,
+    i64,
     Vec<String>,
     Vec<(String, String)>,
     Vec<DeployEvent>,
@@ -1822,11 +1826,15 @@ fn block_event(
         })
         .collect::<Vec<_>>();
 
+    let block_number = block.body.state.block_number;
+    let timestamp = block.header.timestamp;
     let creator = hex::encode(block.sender.clone());
     let seq_num = block.seq_num;
 
     (
         block_hash,
+        block_number,
+        timestamp,
         parent_hashes,
         justification_hashes,
         deploys,
@@ -1837,10 +1845,12 @@ fn block_event(
 
 /// Create BlockCreated event for a block.
 pub fn created_event(block: &BlockMessage) -> F1r3flyEvent {
-    let (block_hash, parent_hashes, justification_hashes, deploys, creator, seq_num) =
+    let (block_hash, block_number, timestamp, parent_hashes, justification_hashes, deploys, creator, seq_num) =
         block_event(block);
     F1r3flyEvent::block_created(
         block_hash,
+        block_number,
+        timestamp,
         parent_hashes,
         justification_hashes,
         deploys,
@@ -1851,10 +1861,12 @@ pub fn created_event(block: &BlockMessage) -> F1r3flyEvent {
 
 /// Create BlockAdded event for a block.
 pub fn added_event(block: &BlockMessage) -> F1r3flyEvent {
-    let (block_hash, parent_hashes, justification_hashes, deploys, creator, seq_num) =
+    let (block_hash, block_number, timestamp, parent_hashes, justification_hashes, deploys, creator, seq_num) =
         block_event(block);
     F1r3flyEvent::block_added(
         block_hash,
+        block_number,
+        timestamp,
         parent_hashes,
         justification_hashes,
         deploys,
@@ -1865,10 +1877,12 @@ pub fn added_event(block: &BlockMessage) -> F1r3flyEvent {
 
 /// Create BlockFinalised event for a block.
 pub fn finalised_event(block: &BlockMessage) -> F1r3flyEvent {
-    let (block_hash, parent_hashes, justification_hashes, deploys, creator, seq_num) =
+    let (block_hash, block_number, timestamp, parent_hashes, justification_hashes, deploys, creator, seq_num) =
         block_event(block);
     F1r3flyEvent::block_finalised(
         block_hash,
+        block_number,
+        timestamp,
         parent_hashes,
         justification_hashes,
         deploys,

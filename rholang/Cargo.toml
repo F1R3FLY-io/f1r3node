@@ -62,9 +62,9 @@ reqwest = { version = "0.11", features = ["json"] }
 serde_json = { workspace = true }
 rust-bert = { version = "0.23.0", optional = true }
 console = "0.16.0"
-async-trait.workspace = true
 anyhow = "1.0.100"
 chroma = { version = "0.10.0", optional = true }
+async-trait = { workspace = true }
 
 [build-dependencies]
 cc = "1.0"

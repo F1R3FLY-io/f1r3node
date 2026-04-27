@@ -1,4 +1,4 @@
-> Last updated: 2026-03-29
+> Last updated: 2026-04-19
 
 # Crate: casper (Consensus Layer)
 
@@ -119,8 +119,12 @@ Computes normalized fault tolerance between -1.0 and 1.0:
 **Finalizer** scoped search from last finalized block (LFB) to tips:
 1. Find blocks with >50% stake agreement via main parent chain
 2. Execute Clique Oracle on candidates
-3. Output first block exceeding fault tolerance threshold
-4. Guarded by `FinalizationInProgress` atomic bool (prevents snapshot creation during finalization)
+3. Output first block exceeding fault tolerance threshold, along with its computed FT value
+4. Cache the normalized FT in `BlockMetadata.fault_tolerance_value` for the directly finalized block and all indirectly finalized ancestors
+5. Propagate FT to all previously-finalized blocks whose cached value is lower (`propagate_ft_to_finalized_blocks`). This covers orphaned branches in the multi-parent DAG and ensures all finalized blocks converge toward FT=1.0 as later rounds produce higher agreement.
+6. Guarded by `FinalizationInProgress` atomic bool (prevents snapshot creation during finalization)
+
+**FT caching**: The block API returns the cached FT for finalized blocks instead of recomputing via the clique oracle. Cached FT is monotonically non-decreasing — it only increases as later finalization rounds propagate higher values. Bulk endpoints (`get_blocks`, `show_main_chain`, `get_blocks_by_heights`) use a single DAG snapshot per response for internal consistency.
 
 ## Equivocation Detection
 
@@ -168,9 +172,27 @@ Merge cost is O(visible_blocks^2 x deploys^2) for the conflict resolution phase,
 
 If the visible block count exceeds `MAX_PARENT_MERGE_SCOPE_BLOCKS` (512) or the LCA distance exceeds `MAX_LCA_DISTANCE_BLOCKS` (256), the merge falls back to the latest parent's post-state. This caps worst-case merge latency at the cost of discarding deploys from non-selected parents, which will be re-proposed in subsequent blocks.
 
+## Deploy Replay
+
+Deploys within a block are evaluated sequentially (matching Scala's `traverse`, not
+`parTraverse`). Each deploy uses a soft checkpoint for rollback on error. The play path
+records event logs; the replay path uses `ReplayRSpace` with the recorded event log as
+an oracle to force the same COMMs regardless of evaluation order.
+
+The `RuntimeManager` coordinates play (`compute_state`) and replay (`replay_compute_state`):
+- Play: evaluates user deploys + system deploys, creates checkpoint, returns state hash
+- Replay: rigs `ReplayRSpace` with play's event log, re-evaluates, verifies state hash match
+
+All `RuntimeManager` methods and `RhoRuntime` methods are async, with `.await` on
+ISpace operations throughout the call chain.
+
 ## Tests
 
 Feature-gated `test_utils` module (`#[cfg(feature = "test-utils")]`) provides test infrastructure: `helper/` (test_node, block_generator, block_dag_storage_fixture, block_util, bonding_util, no_ops_casper_effect) and `util/` (genesis_builder, test_mocks, rholang/resources, comm/transport_layer_test_impl). Integration tests for block_report_api and reporting_casper.
+
+All interpreter-level tests use `#[tokio::test(flavor = "multi_thread", worker_threads = 4)]`
+to match the production multi-threaded runtime, ensuring parallel `tokio::spawn` evaluation
+of Rholang Par branches is exercised during testing.
 
 **See also:** [casper/ crate README](../../casper/README.md) | [Consensus Protocol](./CONSENSUS_PROTOCOL.md) | [Byzantine Fault Tolerance](./BYZANTINE_FAULT_TOLERANCE.md) | [Synchrony Constraint](./SYNC_CONSTRAINT.md)
 

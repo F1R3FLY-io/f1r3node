@@ -105,7 +105,7 @@ async fn replay_compute_state(
         .await
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn comput_state_should_charge_for_deploys() {
     with_runtime_manager(
         |mut runtime_manager, genesis_context, genesis_block| async move {
@@ -253,21 +253,22 @@ async fn exec_replay_system_deploy<S: SystemDeployTrait>(
         _ => None,
     };
 
-    replay_runtime_ops.rig_system_deploy(processed_system_deploy)?;
+    replay_runtime_ops.rig_system_deploy(processed_system_deploy).await?;
     replay_runtime_ops
         .runtime_ops
         .runtime
-        .reset(&Blake2b256Hash::from_bytes_prost(state_hash))?;
+        .reset(&Blake2b256Hash::from_bytes_prost(state_hash))
+        .await?;
 
     let (value, eval_res) = replay_runtime_ops
         .replay_system_deploy_internal(system_deploy, &expected_failure)
         .await?;
 
-    replay_runtime_ops.check_replay_data_with_fix(eval_res.errors.is_empty())?;
+    replay_runtime_ops.check_replay_data_with_fix(eval_res.errors.is_empty()).await?;
 
     match (value, eval_res) {
         (Either::Right(result), _) => {
-            let checkpoint = replay_runtime_ops.runtime_ops.runtime.create_checkpoint();
+            let checkpoint = replay_runtime_ops.runtime_ops.runtime.create_checkpoint().await;
 
             Ok(SystemDeployReplayResult::ReplaySucceeded {
                 state_hash: checkpoint.root.to_bytes_prost(),
@@ -281,7 +282,7 @@ async fn exec_replay_system_deploy<S: SystemDeployTrait>(
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn pre_charge_deploy_should_reduce_user_account_balance_by_correct_amount() {
     with_runtime_manager(
         |mut runtime_manager, genesis_context, genesis_block| async move {
@@ -361,7 +362,7 @@ async fn pre_charge_deploy_should_reduce_user_account_balance_by_correct_amount(
     .unwrap()
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn close_block_should_make_epoch_change_and_reward_validator() {
     with_runtime_manager(
         |mut runtime_manager, genesis_context, genesis_block| async move {
@@ -385,7 +386,7 @@ async fn close_block_should_make_epoch_change_and_reward_validator() {
     .unwrap()
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn close_block_replay_should_fail_with_different_random_seed() {
     with_runtime_manager(
         |mut runtime_manager, genesis_context, genesis_block| async move {
@@ -410,7 +411,7 @@ async fn close_block_replay_should_fail_with_different_random_seed() {
     .unwrap();
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn balance_deploy_should_compute_rev_balances() {
     with_runtime_manager(
         |mut runtime_manager, genesis_context, genesis_block| async move {
@@ -437,7 +438,7 @@ async fn balance_deploy_should_compute_rev_balances() {
     .unwrap();
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn compute_state_should_capture_rholang_errors() {
     with_runtime_manager(
         |mut runtime_manager, genesis_context, genesis_block| async move {
@@ -468,9 +469,10 @@ async fn compute_state_should_capture_rholang_errors() {
     .unwrap();
 }
 
-// TODO: Remove ignore once we have a fix for this test
-// This test is producing non-deterministic results - it's not clear why - sometimes it passes, sometimes it doesn't
-#[tokio::test]
+// TODO: Flaky — GasRefundFailure("Insufficient funds") on some runs.
+// The deployer vault balance becomes insufficient for the second block's
+// refund when scheduling produces a higher deploy cost in block 1.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore]
 async fn compute_state_then_compute_bonds_should_be_replayable_after_all() {
     with_runtime_manager(
@@ -638,7 +640,7 @@ async fn compute_state_then_compute_bonds_should_be_replayable_after_all() {
     .unwrap();
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn compute_state_should_capture_rholang_parsing_errors_and_charge_for_parsing() {
     with_runtime_manager(
         |mut runtime_manager, genesis_context, genesis_block| async move {
@@ -670,7 +672,7 @@ async fn compute_state_should_capture_rholang_parsing_errors_and_charge_for_pars
     .unwrap();
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn compute_state_should_charge_for_parsing_and_execution() {
     with_runtime_manager(
         |mut runtime_manager, genesis_context, genesis_block| async move {
@@ -712,7 +714,7 @@ async fn compute_state_should_charge_for_parsing_and_execution() {
     .unwrap();
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn capture_result_should_return_the_value_at_the_specified_channel_after_a_rholang_computation(
 ) {
     with_runtime_manager(
@@ -770,7 +772,7 @@ async fn capture_result_should_return_the_value_at_the_specified_channel_after_a
     .unwrap();
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn capture_result_should_handle_multiple_results_and_no_results_appropriately() {
     with_runtime_manager(|runtime_manager, _, _| async move {
         let n = 8;
@@ -803,7 +805,7 @@ async fn capture_result_should_handle_multiple_results_and_no_results_appropriat
     .unwrap();
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn capture_result_should_throw_error_if_execution_fails() {
     with_runtime_manager(|runtime_manager, _, _| async move {
         let deploy = construct_deploy::source_deploy(
@@ -827,7 +829,7 @@ async fn capture_result_should_throw_error_if_execution_fails() {
     .unwrap();
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn empty_state_hash_should_not_remember_previous_hot_store_state() {
     with_runtime_manager(
         |mut runtime_manager, genesis_context, genesis_block| async move {
@@ -859,7 +861,7 @@ async fn empty_state_hash_should_not_remember_previous_hot_store_state() {
     .unwrap();
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn compute_state_should_be_replayed_by_replay_compute_state() {
     with_runtime_manager(
         |mut runtime_manager, genesis_context, genesis_block| async move {
@@ -946,7 +948,7 @@ async fn compute_state_should_be_replayed_by_replay_compute_state() {
     .unwrap();
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn compute_state_should_charge_deploys_separately() {
     with_runtime_manager(
         |mut runtime_manager, genesis_context, genesis_block| async move {
@@ -1105,7 +1107,7 @@ async fn compute_state_should_charge_deploys_separately() {
     .unwrap();
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn compute_state_should_just_work() {
     with_runtime_manager(|mut runtime_manager, genesis_context, genesis_block| async move {
       let gen_post_state = genesis_block.body.state.post_state_hash;
@@ -1271,7 +1273,7 @@ async fn invalid_replay(source: String) -> Result<StateHash, CasperError> {
     .await?
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn replaycomputestate_should_catch_discrepancies_in_initial_and_replay_cost_when_no_errors_are_thrown(
 ) {
     let result = invalid_replay("@0!(0) | for(@0 <- @0){ Nil }".to_string()).await;
@@ -1287,7 +1289,7 @@ async fn replaycomputestate_should_catch_discrepancies_in_initial_and_replay_cos
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn replaycomputestate_should_not_catch_discrepancies_in_initial_and_replay_cost_when_user_errors_are_thrown(
 ) {
     let result = invalid_replay("@0!(0) | for(@x <- @0){ x.undefined() }".to_string()).await;
@@ -1305,7 +1307,7 @@ async fn replaycomputestate_should_not_catch_discrepancies_in_initial_and_replay
 
 // This is additional test for sorting with joins and channels inside joins.
 // - after reverted PR https://github.com/rchain/rchain/pull/2436
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn joins_should_be_replayed_correctly() {
     with_runtime_manager(
         |mut runtime_manager, genesis_context, genesis_block| async move {
@@ -1380,7 +1382,7 @@ async fn joins_should_be_replayed_correctly() {
 /// The first plays the deploy (hot store populated from execution).
 /// The second replays with a fresh hot store (loads from history).
 /// This simulates the block creator vs replayer divergence.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn replay_on_independent_runtime_should_match_play_cost_for_duplicate_sends() {
     use crate::util::rholang::resources::{
         mk_runtime_manager_with_history_at, mk_test_rnode_store_manager_from_genesis,
@@ -1465,7 +1467,7 @@ async fn replay_on_independent_runtime_should_match_play_cost_for_duplicate_send
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn cross_deploy_bridge_full_admin_flow() {
     use crate::util::rholang::resources::{
         mk_runtime_manager_with_history_at, mk_test_rnode_store_manager_from_genesis,
@@ -1668,4 +1670,449 @@ in {{
         "Bridge admin API failures:\n{}",
         failures.join("\n")
     );
+}
+
+/// Tests that bridge registry entries survive multi-parent DAG merge.
+///
+/// Deploys bridge.rho on block A (from genesis), creates empty block B (from
+/// genesis, sibling branch), merges [A, B] via compute_parents_post_state,
+/// then queries getNonce from the merged state.
+///
+/// Reproduces: system-integration docs/TODO.md "Contract query deploy returns
+/// empty deployId after finalization (intermittent)"
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn bridge_query_survives_multi_parent_merge() {
+    use block_storage::rust::key_value_block_store::KeyValueBlockStore;
+    use casper::rust::{
+        casper::{CasperShardConf, CasperSnapshot, OnChainCasperState},
+        util::{
+            proto_util,
+            rholang::interpreter_util::{compute_deploys_checkpoint, compute_parents_post_state},
+        },
+    };
+    use crate::util::rholang::resources::{
+        mk_test_rnode_store_manager_from_genesis, block_dag_storage_from_dyn,
+        mergeable_store_from_dyn,
+    };
+    use dashmap::{DashMap, DashSet};
+    use models::rust::{block_hash::BlockHash, block_implicits};
+    use rholang::rust::interpreter::external_services::ExternalServices;
+    use casper::rust::genesis::genesis::Genesis;
+
+    crate::init_logger();
+    let genesis_context = crate::util::rholang::resources::genesis_context()
+        .await
+        .unwrap();
+    let genesis_block = genesis_context.genesis_block.clone();
+    let genesis_hash = genesis_block.block_hash.clone();
+    let genesis_state = proto_util::post_state_hash(&genesis_block);
+    let genesis_bonds = genesis_block.body.state.bonds.clone();
+    let validator: prost::bytes::Bytes = genesis_context.validator_pks()[0].bytes.clone().into();
+    let shard_name = genesis_block.shard_id.clone();
+
+    // Create all stores from the same KVM (shared genesis scope)
+    let mut kvm = mk_test_rnode_store_manager_from_genesis(&genesis_context);
+
+    let rspace_store = kvm.r_space_stores().await.expect("rspace stores");
+    let mergeable_store = mergeable_store_from_dyn(&mut *kvm).await.expect("mergeable store");
+    let (mut rm, _) = RuntimeManager::create_with_history(
+        rspace_store, mergeable_store,
+        Genesis::non_negative_mergeable_tag_name(),
+        ExternalServices::noop(),
+    );
+
+    let mut block_store = KeyValueBlockStore::create_from_kvm(&mut *kvm)
+        .await
+        .expect("block store");
+    let dag_storage = block_dag_storage_from_dyn(&mut *kvm)
+        .await
+        .expect("dag storage");
+
+    block_store.put_block_message(&genesis_block).expect("store genesis");
+    dag_storage.insert(&genesis_block, false, true).expect("dag genesis");
+
+    let now_millis = || -> i64 {
+        SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
+    };
+
+    let mk_snapshot = |lfb: &BlockHash| -> CasperSnapshot {
+        let mut snapshot = CasperSnapshot::new(dag_storage.get_representation());
+        snapshot.last_finalized_block = lfb.clone();
+        let max_seq_nums: DashMap<prost::bytes::Bytes, u64> = DashMap::new();
+        max_seq_nums.insert(validator.clone(), 0);
+        snapshot.max_seq_nums = max_seq_nums;
+        let mut shard_conf = CasperShardConf::new();
+        shard_conf.shard_name = shard_name.clone();
+        shard_conf.max_parent_depth = 0;
+        let mut bonds_map = HashMap::new();
+        bonds_map.insert(validator.clone(), 100);
+        snapshot.on_chain_state = OnChainCasperState {
+            shard_conf,
+            bonds_map,
+            active_validators: vec![validator.clone()],
+        };
+        snapshot.deploys_in_scope = std::sync::Arc::new(DashSet::new());
+        snapshot
+    };
+
+    let make_deploy_id_par = |sig: &[u8]| -> models::rhoapi::Par {
+        models::rhoapi::Par {
+            unforgeables: vec![models::rhoapi::GUnforgeable {
+                unf_instance: Some(
+                    models::rhoapi::g_unforgeable::UnfInstance::GDeployIdBody(
+                        models::rhoapi::GDeployId { sig: sig.to_vec() },
+                    ),
+                ),
+            }],
+            ..Default::default()
+        }
+    };
+
+    let bridge_rho = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/resources/bridge.rho"),
+    ).expect("Failed to read bridge.rho");
+
+    // --- Block A: bridge deploy from genesis ---
+    let bridge_deploy = construct_deploy::source_deploy_now_full(
+        bridge_rho, None, None, None, None, None,
+    ).unwrap();
+
+    let block_a_raw = block_implicits::get_random_block(
+        Some(1), Some(1), Some(genesis_state.clone()), Some(StateHash::default()),
+        Some(validator.clone()), Some(1), Some(now_millis()),
+        Some(vec![genesis_hash.clone()]), Some(Vec::new()),
+        Some(vec![ProcessedDeploy::empty(bridge_deploy)]),
+        Some(Vec::new()), Some(genesis_bonds.clone()), Some(shard_name.clone()), None,
+    );
+
+    let parents_a = vec![genesis_block.clone()];
+    let deploys_a = proto_util::deploys(&block_a_raw).into_iter().map(|d| d.deploy).collect();
+    let snapshot_a = mk_snapshot(&genesis_hash);
+    let (_, post_state_a, pd_a, _, sys_pd_a, bonds_a) = compute_deploys_checkpoint(
+        &mut block_store, parents_a, deploys_a,
+        Vec::<casper::rust::util::rholang::system_deploy_enum::SystemDeployEnum>::new(),
+        &snapshot_a, &mut rm,
+        BlockData::from_block(&block_a_raw), HashMap::new(),
+    ).await.expect("compute block A");
+
+    assert!(!pd_a[0].is_failed, "Bridge deploy failed: {:?}", pd_a[0].system_deploy_error);
+
+    let mut block_a = block_a_raw;
+    block_a.body.state.post_state_hash = post_state_a.clone();
+    block_a.body.deploys = pd_a.clone();
+    block_a.body.system_deploys = sys_pd_a;
+    block_a.body.state.bonds = bonds_a;
+    block_store.put_block_message(&block_a).expect("store A");
+    dag_storage.insert(&block_a, false, false).expect("dag A");
+
+    // Verify bridge wrote data and extract queryUri
+    let bridge_data = rm.get_data(post_state_a.clone(), &make_deploy_id_par(&pd_a[0].deploy.sig)).await.unwrap();
+    assert!(!bridge_data.is_empty(), "Bridge deploy wrote no data to deployId");
+
+    let uri_regex = regex::Regex::new(r"rho:id:[a-zA-Z0-9]+").unwrap();
+    let data_str = format!("{:?}", bridge_data);
+    let uris: Vec<String> = uri_regex.find_iter(&data_str).map(|m| m.as_str().to_string()).collect();
+    let mut unique_uris: Vec<String> = Vec::new();
+    for uri in &uris { if !unique_uris.contains(uri) { unique_uris.push(uri.clone()); } }
+    assert!(unique_uris.len() >= 2, "Expected at least 2 URIs, got: {:?}", unique_uris);
+    let query_uri = unique_uris[0].clone();
+
+    // --- Block B: empty block from genesis (sibling branch) ---
+    let block_b_raw = block_implicits::get_random_block(
+        Some(1), Some(2), Some(genesis_state.clone()), Some(StateHash::default()),
+        Some(validator.clone()), Some(1), Some(now_millis()),
+        Some(vec![genesis_hash.clone()]), Some(Vec::new()),
+        Some(Vec::new()), Some(Vec::new()),
+        Some(genesis_bonds.clone()), Some(shard_name.clone()), None,
+    );
+
+    let parents_b = vec![genesis_block.clone()];
+    let snapshot_b = mk_snapshot(&genesis_hash);
+    let (_, post_state_b, pd_b, _, sys_pd_b, bonds_b) = compute_deploys_checkpoint(
+        &mut block_store, parents_b, Vec::new(),
+        Vec::<casper::rust::util::rholang::system_deploy_enum::SystemDeployEnum>::new(),
+        &snapshot_b, &mut rm,
+        BlockData::from_block(&block_b_raw), HashMap::new(),
+    ).await.expect("compute block B");
+
+    let mut block_b = block_b_raw;
+    block_b.body.state.post_state_hash = post_state_b.clone();
+    block_b.body.deploys = pd_b;
+    block_b.body.system_deploys = sys_pd_b;
+    block_b.body.state.bonds = bonds_b;
+    block_store.put_block_message(&block_b).expect("store B");
+    dag_storage.insert(&block_b, false, false).expect("dag B");
+
+    // --- Merge [A, B] ---
+    let parents = vec![block_a.clone(), block_b.clone()];
+    let snapshot_merge = mk_snapshot(&genesis_hash);
+    let (merged_state, rejected) = compute_parents_post_state(
+        &block_store, parents, &snapshot_merge, &rm, None,
+    ).expect("merge parents");
+
+    assert!(rejected.is_empty(), "Merge rejected deploys: {:?}", rejected);
+
+    // --- Query getNonce from merged state ---
+    let get_nonce_rho = format!(r#"
+new deployId(`rho:system:deployId`),
+    lookup(`rho:registry:lookup`),
+    queryCh, ret
+in {{
+  lookup!(`{}`, *queryCh) |
+  for (query <- queryCh) {{
+    query!("getNonce", Nil, *ret) |
+    for (@result <- ret) {{ deployId!(result) }}
+  }}
+}}
+"#, query_uri);
+
+    let query_deploy = construct_deploy::source_deploy_now_full(
+        get_nonce_rho, None, None, None, None, None,
+    ).unwrap();
+
+    let query_block_raw = block_implicits::get_random_block(
+        Some(2), Some(3), Some(merged_state.clone()), Some(StateHash::default()),
+        Some(validator.clone()), Some(1), Some(now_millis()),
+        Some(vec![block_a.block_hash.clone(), block_b.block_hash.clone()]),
+        Some(Vec::new()),
+        Some(vec![ProcessedDeploy::empty(query_deploy)]),
+        Some(Vec::new()), Some(genesis_bonds.clone()), Some(shard_name.clone()), None,
+    );
+
+    let parents_q = vec![block_a.clone(), block_b.clone()];
+    let deploys_q = proto_util::deploys(&query_block_raw).into_iter().map(|d| d.deploy).collect();
+    let snapshot_q = mk_snapshot(&genesis_hash);
+    let (_, post_state_q, pd_q, _, _, _) = compute_deploys_checkpoint(
+        &mut block_store, parents_q, deploys_q,
+        Vec::<casper::rust::util::rholang::system_deploy_enum::SystemDeployEnum>::new(),
+        &snapshot_q, &mut rm,
+        BlockData::from_block(&query_block_raw), HashMap::new(),
+    ).await.expect("compute query block");
+
+    assert!(!pd_q[0].is_failed, "Query deploy failed: {:?}", pd_q[0].system_deploy_error);
+
+    let query_data = rm.get_data(post_state_q, &make_deploy_id_par(&pd_q[0].deploy.sig)).await.unwrap();
+
+    assert!(
+        !query_data.is_empty(),
+        "Bridge query returned empty deployId after multi-parent merge. \
+         The merge did not preserve the bridge's registry entries when \
+         combining a bridge branch with an empty sibling branch."
+    );
+}
+
+/// Verifies that exploratory deploy can query user-deployed contracts
+/// through the registry. The `contract` keyword is reserved in Rholang,
+/// so variable names in the query must not use it.
+///
+/// Also verifies that play_exploratory_deploy propagates errors (previously
+/// errors were silently swallowed, returning empty results).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn exploratory_deploy_async_contract_query() {
+    use crypto::rust::signatures::signatures_alg::SignaturesAlg;
+
+    with_runtime_manager(|runtime_manager, _genesis_context, genesis_block| async move {
+        let genesis_state = genesis_block.body.state.post_state_hash.clone();
+
+        // Deploy a contract with a persistent state channel + persistent consume
+        let contract_rho = r#"
+new return, stateCh, queryCh,
+    insertArbitrary(`rho:registry:insertArbitrary`)
+in {
+  stateCh!(42) |
+  contract queryCh(@method, ret) = {
+    for (@v <- stateCh) {
+      stateCh!(v) |
+      ret!(v)
+    }
+  } |
+  new uriCh in {
+    insertArbitrary!(bundle+{*queryCh}, *uriCh) |
+    for (@uri <- uriCh) {
+      return!(uri)
+    }
+  }
+}
+"#;
+
+        // Use a unique key to avoid GPrivate collision with exploratory deploy's DEFAULT_SEC
+        let (contract_key, _) = crypto::rust::signatures::secp256k1::Secp256k1.new_key_pair();
+        let deploy = construct_deploy::source_deploy(
+            contract_rho.to_string(), 0, Some(500_000_000), None, Some(contract_key), None, None,
+        ).unwrap();
+
+        // Deploy and read URI via capture_results
+        let uri_pars = runtime_manager
+            .capture_results(&genesis_state, &deploy)
+            .await
+            .expect("deploy contract");
+        assert!(!uri_pars.is_empty(), "Contract deploy returned no URI");
+
+        let uri_str = format!("{:?}", uri_pars[0]);
+        let uri_regex = regex::Regex::new(r"rho:id:[a-zA-Z0-9]+").unwrap();
+        let uri = uri_regex.find(&uri_str).expect("No rho:id URI found").as_str().to_string();
+
+        // Checkpoint via a fresh runtime so exploratory deploy can see the state
+        let runtime = runtime_manager.spawn_runtime().await;
+        let mut runtime_ops = RuntimeOps::new(runtime);
+        runtime_ops.runtime
+            .reset(&Blake2b256Hash::from_bytes_prost(&genesis_state)).await
+            .expect("reset");
+        let eval_result = runtime_ops.evaluate(&deploy).await.expect("evaluate");
+        assert!(eval_result.errors.is_empty(), "Deploy errors: {:?}", eval_result.errors);
+        let checkpoint = runtime_ops.runtime.create_checkpoint().await;
+        let post_state: StateHash = checkpoint.root.to_bytes_prost().into();
+        tracing::info!("Contract at {}, post_state={}", uri, hex::encode(&post_state[..8]));
+
+        // Query with correct variable names (NOT using reserved word 'contract')
+        let query_term = format!(
+            r#"new ret, lookup(`rho:registry:lookup`), ch in {{
+                lookup!(`{}`, *ch) |
+                for (c <- ch) {{
+                    c!("get", *ret)
+                }}
+            }}"#, uri
+        );
+        let (query_result, _) = runtime_manager
+            .play_exploratory_deploy(query_term, &post_state)
+            .await
+            .expect("query exploratory deploy");
+        tracing::info!("Query with correct var name: {} pars", query_result.len());
+        assert_eq!(query_result.len(), 1, "Query should return 1 par (the value 42)");
+
+        // Verify play_exploratory_deploy propagates parse errors (not swallows them)
+        let bad_term = format!(
+            r#"new ret, lookup(`rho:registry:lookup`), ch in {{
+                lookup!(`{}`, *ch) |
+                for (contract <- ch) {{
+                    contract!("get", *ret)
+                }}
+            }}"#, uri
+        );
+        let bad_result = runtime_manager
+            .play_exploratory_deploy(bad_term, &post_state)
+            .await;
+        assert!(bad_result.is_err(),
+            "Using reserved word 'contract' as var name should return Err, not empty Ok");
+    })
+    .await
+    .unwrap();
+}
+
+
+/// Reproduces the replay determinism issue seen with tokio::spawn.
+/// Deploys a contract with parallel composition, plays it, then replays it.
+/// If tokio::spawn introduces non-deterministic evaluation order, the replay
+/// cost will differ from the play cost, causing ReplayCostMismatch.
+///
+/// Run: cargo test -p casper --test mod --release parallel_replay_determinism -- --nocapture
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn parallel_replay_determinism() {
+    with_runtime_manager(
+        |mut runtime_manager, genesis_context, genesis_block| async move {
+            let gps = genesis_block.body.state.post_state_hash;
+
+            // Registry lookup — system process with internal parallel composition
+            let parallel_contract = r#"
+                new rl(`rho:registry:lookup`), ch in {
+                    rl!(`rho:vault:system`, *ch)
+                }
+            "#;
+
+            let deploy = construct_deploy::source_deploy_now_full(
+                parallel_contract.to_string(),
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+
+            let time = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_millis() as i64;
+
+            let block_data = BlockData {
+                time_stamp: time,
+                block_number: 0,
+                sender: genesis_context.validator_pks()[0].clone(),
+                seq_num: 0,
+            };
+
+            // Play the deploy with CloseBlockDeploy system deploy
+            let (play_state, processed_deploys, processed_sys_deploys) = runtime_manager
+                .compute_state(
+                    &gps,
+                    vec![deploy],
+                    vec![
+                        casper::rust::util::rholang::system_deploy_enum::SystemDeployEnum::Close(
+                            CloseBlockDeploy {
+                                initial_rand:
+                                    system_deploy_util::generate_close_deploy_random_seed_from_pk(
+                                        block_data.sender.clone(),
+                                        block_data.seq_num,
+                                    ),
+                            },
+                        ),
+                    ],
+                    block_data.clone(),
+                    None,
+                )
+                .await
+                .unwrap();
+
+            let play_cost = processed_deploys[0].cost.cost;
+            let play_failed = processed_deploys[0].is_failed;
+            let play_event_count = processed_deploys[0].deploy_log.len();
+            let sys_deploy_count = processed_sys_deploys.len();
+
+            // Hash the event log for comparison
+            use std::collections::hash_map::DefaultHasher;
+            use std::hash::{Hash, Hasher};
+            let mut hasher = DefaultHasher::new();
+            for ev in &processed_deploys[0].deploy_log {
+                format!("{:?}", ev).hash(&mut hasher);
+            }
+            let event_log_hash = hasher.finish();
+
+            println!("Play: cost={}, failed={}, events={}, sys_deploys={}, event_hash={:016x}, state={:?}",
+                play_cost, play_failed, play_event_count, sys_deploy_count, event_log_hash, &play_state[..8]);
+
+            // Replay the same deploy — must produce identical state and cost
+            let replay_state = runtime_manager
+                .replay_compute_state(
+                    &gps,
+                    processed_deploys,
+                    processed_sys_deploys,
+                    &block_data,
+                    None,
+                    false,
+                )
+                .await;
+
+            match replay_state {
+                Ok(state) => {
+                    println!("Replay succeeded, state match: {}", state == play_state);
+                    assert_eq!(state, play_state, "Play and replay produced different state hashes");
+                }
+                Err(CasperError::ReplayFailure(ReplayFailure::ReplayCostMismatch {
+                    initial_cost,
+                    replay_cost,
+                })) => {
+                    panic!(
+                        "REPLAY DETERMINISM FAILURE: play cost={} but replay cost={}. \
+                         This indicates non-deterministic evaluation order in parallel composition.",
+                        initial_cost, replay_cost
+                    );
+                }
+                Err(e) => {
+                    panic!("Replay failed: {:?}", e);
+                }
+            }
+        },
+    )
+    .await
+    .unwrap();
 }

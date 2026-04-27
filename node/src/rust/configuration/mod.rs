@@ -140,6 +140,15 @@ pub mod builder {
             );
         }
 
+        // Reject empty/whitespace native token name/symbol and out-of-range
+        // decimals before the node starts. Catches misconfigured shell variable
+        // expansion, typos, and values outside the industry-standard range.
+        node_conf
+            .casper
+            .genesis_block_data
+            .validate_native_token()
+            .map_err(|e| eyre::eyre!("native token config invalid: {}", e))?;
+
         Ok(())
     }
 

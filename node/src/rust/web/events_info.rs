@@ -9,14 +9,24 @@ use axum::{
 };
 use futures::StreamExt;
 use serde_json::{json, Value};
+use std::collections::HashSet;
 
-use shared::rust::shared::{f1r3fly_event::F1r3flyEvent, f1r3fly_events::EventStream};
+use shared::rust::shared::{
+    f1r3fly_event::F1r3flyEvent,
+    f1r3fly_events::{EventStream, StartupBuffer},
+};
 
 use crate::rust::web::shared_handlers::AppState;
 
-// TODO: This implementation differs from the Scala code in the main branch.
-// The main trade-off is that we are transforming events in every tokio task.
-// Instead it would be great if we could transform events in a single tokio task and then broadcast them to all websocket handlers.
+/// WebSocket event handler for /ws/events endpoint.
+///
+/// On client connect:
+/// 1. Sends a "started" handshake event
+/// 2. Replays buffered startup events (node-started, genesis ceremony, etc.)
+/// 3. Enters live stream from the broadcast channel
+///
+/// Startup events are deduplicated — events that were both buffered and
+/// received live are sent only once.
 pub struct EventsInfo;
 
 impl EventsInfo {
@@ -24,7 +34,11 @@ impl EventsInfo {
         Router::new().route("/", get(events_info_handler))
     }
 
-    async fn handle_websocket(mut socket: WebSocket, mut event_stream: EventStream) {
+    async fn handle_websocket(
+        mut socket: WebSocket,
+        mut event_stream: EventStream,
+        startup_buffer: StartupBuffer,
+    ) {
         // Send initial "started" event
         let started = json!({
             "event": "started",
@@ -34,31 +48,67 @@ impl EventsInfo {
             let _ = socket.send(Message::Text(msg.into())).await;
         }
 
+        // Replay buffered startup events.
+        // The broadcast subscription was created before we read the buffer,
+        // so events published between subscribe and buffer-read will appear
+        // in both. Track replayed event fingerprints to deduplicate.
+        let mut replayed: HashSet<String> = HashSet::new();
+        let buffered = startup_buffer
+            .lock()
+            .ok()
+            .and_then(|guard| guard.as_ref().cloned())
+            .unwrap_or_default();
+
+        for event in &buffered {
+            if let Ok(json) = Self::transform_f1r3fly_event(event) {
+                if let Ok(serialized) = serde_json::to_string(&json) {
+                    replayed.insert(serialized.clone());
+                    let message = Message::Text(serialized.into());
+                    if socket.send(message).await.is_err() {
+                        tracing::debug!("WebSocket client disconnected during startup replay");
+                        return;
+                    }
+                }
+            }
+        }
+
+        if !buffered.is_empty() {
+            tracing::debug!(
+                "Replayed {} startup events to WebSocket client",
+                buffered.len()
+            );
+        }
+
+        // Live stream — skip events that were already replayed.
+        // Once the replayed set is drained, all events pass through.
         while let Some(event) = event_stream.next().await {
-            if let Err(e) = Self::send_event_to_websocket(&mut socket, &event).await {
-                tracing::debug!("WebSocket client disconnected: {}", e);
+            let json = match Self::transform_f1r3fly_event(&event) {
+                Ok(j) => j,
+                Err(e) => {
+                    tracing::debug!("Failed to transform event: {}", e);
+                    continue;
+                }
+            };
+
+            let serialized = match serde_json::to_string(&json) {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::debug!("Failed to serialize event: {}", e);
+                    continue;
+                }
+            };
+
+            // Deduplicate against replayed startup events
+            if !replayed.is_empty() && replayed.remove(&serialized) {
+                continue;
+            }
+
+            let message = Message::Text(serialized.into());
+            if socket.send(message).await.is_err() {
+                tracing::debug!("WebSocket client disconnected");
                 break;
             }
         }
-    }
-
-    async fn send_event_to_websocket(
-        socket: &mut WebSocket,
-        event: &F1r3flyEvent,
-    ) -> Result<(), String> {
-        let json = Self::transform_f1r3fly_event(event)
-            .map_err(|e| format!("Failed to transform event: {}", e))?;
-
-        let message_str =
-            serde_json::to_string(&json).map_err(|e| format!("Failed to serialize JSON: {}", e))?;
-
-        let message = Message::Text(message_str.into());
-        socket
-            .send(message)
-            .await
-            .map_err(|e| format!("Failed to send message: {}", e))?;
-
-        Ok(())
     }
 
     // Transforms an F1r3flyEvent into a JSON structure matching the Scala implementation
@@ -103,8 +153,13 @@ pub async fn events_info_handler(
     ws: WebSocketUpgrade,
     State(app_state): State<AppState>,
 ) -> Response {
+    let startup_events = app_state.startup_events.clone();
     ws.on_upgrade(move |socket| {
-        EventsInfo::handle_websocket(socket, app_state.event_stream.new_subscribe())
+        EventsInfo::handle_websocket(
+            socket,
+            app_state.event_stream.new_subscribe(),
+            startup_events,
+        )
     })
 }
 
@@ -122,6 +177,8 @@ mod tests {
     fn test_transform_block_created_event() {
         let event = F1r3flyEvent::block_created(
             "hash123".to_string(),
+            100,
+            1700000000000,
             vec!["parent1".to_string()],
             vec![("j1".to_string(), "j2".to_string())],
             vec![create_test_deploy("deploy1")],
@@ -149,6 +206,8 @@ mod tests {
     fn test_transform_block_added_event() {
         let event = F1r3flyEvent::block_added(
             "hash456".to_string(),
+            200,
+            1700000001000,
             vec!["parent2".to_string()],
             vec![("j3".to_string(), "j4".to_string())],
             vec![create_test_deploy("deploy2")],
@@ -170,6 +229,8 @@ mod tests {
         // BlockFinalised has full block metadata
         let event = F1r3flyEvent::block_finalised(
             "hash789".to_string(),
+            300,
+            1700000002000,
             vec!["parent1".to_string()],
             vec![("j1".to_string(), "j2".to_string())],
             vec![create_test_deploy("deploy1")],
@@ -263,6 +324,8 @@ mod tests {
     fn test_transformation_has_correct_structure() {
         let event = F1r3flyEvent::block_finalised(
             "test-hash".to_string(),
+            400,
+            1700000003000,
             vec!["parent1".to_string()],
             vec![("j1".to_string(), "j2".to_string())],
             vec![create_test_deploy("deploy1")],

@@ -649,7 +649,7 @@ async fn recording_of_new_directly_finalized_block_should_record_finalized_all_n
     let effects = std::sync::Arc::new(std::sync::Mutex::new(HashSet::new()));
     let effects_clone = effects.clone();
     dag_storage
-        .record_directly_finalized(b3.block_hash.clone(), move |blocks: &HashSet<BlockHash>| {
+        .record_directly_finalized(b3.block_hash.clone(), 1.0, move |blocks: &HashSet<BlockHash>| {
             let blocks = blocks.clone();
             let effects_clone = effects_clone.clone();
             Box::pin(async move {

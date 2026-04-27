@@ -167,8 +167,12 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
             synchrony_recovery_cooldown: conf.synchrony_recovery_cooldown,
             synchrony_recovery_max_bypasses: conf.synchrony_recovery_max_bypasses,
             synchrony_finalized_baseline_enabled: conf.synchrony_finalized_baseline_enabled,
-            synchrony_finalized_baseline_max_distance: conf.synchrony_finalized_baseline_max_distance,
+            synchrony_finalized_baseline_max_distance: conf
+                .synchrony_finalized_baseline_max_distance,
             max_user_deploys_per_block: conf.max_user_deploys_per_block,
+            native_token_name: conf.genesis_block_data.native_token_name.clone(),
+            native_token_symbol: conf.genesis_block_data.native_token_symbol.clone(),
+            native_token_decimals: conf.genesis_block_data.native_token_decimals,
         };
 
         Self {
@@ -331,6 +335,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
         );
 
         let ab = approved_block.candidate.block.clone();
+        let genesis_post_state_hash = ab.body.state.post_state_hash.clone();
 
         let casper = self.create_casper(validator_id.clone(), ab)?;
         let casper_arc = Arc::new(casper);
@@ -408,11 +413,40 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
         )
         .await?;
 
+        // Guard against config drift: a joiner's local native-token-* values
+        // must match what this network actually baked into the TokenMetadata
+        // contract at genesis. If they disagree, the node's /api/status would
+        // advertise values that contradict on-chain state, which misleads
+        // block explorers and wallets.
+        let runtime_manager = self.runtime_manager.lock().await;
+        crate::rust::util::token_metadata_check::verify_token_metadata_matches_config(
+            &runtime_manager,
+            &genesis_post_state_hash,
+            &self.conf.genesis_block_data.native_token_name,
+            &self.conf.genesis_block_data.native_token_symbol,
+            self.conf.genesis_block_data.native_token_decimals,
+        )
+        .await?;
+
         Ok(())
     }
 
     async fn connect_as_genesis_validator(&self) -> Result<(), CasperError> {
         println!("connectAsGenesisValidator");
+
+        // As a genesis validator, native-token-* values from local config are
+        // what will be baked into the TokenMetadata contract at genesis (via
+        // default_blessed_terms). On-chain state cannot disagree with local
+        // config here by construction, so no post-genesis verification is
+        // performed on this path.
+        tracing::info!(
+            event = "native_token_metadata_startup",
+            role = "genesis_validator",
+            native_token_name = %self.conf.genesis_block_data.native_token_name,
+            native_token_symbol = %self.conf.genesis_block_data.native_token_symbol,
+            native_token_decimals = self.conf.genesis_block_data.native_token_decimals,
+            "Genesis validator: native token metadata will be derived from local config"
+        );
 
         let timestamp = self
             .conf
@@ -460,6 +494,9 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
                 .pos_multi_sig_public_keys
                 .clone(),
             self.conf.genesis_block_data.pos_multi_sig_quorum,
+            self.conf.genesis_block_data.native_token_name.clone(),
+            self.conf.genesis_block_data.native_token_symbol.clone(),
+            self.conf.genesis_block_data.native_token_decimals,
             self.transport_layer.clone(),
             Arc::new(self.rp_conf_ask.clone()),
         )?;
@@ -498,6 +535,21 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
 
         let validator_id = ValidatorIdentity::from_private_key_with_logging(
             self.conf.validator_private_key.as_deref(),
+        );
+
+        // As ceremony master, native-token-* values from local config will be
+        // baked into the TokenMetadata contract at genesis (via
+        // default_blessed_terms). On-chain state matches local config by
+        // construction on this path, so no post-genesis verification is
+        // performed. If your chain should use different values, update
+        // casper.genesis-block-data.native-token-* before genesis.
+        tracing::info!(
+            event = "native_token_metadata_startup",
+            role = "ceremony_master",
+            native_token_name = %self.conf.genesis_block_data.native_token_name,
+            native_token_symbol = %self.conf.genesis_block_data.native_token_symbol,
+            native_token_decimals = self.conf.genesis_block_data.native_token_decimals,
+            "Ceremony master: native token metadata will be baked into genesis from local config"
         );
 
         tracing::warn!("=== BOOTSTRAP GENESIS INPUT DEBUG START ===");
@@ -553,9 +605,12 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
                 .pos_multi_sig_public_keys
                 .clone(),
             self.conf.genesis_block_data.pos_multi_sig_quorum,
+            self.conf.genesis_block_data.native_token_name.clone(),
+            self.conf.genesis_block_data.native_token_symbol.clone(),
+            self.conf.genesis_block_data.native_token_decimals,
             &mut *self.runtime_manager.lock().await,
             self.last_approved_block.clone(),
-            None, // event_log
+            Some(self.event_publisher.clone()),
             self.transport_layer.clone(),
             Arc::new(self.connections_cell.clone()),
             Arc::new(self.rp_conf_ask.clone()),

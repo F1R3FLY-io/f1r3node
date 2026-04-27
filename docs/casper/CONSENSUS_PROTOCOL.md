@@ -320,6 +320,42 @@ The finalizer operates under time budgets to avoid blocking the proposer. Cooper
 | 0.0 | Exactly 50% | No | No |
 | -1.0 | No majority | No | No |
 
+### FT Caching
+
+The FT value computed by the clique oracle at finalization time is a mathematical proof of irreversibility — it certifies the fraction of total stake that would need to be Byzantine to revert the block. This proof is permanent: once the clique is established, no future honest message can break it.
+
+**Why caching is necessary:** The clique oracle's `normalized_fault_tolerance` function uses `latest_message_hash` to determine which validators agree on a block. This is a live DAG query — different nodes have different DAG states (due to propagation delays), so the same finalized block returns different FT values on different nodes. In a multi-parent DAG, the instability is worse because merge blocks can shift which branch is "main parent," causing validators to lose agreement through non-main parent paths.
+
+**Implementation:**
+1. `Finalizer::run` returns `(BlockHash, f32)` — the LFB hash and its computed FT
+2. `record_directly_finalized` stores the FT in `BlockMetadata.fault_tolerance_value` for:
+   - The **directly finalized block** — receives its own computed FT
+   - **Indirectly finalized ancestors** — receive the descendant's FT as a conservative lower bound (CBC Casper guarantees ancestor FT >= descendant FT)
+3. `propagate_ft_to_finalized_blocks` updates ALL previously-finalized blocks whose cached FT is lower than the new LFB's FT. This covers orphaned branches in the multi-parent DAG that are not reachable via the new LFB's ancestor chain.
+4. `block_api.rs` returns the cached FT for finalized blocks, bypassing the clique oracle
+5. Non-finalized blocks continue using the live oracle
+
+**FT convergence:** Cached FT is monotonically non-decreasing. It only increases — never decreases. As later finalization rounds compute higher FT (more validators agree), the propagation pass updates all finalized blocks. With all validators active, FT converges toward 1.0 across all nodes.
+
+**Data flow:**
+```
+Finalizer → compute FT via clique oracle
+         → if FT > threshold:
+              store (block_hash, ft_value) in BlockMetadata
+              mark block + ancestors as finalized
+              propagate ft_value to all finalized blocks with lower cached FT
+         
+Block API → is_finalized?
+              yes → return BlockMetadata.fault_tolerance_value
+              no  → compute via clique oracle (live DAG)
+```
+
+**Code locations:**
+- `casper/src/rust/finality/finalizer.rs` — FT computed and returned alongside LFB hash
+- `block-storage/src/rust/dag/block_dag_key_value_storage.rs` — `record_directly_finalized` stores FT and runs propagation
+- `block-storage/src/rust/dag/block_metadata_store.rs` — `record_finalized(directly, indirectly, ft_value)` persists FT, `update_ft_if_higher` for propagation
+- `casper/src/rust/api/block_api.rs` — `get_block_info_with_dag` reads cached FT for finalized blocks
+
 ---
 
 ## 8. Liveness (Heartbeat Proposer)
@@ -393,7 +429,13 @@ All consensus parameters are defined in HOCON configuration files:
 
 Operator config files are minimal overrides — HOCON's fallback semantics merge them on top of the built-in defaults automatically.
 
-**Genesis-locked parameters** (cannot change after network creation): `fault-tolerance-threshold` and `synchrony-constraint-threshold` are written into the genesis block's on-chain state. Changing them requires a new genesis.
+**Genesis-locked parameters** (cannot change after network creation):
+- `fault-tolerance-threshold` and `synchrony-constraint-threshold` — written into the genesis block's on-chain state
+- `native-token-name`, `native-token-symbol`, `native-token-decimals` — baked into the `TokenMetadata` Rholang contract at `rho:system:tokenMetadata` with nonce `i64::MAX`, making them immutable via the registry's `insertSigned` protocol
+
+Changing any of these requires a new genesis (new network).
+
+**Native token metadata** is exposed via `/api/status` (`nativeTokenName`, `nativeTokenSymbol`, `nativeTokenDecimals`) and queryable on-chain by any Rholang contract. Joiners verify their config matches the on-chain values at startup; a mismatch causes the node to exit with a structured error event (`native_token_metadata_mismatch`).
 
 See also: [Consensus Configuration Guide](https://github.com/F1R3FLY-io/system-integration/blob/main/docs/consensus-configuration.md) — FTT and synchrony threshold semantics, finalization formula, recommended values per validator set size.
 

@@ -12,7 +12,7 @@ use crate::rust::util::comm::{
 use crypto::rust::{private_key::PrivateKey, public_key::PublicKey, signatures::signed::Signed};
 use futures::FutureExt;
 use models::casper::{
-    BlockQuery, BlocksQuery, BondStatusQuery, ContinuationAtNameQuery, DataAtNameQuery,
+    BlockQuery, BlocksQuery, BondStatusQuery, ContinuationAtNameQuery,
     FindDeployQuery, IsFinalizedQuery, MachineVerifyQuery, VisualizeDagQuery,
 };
 use models::rust::casper::protocol::casper_message::DeployData;
@@ -74,26 +74,6 @@ impl DeployRuntime {
 
     pub async fn machine_verifiable_dag<S: DeployService>(svc: &mut S) {
         Self::graceful_exit(svc.machine_verifiable_dag(MachineVerifyQuery {})).await
-    }
-
-    pub async fn listen_for_data_at_name<S: DeployService + Clone>(svc: &mut S, name: Name) {
-        // Use graceful_exit like other methods, but with polling logic
-        Self::graceful_exit(async {
-            listen_at_name::listen_at_name_until_changes(name, |par| {
-                let mut value = svc.clone();
-                async move {
-                    value
-                        .listen_for_data_at_name(DataAtNameQuery {
-                            depth: i32::MAX,
-                            name: Some(par.clone()),
-                        })
-                        .await
-                }
-            })
-            .await
-            .map(|res| format!("{:?}", res))
-        })
-        .await
     }
 
     pub async fn listen_for_continuation_at_name<S: DeployService + Clone>(

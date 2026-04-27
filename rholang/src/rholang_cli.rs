@@ -177,12 +177,12 @@ fn print_normalized_term(normalized_term: &Par) {
     println!("{}", printer.build_string_from_message(normalized_term));
 }
 
-fn print_storage_contents(runtime: &RhoRuntimeImpl, unmatched_sends_only: bool) {
+async fn print_storage_contents(runtime: &RhoRuntimeImpl, unmatched_sends_only: bool) {
     println!("\nStorage Contents:");
     let output = if unmatched_sends_only {
-        storage_printer::pretty_print_unmatched_sends(runtime)
+        storage_printer::pretty_print_unmatched_sends(runtime).await
     } else {
-        storage_printer::pretty_print(runtime)
+        storage_printer::pretty_print(runtime).await
     };
     println!("{}", output);
 }
@@ -330,7 +330,7 @@ async fn evaluate_par(
     print_errors(&result.errors);
 
     if !quiet {
-        print_storage_contents(runtime, unmatched_sends_only);
+        print_storage_contents(runtime, unmatched_sends_only).await;
     }
 
     Ok(())

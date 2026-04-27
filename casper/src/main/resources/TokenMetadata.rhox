@@ -1,0 +1,49 @@
+/*
+ The table below describes the required computations and their dependencies
+
+ No. | Dependency | Computation method | Result
+ ----+------------+--------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------
+ 1.  |            | given              | sk = 8f9a1c3b2d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a
+ 2.  |            | given              | timestamp = 1737500000000
+ 3.  |            | lastNonce          | nonce = 9223372036854775807
+ 4.  | 1,         | secp256k1          | pk = 04856ecb339aa2462bc25f4d4d5f5e5317c58e366222bed85f488c576f423ff7136ba22c4198b1b7b8d5d2c61722b948fee9d8d8e10e468dc52b490d3393444fd0
+ 5.  | 2, 4, 3,   | registry           | value = (1737500000000, 04856ecb339aa2462bc25f4d4d5f5e5317c58e366222bed85f488c576f423ff7136ba22c4198b1b7b8d5d2c61722b948fee9d8d8e10e468dc52b490d3393444fd0, 9223372036854775807)
+ 6.  | 5,         | protobuf           | toSign = 2a65aa01620a092a071080fc8fb191650a462a44ca014104856ecb339aa2462bc25f4d4d5f5e5317c58e366222bed85f488c576f423ff7136ba22c4198b1b7b8d5d2c61722b948fee9d8d8e10e468dc52b490d3393444fd00a0d2a0b10feffffffffffffffff01
+ 7.  | 6, 1,      | secp256k1          | sig = 3044022065f630061a79b4ae846a705faf6c96dc3f97d90bb9f1dd1dec8d8581d27f50d902207d99a932eee9a9743bef7c7148db938c4ec34bdd4d99b1445db98bc0a61ec851
+ 8.  | 4,         | registry           | uri = rho:id:jutz139igo7x5gpby3ri1dhwcwnbdghd6onuys3wfnqhhkwffxbfsn
+ ----+------------+--------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------
+ */
+new
+  TokenMetadata,
+  rs(`rho:registry:insertSigned:secp256k1`),
+  uriOut
+in {
+  // Returns the full name of the native token (e.g. "F1R3CAP").
+  contract TokenMetadata(@"name", ret) = {
+    ret!("$$nativeTokenName$$")
+  } |
+
+  // Returns the native token ticker symbol (e.g. "F1R3").
+  contract TokenMetadata(@"symbol", ret) = {
+    ret!("$$nativeTokenSymbol$$")
+  } |
+
+  // Returns the number of decimal places used to display the token
+  // (e.g. 8 means 1 token = 10^8 dust).
+  contract TokenMetadata(@"decimals", ret) = {
+    ret!($$nativeTokenDecimals$$)
+  } |
+
+  // Returns all token metadata as a tuple (name, symbol, decimals) for
+  // callers that want a single round-trip.
+  contract TokenMetadata(@"all", ret) = {
+    ret!(("$$nativeTokenName$$", "$$nativeTokenSymbol$$", $$nativeTokenDecimals$$))
+  } |
+
+  rs!(
+    "04856ecb339aa2462bc25f4d4d5f5e5317c58e366222bed85f488c576f423ff7136ba22c4198b1b7b8d5d2c61722b948fee9d8d8e10e468dc52b490d3393444fd0".hexToBytes(),
+    (9223372036854775807, bundle+{*TokenMetadata}),
+    "3044022065f630061a79b4ae846a705faf6c96dc3f97d90bb9f1dd1dec8d8581d27f50d902207d99a932eee9a9743bef7c7148db938c4ec34bdd4d99b1445db98bc0a61ec851".hexToBytes(),
+    *uriOut
+  )
+}

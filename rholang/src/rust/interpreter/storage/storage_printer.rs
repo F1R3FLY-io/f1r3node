@@ -11,8 +11,8 @@ use std::collections::BTreeSet;
 use crate::rust::interpreter::pretty_printer::PrettyPrinter;
 use crate::rust::interpreter::rho_runtime::{RhoRuntime, RhoRuntimeImpl};
 
-pub fn pretty_print(runtime: &RhoRuntimeImpl) -> String {
-    let mapped = runtime.get_hot_changes();
+pub async fn pretty_print(runtime: &RhoRuntimeImpl) -> String {
+    let mapped = runtime.get_hot_changes().await;
 
     let pars: Vec<Par> = mapped
         .iter()
@@ -40,8 +40,8 @@ pub fn pretty_print(runtime: &RhoRuntimeImpl) -> String {
     }
 }
 
-pub fn pretty_print_unmatched_sends(runtime: &RhoRuntimeImpl) -> String {
-    let mapped = runtime.get_hot_changes();
+pub async fn pretty_print_unmatched_sends(runtime: &RhoRuntimeImpl) -> String {
+    let mapped = runtime.get_hot_changes().await;
 
     let pars: Vec<Par> = mapped
         .iter()

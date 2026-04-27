@@ -304,6 +304,12 @@ pub struct CasperShardConf {
     pub synchrony_finalized_baseline_enabled: bool,
     pub synchrony_finalized_baseline_max_distance: u64,
     pub max_user_deploys_per_block: u32,
+    /// Native token metadata baked into the TokenMetadata contract at genesis.
+    /// Present on every node (joiner, validator, ceremony master, observer, standalone)
+    /// so each path can log the effective values at startup.
+    pub native_token_name: String,
+    pub native_token_symbol: String,
+    pub native_token_decimals: u32,
 }
 
 impl CasperShardConf {
@@ -336,6 +342,9 @@ impl CasperShardConf {
             synchrony_finalized_baseline_enabled: true,
             synchrony_finalized_baseline_max_distance: 2048,
             max_user_deploys_per_block: 32,
+            native_token_name: "F1R3CAP".to_string(),
+            native_token_symbol: "F1R3".to_string(),
+            native_token_decimals: 8,
         }
     }
 }

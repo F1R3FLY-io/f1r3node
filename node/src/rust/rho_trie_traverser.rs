@@ -250,13 +250,13 @@ impl RhoTrieTraverser {
     ///
     /// # Returns
     /// Result containing either an integer value (left) or a ParMap (right) if found, None otherwise
-    fn tree_hash_map_getter<R: RhoRuntime>(
+    async fn tree_hash_map_getter<R: RhoRuntime>(
         map_par: &Par,
         nyb_list: &[i32],
         runtime: &R,
     ) -> Result<Option<Result<i64, ParMap>>, InterpreterError> {
         let query = Self::node_map_list(map_par, nyb_list);
-        let result = runtime.get_data(&query);
+        let result = runtime.get_data(&query).await;
 
         if let Some(first) = result.first() {
             if let Some(head_par) = first.a.pars.first() {
@@ -315,13 +315,13 @@ impl RhoTrieTraverser {
     ///
     /// # Returns
     /// Result containing vector of all ParMaps found during traversal, or an error
-    pub fn traverse_trie<R: RhoRuntime>(
+    pub async fn traverse_trie<R: RhoRuntime>(
         depth: i32,
         map_par: &Par,
         runtime: &R,
     ) -> Result<Vec<ParMap>, InterpreterError> {
         let start_params: ReadParams = (vec![vec![]], depth * 2, map_par.clone(), vec![]);
-        Self::traverse_trie_rec(start_params, runtime)
+        Self::traverse_trie_rec(start_params, runtime).await
     }
 
     /// Extend a key based on bit patterns in the value
@@ -345,14 +345,14 @@ impl RhoTrieTraverser {
     /// # Returns
     /// Result containing Either continuation parameters (Left) or final result (Right)
     /// In practice, this iterative version always returns Right with the final result
-    fn traverse_trie_rec<R: RhoRuntime>(
+    async fn traverse_trie_rec<R: RhoRuntime>(
         read_params: ReadParams,
         runtime: &R,
     ) -> Result<Vec<ParMap>, InterpreterError> {
         let (mut keys, depth, map_par, mut collected_results) = read_params;
 
         while let Some(key) = keys.pop() {
-            let current_node = Self::tree_hash_map_getter(&map_par, &key, runtime)?;
+            let current_node = Self::tree_hash_map_getter(&map_par, &key, runtime).await?;
 
             match current_node {
                 Some(Ok(i)) => {

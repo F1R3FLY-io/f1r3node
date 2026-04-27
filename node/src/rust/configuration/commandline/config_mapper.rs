@@ -31,7 +31,21 @@ impl ConfigMapper<Options> for NodeConf {
                 &mut self.protocol_server.disable_state_exporter,
                 run.disable_state_exporter,
             );
-            Self::try_override_value(&mut self.protocol_server.network_id, run.network_id);
+            // `--network-id` must override BOTH protocol_server.network_id
+            // (what this node accepts) and protocol_client.network_id (what
+            // it sends on outbound messages). HOCON uses a substitution
+            // `protocol-client.network-id = ${protocol-server.network-id}`
+            // to keep them in sync at load time, but by this point the
+            // substitution has already resolved, so overriding only
+            // protocol_server leaves the client stuck on the HOCON default.
+            Self::try_override_value(
+                &mut self.protocol_server.network_id,
+                run.network_id.clone(),
+            );
+            Self::try_override_value(
+                &mut self.protocol_client.network_id,
+                run.network_id,
+            );
             Self::try_override_option(&mut self.protocol_server.host, run.host);
             Self::try_override_bool(
                 &mut self.protocol_server.use_random_ports,
@@ -250,6 +264,18 @@ impl ConfigMapper<Options> for NodeConf {
             Self::try_override_value(
                 &mut self.casper.genesis_block_data.number_of_active_validators,
                 run.number_of_active_validators,
+            );
+            Self::try_override_value(
+                &mut self.casper.genesis_block_data.native_token_name,
+                run.native_token_name,
+            );
+            Self::try_override_value(
+                &mut self.casper.genesis_block_data.native_token_symbol,
+                run.native_token_symbol,
+            );
+            Self::try_override_value(
+                &mut self.casper.genesis_block_data.native_token_decimals,
+                run.native_token_decimals,
             );
             Self::try_override_value(
                 &mut self.casper.genesis_block_data.genesis_block_number,
@@ -557,6 +583,9 @@ mod tests {
                 epoch_length: Some(111111),
                 quarantine_length: Some(111111),
                 number_of_active_validators: Some(111111),
+                native_token_name: Some("F1R3CAP".to_string()),
+                native_token_symbol: Some("F1R3".to_string()),
+                native_token_decimals: Some(8),
                 required_signatures: Some(111111),
                 approve_interval: Some(Duration::from_secs(111111)),
                 approve_duration: Some(Duration::from_secs(111111)),
@@ -674,6 +703,9 @@ mod tests {
                     pos_multi_sig_public_keys: vec![],
                     pos_multi_sig_quorum: 0,
                     deploy_timestamp: None,
+                    native_token_name: "F1R3CAP".to_string(),
+                    native_token_symbol: "F1R3".to_string(),
+                    native_token_decimals: 8,
                 },
                 genesis_ceremony: casper::rust::casper_conf::GenesisCeremony {
                     required_signatures: 0,

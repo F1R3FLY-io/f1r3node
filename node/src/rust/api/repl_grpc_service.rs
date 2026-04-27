@@ -67,9 +67,9 @@ impl ReplGrpcServiceImpl {
             .await?;
 
         let pretty_storage = if print_unmatched_sends_only {
-            storage_printer::pretty_print_unmatched_sends(&*self.runtime)
+            storage_printer::pretty_print_unmatched_sends(&*self.runtime).await
         } else {
-            storage_printer::pretty_print(&*self.runtime)
+            storage_printer::pretty_print(&*self.runtime).await
         };
 
         let error_str = if errors.is_empty() {

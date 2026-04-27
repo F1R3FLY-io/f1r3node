@@ -116,6 +116,20 @@ pub fn merge(
     actual_set_vec.sort();
     late_set_vec.sort();
 
+    // Log state change details for debugging merge issues
+    for (i, chain) in actual_set_vec.iter().enumerate() {
+        tracing::debug!(
+            target: "f1r3fly.dag_merger.state_changes",
+            "deploy_chain[{}]: datums={}, conts={}, joins={}, deploys={}, cost={}",
+            i,
+            chain.state_changes.datums_changes.len(),
+            chain.state_changes.cont_changes.len(),
+            chain.state_changes.consume_channels_to_join_serialized_map.len(),
+            chain.deploys_with_cost.0.len(),
+            chain.deploys_with_cost.0.iter().map(|d| d.cost).sum::<u64>(),
+        );
+    }
+
     // Keep as Vec for deterministic processing (ConflictSetMerger expects sorted Vecs)
     let actual_seq = actual_set_vec;
     let late_seq = late_set_vec;

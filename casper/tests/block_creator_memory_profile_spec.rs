@@ -216,6 +216,9 @@ async fn run_block_creator_create_memory_profile() {
         vaults: Vec::new(),
         supply: i64::MAX,
         version: 1,
+        native_token_name: "F1R3CAP".to_string(),
+        native_token_symbol: "F1R3".to_string(),
+        native_token_decimals: 8,
     };
     let parent = Genesis::create_genesis_block(&mut runtime_manager, &genesis)
         .await
@@ -450,6 +453,9 @@ async fn run_block_creator_phase_split_memory_profile() {
         vaults: Vec::new(),
         supply: i64::MAX,
         version: 1,
+        native_token_name: "F1R3CAP".to_string(),
+        native_token_symbol: "F1R3".to_string(),
+        native_token_decimals: 8,
     };
     let parent = Genesis::create_genesis_block(&mut runtime_manager, &genesis)
         .await
