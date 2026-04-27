@@ -104,7 +104,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             true,
             &mut additional_system_processes,
             matcher,
-            ExternalServices::noop(),
+            ExternalServices::for_observer()
         )
         .await;
 

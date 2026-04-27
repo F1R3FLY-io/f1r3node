@@ -67,6 +67,13 @@ services:
       - ./certs/bootstrap/node.certificate.pem:/var/lib/rnode/node.certificate.pem:ro
       - ./certs/bootstrap/node.key.pem:/var/lib/rnode/node.key.pem:ro
 
+  chroma-db:
+    image: chromadb/chroma
+    volumes:
+      - ./chroma_data:/data
+    ports:
+      - "8000:8000"
+
   # =================================================================
   # VALIDATOR 1
   # =================================================================
