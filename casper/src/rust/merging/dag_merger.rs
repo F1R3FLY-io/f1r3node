@@ -153,6 +153,12 @@ pub fn merge(
         late_set_vec.extend(indices);
     }
 
+    // Accumulator for deploys that lose their chain via dedup but have no
+    // fresher copy elsewhere. These are treated the same as conflict-rejected
+    // deploys downstream — added to the rejected-deploy buffer so the
+    // recovery path can re-propose them in a subsequent block.
+    let mut collateral_lost_pairs: Vec<(Bytes, BlockHash)> = Vec::new();
+
     // Deploy de-duplication. When the same deploy ID appears in chains from
     // multiple blocks in scope — for example, because a previously-rejected
     // deploy was re-proposed in a later block — keep the copy from the freshest
@@ -186,26 +192,55 @@ pub fn merge(
         // as the freshest source. A chain with even one stale deploy is discarded —
         // its diffs are against a pre-state that includes the stale deploy's effects,
         // which are being dropped.
+        //
+        // Dropping a chain with multiple deploys can cost "collateral": deploys in
+        // the dropped chain whose IDs have no fresher copy elsewhere are effectively
+        // lost. Collect those sigs so the rejected-deploy buffer can re-propose
+        // them in a later block, mirroring how conflict-rejected deploys recover.
         let pre_dedup_count = actual_set_vec.len();
-        actual_set_vec.retain(|chain| {
-            chain.deploys_with_cost.0.iter().all(|deploy| {
-                match latest_for_deploy.get(&deploy.deploy_id) {
+        let (retained, dropped): (Vec<_>, Vec<_>) = std::mem::take(&mut actual_set_vec)
+            .into_iter()
+            .partition(|chain| {
+                chain.deploys_with_cost.0.iter().all(|deploy| {
+                    match latest_for_deploy.get(&deploy.deploy_id) {
+                        Some((best_num, best_hash)) => {
+                            chain.source_block_number == *best_num
+                                && chain.source_block_hash == *best_hash
+                        }
+                        None => true,
+                    }
+                })
+            });
+        actual_set_vec = retained;
+        let post_dedup_count = actual_set_vec.len();
+
+        for chain in &dropped {
+            for deploy in chain.deploys_with_cost.0.iter() {
+                if is_system_deploy_id(&deploy.deploy_id) {
+                    continue;
+                }
+                let best = latest_for_deploy.get(&deploy.deploy_id);
+                let is_collateral = match best {
                     Some((best_num, best_hash)) => {
                         chain.source_block_number == *best_num
                             && chain.source_block_hash == *best_hash
                     }
                     None => true,
+                };
+                if is_collateral {
+                    collateral_lost_pairs
+                        .push((deploy.deploy_id.clone(), chain.source_block_hash.clone()));
                 }
-            })
-        });
-        let post_dedup_count = actual_set_vec.len();
+            }
+        }
 
         if post_dedup_count < pre_dedup_count {
             tracing::info!(
-                "DagMerger dedup: dropped {} stale chain(s) ({} -> {})",
+                "DagMerger dedup: dropped {} stale chain(s) ({} -> {}), collateral deploys={}",
                 pre_dedup_count - post_dedup_count,
                 pre_dedup_count,
-                post_dedup_count
+                post_dedup_count,
+                collateral_lost_pairs.len(),
             );
         }
     }
@@ -520,6 +555,22 @@ pub fn merge(
         .into_iter()
         .filter(|(id, _)| is_slash_deploy_id(id))
         .collect();
+
+    // Fold dedup collateral into the rejected-user list so the buffer can
+    // recover deploys whose chain was dropped for reasons other than
+    // cost-optimal rejection. Keep the list unique per deploy_id — a deploy
+    // already present from conflict rejection takes precedence.
+    if !collateral_lost_pairs.is_empty() {
+        let existing_ids: HashSet<Bytes> = rejected_user_deploys
+            .iter()
+            .map(|(id, _)| id.clone())
+            .collect();
+        for pair in collateral_lost_pairs {
+            if !existing_ids.contains(&pair.0) {
+                rejected_user_deploys.push(pair);
+            }
+        }
+    }
 
     // Deterministic ordering across validators.
     rejected_user_deploys.sort();
