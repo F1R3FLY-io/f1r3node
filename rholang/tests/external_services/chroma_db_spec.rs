@@ -134,7 +134,7 @@ async fn test_runtime(contract: &str, expected: Option<Par>) {
     with_runtime("interpreter-spec-", |mut runtime| async move {
         success(&mut runtime, contract).await.unwrap();
 
-        let tuple_space = runtime.get_hot_changes();
+        let tuple_space = runtime.get_hot_changes().await;
 
         let ch_zero = vec![RhoNumber::create_par(0)];
         println!("ch_zero: {:?}", ch_zero);
