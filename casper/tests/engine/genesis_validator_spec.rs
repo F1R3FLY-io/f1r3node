@@ -5,8 +5,8 @@ use casper::rust::engine::block_approver_protocol::BlockApproverProtocol;
 use casper::rust::engine::genesis_validator::GenesisValidator;
 use comm::rust::rp::protocol_helper::packet_with_content;
 use models::rust::casper::protocol::casper_message::{
-    ApprovedBlockCandidate, ApprovedBlockRequest, BlockMessage, BlockRequest, CasperMessage,
-    NoApprovedBlockAvailable, UnapprovedBlock,
+    ApprovedBlock, ApprovedBlockCandidate, ApprovedBlockRequest, BlockMessage, BlockRequest,
+    CasperMessage, NoApprovedBlockAvailable, UnapprovedBlock,
 };
 use std::sync::Arc;
 use tokio::time::{sleep, Duration};
@@ -124,6 +124,112 @@ impl GenesisValidatorSpec {
         test.await;
     }
 
+    /// Regression test for the late-joiner race fixed in PR #489.
+    ///
+    /// A genesis validator that joins boot's connections AFTER all
+    /// `UnapprovedBlock` broadcasts but BEFORE the `ApprovedBlock` broadcast
+    /// receives only the `ApprovedBlock` while still in `GenesisValidator`
+    /// state. Pre-fix, the message hit the catch-all `_ => Ok(())` arm and
+    /// was silently dropped, leaving the validator stuck. Post-fix,
+    /// `handle_approved_block_late` transitions the validator to
+    /// `Initializing`, whose `init` proactively emits an
+    /// `ApprovedBlockRequest` to bootstrap.
+    async fn transitions_to_initializing_on_late_approved_block() {
+        let _event_bus = shared::rust::shared::f1r3fly_events::F1r3flyEvents::new();
+
+        let fixture = TestFixture::new().await;
+
+        // ApprovedBlock is constructed from the genesis candidate. Sigs are
+        // empty because GenesisValidator's late-joiner path does not validate
+        // the ApprovedBlock — that happens in Initializing::handle once it
+        // receives the bootstrap response. The transition itself is what we
+        // verify here.
+        let approved_block = ApprovedBlock {
+            candidate: ApprovedBlockCandidate {
+                block: fixture.genesis.clone(),
+                required_sigs: fixture.required_sigs,
+            },
+            sigs: Vec::new(),
+        };
+
+        let test = async {
+            let genesis_validator = GenesisValidator::new(
+                fixture.block_processing_queue_tx.clone(),
+                fixture.blocks_in_processing.clone(),
+                fixture.casper_shard_conf.clone(),
+                fixture.validator_id.clone(),
+                fixture.bap.clone(),
+                fixture.transport_layer.clone(),
+                fixture.rp_conf_ask.clone(),
+                fixture.connections_cell.clone(),
+                fixture.last_approved_block.clone(),
+                fixture.event_publisher.clone(),
+                fixture.block_retriever.clone(),
+                fixture.engine_cell.clone(),
+                fixture.block_store.clone(),
+                fixture.block_dag_storage.clone(),
+                fixture.deploy_storage.clone(),
+                fixture.casper_buffer_storage.clone(),
+                fixture.rspace_state_manager.clone(),
+                fixture.runtime_manager.clone(),
+                fixture.estimator.clone(),
+                casper::rust::heartbeat_signal::new_heartbeat_signal_ref(),
+            );
+
+            fixture.engine_cell.set(Arc::new(genesis_validator)).await;
+
+            let engine = fixture.engine_cell.get().await;
+            engine
+                .handle(
+                    fixture.local.clone(),
+                    CasperMessage::ApprovedBlock(approved_block.clone()),
+                )
+                .await
+                .expect("Failed to handle ApprovedBlock");
+
+            // Initializing::init proactively sends an ApprovedBlockRequest;
+            // its presence on the transport layer is the signal that the
+            // transition fired.
+            let mut saw_approved_block_request = false;
+            for _ in 0..20 {
+                let requests = fixture.transport_layer.get_all_requests();
+                saw_approved_block_request = requests.iter().any(|request| {
+                    matches!(
+                        request.msg.message.as_ref(),
+                        Some(models::routing::protocol::Message::Packet(packet))
+                            if packet.type_id == "ApprovedBlockRequest"
+                    )
+                });
+                if saw_approved_block_request {
+                    break;
+                }
+                sleep(Duration::from_millis(100)).await;
+            }
+
+            assert!(
+                saw_approved_block_request,
+                "Expected GenesisValidator to transition to Initializing on late ApprovedBlock; \
+                 Initializing::init should emit an ApprovedBlockRequest"
+            );
+
+            // A second ApprovedBlock arriving at the same engine_cell now
+            // routes to Initializing::handle (the previous transition replaced
+            // the engine), not back to GenesisValidator::handle. Sending it
+            // again should not panic or stall — exercises the "duplicate
+            // ApprovedBlock after transition" path the review flagged.
+            fixture.transport_layer.reset();
+            let engine = fixture.engine_cell.get().await;
+            let _ = engine
+                .handle(
+                    fixture.local.clone(),
+                    CasperMessage::ApprovedBlock(approved_block),
+                )
+                .await;
+        };
+
+        test.await;
+    }
+
     async fn should_not_respond_to_any_other_message() {
         let _event_bus = shared::rust::shared::f1r3fly_events::F1r3flyEvents::new();
 
@@ -229,4 +335,9 @@ async fn respond_on_unapproved_block_messages_with_block_approval() {
 #[tokio::test]
 async fn should_not_respond_to_any_other_message() {
     GenesisValidatorSpec::should_not_respond_to_any_other_message().await;
+}
+
+#[tokio::test]
+async fn transitions_to_initializing_on_late_approved_block() {
+    GenesisValidatorSpec::transitions_to_initializing_on_late_approved_block().await;
 }

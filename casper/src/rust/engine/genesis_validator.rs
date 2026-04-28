@@ -188,15 +188,19 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisValidator<T> {
     /// `ApprovedBlockRequest` to bootstrap, and its `handle` accepts the response,
     /// validates it, and transitions to `Running` — the same path a late-joining
     /// non-genesis node already takes.
+    ///
+    /// No `seen_candidates` dedup here: that set is for `UnapprovedBlock` repeats and
+    /// would conflate "we've seen the candidate's content" with "we've already
+    /// transitioned for this ApprovedBlock". A successful `transition_to_initializing`
+    /// replaces the engine, so subsequent `ApprovedBlock` messages route to
+    /// `Initializing::handle` rather than back here. Concurrent duplicates during the
+    /// brief transition window are safe — the engine_cell write serializes them and
+    /// `Initializing::init`'s `ApprovedBlockRequest` is idempotent at bootstrap.
     async fn handle_approved_block_late(
         &self,
         approved_block: ApprovedBlock,
     ) -> Result<(), CasperError> {
         let hash = approved_block.candidate.block.block_hash.clone();
-        if self.is_repeated(&hash) {
-            return Ok(());
-        }
-        self.ack(hash.clone());
         tracing::info!(
             "Received ApprovedBlock {} while in GenesisValidator state — transitioning to Initializing for late-joiner recovery",
             PrettyPrinter::build_string_no_limit(&hash)
