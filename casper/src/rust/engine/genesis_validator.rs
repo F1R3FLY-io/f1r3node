@@ -178,6 +178,71 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisValidator<T> {
         self.seen_candidates.lock().unwrap().insert(hash);
     }
 
+    /// Handle an ApprovedBlock that arrives while we're still in GenesisValidator state.
+    ///
+    /// Race scenario: boot broadcasts the UnapprovedBlock to its current connections,
+    /// reaches `required_signatures` from peers that connected first, then transitions
+    /// to Running and broadcasts the ApprovedBlock. A genesis validator that joined
+    /// boot's connections AFTER the UnapprovedBlock broadcasts but BEFORE the
+    /// ApprovedBlock broadcast has never seen the UnapprovedBlock — there is no path
+    /// out of `GenesisValidator` state via the signing flow because there is nothing
+    /// to sign.
+    ///
+    /// Recovery: transition to `Initializing`. `Initializing::init` proactively sends
+    /// `ApprovedBlockRequest` to bootstrap, and its `handle` accepts the response,
+    /// validates it, and transitions to `Running` — the same path a late-joining
+    /// non-genesis node already takes.
+    ///
+    /// No `seen_candidates` dedup here: that set is for `UnapprovedBlock` repeats and
+    /// would conflate "we've seen the candidate's content" with "we've already
+    /// transitioned for this ApprovedBlock". A successful `transition_to_initializing`
+    /// replaces the engine, so subsequent `ApprovedBlock` messages route to
+    /// `Initializing::handle` rather than back here. Concurrent duplicates during the
+    /// brief transition window are safe — the engine_cell write serializes them and
+    /// `Initializing::init`'s `ApprovedBlockRequest` is idempotent at bootstrap.
+    async fn handle_approved_block_late(
+        &self,
+        approved_block: ApprovedBlock,
+    ) -> Result<(), CasperError> {
+        let hash = approved_block.candidate.block.block_hash.clone();
+        tracing::info!(
+            "Received ApprovedBlock {} while in GenesisValidator state — transitioning to Initializing for late-joiner recovery",
+            PrettyPrinter::build_string_no_limit(&hash)
+        );
+
+        let init = Arc::new(|| {
+            Box::pin(async { Ok(()) })
+                as Pin<Box<dyn Future<Output = Result<(), CasperError>> + Send>>
+        });
+        let validator_id_opt = Some(self.validator_id.clone());
+
+        transition_to_initializing(
+            &self.block_processing_queue_tx,
+            &self.blocks_in_processing,
+            &self.casper_shard_conf,
+            &validator_id_opt,
+            init,
+            true,
+            false,
+            &self.transport_layer,
+            &self.rp_conf_ask,
+            &self.connections_cell,
+            &self.last_approved_block,
+            &self.block_store,
+            &self.block_dag_storage,
+            &self.deploy_storage,
+            &self.casper_buffer_storage,
+            &self.rspace_state_manager,
+            self.event_publisher.clone(),
+            self.block_retriever.clone(),
+            &self.engine_cell,
+            &self.runtime_manager,
+            &self.estimator,
+            &self.heartbeat_signal_ref,
+        )
+        .await
+    }
+
     async fn handle_unapproved_block(
         &self,
         peer: PeerNode,
@@ -262,6 +327,9 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> Engine for GenesisValida
                 .await
             }
             CasperMessage::UnapprovedBlock(ub) => self.handle_unapproved_block(peer, ub).await,
+            CasperMessage::ApprovedBlock(approved_block) => {
+                self.handle_approved_block_late(approved_block).await
+            }
             CasperMessage::NoApprovedBlockAvailable(NoApprovedBlockAvailable {
                 node_identifier,
                 ..
