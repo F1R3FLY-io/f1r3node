@@ -8,6 +8,7 @@ use models::rust::casper::protocol::casper_message::{
     ApprovedBlock, ApprovedBlockCandidate, ApprovedBlockRequest, BlockMessage, BlockRequest,
     CasperMessage, NoApprovedBlockAvailable, UnapprovedBlock,
 };
+use serial_test::serial;
 use std::sync::Arc;
 use tokio::time::{sleep, Duration};
 
@@ -327,17 +328,27 @@ impl GenesisValidatorSpec {
     }
 }
 
+// Serialized with approve_block_protocol_test (which is also #[serial]) because the
+// GenesisValidator and ApproveBlockProtocol both increment the process-global "genesis"
+// metrics counter via add_approval. Without serialization, concurrent counter writes
+// from these tests can corrupt the baseline-vs-after delta that approve_block_protocol_test
+// relies on. The non-counter-incrementing tests in this file are also marked #[serial]
+// for consistency and to guard against future test additions accidentally exercising
+// that path.
 #[tokio::test]
+#[serial]
 async fn respond_on_unapproved_block_messages_with_block_approval() {
     GenesisValidatorSpec::respond_on_unapproved_block_messages_with_block_approval().await;
 }
 
 #[tokio::test]
+#[serial]
 async fn should_not_respond_to_any_other_message() {
     GenesisValidatorSpec::should_not_respond_to_any_other_message().await;
 }
 
 #[tokio::test]
+#[serial]
 async fn transitions_to_initializing_on_late_approved_block() {
     GenesisValidatorSpec::transitions_to_initializing_on_late_approved_block().await;
 }
