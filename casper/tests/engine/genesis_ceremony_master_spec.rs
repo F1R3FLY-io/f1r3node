@@ -112,6 +112,7 @@ impl GenesisCeremonyMasterSpec {
                         block_store,
                         block_dag_storage,
                         deploy_storage,
+                        fixture.rejected_deploy_buffer.clone(),
                         casper_buffer_storage,
                         runtime_manager,
                         estimator,

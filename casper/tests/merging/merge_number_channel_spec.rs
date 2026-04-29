@@ -244,6 +244,8 @@ async fn test_case(
                 &base_cp.root,
                 &left_post_state,
                 history_repo.clone(),
+                prost::bytes::Bytes::from(vec![0xAAu8; 32]),
+                1,
             )
             .unwrap()
         })
@@ -258,6 +260,8 @@ async fn test_case(
                 &base_cp.root,
                 &right_post_state,
                 history_repo.clone(),
+                prost::bytes::Bytes::from(vec![0xBBu8; 32]),
+                2,
             )
             .unwrap()
         })

@@ -131,6 +131,23 @@ impl KeyValueBlockStore {
         Ok(has_any)
     }
 
+    /// Fetch rejected deploy signatures for a block without decoding a full BlockMessage.
+    /// Returns the `body.rejected_deploys[*].sig` values. Most blocks have none; only
+    /// multi-parent merge blocks that dropped a conflicting deploy populate this list.
+    pub fn rejected_deploy_sigs(
+        &self,
+        block_hash: &BlockHash,
+    ) -> Result<Option<Vec<Vec<u8>>>, KvStoreError> {
+        let key = block_hash.to_vec();
+        let bytes = match self.store.get_one(&key)? {
+            Some(bytes) => bytes,
+            None => return Ok(None),
+        };
+        let body = Self::decode_block_deploy_sigs(&bytes)?;
+        let sigs = body.rejected_deploys.into_iter().map(|r| r.sig).collect();
+        Ok(Some(sigs))
+    }
+
     /// Fetch deploy signatures for a block without decoding a full BlockMessage.
     /// Uses the same bounded shared cache as `has_any_deploy_sig`.
     pub fn deploy_sigs(
@@ -394,6 +411,8 @@ struct BlockMessageDeploySigIndex {
 struct BlockDeploySigsBody {
     #[prost(message, repeated, tag = "2")]
     deploys: Vec<BlockDeploySigsProcessedDeploy>,
+    #[prost(message, repeated, tag = "5")]
+    rejected_deploys: Vec<BlockDeploySigsRejectedDeploy>,
 }
 
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -405,6 +424,12 @@ struct BlockDeploySigsProcessedDeploy {
 #[derive(Clone, PartialEq, ::prost::Message)]
 struct BlockDeploySigsDeploy {
     #[prost(bytes = "vec", tag = "4")]
+    sig: Vec<u8>,
+}
+
+#[derive(Clone, PartialEq, ::prost::Message)]
+struct BlockDeploySigsRejectedDeploy {
+    #[prost(bytes = "vec", tag = "1")]
     sig: Vec<u8>,
 }
 
@@ -480,8 +505,10 @@ mod tests {
 
         fn iterate_while(
             &self,
-            _f: &mut dyn FnMut(shared::rust::ByteBuffer, shared::rust::ByteBuffer)
-                -> Result<bool, KvStoreError>,
+            _f: &mut dyn FnMut(
+                shared::rust::ByteBuffer,
+                shared::rust::ByteBuffer,
+            ) -> Result<bool, KvStoreError>,
         ) -> Result<(), KvStoreError> {
             todo!()
         }
