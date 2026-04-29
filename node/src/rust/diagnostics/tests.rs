@@ -1,9 +1,8 @@
 #[cfg(test)]
 mod tests {
-    use crate::rust::configuration::kamon::{KamonConf, MetricConfig};
     use crate::rust::configuration::model::{
-        ApiServer, DevConf, Metrics, NodeConf, PeersDiscovery, ProtocolClient, ProtocolServer,
-        Storage, TlsConf,
+        ApiServer, DevConf, InfluxDbEndpoint, Metrics, NodeConf, PeersDiscovery, ProtocolClient,
+        ProtocolServer, Storage, TlsConf,
     };
     use crate::rust::diagnostics::initialize_diagnostics;
     use crate::rust::diagnostics::new_prometheus_reporter::NewPrometheusReporter;
@@ -153,6 +152,8 @@ mod tests {
                 influxdb_udp: false,
                 zipkin: false,
                 sigar: false,
+                tick_interval: Duration::from_secs(10),
+                influxdb_endpoint: InfluxDbEndpoint::default(),
             },
             dev_mode: false,
             dev: DevConf {
@@ -176,43 +177,6 @@ mod tests {
 
     fn create_test_node_conf_all_disabled() -> NodeConf {
         create_test_node_conf()
-    }
-
-    fn create_test_kamon_conf() -> KamonConf {
-        KamonConf {
-            trace: None,
-            metric: Some(MetricConfig {
-                tick_interval: Duration::from_secs(10),
-            }),
-            influxdb: None,
-            zipkin: None,
-            prometheus: None,
-            sigar: None,
-        }
-    }
-
-    fn create_test_kamon_conf_with_custom_interval(interval: Duration) -> KamonConf {
-        KamonConf {
-            trace: None,
-            metric: Some(MetricConfig {
-                tick_interval: interval,
-            }),
-            influxdb: None,
-            zipkin: None,
-            prometheus: None,
-            sigar: None,
-        }
-    }
-
-    fn create_test_kamon_conf_no_metric() -> KamonConf {
-        KamonConf {
-            trace: None,
-            metric: None,
-            influxdb: None,
-            zipkin: None,
-            prometheus: None,
-            sigar: None,
-        }
     }
 
     #[test]
@@ -449,9 +413,7 @@ mod tests {
     #[serial]
     fn test_initialize_with_all_disabled() {
         let node_conf = create_test_node_conf_all_disabled();
-        let kamon_conf = create_test_kamon_conf();
-
-        let result = initialize_diagnostics(&node_conf, &kamon_conf);
+        let result = initialize_diagnostics(&node_conf);
 
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
@@ -461,9 +423,7 @@ mod tests {
     #[serial]
     fn test_initialize_with_prometheus_only() {
         let node_conf = create_test_node_conf_with_prometheus();
-        let kamon_conf = create_test_kamon_conf();
-
-        let result = initialize_diagnostics(&node_conf, &kamon_conf);
+        let result = initialize_diagnostics(&node_conf);
 
         assert!(result.is_ok());
         assert!(result.unwrap().is_some());
@@ -473,20 +433,7 @@ mod tests {
     #[serial]
     async fn test_initialize_with_sigar_only() {
         let node_conf = create_test_node_conf_with_sigar();
-        let kamon_conf = create_test_kamon_conf();
-
-        let result = initialize_diagnostics(&node_conf, &kamon_conf);
-
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    #[serial]
-    fn test_initialize_metrics_interval_default() {
-        let node_conf = create_test_node_conf_with_prometheus();
-        let kamon_conf = create_test_kamon_conf_no_metric();
-
-        let result = initialize_diagnostics(&node_conf, &kamon_conf);
+        let result = initialize_diagnostics(&node_conf);
 
         assert!(result.is_ok());
     }
@@ -494,11 +441,10 @@ mod tests {
     #[test]
     #[serial]
     fn test_initialize_metrics_interval_custom() {
-        let node_conf = create_test_node_conf_with_prometheus();
-        let custom_interval = Duration::from_secs(5);
-        let kamon_conf = create_test_kamon_conf_with_custom_interval(custom_interval);
+        let mut node_conf = create_test_node_conf_with_prometheus();
+        node_conf.metrics.tick_interval = Duration::from_secs(5);
 
-        let result = initialize_diagnostics(&node_conf, &kamon_conf);
+        let result = initialize_diagnostics(&node_conf);
 
         assert!(result.is_ok());
     }

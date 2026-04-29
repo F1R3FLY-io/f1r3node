@@ -8,7 +8,7 @@ use rholang::rust::build::compile_rholang_source::CompiledRholangSource;
 
 #[tokio::test]
 async fn system_vault_spec() {
-    let test_object = CompiledRholangSource::load_source("SystemVaultTest.rho")
+    let test_object = crate::util::rholang::test_rho_loader::load_test_rho("SystemVaultTest.rho")
         .expect("Failed to load SystemVaultTest.rho");
 
     // NormalizerEnv.withDeployerId(deployerPk)

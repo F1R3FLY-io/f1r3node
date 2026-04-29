@@ -7,7 +7,7 @@ use std::collections::HashMap;
 
 #[tokio::test]
 async fn auth_key_spec() {
-    let test_object = CompiledRholangSource::load_source("AuthKeyTest.rho")
+    let test_object = crate::util::rholang::test_rho_loader::load_test_rho("AuthKeyTest.rho")
         .expect("Failed to load AuthKeyTest.rho");
 
     let compiled = CompiledRholangSource::new(

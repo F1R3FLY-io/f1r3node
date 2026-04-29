@@ -7,7 +7,7 @@ use std::collections::HashMap;
 
 #[tokio::test]
 async fn multi_sig_system_vault_spec() {
-    let test_object = CompiledRholangSource::load_source("MultiSigSystemVaultTest.rho")
+    let test_object = crate::util::rholang::test_rho_loader::load_test_rho("MultiSigSystemVaultTest.rho")
         .expect("Failed to load MultiSigSystemVaultTest.rho");
 
     let compiled = CompiledRholangSource::new(
