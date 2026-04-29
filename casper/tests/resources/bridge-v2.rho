@@ -85,8 +85,18 @@ in {
      for (@bridgeVaultAddr <- bridgeVaultAddrCh) {
       bridgeVaultAddrCh!(bridgeVaultAddr) |
        @SystemVault!("unforgeableAuthKey", *bridgeVaultSeed, *bridgeAuthKeyCh) |
+       // Register the bridge's own vault so its `_deposit` contract is
+       // installed in the tuplespace. Without this, any subsequent
+       // `transfer` to this address has its `_deposit` send orphaned —
+       // the response chain breaks and the caller hangs forever.
+       new bridgeVaultRegisterCh in {
+        @SystemVault!("findOrCreate", bridgeVaultAddr, *bridgeVaultRegisterCh) |
+        for (@(true, _) <- bridgeVaultRegisterCh) {
+         stdout!(["bridge vault registered", bridgeVaultAddr])
+        }
+       } |
        stdout!(["address",bridgeVaultAddr]) |
-       deployId!(["address",bridgeVaultAddr]) 
+       deployId!(["address",bridgeVaultAddr])
      } |
     initializedStateChannels!(true) |
      deployId!("initialized state channels") |

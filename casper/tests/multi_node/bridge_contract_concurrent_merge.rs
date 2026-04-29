@@ -10,6 +10,15 @@
 // rejection should occur. Without the fix, one bridge gets rejected and
 // this test fails — that is the observable repro.
 //
+// Note on bridge `findOrCreate` regression: the bridge-v2.rho fixture in
+// this branch also includes a `SystemVault.findOrCreate(bridgeVaultAddr)`
+// call at bridge init time. That fix is required for the integration-level
+// `test_multi_block_state_evolution` test to pass — without it, transfers
+// to the bridge's vault have their `_deposit` send orphaned. This unit test
+// does not directly exercise the lock flow (constructing a lock deploy and
+// reading its deployId-channel response in TestNode is finicky); the
+// integration test owns that regression guard.
+//
 // Diagnostic mode: run with `RUST_LOG=f1r3fly.merge.tag_check=trace` to
 // observe whether `is_mergeable_channel` ever returns `Some(BitmaskOr)`
 // during bridge deployment. Three possible outcomes:
@@ -73,11 +82,14 @@ async fn two_concurrent_bridges_should_merge_without_rejection() {
 
     // Two distinct bridge deploys signed by different genesis-funded keys.
     // Different timestamps avoid signature-collision edge cases.
+    // Bridge deploys need a large phlo budget — they register 3 contracts via
+    // insertArbitrary (each is a TreeHashMap insert) plus call findOrCreate
+    // for the bridge's own vault. The integration test uses 500M; we match.
     let bridge1_deploy = {
         tokio::time::sleep(tokio::time::Duration::from_millis(1)).await;
         construct_deploy::source_deploy_now_full(
             bridge_rho.clone(),
-            None,
+            Some(500_000_000),
             None,
             Some(construct_deploy::DEFAULT_SEC.clone()),
             None,
@@ -89,7 +101,7 @@ async fn two_concurrent_bridges_should_merge_without_rejection() {
         tokio::time::sleep(tokio::time::Duration::from_millis(1)).await;
         construct_deploy::source_deploy_now_full(
             bridge_rho.clone(),
-            None,
+            Some(500_000_000),
             None,
             Some(construct_deploy::DEFAULT_SEC2.clone()),
             None,
@@ -230,4 +242,18 @@ async fn two_concurrent_bridges_should_merge_without_rejection() {
         bridge1_rejected,
         bridge2_rejected,
     );
+
+    // The bridge `findOrCreate` fix (bridge-v2.rho calls findOrCreate on its
+    // own vault address at init) is exercised at integration level — see
+    // `integration-tests/test/tests/shared/test_contract_lifecycle.py::
+    // test_multi_block_state_evolution`. That test calls bridge.lock and
+    // verifies the response chain completes (deployId is populated).
+    //
+    // A code-level equivalent that constructs a lock deploy and reads its
+    // deployId data via `runtime_manager.get_data` was attempted but the
+    // in-process TestNode's per-deploy data lookups don't expose deployId
+    // data the way live gRPC `getDataAtName` does. Rather than fight that,
+    // we let the integration test guard the lock-flow regression and keep
+    // this code-level test scoped to merge behavior, which is what the
+    // multi-node TestNode infrastructure is best at.
 }
