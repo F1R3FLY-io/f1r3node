@@ -42,7 +42,7 @@ where
 
     let runtime = rho_runtime::create_runtime_from_kv_store(
         rspace_store,
-        Par::default(),
+        Arc::new(std::collections::HashMap::new()),
         false,
         &mut Vec::new(),
         Arc::new(Box::new(Matcher)),

@@ -1,5 +1,6 @@
 // See rholang/src/test/scala/coop/rchain/rholang/Resources.scala
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::{future::Future, path::Path, sync::Arc};
 use tempfile::Builder;
@@ -58,7 +59,7 @@ where
     let rspace_store = store_manager.r_space_stores().await.unwrap();
     let runtime = rho_runtime::create_runtime_from_kv_store(
         rspace_store,
-        Par::default(),
+        Arc::new(HashMap::new()),
         false,
         &mut Vec::new(),
         Arc::new(Box::new(Matcher)),
@@ -123,7 +124,7 @@ pub async fn create_runtimes_with_services(
 
     let rho_runtime = create_rho_runtime(
         space.clone(),
-        Par::default(),
+        Arc::new(HashMap::new()),
         init_registry,
         additional_system_processes,
         external_services.clone(),
@@ -132,7 +133,7 @@ pub async fn create_runtimes_with_services(
 
     let replay_rho_runtime = create_replay_rho_runtime(
         replay,
-        Par::default(),
+        Arc::new(HashMap::new()),
         init_registry,
         additional_system_processes,
         external_services,

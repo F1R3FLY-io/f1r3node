@@ -357,7 +357,7 @@ impl GenesisBuilder {
             let mut runtime_manager = RuntimeManager::create_with_store(
                 r_store,
                 m_store,
-                Genesis::non_negative_mergeable_tag_name(),
+                std::sync::Arc::new(Genesis::default_mergeable_tags()),
                 rholang::rust::interpreter::external_services::ExternalServices::noop(),
             );
 

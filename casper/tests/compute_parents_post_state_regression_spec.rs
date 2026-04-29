@@ -200,7 +200,7 @@ async fn run_compute_parents_post_state_finalized_skew_regression() {
     let (mut runtime_manager, _) = RuntimeManager::create_with_history(
         rspace_store,
         mergeable_store,
-        Genesis::non_negative_mergeable_tag_name(),
+        std::sync::Arc::new(Genesis::default_mergeable_tags()),
         ExternalServices::noop(),
     );
 
@@ -409,7 +409,7 @@ async fn run_compute_parents_post_state_missing_mergeable_regression() {
     let (mut runtime_manager, _) = RuntimeManager::create_with_history(
         rspace_store,
         mergeable_store,
-        Genesis::non_negative_mergeable_tag_name(),
+        std::sync::Arc::new(Genesis::default_mergeable_tags()),
         ExternalServices::noop(),
     );
 
@@ -615,7 +615,7 @@ async fn run_visible_blocks_scope_test() {
     let (mut runtime_manager, _) = RuntimeManager::create_with_history(
         rspace_store,
         mergeable_store,
-        Genesis::non_negative_mergeable_tag_name(),
+        std::sync::Arc::new(Genesis::default_mergeable_tags()),
         ExternalServices::noop(),
     );
 

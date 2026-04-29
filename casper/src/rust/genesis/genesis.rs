@@ -11,6 +11,8 @@ use models::{
     },
 };
 use prost::bytes::Bytes;
+use rspace_plus_plus::rspace::merger::merging_logic::MergeType;
+use std::collections::HashMap;
 
 use crate::rust::{
     errors::CasperError,
@@ -55,6 +57,33 @@ impl Genesis {
                 id: unforgeable_byte.into_iter().map(|b| b as u8).collect(),
             })),
         }])
+    }
+
+    pub fn bitmask_or_mergeable_tag_name() -> Par {
+        let mut rng = Tools::unforgeable_name_rng(
+            &standard_deploys::BITMASK_OR_TAG_PUB_KEY,
+            standard_deploys::BITMASK_OR_TAG_TIMESTAMP,
+        );
+
+        rng.next();
+        let unforgeable_byte = rng.next();
+
+        Par::default().with_unforgeables(vec![GUnforgeable {
+            unf_instance: Some(UnfInstance::GPrivateBody(GPrivate {
+                id: unforgeable_byte.into_iter().map(|b| b as u8).collect(),
+            })),
+        }])
+    }
+
+    /// Standard mergeable-tag registry installed at runtime startup. Maps each
+    /// genesis-defined tag `Par` to its merge strategy. Use this everywhere a
+    /// mergeable-tag table is needed unless a test specifically wants a custom
+    /// configuration.
+    pub fn default_mergeable_tags() -> HashMap<Par, MergeType> {
+        let mut tags = HashMap::new();
+        tags.insert(Self::non_negative_mergeable_tag_name(), MergeType::IntegerAdd);
+        tags.insert(Self::bitmask_or_mergeable_tag_name(), MergeType::BitmaskOr);
+        tags
     }
 
     pub fn default_blessed_terms_with_timestamp(

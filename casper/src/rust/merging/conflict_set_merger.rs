@@ -7,7 +7,10 @@ use rspace_plus_plus::rspace::{
     hashing::blake2b256_hash::Blake2b256Hash,
     hot_store_trie_action::HotStoreTrieAction,
     internal::Datum,
-    merger::{merging_logic::NumberChannelsDiff, state_change::StateChange},
+    merger::{
+        merging_logic::{combine_mergeable_value, MergeType, NumberChannelsDiff},
+        state_change::StateChange,
+    },
 };
 use shared::rust::hashable_set::HashableSet;
 use std::collections::HashMap;
@@ -320,12 +323,25 @@ where
     let combined_conts_count = all_changes.cont_changes.len();
     let combined_joins_count = all_changes.consume_channels_to_join_serialized_map.len();
 
-    // Combine all mergeable channels (in sorted order)
+    // Combine all mergeable channels (in sorted order). Per-channel `MergeType`
+    // determines how diffs combine: integer-add uses wrapping addition; bitmask-OR
+    // uses bitwise OR through u64.
     let mut all_mergeable_channels = NumberChannelsDiff::new();
     for item in &to_merge_items {
         let item_channels = mergeable_channels(item);
         for (key, value) in item_channels.iter() {
-            *all_mergeable_channels.entry(key.clone()).or_insert(0) += *value;
+            let (incoming_diff, incoming_mt) = *value;
+            all_mergeable_channels
+                .entry(key.clone())
+                .and_modify(|existing| {
+                    assert_eq!(
+                        existing.1, incoming_mt,
+                        "MergeType mismatch on channel {:?}: {:?} vs {:?}",
+                        key, existing.1, incoming_mt,
+                    );
+                    existing.0 = combine_mergeable_value(existing.0, incoming_diff, incoming_mt);
+                })
+                .or_insert((incoming_diff, incoming_mt));
         }
     }
 
@@ -485,18 +501,31 @@ fn get_optimal_rejection<R: Eq + std::hash::Hash + Clone + Ord>(
 
 /// Calculate merged result for a branch with the origin result map.
 /// Calculate the merged result from base and branches.
+///
+/// Note: the non-negative-result check applies only to `IntegerAdd` channels
+/// (vault balances). `BitmaskOr` channels are bitmaps, where any value is
+/// representable; we OR the diff into the existing value without overflow
+/// concerns.
 fn cal_merged_result<R: Clone + Eq + std::hash::Hash>(
     branch: &Branch<R>,
     origin_result: HashMap<Blake2b256Hash, i64>,
     mergeable_channels: impl Fn(&R) -> NumberChannelsDiff,
 ) -> Option<HashMap<Blake2b256Hash, i64>> {
-    // Combine all channel diffs from the branch
+    // Combine all channel diffs from the branch using per-channel merge strategy.
     let diff = branch.0.iter().map(|r| mergeable_channels(r)).fold(
         NumberChannelsDiff::new(),
         |mut acc, x| {
-            // Manually combine maps by adding values for each key
             for (k, v) in x {
-                *acc.entry(k).or_insert(0) += v;
+                let (incoming_diff, incoming_mt) = v;
+                acc.entry(k)
+                    .and_modify(|existing| {
+                        existing.0 = combine_mergeable_value(
+                            existing.0,
+                            incoming_diff,
+                            incoming_mt,
+                        );
+                    })
+                    .or_insert((incoming_diff, incoming_mt));
             }
             acc
         },
@@ -504,16 +533,27 @@ fn cal_merged_result<R: Clone + Eq + std::hash::Hash>(
 
     // Start with Some(origin_result) and fold over the diffs
     diff.iter()
-        .fold(Some(origin_result), |ba_opt, (channel, diff_val)| {
+        .fold(Some(origin_result), |ba_opt, (channel, value)| {
             ba_opt.and_then(|mut ba| {
+                let (diff_val, merge_type) = *value;
                 let current = *ba.get(channel).unwrap_or(&0);
-                // Check for overflow and negative results
-                match current.checked_add(*diff_val) {
-                    Some(result) if result >= 0 => {
+                match merge_type {
+                    MergeType::IntegerAdd => {
+                        // Vault balance: overflow or negative result rejects the branch
+                        match current.checked_add(diff_val) {
+                            Some(result) if result >= 0 => {
+                                ba.insert(channel.clone(), result);
+                                Some(ba)
+                            }
+                            _ => None,
+                        }
+                    }
+                    MergeType::BitmaskOr => {
+                        // Bitmap: OR the new bits in; no overflow concern
+                        let result = ((current as u64) | (diff_val as u64)) as i64;
                         ba.insert(channel.clone(), result);
                         Some(ba)
                     }
-                    _ => None, // Return None for overflow or negative result
                 }
             })
         })
@@ -663,7 +703,7 @@ mod tests {
                 let mut diff = BTreeMap::new();
                 // item 1 decrements channel, item 2 increments channel
                 let delta = if *r == 1 { -1 } else { 1 };
-                diff.insert(base_channel.clone(), delta);
+                diff.insert(base_channel.clone(), (delta, MergeType::IntegerAdd));
                 diff
             },
             |_state_change, _channels| Ok(Vec::<HotStoreTrieAction<i32, i32, i32, i32>>::new()),

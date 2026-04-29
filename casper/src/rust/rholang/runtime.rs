@@ -48,7 +48,7 @@ use rholang::rust::interpreter::{
 use rspace_plus_plus::rspace::{
     hashing::{blake2b256_hash::Blake2b256Hash, stable_hash_provider},
     history::{instances::radix_history::RadixHistory, Either},
-    merger::merging_logic::NumberChannelsEndVal,
+    merger::merging_logic::{MergeType, NumberChannelsEndVal},
 };
 
 use crate::rust::{
@@ -548,7 +548,7 @@ impl RuntimeOps {
     pub async fn process_deploy(
         &mut self,
         deploy: Signed<DeployData>,
-    ) -> Result<(ProcessedDeploy, HashSet<Par>), CasperError> {
+    ) -> Result<(ProcessedDeploy, HashMap<Par, MergeType>), CasperError> {
         // Keep a soft checkpoint before user deploy execution so failed deploy rollback
         // preserves pre-charge side effects required by refundDeploy.
         let fallback = self.runtime.create_soft_checkpoint().await;
@@ -591,12 +591,12 @@ impl RuntimeOps {
 
     pub async fn get_number_channels_data(
         &self,
-        channels: &HashSet<Par>,
+        channels: &std::collections::HashMap<Par, rspace_plus_plus::rspace::merger::merging_logic::MergeType>,
     ) -> Result<NumberChannelsEndVal, CasperError> {
         let mut result = BTreeMap::new();
-        for channel in channels {
+        for (channel, merge_type) in channels {
             if let Some((hash, value)) = self.get_number_channel(channel).await? {
-                result.insert(hash, value);
+                result.insert(hash, (value, *merge_type));
             }
         }
         Ok(result)
@@ -615,18 +615,19 @@ impl RuntimeOps {
             if ch_values.len() != 1 {
                 // Liveness-first fallback: ambiguous mergeable channel values should not wedge proposing.
                 // Keep behavior deterministic by selecting the maximum observed numeric value.
-                let num = ch_values
+                // Non-numeric values are skipped — they aren't candidates for the integer merge path
+                // and will fall through to existing conflict handling.
+                let num_opt = ch_values
                     .iter()
-                    .map(|datum| {
-                        let (n, _) = RholangMergingLogic::get_number_with_rnd(&datum.a);
-                        n
+                    .filter_map(|datum| {
+                        RholangMergingLogic::try_get_number_with_rnd(&datum.a).map(|(n, _)| n)
                     })
-                    .max()
-                    .ok_or_else(|| {
-                        CasperError::RuntimeError(
-                            "NumberChannel had values but max() returned none.".to_string(),
-                        )
-                    })?;
+                    .max();
+
+                let num = match num_opt {
+                    Some(n) => n,
+                    None => return Ok(None),
+                };
 
                 tracing::warn!(
                     target: "f1r3fly.mergeable_channel.sanitize",
@@ -644,9 +645,14 @@ impl RuntimeOps {
                 return Ok(Some((ch_hash, num)));
             }
 
+            // Single value: opportunistic numeric read. Non-numeric values
+            // (e.g., TreeHashMap leaf Maps tagged with the bitmask tag) are
+            // skipped here and fall through to the existing conflict path.
             let num_par = &ch_values[0].a;
-            let (num, _) = RholangMergingLogic::get_number_with_rnd(num_par);
-            Ok(Some((ch_hash, num)))
+            match RholangMergingLogic::try_get_number_with_rnd(num_par) {
+                Some((num, _)) => Ok(Some((ch_hash, num))),
+                None => Ok(None),
+            }
         }
     }
 
@@ -719,7 +725,7 @@ impl RuntimeOps {
         (
             Vec<Event>,
             Either<SystemDeployUserError, S::Result>,
-            HashSet<Par>,
+            HashMap<Par, MergeType>,
         ),
         CasperError,
     > {

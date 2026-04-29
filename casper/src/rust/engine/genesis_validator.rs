@@ -231,6 +231,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisValidator<T> {
             &self.block_store,
             &self.block_dag_storage,
             &self.deploy_storage,
+            &self.rejected_deploy_buffer,
             &self.casper_buffer_storage,
             &self.rspace_state_manager,
             self.event_publisher.clone(),

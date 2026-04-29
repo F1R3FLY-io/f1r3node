@@ -150,7 +150,7 @@ mod tests {
         let store = kvm.r_space_stores().await.unwrap();
         let runtime = create_runtime_from_kv_store(
             store,
-            Par::default(),
+            Arc::new(std::collections::HashMap::new()),
             true,
             &mut test_framework_contracts(),
             Arc::new(Box::new(Matcher)),

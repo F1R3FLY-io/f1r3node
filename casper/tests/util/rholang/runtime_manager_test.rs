@@ -1823,7 +1823,7 @@ async fn bridge_query_survives_multi_parent_merge() {
     let (mut rm, _) = RuntimeManager::create_with_history(
         rspace_store,
         mergeable_store,
-        Genesis::non_negative_mergeable_tag_name(),
+        std::sync::Arc::new(Genesis::default_mergeable_tags()),
         ExternalServices::noop(),
     );
 
@@ -2155,7 +2155,7 @@ async fn concurrent_registry_inserts_should_not_conflict() {
     let (mut rm, _) = RuntimeManager::create_with_history(
         rspace_store,
         mergeable_store,
-        Genesis::non_negative_mergeable_tag_name(),
+        std::sync::Arc::new(Genesis::default_mergeable_tags()),
         ExternalServices::noop(),
     );
 
@@ -2873,7 +2873,7 @@ async fn finalization_does_not_guarantee_canonical_state() {
     let (mut rm, _) = RuntimeManager::create_with_history(
         rspace_store,
         mergeable_store,
-        Genesis::non_negative_mergeable_tag_name(),
+        std::sync::Arc::new(Genesis::default_mergeable_tags()),
         ExternalServices::noop(),
     );
 
@@ -3176,7 +3176,7 @@ async fn stale_diff_application_corrupts_merged_state() {
     let (mut rm, _) = RuntimeManager::create_with_history(
         rspace_store,
         mergeable_store,
-        Genesis::non_negative_mergeable_tag_name(),
+        std::sync::Arc::new(Genesis::default_mergeable_tags()),
         ExternalServices::noop(),
     );
 

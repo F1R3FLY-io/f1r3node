@@ -6,7 +6,9 @@ use std::sync::{Arc, Mutex};
 use rayon::prelude::*;
 use shared::rust::hashable_set::HashableSet;
 
-use super::merging_logic::{NumberChannelsDiff, combine_produces_copied_by_peek};
+use super::merging_logic::{
+    combine_mergeable_value, combine_produces_copied_by_peek, NumberChannelsDiff,
+};
 use crate::rspace::trace::event::{Consume, Event, IOEvent, Produce};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -364,16 +366,32 @@ impl EventLogIndex {
                     .cloned()
                     .collect(),
             ),
-            // Merge number channels (add differences)
+            // Merge number channels (combine differences according to per-channel
+            // merge strategy: IntegerAdd uses wrapping addition, BitmaskOr uses
+            // bitwise OR through u64).
             number_channels_data: x
                 .number_channels_data
                 .iter()
                 .chain(y.number_channels_data.iter())
                 .fold(NumberChannelsDiff::new(), |mut acc, (key, value)| {
-                    // Sum the values if key exists, otherwise just insert
+                    let (incoming_diff, incoming_mt) = *value;
                     acc.entry(key.clone())
-                        .and_modify(|existing| *existing += value)
-                        .or_insert(*value);
+                        .and_modify(|existing| {
+                            // Both branches must agree on merge_type for a given
+                            // channel. If they ever disagree, this is a bug —
+                            // panic loudly rather than silently picking one.
+                            assert_eq!(
+                                existing.1, incoming_mt,
+                                "MergeType mismatch on channel {:?}: {:?} vs {:?}",
+                                key, existing.1, incoming_mt,
+                            );
+                            existing.0 = combine_mergeable_value(
+                                existing.0,
+                                incoming_diff,
+                                incoming_mt,
+                            );
+                        })
+                        .or_insert((incoming_diff, incoming_mt));
                     acc
                 }),
         }
@@ -391,10 +409,13 @@ mod tests {
     fn mk_hash(byte: u8) -> Blake2b256Hash { Blake2b256Hash::from_bytes(vec![byte; 32]) }
 
     /// Helper: create an empty EventLogIndex with a specific
-    /// number_channels_data map.
+    /// number_channels_data map. All entries default to IntegerAdd semantics.
     fn empty_with_channels(data: BTreeMap<Blake2b256Hash, i64>) -> EventLogIndex {
         let mut eli = EventLogIndex::empty();
-        eli.number_channels_data = data;
+        eli.number_channels_data = data
+            .into_iter()
+            .map(|(k, v)| (k, (v, super::super::merging_logic::MergeType::IntegerAdd)))
+            .collect();
         eli
     }
 

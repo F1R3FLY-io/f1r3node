@@ -1,6 +1,7 @@
 use crypto::rust::hash::blake2b512_random::Blake2b512Random;
 use models::rhoapi::Par;
-use std::collections::{HashMap, HashSet};
+use rspace_plus_plus::rspace::merger::merging_logic::MergeType;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{event, Level};
@@ -19,7 +20,7 @@ use super::reduce::DebruijnInterpreter;
 pub struct EvaluateResult {
     pub cost: Cost,
     pub errors: Vec<InterpreterError>,
-    pub mergeable: HashSet<Par>,
+    pub mergeable: HashMap<Par, MergeType>,
 }
 
 #[allow(async_fn_in_trait)]
@@ -36,7 +37,7 @@ pub trait Interpreter {
 
 pub struct InterpreterImpl {
     c: _cost,
-    merge_chs: Arc<RwLock<HashSet<Par>>>,
+    merge_chs: Arc<RwLock<HashMap<Par, MergeType>>>,
 }
 
 impl Interpreter for InterpreterImpl {
@@ -160,7 +161,7 @@ impl Interpreter for InterpreterImpl {
 }
 
 impl InterpreterImpl {
-    pub fn new(cost: _cost, merge_chs: Arc<RwLock<HashSet<Par>>>) -> InterpreterImpl {
+    pub fn new(cost: _cost, merge_chs: Arc<RwLock<HashMap<Par, MergeType>>>) -> InterpreterImpl {
         InterpreterImpl { c: cost, merge_chs }
     }
 
@@ -175,7 +176,7 @@ impl InterpreterImpl {
             InterpreterError::ParserError(_) => Ok(EvaluateResult {
                 cost: parsing_cost,
                 errors: vec![error],
-                mergeable: HashSet::new(),
+                mergeable: HashMap::new(),
             }),
 
             // For Out Of Phlogistons error initial cost is used because evaluated cost can be higher
@@ -183,21 +184,21 @@ impl InterpreterImpl {
             InterpreterError::OutOfPhlogistonsError => Ok(EvaluateResult {
                 cost: initial_cost,
                 errors: vec![error],
-                mergeable: HashSet::new(),
+                mergeable: HashMap::new(),
             }),
 
             // User triggered abort - execution failed, return cost consumed so far
             InterpreterError::UserAbortError => Ok(EvaluateResult {
                 cost: initial_cost.clone() - self.c.get(),
                 errors: vec![error],
-                mergeable: HashSet::new(),
+                mergeable: HashMap::new(),
             }),
 
             // InterpreterError(s) - multiple errors are result of parallel execution
             InterpreterError::AggregateError { interpreter_errors } => Ok(EvaluateResult {
                 cost: initial_cost,
                 errors: interpreter_errors,
-                mergeable: HashSet::new(),
+                mergeable: HashMap::new(),
             }),
 
             // TODO: Review why 'Compiler::source_to_adt_with_normalizer_env' doesn't pick this up
@@ -208,7 +209,7 @@ impl InterpreterImpl {
             } => Ok(EvaluateResult {
                 cost: parsing_cost,
                 errors: vec![error],
-                mergeable: HashSet::new(),
+                mergeable: HashMap::new(),
             }),
 
             // TODO: Review why 'Compiler::source_to_adt_with_normalizer_env' doesn't pick this up
@@ -220,14 +221,14 @@ impl InterpreterImpl {
             } => Ok(EvaluateResult {
                 cost: parsing_cost,
                 errors: vec![error],
-                mergeable: HashSet::new(),
+                mergeable: HashMap::new(),
             }),
 
             // InterpreterError is returned as a result
             _ => Ok(EvaluateResult {
                 cost: initial_cost,
                 errors: vec![error],
-                mergeable: HashSet::new(),
+                mergeable: HashMap::new(),
             }),
         }
     }

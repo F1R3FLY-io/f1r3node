@@ -38,6 +38,11 @@ pub const STACK_PK: &str = "c94e647de6876c954ebb7b64c40a220227770f9be003635edfe3
 // one-off generator and the derivation table at the top of TokenMetadata.rhox.
 pub const TOKEN_METADATA_PK: &str =
     "8f9a1c3b2d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a";
+// Dedicated key for deriving the bitmask-OR mergeable tag's unforgeable name.
+// Not used to sign any deploy; only seeds Tools::unforgeable_name_rng so the tag
+// has an identity independent of any specific genesis contract.
+pub const BITMASK_OR_TAG_PK: &str =
+    "4d76b8e3f29a51c8d05e7b4f9a23c6e1d8b5f0a7c4e91b6d3a8f5c2e9b6d4a1c";
 
 // Timestamps for each deploy
 pub const REGISTRY_TIMESTAMP: i64 = 1559156071321;
@@ -51,6 +56,8 @@ pub const MULTI_SIG_SYSTEM_VAULT_TIMESTAMP: i64 = 1571408470880;
 pub const POS_GENERATOR_TIMESTAMP: i64 = 1559156420651;
 pub const STACK_TIMESTAMP: i64 = 1751539590099;
 pub const TOKEN_METADATA_TIMESTAMP: i64 = 1737500000000;
+// Distinct timestamp for the bitmask-OR mergeable tag's RNG seed.
+pub const BITMASK_OR_TAG_TIMESTAMP: i64 = 1762000000000;
 
 lazy_static! {
     pub static ref REGISTRY_PUB_KEY: PublicKey = to_public(REGISTRY_PK);
@@ -65,6 +72,7 @@ lazy_static! {
     pub static ref VAULTS_GENERATOR_PUB_KEY: PublicKey = to_public(VAULTS_GENERATOR_PK);
     pub static ref STACK_PUB_KEY: PublicKey = to_public(STACK_PK);
     pub static ref TOKEN_METADATA_PUB_KEY: PublicKey = to_public(TOKEN_METADATA_PK);
+    pub static ref BITMASK_OR_TAG_PUB_KEY: PublicKey = to_public(BITMASK_OR_TAG_PK);
 }
 
 pub fn system_public_keys() -> Vec<&'static PublicKey> {

@@ -85,7 +85,7 @@ async fn create_runtimes_with_cost_log(
 
     let rho_runtime = create_rho_runtime(
         space.clone(),
-        Par::default(),
+        Arc::new(std::collections::HashMap::new()),
         init_registry,
         additional_system_processes,
         ExternalServices::noop(),
@@ -94,7 +94,7 @@ async fn create_runtimes_with_cost_log(
 
     let replay_rho_runtime = create_replay_rho_runtime(
         replay,
-        Par::default(),
+        Arc::new(std::collections::HashMap::new()),
         init_registry,
         additional_system_processes,
         ExternalServices::noop(),

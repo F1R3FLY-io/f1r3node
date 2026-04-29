@@ -171,6 +171,7 @@ impl GenesisValidatorSpec {
                 fixture.block_store.clone(),
                 fixture.block_dag_storage.clone(),
                 fixture.deploy_storage.clone(),
+                fixture.rejected_deploy_buffer.clone(),
                 fixture.casper_buffer_storage.clone(),
                 fixture.rspace_state_manager.clone(),
                 fixture.runtime_manager.clone(),

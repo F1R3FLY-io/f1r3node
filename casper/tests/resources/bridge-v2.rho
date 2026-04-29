@@ -1,0 +1,330 @@
+//           _____                    _____                    _____                                                                                     
+//          /\    \                  /\    \                  /\    \                                                                                    
+//         /::\    \                /::\    \                /::\    \                                                                                   
+//        /::::\    \              /::::\    \               \:::\    \                                                                                  
+//       /::::::\    \            /::::::\    \               \:::\    \                                                                                 
+//      /:::/\:::\    \          /:::/\:::\    \               \:::\    \                                                                                
+//     /:::/__\:::\    \        /:::/__\:::\    \               \:::\    \                                                                               
+//    /::::\   \:::\    \       \:::\   \:::\    \              /::::\    \                                                                              
+//   /::::::\   \:::\    \    ___\:::\   \:::\    \    ____    /::::::\    \                                                                             
+//  /:::/\:::\   \:::\    \  /\   \:::\   \:::\    \  /\   \  /:::/\:::\    \                                                                            
+// /:::/  \:::\   \:::\____\/::\   \:::\   \:::\____\/::\   \/:::/  \:::\____\                                                                           
+// \::/    \:::\  /:::/    /\:::\   \:::\   \::/    /\:::\  /:::/    \::/    /                                                                           
+//  \/____/ \:::\/:::/    /  \:::\   \:::\   \/____/  \:::\/:::/    / \/____/                                                                            
+//           \::::::/    /    \:::\   \:::\    \       \::::::/    /                                                                                     
+//            \::::/    /      \:::\   \:::\____\       \::::/____/                                                                                      
+//            /:::/    /        \:::\  /:::/    /        \:::\    \                                                                                      
+//           /:::/    /          \:::\/:::/    /          \:::\    \                                                                                     
+//          /:::/    /            \::::::/    /            \:::\    \                                                                                    
+//         /:::/    /              \::::/    /              \:::\____\                                                                                   
+//         \::/    /                \::/    /                \::/    /                                                                                   
+//          \/____/                  \/____/                  \/____/                                                                                    
+//
+//           _____                    _____                    _____                    _____                    _____                    _____          
+//          /\    \                  /\    \                  /\    \                  /\    \                  /\    \                  /\    \         
+//         /::\    \                /::\    \                /::\    \                /::\    \                /::\    \                /::\    \        
+//        /::::\    \              /::::\    \               \:::\    \              /::::\    \              /::::\    \              /::::\    \       
+//       /::::::\    \            /::::::\    \               \:::\    \            /::::::\    \            /::::::\    \            /::::::\    \      
+//      /:::/\:::\    \          /:::/\:::\    \               \:::\    \          /:::/\:::\    \          /:::/\:::\    \          /:::/\:::\    \     
+//     /:::/__\:::\    \        /:::/__\:::\    \               \:::\    \        /:::/  \:::\    \        /:::/  \:::\    \        /:::/__\:::\    \    
+//    /::::\   \:::\    \      /::::\   \:::\    \              /::::\    \      /:::/    \:::\    \      /:::/    \:::\    \      /::::\   \:::\    \   
+//   /::::::\   \:::\    \    /::::::\   \:::\    \    ____    /::::::\    \    /:::/    / \:::\    \    /:::/    / \:::\    \    /::::::\   \:::\    \  
+//  /:::/\:::\   \:::\ ___\  /:::/\:::\   \:::\____\  /\   \  /:::/\:::\    \  /:::/    /   \:::\ ___\  /:::/    /   \:::\ ___\  /:::/\:::\   \:::\    \ 
+// /:::/__\:::\   \:::|    |/:::/  \:::\   \:::|    |/::\   \/:::/  \:::\____\/:::/____/     \:::|    |/:::/____/  ___\:::|    |/:::/__\:::\   \:::\____\
+// \:::\   \:::\  /:::|____|\::/   |::::\  /:::|____|\:::\  /:::/    \::/    /\:::\    \     /:::|____|\:::\    \ /\  /:::|____|\:::\   \:::\   \::/    /
+//  \:::\   \:::\/:::/    /  \/____|:::::\/:::/    /  \:::\/:::/    / \/____/  \:::\    \   /:::/    /  \:::\    /::\ \::/    /  \:::\   \:::\   \/____/ 
+//   \:::\   \::::::/    /         |:::::::::/    /    \::::::/    /            \:::\    \ /:::/    /    \:::\   \:::\ \/____/    \:::\   \:::\    \     
+//    \:::\   \::::/    /          |::|\::::/    /      \::::/____/              \:::\    /:::/    /      \:::\   \:::\____\       \:::\   \:::\____\    
+//     \:::\  /:::/    /           |::| \::/____/        \:::\    \               \:::\  /:::/    /        \:::\  /:::/    /        \:::\   \::/    /    
+//      \:::\/:::/    /            |::|  ~|               \:::\    \               \:::\/:::/    /          \:::\/:::/    /          \:::\   \/____/     
+//       \::::::/    /             |::|   |                \:::\    \               \::::::/    /            \::::::/    /            \:::\    \         
+//        \::::/    /              \::|   |                 \:::\____\               \::::/    /              \::::/    /              \:::\____\        
+//         \::/____/                \:|   |                  \::/    /                \::/____/                \::/____/                \::/    /        
+//          ~~                       \|___|                   \/____/                  ~~                                                \/____/         
+//
+//  [ ETH <════════════════════════════════════> ASI CHAIN :: F1R3FLY NETWORK ]
+//  [ LOCK / UNLOCK  ::  PREMINTED SUPPLY  ::  THRESHOLD SIG  ::  ORACLE MESH ]
+//
+new
+ // state channels
+ nonceCh,
+ totalLockedCh,
+ processedCh,
+ lockHistoryCh,
+ lockedByAddressCh,
+ bridgeVaultSeed,
+ bridgeVaultAddrCh,
+ bridgeAuthKeyCh,
+ SystemVaultCh,
+ initializedStateChannels,
+ // contracts
+ queryCh,
+ lockCh,
+ unlockCh,
+ // system channels
+ stdout(`rho:io:stdout`),
+ rl(`rho:registry:lookup`),
+ deployId(`rho:system:deployId`),
+ VaultAddress(`rho:vault:address`),
+ insertArbitrary(`rho:registry:insertArbitrary`),
+in {
+  /////////////////////////
+  // Init state channels //
+  /////////////////////////
+  nonceCh!(0) |
+  totalLockedCh!(0) |
+  processedCh!({}) |
+  lockHistoryCh!({}) |
+  lockedByAddressCh!({}) |
+  ////////////////////////
+  // Get bridge address //
+  ////////////////////////
+   rl!(`rho:vault:system`, *SystemVaultCh) |
+   for (@(_, SystemVault) <- SystemVaultCh) {
+    VaultAddress!("fromUnforgeable", *bridgeVaultSeed, *bridgeVaultAddrCh) |
+     for (@bridgeVaultAddr <- bridgeVaultAddrCh) {
+      bridgeVaultAddrCh!(bridgeVaultAddr) |
+       @SystemVault!("unforgeableAuthKey", *bridgeVaultSeed, *bridgeAuthKeyCh) |
+       stdout!(["address",bridgeVaultAddr]) |
+       deployId!(["address",bridgeVaultAddr]) 
+     } |
+    initializedStateChannels!(true) |
+     deployId!("initialized state channels") |
+     stdout!("initialized state channels")
+   } |
+
+   /////////////////////////////////////////////////////////////////
+   // Intialize contracts: ensure it happens after state channels //
+   /////////////////////////////////////////////////////////////////
+  for (@(true) <- initializedStateChannels) {
+   /////////// 
+   // QUERY //
+   /////////// 
+    contract queryCh(@method, @param, ret) = {
+     match method {
+      "getNonce" => {
+       for (@v <- nonceCh) {
+        nonceCh!(v) |
+         stdout!(["nonce:", v]) |
+         ret!(v)
+       }
+      }
+
+      "getTotalLocked" => {
+       for (@v <- totalLockedCh) {
+        totalLockedCh!(v) |
+         stdout!(["total locked:", v]) |
+         ret!(v)
+       }
+      }
+
+      "getAddress" => {
+       for (@v <- bridgeVaultAddrCh) {
+        bridgeVaultAddrCh!(v) |
+         stdout!(["bridge vault address:", v]) |
+         ret!(v)
+       }
+      }
+
+      "getBalance" => {
+       new localSystemVaultCh, localVaultCh in {
+        rl!(`rho:vault:system`, *localSystemVaultCh) |
+         for (@(_, SystemVault) <- localSystemVaultCh; @bridgeVaultAddr <- bridgeVaultAddrCh) {
+          bridgeVaultAddrCh!(bridgeVaultAddr) |
+           @SystemVault!("findOrCreate", bridgeVaultAddr, *localVaultCh) |
+           for (@maybeVault <- localVaultCh) {
+            match maybeVault {
+             (true, bridgeVault) => {
+              new balanceCh in {
+               deployId!(["balance query using system vault", bridgeVaultAddr]) |
+                @bridgeVault!("balance", *balanceCh) |
+                for (@bal <- balanceCh) {
+                 stdout!(["bridge balance:", bal]) |
+                  ret!(["balance:", bal])
+                }
+              }
+             }
+             (false, err) => ret!(err)
+            }
+          }
+        }
+       }
+      }
+
+      "getLockedByAddress" => {
+       for (@v <- lockedByAddressCh) { lockedByAddressCh!(v) | ret!(v) }
+      }
+
+     "getLockAmount" => {
+      for (@history <- lockHistoryCh) {
+       lockHistoryCh!(history) |
+       match history.get(param) {
+        Nil => { ret!(-1) }
+        entry => { ret!(entry.get("amount")) }
+       }
+      }
+     }
+
+     "getLockRecipient" => {
+      for (@history <- lockHistoryCh) {
+       lockHistoryCh!(history) |
+       match history.get(param) {
+        Nil => { ret!("") }
+        entry => { ret!(entry.get("ethRecipient")) }
+       }
+      }
+     }
+
+     "getLockedAmountForAddress" => {
+      for (@m <- lockedByAddressCh) {
+       lockedByAddressCh!(m) |
+       match m.get(param) {
+        Nil => { ret!(0) }
+        v => { ret!(v) }
+       }
+      }
+     }
+
+     _ => ret!("UnknownMethod")
+     
+     }
+    } |
+
+    ////////// 
+    // LOCK //
+    ////////// 
+    // TODO: change order of args to match unlock eth transfer style
+    contract lockCh(@amount, @ethRecipient, @fromAddr, fromAuthKey, ret) = {
+     if (amount <= 0) {
+      ret!({"status": "error", "error": "ZeroAmount"})
+     } else if (ethRecipient == "") {
+      ret!({"status": "error", "error": "ZeroAddress"})
+     } else {
+      new localSystemVaultCh, userVaultCh, balanceCh, transferResultCh in {
+       rl!(`rho:vault:system`, *localSystemVaultCh) |
+        for (@(_, SystemVault) <- localSystemVaultCh) {
+         @SystemVault!("findOrCreate", fromAddr, *userVaultCh) |
+          for (@(true, userVault) <- userVaultCh) {
+           @userVault!("balance", *balanceCh) |
+            for (@bal <- balanceCh) {
+             if (bal < amount) {
+              ret!({"status": "error", "error": "InsufficientVaultBalance", "balance": bal})
+             } else {
+              for (@bridgeVaultAddr <- bridgeVaultAddrCh) {
+               bridgeVaultAddrCh!(bridgeVaultAddr) |
+                @userVault!("transfer", bridgeVaultAddr, amount, *fromAuthKey, *transferResultCh) |
+                for (@transferResult <- transferResultCh) {
+                 match transferResult {
+                  (true, Nil) => {
+                   for (@totalLocked <- totalLockedCh; @currentNonce <- nonceCh; @lockedByAddress <- lockedByAddressCh; @history <- lockHistoryCh) {
+                    totalLockedCh!(totalLocked + amount) |
+                    nonceCh!(currentNonce + 1) |
+
+                    lockedByAddressCh!(
+                     lockedByAddress.set(
+                      fromAddr,
+                      match lockedByAddress.get(fromAddr) {
+                       Nil => amount
+                       v => v + amount
+                      }
+                     )
+                    ) |
+
+                    lockHistoryCh!(
+                     history.set(
+                     currentNonce,
+                      {
+                       "from": fromAddr,
+                       "ethRecipient": ethRecipient,
+                       "amount": amount
+                       }
+                      )
+                     ) |
+
+                    stdout!(["bridge lock OK", {"from": fromAddr, "amount": amount, "ethRecipient": ethRecipient, "nonce": currentNonce}]) |
+                    ret!(["bridge lock OK", {"status": "ok", "nonce": currentNonce}])
+                   }
+                  }
+                  _ => {
+                   stdout!(("bridge lock ERR", transferResult)) |
+                    ret!(["bridge lock ERR", transferResult])
+                  }
+                 }
+                }
+              }
+             }
+            }
+          }
+        }
+      }
+     }
+    } |
+
+    //////////// 
+    // UNLOCK //
+    //////////// 
+    contract unlockCh(@fromAddr, @amount, @recipientAddr, @ethTxHash, @ethNonce, ret) = {
+     if (amount <= 0) {
+      ret!({"status": "error", "error": "ZeroAmount"})
+     } else if (recipientAddr == "") {
+      ret!({"status": "error", "error": "ZeroAddress"})
+     } else {
+      new localSystemVaultCh, localVaultCh, transferResultCh in {
+       rl!(`rho:vault:system`, *localSystemVaultCh) |
+        for (@(_, SystemVault) <- localSystemVaultCh; @bridgeVaultAddr <- bridgeVaultAddrCh) {
+         bridgeVaultAddrCh!(bridgeVaultAddr) |
+          @SystemVault!("findOrCreate", bridgeVaultAddr, *localVaultCh) |
+          for (@maybeVault <- localVaultCh; bridgeAuthKey <- bridgeAuthKeyCh) {
+           bridgeAuthKeyCh!(*bridgeAuthKey) |
+           match maybeVault {
+            (true, bridgeVault) => {
+             for (@totalLocked <- totalLockedCh) {
+              totalLockedCh!(totalLocked) |
+              if (amount > totalLocked) {
+               ret!({"status": "error", "error": "InsufficientBridgeBalance", "totalLocked": totalLocked})
+              } else {
+               @bridgeVault!("transfer", recipientAddr, amount, *bridgeAuthKey, *transferResultCh) |
+                for (@transferResult <- transferResultCh) {
+                 match transferResult {
+                  (true, Nil) => {
+                   for (@currentTotalLocked <- totalLockedCh; @processed <- processedCh) {
+                    totalLockedCh!(currentTotalLocked - amount) |
+                    processedCh!(processed.set([recipientAddr, amount, ethTxHash, ethNonce], true)) |
+                    stdout!(["bridge unlock OK", {"from": fromAddr, "to": recipientAddr, "amount": amount}]) |
+                    ret!({"status": "ok", "amount": amount, "recipient": recipientAddr})
+                   }
+                  }
+                  _ => {
+                   stdout!(("bridge unlock ERR", transferResult)) |
+                   ret!({"status": "error", "error": transferResult})
+                  }
+                 }
+                }
+              }
+             }
+            }
+            (false, err) => ret!({"status": "error", "error": err})
+           }
+          }
+        }
+      }
+     }
+    } |
+
+    ////////////////////////
+    // Register contracts //
+    ////////////////////////
+    new queryUriCh, lockUriCh, unlockUriCh in {
+     insertArbitrary!(bundle+{*queryCh}, *queryUriCh) |
+      for (@queryUri <- queryUriCh) {
+       insertArbitrary!(bundle+{*lockCh}, *lockUriCh) |
+        for (@lockUri <- lockUriCh) {
+         insertArbitrary!(bundle+{*unlockCh}, *unlockUriCh) |
+          for (@unlockUri <- unlockUriCh) {
+           deployId!([queryUri, lockUri, unlockUri])
+          }
+        }
+      }
+    }
+   }
+ }
