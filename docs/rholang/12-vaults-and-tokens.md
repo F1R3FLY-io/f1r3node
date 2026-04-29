@@ -127,6 +127,50 @@ new lookup(`rho:registry:lookup`), sysCh,
 }
 ```
 
+## Vault Registration
+
+`SystemVault.findOrCreate(address)` does two things:
+
+1. Computes the per-address vault instance channel.
+2. Registers the per-vault contracts (including the internal `_deposit` receiver) in the tuplespace.
+
+The second step is required for any transfer **to** that address to succeed. A transfer's internal `_deposit` send targets the destination vault's contract — if no contract is registered, the send is orphaned and the entire transfer's response chain breaks silently. The deploy completes with `errored: false` and `transfers: [{success: true}]`, but the caller's `for (@result <- resultCh)` continuation never fires. See [Common Pitfalls — Orphan Sends](09-contracts-and-state.md#orphan-sends-to-unregistered-channels).
+
+This is why the standard transfer pattern calls `findOrCreate` on **both** endpoints:
+
+```rho
+@SystemVault!("findOrCreate", fromAddress, *vaultCh) |
+@SystemVault!("findOrCreate", toAddress, *targetCh) |  // critical: registers _deposit on destination
+```
+
+Skipping the destination `findOrCreate` is only safe when the destination is already known to be registered (e.g., a genesis-funded validator vault or a vault you registered earlier in the same deploy). For any new or contract-owned destination, it must be called.
+
+### Self-Registering Contracts
+
+When a contract owns a vault — a bridge, escrow, or any service that holds funds at a vault address derived from its own identity — it should call `findOrCreate` on that address at initialization, not on first use. Self-registration means callers don't have to know to register the contract's vault before sending it funds.
+
+```rho
+// Inside a bridge / escrow contract's init
+new bridgeVaultAddrCh, bridgeVaultRegisterCh in {
+  // ... derive bridgeVaultAddr from this contract's unforgeable identity ...
+
+  for (@bridgeVaultAddr <- bridgeVaultAddrCh) {
+    bridgeVaultAddrCh!(bridgeVaultAddr) |
+
+    // Register the contract's own vault BEFORE exposing the bridge interface.
+    // Without this, the first incoming transfer's _deposit send is orphaned
+    // and the lock/transfer response chain hangs forever.
+    @SystemVault!("findOrCreate", bridgeVaultAddr, *bridgeVaultRegisterCh) |
+    for (@(true, _) <- bridgeVaultRegisterCh) {
+      // Now safe to publish the bridge address and accept transfers
+      deployId!(["address", bridgeVaultAddr])
+    }
+  }
+}
+```
+
+Without this defensive registration, callers that do `findOrCreate` only on the source side will silently fail when the destination is the contract — the deploy completes, the transfer reports `success: true`, but the contract's continuation never fires. This was the bug pattern fixed in `bridge-v2.rho` (see `casper/tests/resources/bridge-v2.rho`).
+
 ## MakeMint
 
 MakeMint is a token factory that creates purses with controlled minting.

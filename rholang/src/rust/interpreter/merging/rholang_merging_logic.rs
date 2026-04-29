@@ -13,7 +13,7 @@ use rspace_plus_plus::rspace::{
     hashing::{blake2b256_hash::Blake2b256Hash, stable_hash_provider},
     hot_store_trie_action::HotStoreTrieAction,
     internal::Datum,
-    merger::channel_change::ChannelChange,
+    merger::{channel_change::ChannelChange, merging_logic::MergeType},
     serializers::serializers,
     trace::event::Produce,
 };
@@ -41,9 +41,9 @@ impl RholangMergingLogic {
      * @param getInitialValue Accessor to initial value
      */
     pub fn calculate_num_channel_diff<Key: Clone + Eq + Hash + Ord>(
-        channel_values: Vec<BTreeMap<Key, i64>>,
+        channel_values: Vec<BTreeMap<Key, (i64, MergeType)>>,
         get_initial_value: impl Fn(&Key) -> Option<i64> + Send + Sync,
-    ) -> Vec<BTreeMap<Key, i64>> {
+    ) -> Vec<BTreeMap<Key, (i64, MergeType)>> {
         // First collect unique keys while preserving order
         let unique_keys: Vec<_> = channel_values
             .iter()
@@ -63,10 +63,15 @@ impl RholangMergingLogic {
             .map(|end_val_map| {
                 let mut diffs = BTreeMap::new();
 
-                for (ch, end_val) in end_val_map {
+                for (ch, (end_val, merge_type)) in end_val_map {
                     if let Some(prev_val) = state.get(&ch) {
-                        let diff = end_val.wrapping_sub(*prev_val);
-                        diffs.insert(ch.clone(), diff);
+                        let diff = match merge_type {
+                            MergeType::IntegerAdd => end_val.wrapping_sub(*prev_val),
+                            MergeType::BitmaskOr => {
+                                ((end_val as u64) & !(*prev_val as u64)) as i64
+                            }
+                        };
+                        diffs.insert(ch.clone(), (diff, merge_type));
                         state.insert(ch, end_val);
                     }
                 }
@@ -86,6 +91,7 @@ impl RholangMergingLogic {
     pub fn calculate_number_channel_merge(
         channel_hash: &Blake2b256Hash,
         diff: i64,
+        merge_type: MergeType,
         changes: &ChannelChange<Vec<u8>>,
         get_base_data: impl Fn(&Blake2b256Hash) -> Result<Vec<Datum<ListParWithRandom>>, HistoryError>,
     ) -> HotStoreTrieAction<Par, BindPattern, ListParWithRandom, TaggedContinuation> {
@@ -94,7 +100,10 @@ impl RholangMergingLogic {
 
         // Calculate number channel new value
         let init_num = init_val_opt.unwrap_or(0);
-        let new_val = init_num + diff;
+        let new_val = match merge_type {
+            MergeType::IntegerAdd => init_num.wrapping_add(diff),
+            MergeType::BitmaskOr => ((init_num as u64) | (diff as u64)) as i64,
+        };
 
         // Calculate merged random generator (use only unique changes as input)
         let new_rnd = if changes.added.iter().collect::<HashSet<_>>().len() == 1 {
@@ -151,6 +160,23 @@ impl RholangMergingLogic {
             num,
             Blake2b512Random::from_bytes(&par_with_rnd.random_state),
         )
+    }
+
+    /// Like `get_number_with_rnd` but returns None when the channel value is
+    /// not an integer. Used by readers that opportunistically check whether a
+    /// mergeable-tagged channel currently holds a numeric value — for example,
+    /// the registry's TreeHashMap, where interior-node bitmaps are i64-typed
+    /// but leaf-node values are Rholang Maps. Non-numeric values fall through
+    /// to the existing conflict-rejection path rather than wedging the merger.
+    pub fn try_get_number_with_rnd(
+        par_with_rnd: &ListParWithRandom,
+    ) -> Option<(i64, Blake2b512Random)> {
+        if par_with_rnd.pars.len() != 1 {
+            return None;
+        }
+        RhoNumber::unapply(&par_with_rnd.pars[0]).map(|num| {
+            (num, Blake2b512Random::from_bytes(&par_with_rnd.random_state))
+        })
     }
 
     fn create_datum_encoded(
@@ -221,6 +247,7 @@ pub struct DeployMergeableData {
 pub struct NumberChannel {
     pub hash: Blake2b256Hash,
     pub diff: i64,
+    pub merge_type: MergeType,
 }
 
 // See rholang/src/test/scala/coop/rchain/rholang/interpreter/merging/RholangMergingLogicSpec.scala
@@ -254,23 +281,25 @@ mod tests {
         // Define the accessor function to get initial values
         let get_data_on_hash = |hash: String| -> Option<i64> { init_values.get(&hash).copied() };
 
-        // Define input channel values (Vec of Maps)
+        // Define input channel values (Vec of Maps); all entries use IntegerAdd
+        // semantics for the existing vault path.
+        let mt = MergeType::IntegerAdd;
         let mut input = Vec::new();
 
         // Map 0: {A -> 20}
         let mut map0 = BTreeMap::new();
-        map0.insert(ch_a.clone(), 20i64);
+        map0.insert(ch_a.clone(), (20i64, mt));
         input.push(map0);
 
         // Map 1: {B -> 3}
         let mut map1 = BTreeMap::new();
-        map1.insert(ch_b.clone(), 3i64);
+        map1.insert(ch_b.clone(), (3i64, mt));
         input.push(map1);
 
         // Map 2: {A -> 15, C -> 10}
         let mut map2 = BTreeMap::new();
-        map2.insert(ch_a.clone(), 15i64);
-        map2.insert(ch_c.clone(), 10i64);
+        map2.insert(ch_a.clone(), (15i64, mt));
+        map2.insert(ch_c.clone(), (10i64, mt));
         input.push(map2);
 
         // Calculate the differences
@@ -284,21 +313,41 @@ mod tests {
 
         // Expected Map 0: {A -> 10}
         let mut expected_map0 = BTreeMap::new();
-        expected_map0.insert(ch_a.clone(), 10i64);
+        expected_map0.insert(ch_a.clone(), (10i64, mt));
         expected.push(expected_map0);
 
         // Expected Map 1: {B -> 3}
         let mut expected_map1 = BTreeMap::new();
-        expected_map1.insert(ch_b.clone(), 3i64);
+        expected_map1.insert(ch_b.clone(), (3i64, mt));
         expected.push(expected_map1);
 
         // Expected Map 2: {A -> -5, C -> -10}
         let mut expected_map2 = BTreeMap::new();
-        expected_map2.insert(ch_a.clone(), -5i64);
-        expected_map2.insert(ch_c.clone(), -10i64);
+        expected_map2.insert(ch_a.clone(), (-5i64, mt));
+        expected_map2.insert(ch_c.clone(), (-10i64, mt));
         expected.push(expected_map2);
 
         // Assert that the results match the expected values
         assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_calculate_num_channel_diff_bitmask() {
+        // Verify bitmask diff semantics: diff = newly-set bits = end & !prev
+        // Example: prev=0b0001, end=0b0101 → diff=0b0100 (bit 2 newly set)
+        let ch = "X".to_string();
+        let mt = MergeType::BitmaskOr;
+        let mut init_values = HashMap::new();
+        init_values.insert(ch.clone(), 0b0001i64);
+        let get_initial = |k: &String| -> Option<i64> { init_values.get(k).copied() };
+
+        let mut map0 = BTreeMap::new();
+        map0.insert(ch.clone(), (0b0101i64, mt));
+        let result =
+            RholangMergingLogic::calculate_num_channel_diff(vec![map0], get_initial);
+
+        let mut expected_map0 = BTreeMap::new();
+        expected_map0.insert(ch.clone(), (0b0100i64, mt));
+        assert_eq!(result, vec![expected_map0]);
     }
 }

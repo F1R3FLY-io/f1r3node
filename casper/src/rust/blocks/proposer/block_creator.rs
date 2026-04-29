@@ -60,6 +60,9 @@ async fn prepare_user_deploys(
     block_number: i64,
     current_time_millis: i64,
     deploy_storage: Arc<Mutex<KeyValueDeployStorage>>,
+    rejected_deploy_buffer: Arc<
+        Mutex<block_storage::rust::deploy::key_value_rejected_deploy_buffer::KeyValueRejectedDeployBuffer>,
+    >,
 ) -> Result<PreparedUserDeploys, CasperError> {
     let mut deploy_storage_guard = deploy_storage
         .lock()
@@ -67,6 +70,28 @@ async fn prepare_user_deploys(
 
     // Read all unfinalized deploys from storage
     let unfinalized: HashSet<Signed<DeployData>> = deploy_storage_guard.read_all()?;
+
+    // Read recovered deploys from the rejected-deploy buffer. These were dropped
+    // by a prior merge's conflict resolution and are now candidates for
+    // re-inclusion (fresh execution against the current merged base).
+    let recovered: HashSet<Signed<DeployData>> = {
+        let buffer_guard = rejected_deploy_buffer
+            .lock()
+            .map_err(|e| CasperError::LockError(e.to_string()))?;
+        buffer_guard.read_all()?
+    };
+
+    let recovered_count = recovered.len();
+    let unfinalized: HashSet<Signed<DeployData>> = unfinalized
+        .into_iter()
+        .chain(recovered.into_iter())
+        .collect();
+    if recovered_count > 0 {
+        tracing::info!(
+            "Prepare user deploys: {} recovered from rejected-deploy buffer",
+            recovered_count
+        );
+    }
 
     let earliest_block_number =
         block_number - casper_snapshot.on_chain_state.shard_conf.deploy_lifespan;
@@ -98,15 +123,25 @@ async fn prepare_user_deploys(
 
     let valid_count = valid.len();
 
-    // Remove deploys that are already in scope to prevent resending
+    // Remove deploys that are already in scope to prevent resending. Exception:
+    // deploys that appear in a descendant's `rejected_deploys` list are eligible
+    // for re-inclusion — their state effects never made it into canonical state,
+    // so proposing them again is correct.
     let already_in_scope: Vec<Signed<DeployData>> = valid
         .iter()
-        .filter(|deploy| casper_snapshot.deploys_in_scope.contains(&deploy.sig))
+        .filter(|deploy| {
+            casper_snapshot.deploys_in_scope.contains(&deploy.sig)
+                && !casper_snapshot.rejected_in_scope.contains(&deploy.sig)
+        })
         .map(|deploy| (*deploy).clone())
         .collect();
     let valid_unique: HashSet<Signed<DeployData>> = valid
         .into_iter()
-        .filter(|deploy| !casper_snapshot.deploys_in_scope.contains(&deploy.sig))
+        .filter(|deploy| {
+            let sig = &deploy.sig;
+            !casper_snapshot.deploys_in_scope.contains(sig)
+                || casper_snapshot.rejected_in_scope.contains(sig)
+        })
         .collect();
 
     let already_in_scope_count = already_in_scope.len();
@@ -179,7 +214,10 @@ async fn prepare_user_deploys(
         deploy_storage_guard.remove(expired_list)?;
     }
 
-    let max_deploys = casper_snapshot.on_chain_state.shard_conf.max_user_deploys_per_block as usize;
+    let max_deploys = casper_snapshot
+        .on_chain_state
+        .shard_conf
+        .max_user_deploys_per_block as usize;
     let max_user_deploys = max_deploys;
     if valid_unique.len() <= max_user_deploys {
         return Ok(PreparedUserDeploys {
@@ -385,6 +423,7 @@ pub async fn create(
     validator_identity: &ValidatorIdentity,
     dummy_deploy_opt: Option<(PrivateKey, String)>,
     deploy_storage: Arc<Mutex<KeyValueDeployStorage>>,
+    rejected_deploy_buffer: Arc<Mutex<block_storage::rust::deploy::key_value_rejected_deploy_buffer::KeyValueRejectedDeployBuffer>>,
     runtime_manager: &mut RuntimeManager,
     block_store: &mut KeyValueBlockStore,
     allow_empty_blocks: bool,
@@ -438,6 +477,7 @@ pub async fn create(
             next_block_num,
             now_millis,
             deploy_storage.clone(),
+            rejected_deploy_buffer.clone(),
         )
         .await?;
         let mut v = prepared.deploys;
@@ -506,11 +546,56 @@ pub async fn create(
         }
     }
 
+    // Merge the parents once up front to discover slashes that were rejected
+    // by cost-optimal resolution. The result is cached so the downstream
+    // compute_deploys_checkpoint call below hits the cache. Rejected slashes
+    // are re-issued by this proposer (below) so the slash effect lands in
+    // the merge block regardless of the merge's rejection decision.
+    let merge_pre_info = interpreter_util::compute_parents_post_state(
+        block_store,
+        parents.clone(),
+        casper_snapshot,
+        runtime_manager,
+        None,
+        Some(&rejected_deploy_buffer),
+    )?;
+    let (_pre_state, _rejected_user_sigs, rejected_slashes) = merge_pre_info;
+
+    // Union own slashes with merge-rejected slashes, dedup by
+    // (invalid_block_hash, issuer_public_key). Own detections take priority
+    // and the dedup set drops any merge-rejected slash that is already
+    // covered by prepare_slashing_deploys.
+    let own_slash_keys = slashing_deploys
+        .iter()
+        .map(|sd| (sd.invalid_block_hash.clone(), sd.pk.bytes.to_vec()));
+    let recovered_rejected_slashes =
+        crate::rust::merging::rejected_slash::filter_recoverable(rejected_slashes, own_slash_keys);
+
     // Make sure closeBlock is the last system Deploy
     let mut system_deploys_converted: Vec<SystemDeployEnum> = Vec::new();
 
-    // Add slashing deploys
+    // Add own-detected slashes
     for slash_deploy in slashing_deploys {
+        system_deploys_converted.push(SystemDeployEnum::Slash(slash_deploy));
+    }
+
+    // Re-issue slashes that the merge dropped. The proposer signs these
+    // under its own identity, matching the existing slashing convention.
+    let self_id = Bytes::copy_from_slice(&validator_identity.public_key.bytes);
+    for rs in &recovered_rejected_slashes {
+        let slash_deploy = SlashDeploy {
+            invalid_block_hash: rs.invalid_block_hash.clone(),
+            pk: validator_identity.public_key.clone(),
+            initial_rand: system_deploy_util::generate_slash_deploy_random_seed(
+                self_id.clone(),
+                next_seq_num,
+            ),
+        };
+        tracing::info!(
+            "Recovering merge-rejected slash: invalid_block={}, original_issuer={}",
+            pretty_printer::PrettyPrinter::build_string_bytes(&rs.invalid_block_hash),
+            hex::encode(&rs.issuer_public_key.bytes)
+        );
         system_deploys_converted.push(SystemDeployEnum::Slash(slash_deploy));
     }
 
@@ -544,6 +629,7 @@ pub async fn create(
         runtime_manager,
         block_data.clone(),
         invalid_blocks,
+        Some(&rejected_deploy_buffer),
     )
     .await
     {
@@ -689,4 +775,3 @@ fn not_expired_deploy(earliest_block_number: i64, deploy_data: &DeployData) -> b
 fn not_future_deploy(current_block_number: i64, deploy_data: &DeployData) -> bool {
     deploy_data.valid_after_block_number < current_block_number
 }
-

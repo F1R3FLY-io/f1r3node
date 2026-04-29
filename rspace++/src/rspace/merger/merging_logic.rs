@@ -9,9 +9,44 @@ use super::event_log_index::EventLogIndex;
 use crate::rspace::hashing::blake2b256_hash::Blake2b256Hash;
 use crate::rspace::trace::event::{Consume, Produce};
 
-pub type NumberChannelsEndVal = BTreeMap<Blake2b256Hash, i64>;
+/// Merge strategy for a mergeable channel. Mirrors
+/// `rholang::interpreter::merging::merge_type::MergeType` but is redefined
+/// here to avoid `rspace++` taking a dependency on `rholang`.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Hash,
+    Ord,
+    PartialOrd,
+    serde::Serialize,
+    serde::Deserialize,
+)]
+pub enum MergeType {
+    IntegerAdd,
+    BitmaskOr,
+}
 
-pub type NumberChannelsDiff = BTreeMap<Blake2b256Hash, i64>;
+pub type NumberChannelsEndVal = BTreeMap<Blake2b256Hash, (i64, MergeType)>;
+
+pub type NumberChannelsDiff = BTreeMap<Blake2b256Hash, (i64, MergeType)>;
+
+/// Combine two values according to the strategy. Used by `EventLogIndex::combine`
+/// to aggregate diffs within a chain and by the merge engine to combine across
+/// chains. For `IntegerAdd` semantics, this performs wrapping addition; for
+/// `BitmaskOr` it performs a bitwise OR through `u64`.
+pub fn combine_mergeable_value(
+    a: i64,
+    b: i64,
+    merge_type: MergeType,
+) -> i64 {
+    match merge_type {
+        MergeType::IntegerAdd => a.wrapping_add(b),
+        MergeType::BitmaskOr => ((a as u64) | (b as u64)) as i64,
+    }
+}
 
 /// If target depends on source.
 pub fn depends(target: &EventLogIndex, source: &EventLogIndex) -> bool {

@@ -253,7 +253,9 @@ async fn exec_replay_system_deploy<S: SystemDeployTrait>(
         _ => None,
     };
 
-    replay_runtime_ops.rig_system_deploy(processed_system_deploy).await?;
+    replay_runtime_ops
+        .rig_system_deploy(processed_system_deploy)
+        .await?;
     replay_runtime_ops
         .runtime_ops
         .runtime
@@ -264,11 +266,17 @@ async fn exec_replay_system_deploy<S: SystemDeployTrait>(
         .replay_system_deploy_internal(system_deploy, &expected_failure)
         .await?;
 
-    replay_runtime_ops.check_replay_data_with_fix(eval_res.errors.is_empty()).await?;
+    replay_runtime_ops
+        .check_replay_data_with_fix(eval_res.errors.is_empty())
+        .await?;
 
     match (value, eval_res) {
         (Either::Right(result), _) => {
-            let checkpoint = replay_runtime_ops.runtime_ops.runtime.create_checkpoint().await;
+            let checkpoint = replay_runtime_ops
+                .runtime_ops
+                .runtime
+                .create_checkpoint()
+                .await;
 
             Ok(SystemDeployReplayResult::ReplaySucceeded {
                 state_hash: checkpoint.root.to_bytes_prost(),
@@ -1396,8 +1404,7 @@ async fn replay_on_independent_runtime_should_match_play_cost_for_duplicate_send
     let genesis_post_state = genesis_block.body.state.post_state_hash.clone();
 
     let bridge_rho = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/resources/bridge.rho"),
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/resources/bridge.rho"),
     )
     .expect("Failed to read bridge.rho");
 
@@ -1408,8 +1415,13 @@ async fn replay_on_independent_runtime_should_match_play_cost_for_duplicate_send
 
         let deploy = construct_deploy::source_deploy_now_full(
             bridge_rho.clone(),
-            None, None, None, None, None,
-        ).unwrap();
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
 
         let play_block_data = BlockData {
             time_stamp: deploy.data.time_stamp,
@@ -1477,12 +1489,17 @@ async fn cross_deploy_bridge_full_admin_flow() {
     let genesis_context = crate::util::rholang::resources::genesis_context()
         .await
         .unwrap();
-    let genesis_post_state = genesis_context.genesis_block.body.state.post_state_hash.clone();
+    let genesis_post_state = genesis_context
+        .genesis_block
+        .body
+        .state
+        .post_state_hash
+        .clone();
 
     let bridge_rho = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/resources/bridge.rho"),
-    ).expect("Failed to read bridge.rho");
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/resources/bridge.rho"),
+    )
+    .expect("Failed to read bridge.rho");
 
     let mut kvm = mk_test_rnode_store_manager_from_genesis(&genesis_context);
     let (mut rm, _) = mk_runtime_manager_with_history_at(&mut *kvm).await;
@@ -1492,11 +1509,9 @@ async fn cross_deploy_bridge_full_admin_flow() {
     let make_deploy_id_par = |sig: &[u8]| -> models::rhoapi::Par {
         models::rhoapi::Par {
             unforgeables: vec![models::rhoapi::GUnforgeable {
-                unf_instance: Some(
-                    models::rhoapi::g_unforgeable::UnfInstance::GDeployIdBody(
-                        models::rhoapi::GDeployId { sig: sig.to_vec() },
-                    ),
-                ),
+                unf_instance: Some(models::rhoapi::g_unforgeable::UnfInstance::GDeployIdBody(
+                    models::rhoapi::GDeployId { sig: sig.to_vec() },
+                )),
             }],
             ..Default::default()
         }
@@ -1508,9 +1523,8 @@ async fn cross_deploy_bridge_full_admin_flow() {
     // Step 1: Deploy bridge.rho
     tracing::info!("Step 1: Deploying bridge.rho");
     block_number += 1;
-    let deploy1 = construct_deploy::source_deploy_now_full(
-        bridge_rho, None, None, None, None, None,
-    ).unwrap();
+    let deploy1 =
+        construct_deploy::source_deploy_now_full(bridge_rho, None, None, None, None, None).unwrap();
 
     let (post_state_1, pd1_vec, _) = rm
         .compute_state(
@@ -1518,7 +1532,10 @@ async fn cross_deploy_bridge_full_admin_flow() {
             vec![deploy1],
             Vec::new(),
             BlockData {
-                time_stamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as i64,
+                time_stamp: SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_millis() as i64,
                 block_number: block_number as i64,
                 sender: genesis_context.validator_pks()[0].clone(),
                 seq_num: block_number as i32,
@@ -1529,19 +1546,45 @@ async fn cross_deploy_bridge_full_admin_flow() {
         .unwrap();
 
     let pd1 = &pd1_vec[0];
-    assert!(!pd1.is_failed, "Step 1: bridge deploy failed: {:?}", pd1.system_deploy_error);
-    tracing::info!("Step 1: cost={}, events={}", pd1.cost.cost, pd1.deploy_log.len());
+    assert!(
+        !pd1.is_failed,
+        "Step 1: bridge deploy failed: {:?}",
+        pd1.system_deploy_error
+    );
+    tracing::info!(
+        "Step 1: cost={}, events={}",
+        pd1.cost.cost,
+        pd1.deploy_log.len()
+    );
 
-    let deploy1_data = rm.get_data(post_state_1.clone(), &make_deploy_id_par(&pd1_vec[0].deploy.sig)).await.unwrap();
-    assert!(!deploy1_data.is_empty(), "Step 1: bridge deploy wrote no data to deployId");
+    let deploy1_data = rm
+        .get_data(
+            post_state_1.clone(),
+            &make_deploy_id_par(&pd1_vec[0].deploy.sig),
+        )
+        .await
+        .unwrap();
+    assert!(
+        !deploy1_data.is_empty(),
+        "Step 1: bridge deploy wrote no data to deployId"
+    );
 
     let data_str = format!("{:?}", deploy1_data);
-    let uris: Vec<String> = uri_regex.find_iter(&data_str).map(|m| m.as_str().to_string()).collect();
+    let uris: Vec<String> = uri_regex
+        .find_iter(&data_str)
+        .map(|m| m.as_str().to_string())
+        .collect();
     let mut unique_uris: Vec<String> = Vec::new();
     for uri in &uris {
-        if !unique_uris.contains(uri) { unique_uris.push(uri.clone()); }
+        if !unique_uris.contains(uri) {
+            unique_uris.push(uri.clone());
+        }
     }
-    assert!(unique_uris.len() >= 2, "Expected at least 2 URIs, got: {:?}", unique_uris);
+    assert!(
+        unique_uris.len() >= 2,
+        "Expected at least 2 URIs, got: {:?}",
+        unique_uris
+    );
     let query_uri = unique_uris[0].clone();
     let admin_uri = unique_uris.last().unwrap().clone();
     tracing::info!("  queryUri: {}, adminUri: {}", query_uri, admin_uri);
@@ -1549,7 +1592,10 @@ async fn cross_deploy_bridge_full_admin_flow() {
 
     // Steps 2-7: getNonce + admin calls
     let steps: Vec<(&str, String)> = vec![
-        ("getNonce", format!(r#"
+        (
+            "getNonce",
+            format!(
+                r#"
 new deployId(`rho:system:deployId`),
     lookup(`rho:registry:lookup`),
     queryCh, ret
@@ -1560,8 +1606,14 @@ in {{
     for (@result <- ret) {{ deployId!(result) }}
   }}
 }}
-"#, query_uri)),
-        ("setVerifier", format!(r#"
+"#,
+                query_uri
+            ),
+        ),
+        (
+            "setVerifier",
+            format!(
+                r#"
 new deployId(`rho:system:deployId`), deployerId(`rho:system:deployerId`),
     lookup(`rho:registry:lookup`), VaultAddress(`rho:vault:address`),
     adminBridgeCh, callerAddrCh, ret
@@ -1573,8 +1625,14 @@ in {{
     for (@result <- ret) {{ deployId!(result) }}
   }}
 }}
-"#, admin_uri)),
-        ("setRelayer", format!(r#"
+"#,
+                admin_uri
+            ),
+        ),
+        (
+            "setRelayer",
+            format!(
+                r#"
 new deployId(`rho:system:deployId`), deployerId(`rho:system:deployerId`),
     lookup(`rho:registry:lookup`), VaultAddress(`rho:vault:address`),
     adminBridgeCh, callerAddrCh, ret
@@ -1586,8 +1644,14 @@ in {{
     for (@result <- ret) {{ deployId!(result) }}
   }}
 }}
-"#, admin_uri)),
-        ("setRequiredSignatures", format!(r#"
+"#,
+                admin_uri
+            ),
+        ),
+        (
+            "setRequiredSignatures",
+            format!(
+                r#"
 new deployId(`rho:system:deployId`), deployerId(`rho:system:deployerId`),
     lookup(`rho:registry:lookup`), VaultAddress(`rho:vault:address`),
     adminBridgeCh, callerAddrCh, ret
@@ -1599,8 +1663,14 @@ in {{
     for (@result <- ret) {{ deployId!(result) }}
   }}
 }}
-"#, admin_uri)),
-        ("addOracle", format!(r#"
+"#,
+                admin_uri
+            ),
+        ),
+        (
+            "addOracle",
+            format!(
+                r#"
 new deployId(`rho:system:deployId`), deployerId(`rho:system:deployerId`),
     lookup(`rho:registry:lookup`), VaultAddress(`rho:vault:address`),
     adminBridgeCh, callerAddrCh, ret
@@ -1612,8 +1682,14 @@ in {{
     for (@result <- ret) {{ deployId!(result) }}
   }}
 }}
-"#, admin_uri)),
-        ("removeOracle", format!(r#"
+"#,
+                admin_uri
+            ),
+        ),
+        (
+            "removeOracle",
+            format!(
+                r#"
 new deployId(`rho:system:deployId`), deployerId(`rho:system:deployerId`),
     lookup(`rho:registry:lookup`), VaultAddress(`rho:vault:address`),
     adminBridgeCh, callerAddrCh, ret
@@ -1625,7 +1701,10 @@ in {{
     for (@result <- ret) {{ deployId!(result) }}
   }}
 }}
-"#, admin_uri)),
+"#,
+                admin_uri
+            ),
+        ),
     ];
 
     let mut failures = Vec::new();
@@ -1633,9 +1712,9 @@ in {{
         block_number += 1;
         tracing::info!("{}", name);
 
-        let deploy = construct_deploy::source_deploy_now_full(
-            code.clone(), None, None, None, None, None,
-        ).unwrap();
+        let deploy =
+            construct_deploy::source_deploy_now_full(code.clone(), None, None, None, None, None)
+                .unwrap();
 
         let (post_state_n, pdn_vec, _) = rm
             .compute_state(
@@ -1643,7 +1722,10 @@ in {{
                 vec![deploy],
                 Vec::new(),
                 BlockData {
-                    time_stamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as i64,
+                    time_stamp: SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap()
+                        .as_millis() as i64,
                     block_number: block_number as i64,
                     sender: genesis_context.validator_pks()[0].clone(),
                     seq_num: block_number as i32,
@@ -1654,13 +1736,34 @@ in {{
             .unwrap();
 
         let pdn = &pdn_vec[0];
-        assert!(!pdn.is_failed, "{}: deploy failed: {:?}", name, pdn.system_deploy_error);
-        let deploy_data = rm.get_data(post_state_n.clone(), &make_deploy_id_par(&pdn_vec[0].deploy.sig)).await.unwrap();
+        assert!(
+            !pdn.is_failed,
+            "{}: deploy failed: {:?}",
+            name, pdn.system_deploy_error
+        );
+        let deploy_data = rm
+            .get_data(
+                post_state_n.clone(),
+                &make_deploy_id_par(&pdn_vec[0].deploy.sig),
+            )
+            .await
+            .unwrap();
         let has_data = !deploy_data.is_empty();
-        tracing::info!("  {}: cost={}, events={}, deployId_data={}", name, pdn.cost.cost, pdn.deploy_log.len(), has_data);
+        tracing::info!(
+            "  {}: cost={}, events={}, deployId_data={}",
+            name,
+            pdn.cost.cost,
+            pdn.deploy_log.len(),
+            has_data
+        );
 
         if !has_data {
-            failures.push(format!("{} returned no data. cost={}, events={}", name, pdn.cost.cost, pdn.deploy_log.len()));
+            failures.push(format!(
+                "{} returned no data. cost={}, events={}",
+                name,
+                pdn.cost.cost,
+                pdn.deploy_log.len()
+            ));
         }
         current_state = post_state_n;
     }
@@ -1682,7 +1785,12 @@ in {{
 /// empty deployId after finalization (intermittent)"
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn bridge_query_survives_multi_parent_merge() {
+    use crate::util::rholang::resources::{
+        block_dag_storage_from_dyn, mergeable_store_from_dyn,
+        mk_test_rnode_store_manager_from_genesis,
+    };
     use block_storage::rust::key_value_block_store::KeyValueBlockStore;
+    use casper::rust::genesis::genesis::Genesis;
     use casper::rust::{
         casper::{CasperShardConf, CasperSnapshot, OnChainCasperState},
         util::{
@@ -1690,14 +1798,9 @@ async fn bridge_query_survives_multi_parent_merge() {
             rholang::interpreter_util::{compute_deploys_checkpoint, compute_parents_post_state},
         },
     };
-    use crate::util::rholang::resources::{
-        mk_test_rnode_store_manager_from_genesis, block_dag_storage_from_dyn,
-        mergeable_store_from_dyn,
-    };
     use dashmap::{DashMap, DashSet};
     use models::rust::{block_hash::BlockHash, block_implicits};
     use rholang::rust::interpreter::external_services::ExternalServices;
-    use casper::rust::genesis::genesis::Genesis;
 
     crate::init_logger();
     let genesis_context = crate::util::rholang::resources::genesis_context()
@@ -1714,10 +1817,13 @@ async fn bridge_query_survives_multi_parent_merge() {
     let mut kvm = mk_test_rnode_store_manager_from_genesis(&genesis_context);
 
     let rspace_store = kvm.r_space_stores().await.expect("rspace stores");
-    let mergeable_store = mergeable_store_from_dyn(&mut *kvm).await.expect("mergeable store");
+    let mergeable_store = mergeable_store_from_dyn(&mut *kvm)
+        .await
+        .expect("mergeable store");
     let (mut rm, _) = RuntimeManager::create_with_history(
-        rspace_store, mergeable_store,
-        Genesis::non_negative_mergeable_tag_name(),
+        rspace_store,
+        mergeable_store,
+        std::sync::Arc::new(Genesis::default_mergeable_tags()),
         ExternalServices::noop(),
     );
 
@@ -1728,11 +1834,18 @@ async fn bridge_query_survives_multi_parent_merge() {
         .await
         .expect("dag storage");
 
-    block_store.put_block_message(&genesis_block).expect("store genesis");
-    dag_storage.insert(&genesis_block, false, true).expect("dag genesis");
+    block_store
+        .put_block_message(&genesis_block)
+        .expect("store genesis");
+    dag_storage
+        .insert(&genesis_block, false, true)
+        .expect("dag genesis");
 
     let now_millis = || -> i64 {
-        SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0)
     };
 
     let mk_snapshot = |lfb: &BlockHash| -> CasperSnapshot {
@@ -1758,11 +1871,9 @@ async fn bridge_query_survives_multi_parent_merge() {
     let make_deploy_id_par = |sig: &[u8]| -> models::rhoapi::Par {
         models::rhoapi::Par {
             unforgeables: vec![models::rhoapi::GUnforgeable {
-                unf_instance: Some(
-                    models::rhoapi::g_unforgeable::UnfInstance::GDeployIdBody(
-                        models::rhoapi::GDeployId { sig: sig.to_vec() },
-                    ),
-                ),
+                unf_instance: Some(models::rhoapi::g_unforgeable::UnfInstance::GDeployIdBody(
+                    models::rhoapi::GDeployId { sig: sig.to_vec() },
+                )),
             }],
             ..Default::default()
         }
@@ -1770,32 +1881,55 @@ async fn bridge_query_survives_multi_parent_merge() {
 
     let bridge_rho = std::fs::read_to_string(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/resources/bridge.rho"),
-    ).expect("Failed to read bridge.rho");
+    )
+    .expect("Failed to read bridge.rho");
 
     // --- Block A: bridge deploy from genesis ---
-    let bridge_deploy = construct_deploy::source_deploy_now_full(
-        bridge_rho, None, None, None, None, None,
-    ).unwrap();
+    let bridge_deploy =
+        construct_deploy::source_deploy_now_full(bridge_rho, None, None, None, None, None).unwrap();
 
     let block_a_raw = block_implicits::get_random_block(
-        Some(1), Some(1), Some(genesis_state.clone()), Some(StateHash::default()),
-        Some(validator.clone()), Some(1), Some(now_millis()),
-        Some(vec![genesis_hash.clone()]), Some(Vec::new()),
+        Some(1),
+        Some(1),
+        Some(genesis_state.clone()),
+        Some(StateHash::default()),
+        Some(validator.clone()),
+        Some(1),
+        Some(now_millis()),
+        Some(vec![genesis_hash.clone()]),
+        Some(Vec::new()),
         Some(vec![ProcessedDeploy::empty(bridge_deploy)]),
-        Some(Vec::new()), Some(genesis_bonds.clone()), Some(shard_name.clone()), None,
+        Some(Vec::new()),
+        Some(genesis_bonds.clone()),
+        Some(shard_name.clone()),
+        None,
     );
 
     let parents_a = vec![genesis_block.clone()];
-    let deploys_a = proto_util::deploys(&block_a_raw).into_iter().map(|d| d.deploy).collect();
+    let deploys_a = proto_util::deploys(&block_a_raw)
+        .into_iter()
+        .map(|d| d.deploy)
+        .collect();
     let snapshot_a = mk_snapshot(&genesis_hash);
     let (_, post_state_a, pd_a, _, sys_pd_a, bonds_a) = compute_deploys_checkpoint(
-        &mut block_store, parents_a, deploys_a,
+        &mut block_store,
+        parents_a,
+        deploys_a,
         Vec::<casper::rust::util::rholang::system_deploy_enum::SystemDeployEnum>::new(),
-        &snapshot_a, &mut rm,
-        BlockData::from_block(&block_a_raw), HashMap::new(),
-    ).await.expect("compute block A");
+        &snapshot_a,
+        &mut rm,
+        BlockData::from_block(&block_a_raw),
+        HashMap::new(),
+        None,
+    )
+    .await
+    .expect("compute block A");
 
-    assert!(!pd_a[0].is_failed, "Bridge deploy failed: {:?}", pd_a[0].system_deploy_error);
+    assert!(
+        !pd_a[0].is_failed,
+        "Bridge deploy failed: {:?}",
+        pd_a[0].system_deploy_error
+    );
 
     let mut block_a = block_a_raw;
     block_a.body.state.post_state_hash = post_state_a.clone();
@@ -1806,34 +1940,70 @@ async fn bridge_query_survives_multi_parent_merge() {
     dag_storage.insert(&block_a, false, false).expect("dag A");
 
     // Verify bridge wrote data and extract queryUri
-    let bridge_data = rm.get_data(post_state_a.clone(), &make_deploy_id_par(&pd_a[0].deploy.sig)).await.unwrap();
-    assert!(!bridge_data.is_empty(), "Bridge deploy wrote no data to deployId");
+    let bridge_data = rm
+        .get_data(
+            post_state_a.clone(),
+            &make_deploy_id_par(&pd_a[0].deploy.sig),
+        )
+        .await
+        .unwrap();
+    assert!(
+        !bridge_data.is_empty(),
+        "Bridge deploy wrote no data to deployId"
+    );
 
     let uri_regex = regex::Regex::new(r"rho:id:[a-zA-Z0-9]+").unwrap();
     let data_str = format!("{:?}", bridge_data);
-    let uris: Vec<String> = uri_regex.find_iter(&data_str).map(|m| m.as_str().to_string()).collect();
+    let uris: Vec<String> = uri_regex
+        .find_iter(&data_str)
+        .map(|m| m.as_str().to_string())
+        .collect();
     let mut unique_uris: Vec<String> = Vec::new();
-    for uri in &uris { if !unique_uris.contains(uri) { unique_uris.push(uri.clone()); } }
-    assert!(unique_uris.len() >= 2, "Expected at least 2 URIs, got: {:?}", unique_uris);
+    for uri in &uris {
+        if !unique_uris.contains(uri) {
+            unique_uris.push(uri.clone());
+        }
+    }
+    assert!(
+        unique_uris.len() >= 2,
+        "Expected at least 2 URIs, got: {:?}",
+        unique_uris
+    );
     let query_uri = unique_uris[0].clone();
 
     // --- Block B: empty block from genesis (sibling branch) ---
     let block_b_raw = block_implicits::get_random_block(
-        Some(1), Some(2), Some(genesis_state.clone()), Some(StateHash::default()),
-        Some(validator.clone()), Some(1), Some(now_millis()),
-        Some(vec![genesis_hash.clone()]), Some(Vec::new()),
-        Some(Vec::new()), Some(Vec::new()),
-        Some(genesis_bonds.clone()), Some(shard_name.clone()), None,
+        Some(1),
+        Some(2),
+        Some(genesis_state.clone()),
+        Some(StateHash::default()),
+        Some(validator.clone()),
+        Some(1),
+        Some(now_millis()),
+        Some(vec![genesis_hash.clone()]),
+        Some(Vec::new()),
+        Some(Vec::new()),
+        Some(Vec::new()),
+        Some(genesis_bonds.clone()),
+        Some(shard_name.clone()),
+        None,
     );
 
     let parents_b = vec![genesis_block.clone()];
     let snapshot_b = mk_snapshot(&genesis_hash);
     let (_, post_state_b, pd_b, _, sys_pd_b, bonds_b) = compute_deploys_checkpoint(
-        &mut block_store, parents_b, Vec::new(),
+        &mut block_store,
+        parents_b,
+        Vec::new(),
         Vec::<casper::rust::util::rholang::system_deploy_enum::SystemDeployEnum>::new(),
-        &snapshot_b, &mut rm,
-        BlockData::from_block(&block_b_raw), HashMap::new(),
-    ).await.expect("compute block B");
+        &snapshot_b,
+        &mut rm,
+        BlockData::from_block(&block_b_raw),
+        HashMap::new(),
+        None,
+    )
+    .await
+    .expect("compute block B");
 
     let mut block_b = block_b_raw;
     block_b.body.state.post_state_hash = post_state_b.clone();
@@ -1846,14 +2016,26 @@ async fn bridge_query_survives_multi_parent_merge() {
     // --- Merge [A, B] ---
     let parents = vec![block_a.clone(), block_b.clone()];
     let snapshot_merge = mk_snapshot(&genesis_hash);
-    let (merged_state, rejected) = compute_parents_post_state(
-        &block_store, parents, &snapshot_merge, &rm, None,
-    ).expect("merge parents");
+    let (merged_state, rejected, rejected_slashes) =
+        compute_parents_post_state(&block_store, parents, &snapshot_merge, &rm, None, None)
+            .expect("merge parents");
 
-    assert!(rejected.is_empty(), "Merge rejected deploys: {:?}", rejected);
+    assert!(
+        rejected.is_empty(),
+        "Merge rejected deploys: {:?}",
+        rejected
+    );
+    // Non-slash merge scenario must surface an empty rejected_slashes list so
+    // the block creator's dedup step runs as a no-op.
+    assert!(
+        rejected_slashes.is_empty(),
+        "Merge rejected slashes unexpectedly populated: count={}",
+        rejected_slashes.len()
+    );
 
     // --- Query getNonce from merged state ---
-    let get_nonce_rho = format!(r#"
+    let get_nonce_rho = format!(
+        r#"
 new deployId(`rho:system:deployId`),
     lookup(`rho:registry:lookup`),
     queryCh, ret
@@ -1864,40 +2046,537 @@ in {{
     for (@result <- ret) {{ deployId!(result) }}
   }}
 }}
-"#, query_uri);
+"#,
+        query_uri
+    );
 
-    let query_deploy = construct_deploy::source_deploy_now_full(
-        get_nonce_rho, None, None, None, None, None,
-    ).unwrap();
+    let query_deploy =
+        construct_deploy::source_deploy_now_full(get_nonce_rho, None, None, None, None, None)
+            .unwrap();
 
     let query_block_raw = block_implicits::get_random_block(
-        Some(2), Some(3), Some(merged_state.clone()), Some(StateHash::default()),
-        Some(validator.clone()), Some(1), Some(now_millis()),
+        Some(2),
+        Some(3),
+        Some(merged_state.clone()),
+        Some(StateHash::default()),
+        Some(validator.clone()),
+        Some(1),
+        Some(now_millis()),
         Some(vec![block_a.block_hash.clone(), block_b.block_hash.clone()]),
         Some(Vec::new()),
         Some(vec![ProcessedDeploy::empty(query_deploy)]),
-        Some(Vec::new()), Some(genesis_bonds.clone()), Some(shard_name.clone()), None,
+        Some(Vec::new()),
+        Some(genesis_bonds.clone()),
+        Some(shard_name.clone()),
+        None,
     );
 
     let parents_q = vec![block_a.clone(), block_b.clone()];
-    let deploys_q = proto_util::deploys(&query_block_raw).into_iter().map(|d| d.deploy).collect();
+    let deploys_q = proto_util::deploys(&query_block_raw)
+        .into_iter()
+        .map(|d| d.deploy)
+        .collect();
     let snapshot_q = mk_snapshot(&genesis_hash);
     let (_, post_state_q, pd_q, _, _, _) = compute_deploys_checkpoint(
-        &mut block_store, parents_q, deploys_q,
+        &mut block_store,
+        parents_q,
+        deploys_q,
         Vec::<casper::rust::util::rholang::system_deploy_enum::SystemDeployEnum>::new(),
-        &snapshot_q, &mut rm,
-        BlockData::from_block(&query_block_raw), HashMap::new(),
-    ).await.expect("compute query block");
+        &snapshot_q,
+        &mut rm,
+        BlockData::from_block(&query_block_raw),
+        HashMap::new(),
+        None,
+    )
+    .await
+    .expect("compute query block");
 
-    assert!(!pd_q[0].is_failed, "Query deploy failed: {:?}", pd_q[0].system_deploy_error);
+    assert!(
+        !pd_q[0].is_failed,
+        "Query deploy failed: {:?}",
+        pd_q[0].system_deploy_error
+    );
 
-    let query_data = rm.get_data(post_state_q, &make_deploy_id_par(&pd_q[0].deploy.sig)).await.unwrap();
+    let query_data = rm
+        .get_data(post_state_q, &make_deploy_id_par(&pd_q[0].deploy.sig))
+        .await
+        .unwrap();
 
     assert!(
         !query_data.is_empty(),
         "Bridge query returned empty deployId after multi-parent merge. \
          The merge did not preserve the bridge's registry entries when \
          combining a bridge branch with an empty sibling branch."
+    );
+}
+
+/// Exercises the conflict-detection path for two independent contracts both
+/// calling insertArbitrary. Under multi-parent DAG semantics with
+/// non-persistent Rholang produces on shared system channels, concurrent
+/// operations on the same channel legitimately race and one must be rejected;
+/// the test's `rejected.is_empty()` assertion encodes an obsolete premise and
+/// needs to be rewritten once the rejected-deploy recovery mechanism lands.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "assertion contradicts multi-parent DAG design; awaits rewrite"]
+async fn concurrent_registry_inserts_should_not_conflict() {
+    use crate::util::rholang::resources::{
+        block_dag_storage_from_dyn, mergeable_store_from_dyn,
+        mk_test_rnode_store_manager_from_genesis,
+    };
+    use block_storage::rust::key_value_block_store::KeyValueBlockStore;
+    use casper::rust::genesis::genesis::Genesis;
+    use casper::rust::{
+        casper::{CasperShardConf, CasperSnapshot, OnChainCasperState},
+        util::{
+            proto_util,
+            rholang::interpreter_util::{compute_deploys_checkpoint, compute_parents_post_state},
+        },
+    };
+    use dashmap::{DashMap, DashSet};
+    use models::rust::{block_hash::BlockHash, block_implicits};
+    use rholang::rust::interpreter::external_services::ExternalServices;
+
+    crate::init_logger();
+    let genesis_context = crate::util::rholang::resources::genesis_context()
+        .await
+        .unwrap();
+    let genesis_block = genesis_context.genesis_block.clone();
+    let genesis_hash = genesis_block.block_hash.clone();
+    let genesis_state = proto_util::post_state_hash(&genesis_block);
+    let genesis_bonds = genesis_block.body.state.bonds.clone();
+    let validator: prost::bytes::Bytes = genesis_context.validator_pks()[0].bytes.clone().into();
+    let shard_name = genesis_block.shard_id.clone();
+
+    let mut kvm = mk_test_rnode_store_manager_from_genesis(&genesis_context);
+    let rspace_store = kvm.r_space_stores().await.expect("rspace stores");
+    let mergeable_store = mergeable_store_from_dyn(&mut *kvm)
+        .await
+        .expect("mergeable store");
+    let (mut rm, _) = RuntimeManager::create_with_history(
+        rspace_store,
+        mergeable_store,
+        std::sync::Arc::new(Genesis::default_mergeable_tags()),
+        ExternalServices::noop(),
+    );
+
+    let mut block_store = KeyValueBlockStore::create_from_kvm(&mut *kvm)
+        .await
+        .expect("block store");
+    let dag_storage = block_dag_storage_from_dyn(&mut *kvm)
+        .await
+        .expect("dag storage");
+
+    block_store
+        .put_block_message(&genesis_block)
+        .expect("store genesis");
+    dag_storage
+        .insert(&genesis_block, false, true)
+        .expect("dag genesis");
+
+    let now_millis = || -> i64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0)
+    };
+
+    let mk_snapshot = |lfb: &BlockHash| -> CasperSnapshot {
+        let mut snapshot = CasperSnapshot::new(dag_storage.get_representation());
+        snapshot.last_finalized_block = lfb.clone();
+        let max_seq_nums: DashMap<prost::bytes::Bytes, u64> = DashMap::new();
+        max_seq_nums.insert(validator.clone(), 0);
+        snapshot.max_seq_nums = max_seq_nums;
+        let mut shard_conf = CasperShardConf::new();
+        shard_conf.shard_name = shard_name.clone();
+        shard_conf.max_parent_depth = 0;
+        let mut bonds_map = HashMap::new();
+        bonds_map.insert(validator.clone(), 100);
+        snapshot.on_chain_state = OnChainCasperState {
+            shard_conf,
+            bonds_map,
+            active_validators: vec![validator.clone()],
+        };
+        snapshot.deploys_in_scope = std::sync::Arc::new(DashSet::new());
+        snapshot
+    };
+
+    // Both blocks deploy bridge-v2.rho — a complex contract with vault operations,
+    // registry inserts, and many shared channel interactions.
+    // Use different genesis validator keys so both deployers have funded vaults.
+    let bridge_rho = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/resources/bridge.rho"),
+    )
+    .expect("Failed to read bridge.rho");
+
+    // Use DEFAULT_SEC / DEFAULT_SEC2 — these have funded vaults (9M balance) in genesis.
+    // Validator keys have 0 balance and can't deploy.
+    let key_a = construct_deploy::DEFAULT_SEC.clone();
+    let key_b = construct_deploy::DEFAULT_SEC2.clone();
+
+    // --- Block A: bridge deploy from genesis (funded deployer A) ---
+    let deploy_a = construct_deploy::source_deploy_now_full(
+        bridge_rho.clone(),
+        None,
+        None,
+        Some(key_a),
+        None,
+        None,
+    )
+    .unwrap();
+
+    let block_a_raw = block_implicits::get_random_block(
+        Some(1),
+        Some(1),
+        Some(genesis_state.clone()),
+        Some(StateHash::default()),
+        Some(validator.clone()),
+        Some(1),
+        Some(now_millis()),
+        Some(vec![genesis_hash.clone()]),
+        Some(Vec::new()),
+        Some(vec![ProcessedDeploy::empty(deploy_a)]),
+        Some(Vec::new()),
+        Some(genesis_bonds.clone()),
+        Some(shard_name.clone()),
+        None,
+    );
+
+    let parents_a = vec![genesis_block.clone()];
+    let deploys_a = proto_util::deploys(&block_a_raw)
+        .into_iter()
+        .map(|d| d.deploy)
+        .collect();
+    let snapshot_a = mk_snapshot(&genesis_hash);
+    let (_, post_state_a, pd_a, _, sys_pd_a, bonds_a) = compute_deploys_checkpoint(
+        &mut block_store,
+        parents_a,
+        deploys_a,
+        Vec::<casper::rust::util::rholang::system_deploy_enum::SystemDeployEnum>::new(),
+        &snapshot_a,
+        &mut rm,
+        BlockData::from_block(&block_a_raw),
+        HashMap::new(),
+        None,
+    )
+    .await
+    .expect("compute block A");
+
+    assert!(
+        !pd_a[0].is_failed,
+        "Contract A deploy failed: {:?}",
+        pd_a[0].system_deploy_error
+    );
+    tracing::info!(
+        "Block A: cost={}, events={}",
+        pd_a[0].cost.cost,
+        pd_a[0].deploy_log.len()
+    );
+
+    let mut block_a = block_a_raw;
+    block_a.body.state.post_state_hash = post_state_a.clone();
+    block_a.body.deploys = pd_a.clone();
+    block_a.body.system_deploys = sys_pd_a;
+    block_a.body.state.bonds = bonds_a;
+    block_store.put_block_message(&block_a).expect("store A");
+    dag_storage.insert(&block_a, false, false).expect("dag A");
+
+    // --- Block B: second bridge deploy from genesis (sibling branch, funded deployer B) ---
+    let deploy_b =
+        construct_deploy::source_deploy_now_full(bridge_rho, None, None, Some(key_b), None, None)
+            .unwrap();
+
+    let block_b_raw = block_implicits::get_random_block(
+        Some(1),
+        Some(2),
+        Some(genesis_state.clone()),
+        Some(StateHash::default()),
+        Some(validator.clone()),
+        Some(1),
+        Some(now_millis()),
+        Some(vec![genesis_hash.clone()]),
+        Some(Vec::new()),
+        Some(vec![ProcessedDeploy::empty(deploy_b)]),
+        Some(Vec::new()),
+        Some(genesis_bonds.clone()),
+        Some(shard_name.clone()),
+        None,
+    );
+
+    let parents_b = vec![genesis_block.clone()];
+    let deploys_b = proto_util::deploys(&block_b_raw)
+        .into_iter()
+        .map(|d| d.deploy)
+        .collect();
+    let snapshot_b = mk_snapshot(&genesis_hash);
+    let (_, post_state_b, pd_b, _, sys_pd_b, bonds_b) = compute_deploys_checkpoint(
+        &mut block_store,
+        parents_b,
+        deploys_b,
+        Vec::<casper::rust::util::rholang::system_deploy_enum::SystemDeployEnum>::new(),
+        &snapshot_b,
+        &mut rm,
+        BlockData::from_block(&block_b_raw),
+        HashMap::new(),
+        None,
+    )
+    .await
+    .expect("compute block B");
+
+    assert!(
+        !pd_b[0].is_failed,
+        "Contract B deploy failed: {:?}",
+        pd_b[0].system_deploy_error
+    );
+    tracing::info!(
+        "Block B: cost={}, events={}",
+        pd_b[0].cost.cost,
+        pd_b[0].deploy_log.len()
+    );
+
+    let mut block_b = block_b_raw;
+    block_b.body.state.post_state_hash = post_state_b.clone();
+    block_b.body.deploys = pd_b.clone();
+    block_b.body.system_deploys = sys_pd_b;
+    block_b.body.state.bonds = bonds_b;
+    block_store.put_block_message(&block_b).expect("store B");
+    dag_storage.insert(&block_b, false, false).expect("dag B");
+
+    // Analyze conflict between the two deploys' event logs BEFORE merge
+    {
+        use casper::rust::merging::block_index::create_event_log_index;
+        use rspace_plus_plus::rspace::merger::merging_logic::{conflict_reason, conflicts};
+
+        let history_repo = rm.get_history_repo();
+        let genesis_hash_b256 =
+            rspace_plus_plus::rspace::hashing::blake2b256_hash::Blake2b256Hash::from_bytes_prost(
+                &genesis_state,
+            );
+
+        let eli_a = create_event_log_index(
+            &pd_a[0].deploy_log,
+            history_repo.clone(),
+            &genesis_hash_b256,
+            std::collections::BTreeMap::new(),
+        );
+        let eli_b = create_event_log_index(
+            &pd_b[0].deploy_log,
+            history_repo.clone(),
+            &genesis_hash_b256,
+            std::collections::BTreeMap::new(),
+        );
+
+        let reason = conflict_reason(&eli_a, &eli_b);
+        let conflict_channels = conflicts(&eli_a, &eli_b);
+        tracing::info!(
+            "Conflict analysis: reason={:?}, conflicting_channels={}",
+            reason,
+            conflict_channels.0.len(),
+        );
+        for ch in &conflict_channels.0 {
+            tracing::info!("  conflicting channel: {}", hex::encode(&ch.0[..8]));
+        }
+
+        // Find which produces are racing
+        let shared_produces: std::collections::HashSet<_> = eli_a
+            .produces_consumed
+            .0
+            .intersection(&eli_b.produces_consumed.0)
+            .cloned()
+            .collect();
+        let mergeable_produces: std::collections::HashSet<_> = eli_a
+            .produces_mergeable
+            .0
+            .intersection(&eli_b.produces_mergeable.0)
+            .cloned()
+            .collect();
+        let racing_produces: Vec<_> = shared_produces
+            .difference(&mergeable_produces)
+            .filter(|p| !p.persistent)
+            .collect();
+        tracing::info!("Racing produces: {}", racing_produces.len());
+        // Collect racing channel hashes for COMM tracing
+        let racing_channels: std::collections::HashSet<_> = racing_produces
+            .iter()
+            .map(|p| p.channel_hash.clone())
+            .collect();
+
+        // Search deploy A's event log for COMMs involving racing channels
+        tracing::info!(
+            "Searching deploy A events ({} total) for racing channels...",
+            pd_a[0].deploy_log.len()
+        );
+        for (idx, event) in pd_a[0].deploy_log.iter().enumerate() {
+            use models::rust::casper::protocol::casper_message::Event as CasperEvent;
+            match event {
+                CasperEvent::Comm(comm) => {
+                    let consume_channels: Vec<String> = comm
+                        .consume
+                        .channels_hashes
+                        .iter()
+                        .map(|h| hex::encode(&h[..std::cmp::min(8, h.len())]))
+                        .collect();
+                    let produce_channels: Vec<String> = comm
+                        .produces
+                        .iter()
+                        .map(|p| {
+                            hex::encode(&p.channels_hash[..std::cmp::min(8, p.channels_hash.len())])
+                        })
+                        .collect();
+                    // Check if any racing channel is in this COMM's produces
+                    for p in &comm.produces {
+                        let ch = rspace_plus_plus::rspace::hashing::blake2b256_hash::Blake2b256Hash::from_bytes_prost(&p.channels_hash);
+                        if racing_channels.contains(&ch) {
+                            tracing::info!(
+                                "  A event[{}] COMM: consume_channels={:?}, produce_channels={:?}, peeks={:?}, persistent_consume={}",
+                                idx, consume_channels, produce_channels, comm.peeks, comm.consume.persistent,
+                            );
+                        }
+                    }
+                }
+                CasperEvent::Produce(p) => {
+                    let ch = rspace_plus_plus::rspace::hashing::blake2b256_hash::Blake2b256Hash::from_bytes_prost(&p.channels_hash);
+                    if racing_channels.contains(&ch) {
+                        tracing::info!(
+                            "  A event[{}] IOProduce: channel={}, persistent={}, output_len={}",
+                            idx,
+                            hex::encode(
+                                &p.channels_hash[..std::cmp::min(8, p.channels_hash.len())]
+                            ),
+                            p.persistent,
+                            p.output_value.len(),
+                        );
+                    }
+                }
+                CasperEvent::Consume(c) => {
+                    for h in &c.channels_hashes {
+                        let ch = rspace_plus_plus::rspace::hashing::blake2b256_hash::Blake2b256Hash::from_bytes_prost(h);
+                        if racing_channels.contains(&ch) {
+                            tracing::info!(
+                                "  A event[{}] IOConsume: channels={:?}, persistent={}",
+                                idx,
+                                c.channels_hashes
+                                    .iter()
+                                    .map(|h| hex::encode(&h[..std::cmp::min(8, h.len())]))
+                                    .collect::<Vec<_>>(),
+                                c.persistent,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        for p in &racing_produces {
+            // Decode the output_value to see what data is being raced for
+            let output_str: Vec<String> = p
+                .output_value
+                .iter()
+                .map(|v| {
+                    format!(
+                        "raw({} bytes, first8={})",
+                        v.len(),
+                        hex::encode(&v[..std::cmp::min(8, v.len())])
+                    )
+                })
+                .collect();
+            tracing::info!(
+                "  racing produce: channel={}, hash={}, persistent={}, output={:?}",
+                hex::encode(&p.channel_hash.0[..8]),
+                hex::encode(&p.hash.0[..8]),
+                p.persistent,
+                output_str,
+            );
+        }
+    }
+
+    // --- Merge [A, B] ---
+    let parents = vec![block_a.clone(), block_b.clone()];
+    let snapshot_merge = mk_snapshot(&genesis_hash);
+    let (merged_state, rejected, _rejected_slashes) =
+        compute_parents_post_state(&block_store, parents, &snapshot_merge, &rm, None, None)
+            .expect("merge parents");
+
+    tracing::info!(
+        "Merge result: rejected={}, merged_state={}",
+        rejected.len(),
+        hex::encode(&merged_state[..8]),
+    );
+
+    if !rejected.is_empty() {
+        let rejected_sigs: Vec<String> = rejected
+            .iter()
+            .map(|d| hex::encode(&d[..std::cmp::min(8, d.len())]))
+            .collect();
+        tracing::warn!(
+            "CONFLICT DETECTED: {} deploys rejected: {:?}",
+            rejected.len(),
+            rejected_sigs,
+        );
+
+        // Identify which deploy was rejected
+        let a_sig = hex::encode(&pd_a[0].deploy.sig[..8]);
+        let b_sig = hex::encode(&pd_b[0].deploy.sig[..8]);
+        let a_rejected = rejected_sigs.iter().any(|s| *s == a_sig);
+        let b_rejected = rejected_sigs.iter().any(|s| *s == b_sig);
+        tracing::warn!(
+            "  Contract A ({}): {}",
+            a_sig,
+            if a_rejected { "REJECTED" } else { "kept" },
+        );
+        tracing::warn!(
+            "  Contract B ({}): {}",
+            b_sig,
+            if b_rejected { "REJECTED" } else { "kept" },
+        );
+    }
+
+    // The key assertion: both deploys should be kept.
+    // If one is rejected, insertArbitrary calls falsely conflict.
+    assert!(
+        rejected.is_empty(),
+        "Concurrent insertArbitrary calls should not conflict. \
+         {} deploys rejected during merge of two independent registry inserts. \
+         This is a false positive in conflict detection — both contracts write \
+         to different TreeHashMap leaf channels but share internal node channels.",
+        rejected.len(),
+    );
+
+    // Verify both URIs accessible from merged state
+    let make_deploy_id_par = |sig: &[u8]| -> models::rhoapi::Par {
+        models::rhoapi::Par {
+            unforgeables: vec![models::rhoapi::GUnforgeable {
+                unf_instance: Some(models::rhoapi::g_unforgeable::UnfInstance::GDeployIdBody(
+                    models::rhoapi::GDeployId { sig: sig.to_vec() },
+                )),
+            }],
+            ..Default::default()
+        }
+    };
+
+    let data_a = rm
+        .get_data(
+            merged_state.clone(),
+            &make_deploy_id_par(&pd_a[0].deploy.sig),
+        )
+        .await
+        .unwrap();
+    let data_b = rm
+        .get_data(
+            merged_state.clone(),
+            &make_deploy_id_par(&pd_b[0].deploy.sig),
+        )
+        .await
+        .unwrap();
+    tracing::info!("Contract A data in merged state: {} pars", data_a.len());
+    tracing::info!("Contract B data in merged state: {} pars", data_b.len());
+
+    assert!(
+        !data_a.is_empty(),
+        "Contract A data missing from merged state"
+    );
+    assert!(
+        !data_b.is_empty(),
+        "Contract B data missing from merged state"
     );
 }
 
@@ -1911,11 +2590,12 @@ in {{
 async fn exploratory_deploy_async_contract_query() {
     use crypto::rust::signatures::signatures_alg::SignaturesAlg;
 
-    with_runtime_manager(|runtime_manager, _genesis_context, genesis_block| async move {
-        let genesis_state = genesis_block.body.state.post_state_hash.clone();
+    with_runtime_manager(
+        |runtime_manager, _genesis_context, genesis_block| async move {
+            let genesis_state = genesis_block.body.state.post_state_hash.clone();
 
-        // Deploy a contract with a persistent state channel + persistent consume
-        let contract_rho = r#"
+            // Deploy a contract with a persistent state channel + persistent consume
+            let contract_rho = r#"
 new return, stateCh, queryCh,
     insertArbitrary(`rho:registry:insertArbitrary`)
 in {
@@ -1935,70 +2615,99 @@ in {
 }
 "#;
 
-        // Use a unique key to avoid GPrivate collision with exploratory deploy's DEFAULT_SEC
-        let (contract_key, _) = crypto::rust::signatures::secp256k1::Secp256k1.new_key_pair();
-        let deploy = construct_deploy::source_deploy(
-            contract_rho.to_string(), 0, Some(500_000_000), None, Some(contract_key), None, None,
-        ).unwrap();
+            // Use a unique key to avoid GPrivate collision with exploratory deploy's DEFAULT_SEC
+            let (contract_key, _) = crypto::rust::signatures::secp256k1::Secp256k1.new_key_pair();
+            let deploy = construct_deploy::source_deploy(
+                contract_rho.to_string(),
+                0,
+                Some(500_000_000),
+                None,
+                Some(contract_key),
+                None,
+                None,
+            )
+            .unwrap();
 
-        // Deploy and read URI via capture_results
-        let uri_pars = runtime_manager
-            .capture_results(&genesis_state, &deploy)
-            .await
-            .expect("deploy contract");
-        assert!(!uri_pars.is_empty(), "Contract deploy returned no URI");
+            // Deploy and read URI via capture_results
+            let uri_pars = runtime_manager
+                .capture_results(&genesis_state, &deploy)
+                .await
+                .expect("deploy contract");
+            assert!(!uri_pars.is_empty(), "Contract deploy returned no URI");
 
-        let uri_str = format!("{:?}", uri_pars[0]);
-        let uri_regex = regex::Regex::new(r"rho:id:[a-zA-Z0-9]+").unwrap();
-        let uri = uri_regex.find(&uri_str).expect("No rho:id URI found").as_str().to_string();
+            let uri_str = format!("{:?}", uri_pars[0]);
+            let uri_regex = regex::Regex::new(r"rho:id:[a-zA-Z0-9]+").unwrap();
+            let uri = uri_regex
+                .find(&uri_str)
+                .expect("No rho:id URI found")
+                .as_str()
+                .to_string();
 
-        // Checkpoint via a fresh runtime so exploratory deploy can see the state
-        let runtime = runtime_manager.spawn_runtime().await;
-        let mut runtime_ops = RuntimeOps::new(runtime);
-        runtime_ops.runtime
-            .reset(&Blake2b256Hash::from_bytes_prost(&genesis_state)).await
-            .expect("reset");
-        let eval_result = runtime_ops.evaluate(&deploy).await.expect("evaluate");
-        assert!(eval_result.errors.is_empty(), "Deploy errors: {:?}", eval_result.errors);
-        let checkpoint = runtime_ops.runtime.create_checkpoint().await;
-        let post_state: StateHash = checkpoint.root.to_bytes_prost().into();
-        tracing::info!("Contract at {}, post_state={}", uri, hex::encode(&post_state[..8]));
+            // Checkpoint via a fresh runtime so exploratory deploy can see the state
+            let runtime = runtime_manager.spawn_runtime().await;
+            let mut runtime_ops = RuntimeOps::new(runtime);
+            runtime_ops
+                .runtime
+                .reset(&Blake2b256Hash::from_bytes_prost(&genesis_state))
+                .await
+                .expect("reset");
+            let eval_result = runtime_ops.evaluate(&deploy).await.expect("evaluate");
+            assert!(
+                eval_result.errors.is_empty(),
+                "Deploy errors: {:?}",
+                eval_result.errors
+            );
+            let checkpoint = runtime_ops.runtime.create_checkpoint().await;
+            let post_state: StateHash = checkpoint.root.to_bytes_prost().into();
+            tracing::info!(
+                "Contract at {}, post_state={}",
+                uri,
+                hex::encode(&post_state[..8])
+            );
 
-        // Query with correct variable names (NOT using reserved word 'contract')
-        let query_term = format!(
-            r#"new ret, lookup(`rho:registry:lookup`), ch in {{
+            // Query with correct variable names (NOT using reserved word 'contract')
+            let query_term = format!(
+                r#"new ret, lookup(`rho:registry:lookup`), ch in {{
                 lookup!(`{}`, *ch) |
                 for (c <- ch) {{
                     c!("get", *ret)
                 }}
-            }}"#, uri
-        );
-        let (query_result, _) = runtime_manager
-            .play_exploratory_deploy(query_term, &post_state)
-            .await
-            .expect("query exploratory deploy");
-        tracing::info!("Query with correct var name: {} pars", query_result.len());
-        assert_eq!(query_result.len(), 1, "Query should return 1 par (the value 42)");
+            }}"#,
+                uri
+            );
+            let (query_result, _) = runtime_manager
+                .play_exploratory_deploy(query_term, &post_state)
+                .await
+                .expect("query exploratory deploy");
+            tracing::info!("Query with correct var name: {} pars", query_result.len());
+            assert_eq!(
+                query_result.len(),
+                1,
+                "Query should return 1 par (the value 42)"
+            );
 
-        // Verify play_exploratory_deploy propagates parse errors (not swallows them)
-        let bad_term = format!(
-            r#"new ret, lookup(`rho:registry:lookup`), ch in {{
+            // Verify play_exploratory_deploy propagates parse errors (not swallows them)
+            let bad_term = format!(
+                r#"new ret, lookup(`rho:registry:lookup`), ch in {{
                 lookup!(`{}`, *ch) |
                 for (contract <- ch) {{
                     contract!("get", *ret)
                 }}
-            }}"#, uri
-        );
-        let bad_result = runtime_manager
-            .play_exploratory_deploy(bad_term, &post_state)
-            .await;
-        assert!(bad_result.is_err(),
-            "Using reserved word 'contract' as var name should return Err, not empty Ok");
-    })
+            }}"#,
+                uri
+            );
+            let bad_result = runtime_manager
+                .play_exploratory_deploy(bad_term, &post_state)
+                .await;
+            assert!(
+                bad_result.is_err(),
+                "Using reserved word 'contract' as var name should return Err, not empty Ok"
+            );
+        },
+    )
     .await
     .unwrap();
 }
-
 
 /// Reproduces the replay determinism issue seen with tokio::spawn.
 /// Deploys a contract with parallel composition, plays it, then replays it.
@@ -2116,3 +2825,733 @@ async fn parallel_replay_determinism() {
     .await
     .unwrap();
 }
+
+/// Demonstrates that a finalized block can contain deploys whose effects are
+/// not in the canonical merged state. Builds two conflicting bridge deploys,
+/// computes the merge (one is rejected), then manually finalizes the rejected
+/// deploy's block and asserts the deploy is finalized but its effects are
+/// absent from the merged state.
+///
+/// The precondition (rejection must have occurred) is intermittently flaky
+/// under the two-bridge setup, so the test is disabled by default.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "flaky precondition under the two-bridge merge setup"]
+async fn finalization_does_not_guarantee_canonical_state() {
+    use crate::util::rholang::resources::{
+        block_dag_storage_from_dyn, mergeable_store_from_dyn,
+        mk_test_rnode_store_manager_from_genesis,
+    };
+    use block_storage::rust::key_value_block_store::KeyValueBlockStore;
+    use casper::rust::genesis::genesis::Genesis;
+    use casper::rust::{
+        casper::{CasperShardConf, CasperSnapshot, OnChainCasperState},
+        util::{
+            proto_util,
+            rholang::interpreter_util::{compute_deploys_checkpoint, compute_parents_post_state},
+        },
+    };
+    use dashmap::{DashMap, DashSet};
+    use models::rust::{block_hash::BlockHash, block_implicits};
+    use rholang::rust::interpreter::external_services::ExternalServices;
+
+    crate::init_logger();
+    let genesis_context = crate::util::rholang::resources::genesis_context()
+        .await
+        .unwrap();
+    let genesis_block = genesis_context.genesis_block.clone();
+    let genesis_hash = genesis_block.block_hash.clone();
+    let genesis_state = proto_util::post_state_hash(&genesis_block);
+    let genesis_bonds = genesis_block.body.state.bonds.clone();
+    let validator: prost::bytes::Bytes = genesis_context.validator_pks()[0].bytes.clone().into();
+    let shard_name = genesis_block.shard_id.clone();
+
+    let mut kvm = mk_test_rnode_store_manager_from_genesis(&genesis_context);
+    let rspace_store = kvm.r_space_stores().await.expect("rspace stores");
+    let mergeable_store = mergeable_store_from_dyn(&mut *kvm)
+        .await
+        .expect("mergeable store");
+    let (mut rm, _) = RuntimeManager::create_with_history(
+        rspace_store,
+        mergeable_store,
+        std::sync::Arc::new(Genesis::default_mergeable_tags()),
+        ExternalServices::noop(),
+    );
+
+    let mut block_store = KeyValueBlockStore::create_from_kvm(&mut *kvm)
+        .await
+        .expect("block store");
+    let dag_storage = block_dag_storage_from_dyn(&mut *kvm)
+        .await
+        .expect("dag storage");
+
+    block_store
+        .put_block_message(&genesis_block)
+        .expect("store genesis");
+    dag_storage
+        .insert(&genesis_block, false, true)
+        .expect("dag genesis");
+
+    let now_millis = || -> i64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0)
+    };
+
+    let mk_snapshot = |lfb: &BlockHash| -> CasperSnapshot {
+        let mut snapshot = CasperSnapshot::new(dag_storage.get_representation());
+        snapshot.last_finalized_block = lfb.clone();
+        let max_seq_nums: DashMap<prost::bytes::Bytes, u64> = DashMap::new();
+        max_seq_nums.insert(validator.clone(), 0);
+        snapshot.max_seq_nums = max_seq_nums;
+        let mut shard_conf = CasperShardConf::new();
+        shard_conf.shard_name = shard_name.clone();
+        shard_conf.max_parent_depth = 0;
+        let mut bonds_map = HashMap::new();
+        bonds_map.insert(validator.clone(), 100);
+        snapshot.on_chain_state = OnChainCasperState {
+            shard_conf,
+            bonds_map,
+            active_validators: vec![validator.clone()],
+        };
+        snapshot.deploys_in_scope = std::sync::Arc::new(DashSet::new());
+        snapshot
+    };
+
+    let bridge_rho = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/resources/bridge.rho"),
+    )
+    .expect("Failed to read bridge.rho");
+
+    let key_a = construct_deploy::DEFAULT_SEC.clone();
+    let key_b = construct_deploy::DEFAULT_SEC2.clone();
+
+    // ── Block A: bridge1 ──
+    let deploy_a = construct_deploy::source_deploy_now_full(
+        bridge_rho.clone(),
+        None,
+        None,
+        Some(key_a),
+        None,
+        None,
+    )
+    .unwrap();
+    let block_a_raw = block_implicits::get_random_block(
+        Some(1),
+        Some(1),
+        Some(genesis_state.clone()),
+        Some(StateHash::default()),
+        Some(validator.clone()),
+        Some(1),
+        Some(now_millis()),
+        Some(vec![genesis_hash.clone()]),
+        Some(Vec::new()),
+        Some(vec![ProcessedDeploy::empty(deploy_a)]),
+        Some(Vec::new()),
+        Some(genesis_bonds.clone()),
+        Some(shard_name.clone()),
+        None,
+    );
+    let parents_a = vec![genesis_block.clone()];
+    let deploys_a = proto_util::deploys(&block_a_raw)
+        .into_iter()
+        .map(|d| d.deploy)
+        .collect();
+    let (_, post_state_a, pd_a, _, sys_pd_a, bonds_a) = compute_deploys_checkpoint(
+        &mut block_store,
+        parents_a,
+        deploys_a,
+        Vec::<casper::rust::util::rholang::system_deploy_enum::SystemDeployEnum>::new(),
+        &mk_snapshot(&genesis_hash),
+        &mut rm,
+        BlockData::from_block(&block_a_raw),
+        HashMap::new(),
+        None,
+    )
+    .await
+    .expect("compute block A");
+    assert!(!pd_a[0].is_failed, "Bridge1 failed");
+
+    let mut block_a = block_a_raw;
+    block_a.body.state.post_state_hash = post_state_a.clone();
+    block_a.body.deploys = pd_a.clone();
+    block_a.body.system_deploys = sys_pd_a;
+    block_a.body.state.bonds = bonds_a;
+    block_store.put_block_message(&block_a).expect("store A");
+    dag_storage.insert(&block_a, false, false).expect("dag A");
+
+    // ── Block B: bridge2 ──
+    let deploy_b =
+        construct_deploy::source_deploy_now_full(bridge_rho, None, None, Some(key_b), None, None)
+            .unwrap();
+    let block_b_raw = block_implicits::get_random_block(
+        Some(1),
+        Some(2),
+        Some(genesis_state.clone()),
+        Some(StateHash::default()),
+        Some(validator.clone()),
+        Some(1),
+        Some(now_millis()),
+        Some(vec![genesis_hash.clone()]),
+        Some(Vec::new()),
+        Some(vec![ProcessedDeploy::empty(deploy_b)]),
+        Some(Vec::new()),
+        Some(genesis_bonds.clone()),
+        Some(shard_name.clone()),
+        None,
+    );
+    let parents_b = vec![genesis_block.clone()];
+    let deploys_b = proto_util::deploys(&block_b_raw)
+        .into_iter()
+        .map(|d| d.deploy)
+        .collect();
+    let (_, post_state_b, pd_b, _, sys_pd_b, bonds_b) = compute_deploys_checkpoint(
+        &mut block_store,
+        parents_b,
+        deploys_b,
+        Vec::<casper::rust::util::rholang::system_deploy_enum::SystemDeployEnum>::new(),
+        &mk_snapshot(&genesis_hash),
+        &mut rm,
+        BlockData::from_block(&block_b_raw),
+        HashMap::new(),
+        None,
+    )
+    .await
+    .expect("compute block B");
+    assert!(!pd_b[0].is_failed, "Bridge2 failed");
+
+    let mut block_b = block_b_raw;
+    block_b.body.state.post_state_hash = post_state_b.clone();
+    block_b.body.deploys = pd_b.clone();
+    block_b.body.system_deploys = sys_pd_b;
+    block_b.body.state.bonds = bonds_b;
+    block_store.put_block_message(&block_b).expect("store B");
+    dag_storage.insert(&block_b, false, false).expect("dag B");
+
+    // ── Merge [A, B] — one bridge rejected ──
+    let (merged_state, rejected, _rejected_slashes) = compute_parents_post_state(
+        &block_store,
+        vec![block_a.clone(), block_b.clone()],
+        &mk_snapshot(&genesis_hash),
+        &rm,
+        None,
+        None,
+    )
+    .expect("merge");
+    assert!(
+        !rejected.is_empty(),
+        "Expected rejection — test precondition"
+    );
+
+    let b_sig_prefix = hex::encode(&pd_b[0].deploy.sig[..8]);
+    let rejected_prefix = hex::encode(&rejected[0][..std::cmp::min(8, rejected[0].len())]);
+    let bridge2_rejected = rejected_prefix == b_sig_prefix;
+
+    // ── Manually finalize block B ──
+    // This simulates what happens in production: block B's block gets finalized
+    // even though a merge block that excluded B's effects also gets finalized.
+    dag_storage
+        .record_directly_finalized(
+            block_b.block_hash.clone(),
+            0.5, // FT value
+            |_finalized_set| async {
+                Ok::<(), shared::rust::store::key_value_store::KvStoreError>(())
+            },
+        )
+        .await
+        .expect("finalize block B");
+
+    // Verify block B is finalized
+    let dag = dag_storage.get_representation();
+    let b_meta = dag.lookup_unsafe(&block_b.block_hash).expect("lookup B");
+    let is_finalized = b_meta.finalized;
+    tracing::info!("Block B finalized: {}", is_finalized);
+    assert!(is_finalized, "Block B should be marked as finalized");
+
+    // ── THE PROOF ──
+    let make_deploy_id_par = |sig: &[u8]| -> models::rhoapi::Par {
+        models::rhoapi::Par {
+            unforgeables: vec![models::rhoapi::GUnforgeable {
+                unf_instance: Some(models::rhoapi::g_unforgeable::UnfInstance::GDeployIdBody(
+                    models::rhoapi::GDeployId { sig: sig.to_vec() },
+                )),
+            }],
+            ..Default::default()
+        }
+    };
+
+    let rejected_deploy = if bridge2_rejected { &pd_b[0] } else { &pd_a[0] };
+    let rejected_data = rm
+        .get_data(
+            merged_state.clone(),
+            &make_deploy_id_par(&rejected_deploy.deploy.sig),
+        )
+        .await
+        .unwrap();
+
+    assert!(
+        !rejected_deploy.is_failed,
+        "PROOF 1 FAILED: Deploy should not be marked as failed"
+    );
+    assert!(
+        rejected_deploy.cost.cost > 0,
+        "PROOF 2 FAILED: Deploy should have non-zero cost"
+    );
+    assert!(
+        is_finalized,
+        "PROOF 3 FAILED: Deploy's block should be finalized"
+    );
+    assert!(
+        rejected_data.is_empty(),
+        "PROOF 4 FAILED: Deploy's effects should be missing (got {} pars)",
+        rejected_data.len()
+    );
+
+    tracing::info!("════════════════════════════════════════════════════════════════");
+    tracing::info!("PROVEN: Finalization does NOT guarantee canonical state inclusion.");
+    tracing::info!(
+        "  - Deploy is_failed=false, cost={}",
+        rejected_deploy.cost.cost
+    );
+    tracing::info!("  - Deploy's block is finalized (is_finalized=true, FT=0.5)");
+    tracing::info!("  - Deploy's effects are MISSING from the canonical merged state");
+    tracing::info!("════════════════════════════════════════════════════════════════");
+}
+
+/// Regression guard for the rejection-expansion behavior in `DagMerger::merge`.
+///
+/// DAG shape:
+///
+///        genesis (LCA)
+///         /     \
+///        BA      BB       bridge(key_A), bridge(key_B) — conflict on shared system channels
+///        |       |
+///        BC      BD       trivial writes by the same deployer as the ancestor
+///
+/// `compute_parents_post_state([BC, BD])` drives a merge whose scope is
+/// `{BA, BB, BC, BD}`. One of BA/BB is rejected by conflict resolution.
+/// Without rejection expansion, the descendant of the rejected block retains
+/// pre-computed diffs against a pre-state that no longer materializes — the
+/// merged post-state ends up with the descendant's writes present but the
+/// ancestor's writes absent, which is internally inconsistent.
+///
+/// The expansion in DagMerger rejects the descendant's chains as well, so the
+/// assertion below — "no ancestor-rejected-but-descendant-surviving" — holds.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn stale_diff_application_corrupts_merged_state() {
+    use crate::util::rholang::resources::{
+        block_dag_storage_from_dyn, mergeable_store_from_dyn,
+        mk_test_rnode_store_manager_from_genesis,
+    };
+    use block_storage::rust::key_value_block_store::KeyValueBlockStore;
+    use casper::rust::genesis::genesis::Genesis;
+    use casper::rust::{
+        casper::{CasperShardConf, CasperSnapshot, OnChainCasperState},
+        util::{
+            proto_util,
+            rholang::interpreter_util::{compute_deploys_checkpoint, compute_parents_post_state},
+        },
+    };
+    use dashmap::{DashMap, DashSet};
+    use models::rust::{block_hash::BlockHash, block_implicits};
+    use rholang::rust::interpreter::external_services::ExternalServices;
+    use std::collections::HashSet;
+
+    crate::init_logger();
+    let genesis_context = crate::util::rholang::resources::genesis_context()
+        .await
+        .unwrap();
+    let genesis_block = genesis_context.genesis_block.clone();
+    let genesis_hash = genesis_block.block_hash.clone();
+    let genesis_state = proto_util::post_state_hash(&genesis_block);
+    let genesis_bonds = genesis_block.body.state.bonds.clone();
+    let validator: prost::bytes::Bytes = genesis_context.validator_pks()[0].bytes.clone().into();
+    let shard_name = genesis_block.shard_id.clone();
+
+    let mut kvm = mk_test_rnode_store_manager_from_genesis(&genesis_context);
+    let rspace_store = kvm.r_space_stores().await.expect("rspace stores");
+    let mergeable_store = mergeable_store_from_dyn(&mut *kvm)
+        .await
+        .expect("mergeable store");
+    let (mut rm, _) = RuntimeManager::create_with_history(
+        rspace_store,
+        mergeable_store,
+        std::sync::Arc::new(Genesis::default_mergeable_tags()),
+        ExternalServices::noop(),
+    );
+
+    let mut block_store = KeyValueBlockStore::create_from_kvm(&mut *kvm)
+        .await
+        .expect("block store");
+    let dag_storage = block_dag_storage_from_dyn(&mut *kvm)
+        .await
+        .expect("dag storage");
+
+    block_store
+        .put_block_message(&genesis_block)
+        .expect("store genesis");
+    dag_storage
+        .insert(&genesis_block, false, true)
+        .expect("dag genesis");
+
+    let now_millis = || -> i64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0)
+    };
+
+    let mk_snapshot = |lfb: &BlockHash| -> CasperSnapshot {
+        let mut snapshot = CasperSnapshot::new(dag_storage.get_representation());
+        snapshot.last_finalized_block = lfb.clone();
+        let max_seq_nums: DashMap<prost::bytes::Bytes, u64> = DashMap::new();
+        max_seq_nums.insert(validator.clone(), 0);
+        snapshot.max_seq_nums = max_seq_nums;
+        let mut shard_conf = CasperShardConf::new();
+        shard_conf.shard_name = shard_name.clone();
+        shard_conf.max_parent_depth = 0;
+        let mut bonds_map = HashMap::new();
+        bonds_map.insert(validator.clone(), 100);
+        snapshot.on_chain_state = OnChainCasperState {
+            shard_conf,
+            bonds_map,
+            active_validators: vec![validator.clone()],
+        };
+        snapshot.deploys_in_scope = std::sync::Arc::new(DashSet::new());
+        snapshot
+    };
+
+    let make_deploy_id_par = |sig: &[u8]| -> models::rhoapi::Par {
+        models::rhoapi::Par {
+            unforgeables: vec![models::rhoapi::GUnforgeable {
+                unf_instance: Some(models::rhoapi::g_unforgeable::UnfInstance::GDeployIdBody(
+                    models::rhoapi::GDeployId { sig: sig.to_vec() },
+                )),
+            }],
+            ..Default::default()
+        }
+    };
+
+    let bridge_rho = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/resources/bridge.rho"),
+    )
+    .expect("Failed to read bridge.rho");
+
+    let key_a = construct_deploy::DEFAULT_SEC.clone();
+    let key_b = construct_deploy::DEFAULT_SEC2.clone();
+
+    let trivial_rho = r#"
+new deployId(`rho:system:deployId`) in {
+  deployId!("descendant-tag")
+}
+"#
+    .to_string();
+
+    // ── Block A: bridge deployed by key_a, parent = genesis ──
+    let deploy_a = construct_deploy::source_deploy_now_full(
+        bridge_rho.clone(),
+        None,
+        None,
+        Some(key_a.clone()),
+        None,
+        None,
+    )
+    .unwrap();
+    let block_a_raw = block_implicits::get_random_block(
+        Some(1),
+        Some(1),
+        Some(genesis_state.clone()),
+        Some(StateHash::default()),
+        Some(validator.clone()),
+        Some(1),
+        Some(now_millis()),
+        Some(vec![genesis_hash.clone()]),
+        Some(Vec::new()),
+        Some(vec![ProcessedDeploy::empty(deploy_a)]),
+        Some(Vec::new()),
+        Some(genesis_bonds.clone()),
+        Some(shard_name.clone()),
+        None,
+    );
+    let (_, post_state_a, pd_a, _, sys_pd_a, bonds_a) = compute_deploys_checkpoint(
+        &mut block_store,
+        vec![genesis_block.clone()],
+        proto_util::deploys(&block_a_raw)
+            .into_iter()
+            .map(|d| d.deploy)
+            .collect(),
+        Vec::<casper::rust::util::rholang::system_deploy_enum::SystemDeployEnum>::new(),
+        &mk_snapshot(&genesis_hash),
+        &mut rm,
+        BlockData::from_block(&block_a_raw),
+        HashMap::new(),
+        None,
+    )
+    .await
+    .expect("compute block A");
+    assert!(
+        !pd_a[0].is_failed,
+        "Bridge A failed: {:?}",
+        pd_a[0].system_deploy_error
+    );
+    let mut block_a = block_a_raw;
+    block_a.body.state.post_state_hash = post_state_a.clone();
+    block_a.body.deploys = pd_a.clone();
+    block_a.body.system_deploys = sys_pd_a;
+    block_a.body.state.bonds = bonds_a;
+    block_store.put_block_message(&block_a).expect("store A");
+    dag_storage.insert(&block_a, false, false).expect("dag A");
+
+    // ── Block B: bridge deployed by key_b, parent = genesis (sibling of A) ──
+    let deploy_b = construct_deploy::source_deploy_now_full(
+        bridge_rho,
+        None,
+        None,
+        Some(key_b.clone()),
+        None,
+        None,
+    )
+    .unwrap();
+    let block_b_raw = block_implicits::get_random_block(
+        Some(1),
+        Some(2),
+        Some(genesis_state.clone()),
+        Some(StateHash::default()),
+        Some(validator.clone()),
+        Some(1),
+        Some(now_millis()),
+        Some(vec![genesis_hash.clone()]),
+        Some(Vec::new()),
+        Some(vec![ProcessedDeploy::empty(deploy_b)]),
+        Some(Vec::new()),
+        Some(genesis_bonds.clone()),
+        Some(shard_name.clone()),
+        None,
+    );
+    let (_, post_state_b, pd_b, _, sys_pd_b, bonds_b) = compute_deploys_checkpoint(
+        &mut block_store,
+        vec![genesis_block.clone()],
+        proto_util::deploys(&block_b_raw)
+            .into_iter()
+            .map(|d| d.deploy)
+            .collect(),
+        Vec::<casper::rust::util::rholang::system_deploy_enum::SystemDeployEnum>::new(),
+        &mk_snapshot(&genesis_hash),
+        &mut rm,
+        BlockData::from_block(&block_b_raw),
+        HashMap::new(),
+        None,
+    )
+    .await
+    .expect("compute block B");
+    assert!(
+        !pd_b[0].is_failed,
+        "Bridge B failed: {:?}",
+        pd_b[0].system_deploy_error
+    );
+    let mut block_b = block_b_raw;
+    block_b.body.state.post_state_hash = post_state_b.clone();
+    block_b.body.deploys = pd_b.clone();
+    block_b.body.system_deploys = sys_pd_b;
+    block_b.body.state.bonds = bonds_b;
+    block_store.put_block_message(&block_b).expect("store B");
+    dag_storage.insert(&block_b, false, false).expect("dag B");
+
+    // ── Block C: trivial deploy by key_a, parent = A ──
+    let deploy_c = construct_deploy::source_deploy_now_full(
+        trivial_rho.clone(),
+        None,
+        None,
+        Some(key_a),
+        None,
+        None,
+    )
+    .unwrap();
+    let block_c_raw = block_implicits::get_random_block(
+        Some(2),
+        Some(3),
+        Some(post_state_a.clone()),
+        Some(StateHash::default()),
+        Some(validator.clone()),
+        Some(1),
+        Some(now_millis()),
+        Some(vec![block_a.block_hash.clone()]),
+        Some(Vec::new()),
+        Some(vec![ProcessedDeploy::empty(deploy_c)]),
+        Some(Vec::new()),
+        Some(genesis_bonds.clone()),
+        Some(shard_name.clone()),
+        None,
+    );
+    let (_, post_state_c, pd_c, _, sys_pd_c, bonds_c) = compute_deploys_checkpoint(
+        &mut block_store,
+        vec![block_a.clone()],
+        proto_util::deploys(&block_c_raw)
+            .into_iter()
+            .map(|d| d.deploy)
+            .collect(),
+        Vec::<casper::rust::util::rholang::system_deploy_enum::SystemDeployEnum>::new(),
+        &mk_snapshot(&genesis_hash),
+        &mut rm,
+        BlockData::from_block(&block_c_raw),
+        HashMap::new(),
+        None,
+    )
+    .await
+    .expect("compute block C");
+    assert!(
+        !pd_c[0].is_failed,
+        "Trivial C failed: {:?}",
+        pd_c[0].system_deploy_error
+    );
+    let mut block_c = block_c_raw;
+    block_c.body.state.post_state_hash = post_state_c.clone();
+    block_c.body.deploys = pd_c.clone();
+    block_c.body.system_deploys = sys_pd_c;
+    block_c.body.state.bonds = bonds_c;
+    block_store.put_block_message(&block_c).expect("store C");
+    dag_storage.insert(&block_c, false, false).expect("dag C");
+
+    // ── Block D: trivial deploy by key_b, parent = B ──
+    let deploy_d =
+        construct_deploy::source_deploy_now_full(trivial_rho, None, None, Some(key_b), None, None)
+            .unwrap();
+    let block_d_raw = block_implicits::get_random_block(
+        Some(2),
+        Some(4),
+        Some(post_state_b.clone()),
+        Some(StateHash::default()),
+        Some(validator.clone()),
+        Some(1),
+        Some(now_millis()),
+        Some(vec![block_b.block_hash.clone()]),
+        Some(Vec::new()),
+        Some(vec![ProcessedDeploy::empty(deploy_d)]),
+        Some(Vec::new()),
+        Some(genesis_bonds.clone()),
+        Some(shard_name.clone()),
+        None,
+    );
+    let (_, post_state_d, pd_d, _, sys_pd_d, bonds_d) = compute_deploys_checkpoint(
+        &mut block_store,
+        vec![block_b.clone()],
+        proto_util::deploys(&block_d_raw)
+            .into_iter()
+            .map(|d| d.deploy)
+            .collect(),
+        Vec::<casper::rust::util::rholang::system_deploy_enum::SystemDeployEnum>::new(),
+        &mk_snapshot(&genesis_hash),
+        &mut rm,
+        BlockData::from_block(&block_d_raw),
+        HashMap::new(),
+        None,
+    )
+    .await
+    .expect("compute block D");
+    assert!(
+        !pd_d[0].is_failed,
+        "Trivial D failed: {:?}",
+        pd_d[0].system_deploy_error
+    );
+    let mut block_d = block_d_raw;
+    block_d.body.state.post_state_hash = post_state_d.clone();
+    block_d.body.deploys = pd_d.clone();
+    block_d.body.system_deploys = sys_pd_d;
+    block_d.body.state.bonds = bonds_d;
+    block_store.put_block_message(&block_d).expect("store D");
+    dag_storage.insert(&block_d, false, false).expect("dag D");
+
+    // ── Merge [C, D] — simulates what a validator would compute when proposing
+    //    a multi-parent block with parents [BC, BD]. LCA is genesis.
+    let (merged_state, rejected, _rejected_slashes) = compute_parents_post_state(
+        &block_store,
+        vec![block_c.clone(), block_d.clone()],
+        &mk_snapshot(&genesis_hash),
+        &rm,
+        None,
+        None,
+    )
+    .expect("merge [C, D]");
+
+    let rejected_set: HashSet<prost::bytes::Bytes> = rejected.iter().cloned().collect();
+    let ba_rejected = rejected_set.contains(&pd_a[0].deploy.sig);
+    let bb_rejected = rejected_set.contains(&pd_b[0].deploy.sig);
+    let bc_rejected = rejected_set.contains(&pd_c[0].deploy.sig);
+    let bd_rejected = rejected_set.contains(&pd_d[0].deploy.sig);
+
+    tracing::info!("──────── Rejection outcome ────────");
+    tracing::info!(
+        "BA (bridge, key_A)                 rejected: {}",
+        ba_rejected
+    );
+    tracing::info!(
+        "BB (bridge, key_B)                 rejected: {}",
+        bb_rejected
+    );
+    tracing::info!(
+        "BC (trivial, key_A, child of BA)   rejected: {}",
+        bc_rejected
+    );
+    tracing::info!(
+        "BD (trivial, key_B, child of BB)   rejected: {}",
+        bd_rejected
+    );
+    tracing::info!("Total rejected: {} deploys", rejected.len());
+
+    let ba_data = rm
+        .get_data(
+            merged_state.clone(),
+            &make_deploy_id_par(&pd_a[0].deploy.sig),
+        )
+        .await
+        .unwrap();
+    let bb_data = rm
+        .get_data(
+            merged_state.clone(),
+            &make_deploy_id_par(&pd_b[0].deploy.sig),
+        )
+        .await
+        .unwrap();
+    let bc_data = rm
+        .get_data(
+            merged_state.clone(),
+            &make_deploy_id_par(&pd_c[0].deploy.sig),
+        )
+        .await
+        .unwrap();
+    let bd_data = rm
+        .get_data(
+            merged_state.clone(),
+            &make_deploy_id_par(&pd_d[0].deploy.sig),
+        )
+        .await
+        .unwrap();
+
+    tracing::info!("──────── State presence in merged post-state ────────");
+    tracing::info!("BA bridge data  pars: {}", ba_data.len());
+    tracing::info!("BB bridge data  pars: {}", bb_data.len());
+    tracing::info!("BC trivial data pars: {}", bc_data.len());
+    tracing::info!("BD trivial data pars: {}", bd_data.len());
+
+    let bc_orphaned = ba_rejected && !bc_rejected && ba_data.is_empty() && !bc_data.is_empty();
+    let bd_orphaned = bb_rejected && !bd_rejected && bb_data.is_empty() && !bd_data.is_empty();
+
+    assert!(
+        !bc_orphaned && !bd_orphaned,
+        "STALE-DIFF BUG REPRODUCED: descendant of rejected block has state present \
+         in merged post-state while its ancestor's state is absent. \
+         bc_orphaned={} (ba_rejected={}, bc_rejected={}, ba_empty={}, bc_present={}); \
+         bd_orphaned={} (bb_rejected={}, bd_rejected={}, bb_empty={}, bd_present={}).",
+        bc_orphaned,
+        ba_rejected,
+        bc_rejected,
+        ba_data.is_empty(),
+        !bc_data.is_empty(),
+        bd_orphaned,
+        bb_rejected,
+        bd_rejected,
+        bb_data.is_empty(),
+        !bd_data.is_empty(),
+    );
+}
+

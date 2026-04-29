@@ -7,7 +7,10 @@ use rspace_plus_plus::rspace::{
     hashing::blake2b256_hash::Blake2b256Hash,
     hot_store_trie_action::HotStoreTrieAction,
     internal::Datum,
-    merger::{merging_logic::NumberChannelsDiff, state_change::StateChange},
+    merger::{
+        merging_logic::{combine_mergeable_value, MergeType, NumberChannelsDiff},
+        state_change::StateChange,
+    },
 };
 use shared::rust::hashable_set::HashableSet;
 use std::collections::HashMap;
@@ -57,32 +60,41 @@ fn compare_branches<R: Ord>(a: &Branch<R>, b: &Branch<R>) -> std::cmp::Ordering 
     std::cmp::Ordering::Equal
 }
 
-/// R is a type for minimal rejection unit.
-/// IMPORTANT: actual_seq and late_seq must be passed in sorted order to ensure
-/// deterministic processing across all validators.
-pub fn merge<
-    R: Clone + Eq + std::hash::Hash + PartialOrd + Ord,
-    C: Clone,
-    P: Clone,
-    A: Clone,
-    K: Clone,
->(
-    actual_seq: Vec<R>, // Changed from HashableSet to Vec for deterministic ordering
-    late_seq: Vec<R>,   // Changed from HashableSet to Vec for deterministic ordering
-    depends: impl Fn(&R, &R) -> bool,
-    conflicts: impl Fn(&HashableSet<R>, &HashableSet<R>) -> bool,
-    cost: impl Fn(&R) -> u64,
-    state_changes: impl Fn(&R) -> Result<StateChange, HistoryError>,
-    mergeable_channels: impl Fn(&R) -> NumberChannelsDiff,
-    compute_trie_actions: impl Fn(
-        StateChange,
-        NumberChannelsDiff,
-    ) -> Result<Vec<HotStoreTrieAction<C, P, A, K>>, HistoryError>,
-    apply_trie_actions: impl Fn(
-        Vec<HotStoreTrieAction<C, P, A, K>>,
-    ) -> Result<Blake2b256Hash, HistoryError>,
-    get_data: impl Fn(Blake2b256Hash) -> Result<Vec<Datum<ListParWithRandom>>, HistoryError>,
-) -> Result<(Blake2b256Hash, HashableSet<R>), HistoryError> {
+/// Result of conflict resolution. Callers that need to adjust the rejection
+/// set before diffs are applied — for example, to add DAG-descendants of
+/// rejected blocks whose diffs would be stale — can do so before invoking
+/// `compute_merged_state`.
+pub struct ResolvedConflicts<R: Clone + Eq + std::hash::Hash> {
+    /// Branches surviving conflict resolution; their diffs will be applied.
+    pub to_merge: Vec<HashableSet<R>>,
+    /// Rejected items (late set + dependents + optimal rejection).
+    pub rejected: HashableSet<R>,
+    // Diagnostic counters used in the summary log.
+    pub late_set_size: usize,
+    pub actual_set_size: usize,
+    pub branches_count: usize,
+    pub rejected_as_dependents_count: usize,
+    pub optimal_rejection_count: usize,
+    pub conflict_map_conflicts_count: usize,
+    pub rejection_options_count: usize,
+    // Timings.
+    pub branches_time: Duration,
+    pub conflicts_map_time: Duration,
+    pub rejection_options_time: Duration,
+}
+
+/// Conflict detection and optimal rejection selection. Returns the set of
+/// chains to merge along with those rejected. Callers can adjust the result
+/// before calling `compute_merged_state`.
+pub fn resolve_conflicts<R: Clone + Eq + std::hash::Hash + PartialOrd + Ord>(
+    actual_seq: Vec<R>,
+    late_seq: Vec<R>,
+    depends: &impl Fn(&R, &R) -> bool,
+    conflicts: &impl Fn(&HashableSet<R>, &HashableSet<R>) -> bool,
+    cost: &impl Fn(&R) -> u64,
+    mergeable_channels: &impl Fn(&R) -> NumberChannelsDiff,
+    get_data: &impl Fn(Blake2b256Hash) -> Result<Vec<Datum<ListParWithRandom>>, HistoryError>,
+) -> Result<ResolvedConflicts<R>, HistoryError> {
     // Convert to Sets for set operations, but use Vec for ordered iteration
     let actual_set: HashSet<R> = actual_seq.iter().cloned().collect();
     let late_set: HashSet<R> = late_seq.iter().cloned().collect();
@@ -110,7 +122,8 @@ pub fn merge<
     metrics::histogram!(
         crate::rust::metrics_constants::DAG_MERGE_BRANCHES_TIME_METRIC,
         "source" => crate::rust::metrics_constants::MERGING_METRICS_SOURCE
-    ).record(branches_time.as_secs_f64());
+    )
+    .record(branches_time.as_secs_f64());
 
     // Compute relation map for conflicting branches with timing
     use rspace_plus_plus::rspace::merger::merging_logic::compute_relation_map;
@@ -120,7 +133,8 @@ pub fn merge<
     metrics::histogram!(
         crate::rust::metrics_constants::DAG_MERGE_CONFLICTS_MAP_TIME_METRIC,
         "source" => crate::rust::metrics_constants::MERGING_METRICS_SOURCE
-    ).record(conflicts_map_time.as_secs_f64());
+    )
+    .record(conflicts_map_time.as_secs_f64());
 
     // Compute rejection options that leave only non-conflicting branches with timing
     use rspace_plus_plus::rspace::merger::merging_logic::compute_rejection_options;
@@ -129,7 +143,8 @@ pub fn merge<
     metrics::histogram!(
         crate::rust::metrics_constants::DAG_MERGE_REJECTION_OPTIONS_TIME_METRIC,
         "source" => crate::rust::metrics_constants::MERGING_METRICS_SOURCE
-    ).record(rejection_options_time.as_secs_f64());
+    )
+    .record(rejection_options_time.as_secs_f64());
 
     // Get base mergeable channel results
     let channel_reads_start = Instant::now();
@@ -170,14 +185,15 @@ pub fn merge<
     metrics::histogram!(
         "dag.merge.channel-reads.time",
         "source" => crate::rust::metrics_constants::MERGING_METRICS_SOURCE
-    ).record(channel_reads_start.elapsed().as_secs_f64());
+    )
+    .record(channel_reads_start.elapsed().as_secs_f64());
 
     // Get merged result rejection options
     let rejection_options_with_overflow = get_merged_result_rejection(
         &branches_set,
         &rejection_options,
         base_mergeable_ch_res.clone(),
-        &mergeable_channels,
+        mergeable_channels,
     );
 
     // Compute optimal rejection using cost function
@@ -220,6 +236,7 @@ pub fn merge<
     }
 
     // Detailed INFO logging for rejection breakdown (always visible)
+    let conflict_map_conflicts_count = conflict_map.iter().filter(|(_, v)| !v.0.is_empty()).count();
     info!(
         "ConflictSetMerger rejection breakdown: lateSet={}, rejectedAsDependents={}, \
         optimalRejection={}, total rejected={}, branches={}, toMerge={}, \
@@ -230,13 +247,51 @@ pub fn merge<
         rejected.0.len(),
         branches_set.0.len(),
         to_merge.len(),
-        conflict_map.iter().filter(|(_, v)| !v.0.is_empty()).count(),
+        conflict_map_conflicts_count,
         rejection_options.0.len(),
         1  // rejectionOptionsWithOverflow.size - approximation
     );
 
+    Ok(ResolvedConflicts {
+        to_merge,
+        rejected,
+        late_set_size: late_set.len(),
+        actual_set_size: actual_set.len(),
+        branches_count: branches_set.0.len(),
+        rejected_as_dependents_count: rejected_as_dependents.0.len(),
+        optimal_rejection_count: optimal_rejection.0.len(),
+        conflict_map_conflicts_count,
+        rejection_options_count: rejection_options.0.len(),
+        branches_time,
+        conflicts_map_time,
+        rejection_options_time,
+    })
+}
+
+/// Combine the surviving chains' diffs into trie actions and apply them to
+/// the merged base state. Reads `resolved.to_merge` and returns the new state
+/// root; `resolved.rejected` is not read or modified.
+pub fn compute_merged_state<R, C, P, A, K>(
+    resolved: &ResolvedConflicts<R>,
+    state_changes: &impl Fn(&R) -> Result<StateChange, HistoryError>,
+    mergeable_channels: &impl Fn(&R) -> NumberChannelsDiff,
+    compute_trie_actions: &impl Fn(
+        StateChange,
+        NumberChannelsDiff,
+    ) -> Result<Vec<HotStoreTrieAction<C, P, A, K>>, HistoryError>,
+    apply_trie_actions: &impl Fn(
+        Vec<HotStoreTrieAction<C, P, A, K>>,
+    ) -> Result<Blake2b256Hash, HistoryError>,
+) -> Result<Blake2b256Hash, HistoryError>
+where
+    R: Clone + Eq + std::hash::Hash + PartialOrd + Ord,
+    C: Clone,
+    P: Clone,
+    A: Clone,
+    K: Clone,
+{
     // Sort toMerge for deterministic processing order
-    let mut to_merge_sorted: Vec<&HashableSet<R>> = to_merge.iter().collect();
+    let mut to_merge_sorted: Vec<&HashableSet<R>> = resolved.to_merge.iter().collect();
     to_merge_sorted.sort_by(|a, b| compare_branches(a, b));
 
     // Flatten and sort items within each branch
@@ -261,18 +316,32 @@ pub fn merge<
     metrics::histogram!(
         "dag.merge.combine-changes.time",
         "source" => crate::rust::metrics_constants::MERGING_METRICS_SOURCE
-    ).record(combine_all_changes_time.as_secs_f64());
+    )
+    .record(combine_all_changes_time.as_secs_f64());
 
     let combined_datums_count = all_changes.datums_changes.len();
     let combined_conts_count = all_changes.cont_changes.len();
     let combined_joins_count = all_changes.consume_channels_to_join_serialized_map.len();
 
-    // Combine all mergeable channels (in sorted order)
+    // Combine all mergeable channels (in sorted order). Per-channel `MergeType`
+    // determines how diffs combine: integer-add uses wrapping addition; bitmask-OR
+    // uses bitwise OR through u64.
     let mut all_mergeable_channels = NumberChannelsDiff::new();
     for item in &to_merge_items {
         let item_channels = mergeable_channels(item);
         for (key, value) in item_channels.iter() {
-            *all_mergeable_channels.entry(key.clone()).or_insert(0) += *value;
+            let (incoming_diff, incoming_mt) = *value;
+            all_mergeable_channels
+                .entry(key.clone())
+                .and_modify(|existing| {
+                    assert_eq!(
+                        existing.1, incoming_mt,
+                        "MergeType mismatch on channel {:?}: {:?} vs {:?}",
+                        key, existing.1, incoming_mt,
+                    );
+                    existing.0 = combine_mergeable_value(existing.0, incoming_diff, incoming_mt);
+                })
+                .or_insert((incoming_diff, incoming_mt));
         }
     }
 
@@ -289,15 +358,15 @@ pub fn merge<
         conflicts map in {:?}; rejection options ({}) in {:?}; optimal rejection set size {}; \
         rejected as late dependency {}; changes combined (datums={}, conts={}, joins={}) in {:?}; \
         trie actions ({}) in {:?}; actions applied in {:?}",
-        late_set.len(),
-        actual_set.len(),
-        branches_set.0.len(),
-        branches_time,
-        conflicts_map_time,
-        rejection_options.0.len(),
-        rejection_options_time,
-        optimal_rejection.0.len(),
-        rejected_as_dependents.0.len(),
+        resolved.late_set_size,
+        resolved.actual_set_size,
+        resolved.branches_count,
+        resolved.branches_time,
+        resolved.conflicts_map_time,
+        resolved.rejection_options_count,
+        resolved.rejection_options_time,
+        resolved.optimal_rejection_count,
+        resolved.rejected_as_dependents_count,
         combined_datums_count,
         combined_conts_count,
         combined_joins_count,
@@ -309,7 +378,56 @@ pub fn merge<
 
     debug!("{}", log_str);
 
-    Ok((new_state, rejected))
+    Ok(new_state)
+}
+
+/// R is a type for minimal rejection unit.
+/// IMPORTANT: actual_seq and late_seq must be passed in sorted order to ensure
+/// deterministic processing across all validators.
+///
+/// Convenience wrapper that runs `resolve_conflicts` followed by
+/// `compute_merged_state`. Callers that need to inspect or adjust the rejection
+/// set between the two steps should call them directly instead.
+pub fn merge<
+    R: Clone + Eq + std::hash::Hash + PartialOrd + Ord,
+    C: Clone,
+    P: Clone,
+    A: Clone,
+    K: Clone,
+>(
+    actual_seq: Vec<R>,
+    late_seq: Vec<R>,
+    depends: impl Fn(&R, &R) -> bool,
+    conflicts: impl Fn(&HashableSet<R>, &HashableSet<R>) -> bool,
+    cost: impl Fn(&R) -> u64,
+    state_changes: impl Fn(&R) -> Result<StateChange, HistoryError>,
+    mergeable_channels: impl Fn(&R) -> NumberChannelsDiff,
+    compute_trie_actions: impl Fn(
+        StateChange,
+        NumberChannelsDiff,
+    ) -> Result<Vec<HotStoreTrieAction<C, P, A, K>>, HistoryError>,
+    apply_trie_actions: impl Fn(
+        Vec<HotStoreTrieAction<C, P, A, K>>,
+    ) -> Result<Blake2b256Hash, HistoryError>,
+    get_data: impl Fn(Blake2b256Hash) -> Result<Vec<Datum<ListParWithRandom>>, HistoryError>,
+) -> Result<(Blake2b256Hash, HashableSet<R>), HistoryError> {
+    let resolved = resolve_conflicts(
+        actual_seq,
+        late_seq,
+        &depends,
+        &conflicts,
+        &cost,
+        &mergeable_channels,
+        &get_data,
+    )?;
+    let new_state = compute_merged_state(
+        &resolved,
+        &state_changes,
+        &mergeable_channels,
+        &compute_trie_actions,
+        &apply_trie_actions,
+    )?;
+    Ok((new_state, resolved.rejected))
 }
 
 /// Compute optimal rejection configuration.
@@ -383,18 +501,31 @@ fn get_optimal_rejection<R: Eq + std::hash::Hash + Clone + Ord>(
 
 /// Calculate merged result for a branch with the origin result map.
 /// Calculate the merged result from base and branches.
+///
+/// Note: the non-negative-result check applies only to `IntegerAdd` channels
+/// (vault balances). `BitmaskOr` channels are bitmaps, where any value is
+/// representable; we OR the diff into the existing value without overflow
+/// concerns.
 fn cal_merged_result<R: Clone + Eq + std::hash::Hash>(
     branch: &Branch<R>,
     origin_result: HashMap<Blake2b256Hash, i64>,
     mergeable_channels: impl Fn(&R) -> NumberChannelsDiff,
 ) -> Option<HashMap<Blake2b256Hash, i64>> {
-    // Combine all channel diffs from the branch
+    // Combine all channel diffs from the branch using per-channel merge strategy.
     let diff = branch.0.iter().map(|r| mergeable_channels(r)).fold(
         NumberChannelsDiff::new(),
         |mut acc, x| {
-            // Manually combine maps by adding values for each key
             for (k, v) in x {
-                *acc.entry(k).or_insert(0) += v;
+                let (incoming_diff, incoming_mt) = v;
+                acc.entry(k)
+                    .and_modify(|existing| {
+                        existing.0 = combine_mergeable_value(
+                            existing.0,
+                            incoming_diff,
+                            incoming_mt,
+                        );
+                    })
+                    .or_insert((incoming_diff, incoming_mt));
             }
             acc
         },
@@ -402,16 +533,27 @@ fn cal_merged_result<R: Clone + Eq + std::hash::Hash>(
 
     // Start with Some(origin_result) and fold over the diffs
     diff.iter()
-        .fold(Some(origin_result), |ba_opt, (channel, diff_val)| {
+        .fold(Some(origin_result), |ba_opt, (channel, value)| {
             ba_opt.and_then(|mut ba| {
+                let (diff_val, merge_type) = *value;
                 let current = *ba.get(channel).unwrap_or(&0);
-                // Check for overflow and negative results
-                match current.checked_add(*diff_val) {
-                    Some(result) if result >= 0 => {
+                match merge_type {
+                    MergeType::IntegerAdd => {
+                        // Vault balance: overflow or negative result rejects the branch
+                        match current.checked_add(diff_val) {
+                            Some(result) if result >= 0 => {
+                                ba.insert(channel.clone(), result);
+                                Some(ba)
+                            }
+                            _ => None,
+                        }
+                    }
+                    MergeType::BitmaskOr => {
+                        // Bitmap: OR the new bits in; no overflow concern
+                        let result = ((current as u64) | (diff_val as u64)) as i64;
                         ba.insert(channel.clone(), result);
                         Some(ba)
                     }
-                    _ => None, // Return None for overflow or negative result
                 }
             })
         })
@@ -561,7 +703,7 @@ mod tests {
                 let mut diff = BTreeMap::new();
                 // item 1 decrements channel, item 2 increments channel
                 let delta = if *r == 1 { -1 } else { 1 };
-                diff.insert(base_channel.clone(), delta);
+                diff.insert(base_channel.clone(), (delta, MergeType::IntegerAdd));
                 diff
             },
             |_state_change, _channels| Ok(Vec::<HotStoreTrieAction<i32, i32, i32, i32>>::new()),

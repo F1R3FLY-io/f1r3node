@@ -44,9 +44,7 @@ use block_storage::rust::dag::block_dag_key_value_storage::KeyValueDagRepresenta
 
 use crate::rust::ProposeFunction;
 
-use crate::rust::safety_oracle::{
-    CliqueOracleImpl, SafetyOracle,
-};
+use crate::rust::safety_oracle::{CliqueOracleImpl, SafetyOracle};
 use block_storage::rust::dag::block_dag_key_value_storage::DeployId;
 use rspace_plus_plus::rspace::history::Either;
 use shared::rust::ByteString;
@@ -337,10 +335,15 @@ impl BlockAPI {
                                         continue;
                                     }
 
-                                    if let Some(msg) = recoverable_propose_failure_message(&status) {
+                                    if let Some(msg) = recoverable_propose_failure_message(&status)
+                                    {
                                         tracing::info!("{} (seqNum {})", msg, seq_number);
                                     } else {
-                                        tracing::error!("Failure: {} (seqNum {})", status, seq_number);
+                                        tracing::error!(
+                                            "Failure: {} (seqNum {})",
+                                            status,
+                                            seq_number
+                                        );
                                     }
                                 }
                                 ProposerResult::Empty => {
@@ -371,7 +374,10 @@ impl BlockAPI {
                                     tokio::time::sleep(retry_delay).await;
                                     continue;
                                 }
-                                tracing::error!("Failed to trigger propose from deploy path: {}", err);
+                                tracing::error!(
+                                    "Failed to trigger propose from deploy path: {}",
+                                    err
+                                );
                             }
                         }
                         break;
@@ -1495,6 +1501,39 @@ impl BlockAPI {
         }
     }
 
+    /// Query the finalization status of a deploy by its signature. Clients
+    /// should prefer this over block-hash finalization polling: after the
+    /// merge fix, a block can finalize while some of its deploys' effects
+    /// were dropped during merge — polling by block hash returns a
+    /// misleading `true`. Polling by deploy sig via this API correctly
+    /// reports the effect's canonical-state presence.
+    ///
+    /// Thin wrapper around
+    /// `deploy_finalization_status::resolve` that unwraps the engine cell.
+    /// The pure resolver is reused by the catchup gate in
+    /// `compute_parents_post_state` to avoid gating buffer population on
+    /// already-finalized sigs.
+    pub async fn deploy_finalization_status(
+        engine_cell: &EngineCell,
+        sig: &[u8],
+    ) -> ApiErr<crate::rust::api::deploy_finalization_status::DeployFinalizationStatus> {
+        let error_message =
+            "Could not compute deploy finalization status, casper instance was not available yet.";
+        let eng = engine_cell.get().await;
+        let Some(casper) = eng.with_casper() else {
+            tracing::warn!("{}", error_message);
+            return Err(eyre::eyre!("Error: {}", error_message));
+        };
+
+        let dag = casper.block_dag().await?;
+        crate::rust::api::deploy_finalization_status::resolve(
+            &dag,
+            casper.block_store(),
+            casper.casper_shard_conf().deploy_lifespan,
+            sig,
+        )
+    }
+
     pub async fn bond_status(engine_cell: &EngineCell, public_key: &ByteString) -> ApiErr<bool> {
         let error_message =
             "Could not check if validator is bonded, casper instance was not available yet.";
@@ -1567,13 +1606,14 @@ impl BlockAPI {
                             parents.len()
                         );
                         let runtime_guard = runtime_manager.lock().await;
-                        let (merged_state_hash, _rejected) =
+                        let (merged_state_hash, _rejected, _rejected_slashes) =
                             crate::rust::util::rholang::interpreter_util::compute_parents_post_state(
                                 casper.block_store(),
                                 parents.clone(),
                                 &snapshot,
                                 &runtime_guard,
                                 Some(true), // disable_late_block_filtering = true for exploratory deploy
+                                None,       // exploratory deploy: no buffer populate needed
                             )?;
                         merged_state_hash
                     };

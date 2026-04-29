@@ -50,10 +50,11 @@ fn make_chain(idx: usize) -> DeployChainIndex {
 
     DeployChainIndex::from_parts(
         HashableSet(deploys),
-        Blake2b256Hash::from_bytes(vec![0u8; 32]),
         Blake2b256Hash::from_bytes(vec![1u8; 32]),
         event_log,
         rspace_plus_plus::rspace::merger::state_change::StateChange::empty(),
+        Bytes::from(dh.to_vec()),
+        0,
     )
 }
 

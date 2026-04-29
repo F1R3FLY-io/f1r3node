@@ -843,6 +843,79 @@ async fn repeat_deploy_validation_should_not_accept_blocks_with_a_repeated_deplo
     .await
 }
 
+/// Regression test for `repeat_deploy`'s `rejected_in_scope` exemption.
+///
+/// Without the exemption, validation rejects any block that re-includes a
+/// sig already present in an ancestor's `body.deploys` — including the
+/// legitimate recovery path where a deploy was rejected by a descendant
+/// merge and is re-proposed through `RejectedDeployBuffer` to land its
+/// effects in canonical state.
+///
+/// Setup: same DAG shape as the "should not accept" test above, but with
+/// the deploy's sig pre-populated into `CasperSnapshot::rejected_in_scope`
+/// to simulate a descendant merge having rejected it. The repeat check
+/// must filter that sig out and report the block as valid.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn repeat_deploy_validation_allows_recovered_deploy_from_rejected_in_scope() {
+    use dashmap::DashSet;
+    use std::sync::Arc;
+
+    with_storage(|mut block_store, mut block_dag_storage| async move {
+        let deploy = construct_deploy::basic_processed_deploy(0, None).unwrap();
+        let deploy_sig: Bytes = deploy.deploy.sig.clone();
+
+        let genesis = create_genesis_block(
+            &mut block_store,
+            &mut block_dag_storage,
+            None,
+            None,
+            None,
+            Some(vec![deploy.clone()]),
+            None,
+            None,
+            None,
+            None,
+        );
+
+        // Same DAG as the "should not accept" test: block1 re-includes a sig
+        // already in its genesis ancestor's `body.deploys`.
+        let block1 = create_block(
+            &mut block_store,
+            &mut block_dag_storage,
+            vec![genesis.block_hash.clone()],
+            &genesis,
+            None,
+            None,
+            None,
+            Some(vec![deploy]),
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+
+        let dag = block_dag_storage.get_representation();
+        let mut snapshot = mk_casper_snapshot(dag);
+
+        // Mark the sig as "rejected in a descendant merge within deploy_lifespan".
+        // This is the signal the block-creator and Phase D recovery pipelines use
+        // to justify re-inclusion; validation must honor it.
+        let rejected: DashSet<Bytes> = DashSet::new();
+        rejected.insert(deploy_sig);
+        snapshot.rejected_in_scope = Arc::new(rejected);
+
+        let result = Validate::repeat_deploy(&block1, &mut snapshot, &mut block_store, 50);
+        assert_eq!(
+            result,
+            Either::Right(ValidBlock::Valid),
+            "recovery re-inclusion of a rejected-in-scope sig must validate; got {:?}",
+            result,
+        );
+    })
+    .await
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn sender_validation_should_return_true_for_genesis_and_blocks_from_bonded_validators_and_false_otherwise(
 ) {
@@ -1879,7 +1952,7 @@ async fn bonds_cache_validation_should_succeed_on_a_valid_block_and_fail_on_modi
         let mut runtime_manager = RuntimeManager::create_with_store(
             (&mut *kvm).r_space_stores().await.unwrap(),
             m_store,
-            Genesis::non_negative_mergeable_tag_name(),
+            std::sync::Arc::new(Genesis::default_mergeable_tags()),
             rholang::rust::interpreter::external_services::ExternalServices::noop(),
         );
 
@@ -1891,6 +1964,7 @@ async fn bonds_cache_validation_should_succeed_on_a_valid_block_and_fail_on_modi
             &mut block_store,
             &mut casper_snapshot,
             &mut runtime_manager,
+            None,
         )
         .await
         .unwrap();

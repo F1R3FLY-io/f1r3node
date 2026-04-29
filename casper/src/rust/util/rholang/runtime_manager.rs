@@ -40,7 +40,7 @@ use crate::rust::errors::CasperError;
 use crate::rust::merging::block_index::BlockIndex;
 use crate::rust::metrics_constants::{
     BLOCK_INDEX_CACHE_SIZE_METRIC, CASPER_METRICS_SOURCE, PARENTS_POST_STATE_CACHE_SIZE_METRIC,
-    RUNTIME_SPAWN_TIME_METRIC, RUNTIME_SPAWN_REPLAY_TIME_METRIC,
+    RUNTIME_SPAWN_REPLAY_TIME_METRIC, RUNTIME_SPAWN_TIME_METRIC,
 };
 use crate::rust::rholang::replay_runtime::ReplayRuntimeOps;
 use crate::rust::rholang::runtime::RuntimeOps;
@@ -65,7 +65,7 @@ pub struct RuntimeManager {
     pub replay_space: ReplayRSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>,
     pub history_repo: RhoHistoryRepository,
     pub mergeable_store: MergeableStore,
-    pub mergeable_tag_name: Par,
+    pub mergeable_tags: std::sync::Arc<std::collections::HashMap<Par, rspace_plus_plus::rspace::merger::merging_logic::MergeType>>,
     // TODO: make proper storage for block indices - OLD
     pub block_index_cache: Arc<DashMap<BlockHash, BlockIndex>>,
     pub block_index_cache_order: Arc<Mutex<VecDeque<BlockHash>>>,
@@ -91,7 +91,11 @@ pub struct ParentsPostStateCacheKey {
     pub disable_late_block_filtering: bool,
 }
 
-pub type ParentsPostStateCacheVal = (StateHash, Vec<prost::bytes::Bytes>);
+pub type ParentsPostStateCacheVal = (
+    StateHash,
+    Vec<prost::bytes::Bytes>,
+    Vec<crate::rust::merging::rejected_slash::RejectedSlash>,
+);
 
 impl RuntimeManager {
     const MAX_BLOCK_INDEX_CACHE_ENTRIES: usize = 128;
@@ -264,7 +268,7 @@ impl RuntimeManager {
         let new_space = self.space.spawn().expect("Failed to spawn RSpace");
         let runtime = rho_runtime::create_rho_runtime(
             new_space,
-            self.mergeable_tag_name.clone(),
+            self.mergeable_tags.clone(),
             true,
             &mut Vec::new(),
             self.external_services.clone(),
@@ -285,7 +289,7 @@ impl RuntimeManager {
 
         let runtime = rho_runtime::create_replay_rho_runtime(
             new_replay_space,
-            self.mergeable_tag_name.clone(),
+            self.mergeable_tags.clone(),
             true,
             &mut Vec::new(),
             self.external_services.clone(),
@@ -404,9 +408,8 @@ impl RuntimeManager {
         CasperError,
     > {
         let mem_profile_enabled = crate::rust::util::rholang::mem_profiler::mem_profile_enabled();
-        let read_vm_rss_kb = || -> Option<usize> {
-            crate::rust::util::rholang::mem_profiler::read_vm_rss_kb()
-        };
+        let read_vm_rss_kb =
+            || -> Option<usize> { crate::rust::util::rholang::mem_profiler::read_vm_rss_kb() };
         let mut rss_baseline = if mem_profile_enabled {
             read_vm_rss_kb()
         } else {
@@ -612,20 +615,20 @@ impl RuntimeManager {
                         );
                         // Continue to full replay path for validation.
                     } else {
-                    let pre_state_hash = Blake2b256Hash::from_bytes_prost(start_hash);
-                    let post_state_hash = Blake2b256Hash::from_bytes_prost(&cached_post);
-                    self.save_mergeable_channels(
-                        post_state_hash,
-                        sender.bytes.clone(),
-                        seq_num,
-                        Vec::new(),
-                        &pre_state_hash,
-                    )?;
-                    tracing::warn!(
+                        let pre_state_hash = Blake2b256Hash::from_bytes_prost(start_hash);
+                        let post_state_hash = Blake2b256Hash::from_bytes_prost(&cached_post);
+                        self.save_mergeable_channels(
+                            post_state_hash,
+                            sender.bytes.clone(),
+                            seq_num,
+                            Vec::new(),
+                            &pre_state_hash,
+                        )?;
+                        tracing::warn!(
                         "[CACHE] StateHashCache hit without mergeable entry for empty block (seq={}); synthesized empty mergeable metadata",
                         seq_num
                     );
-                    return Ok(cached_post);
+                        return Ok(cached_post);
                     }
                 }
 
@@ -724,7 +727,10 @@ impl RuntimeManager {
 
         let max_entries = Self::max_active_validators_cache_entries();
         if self.active_validators_cache.len() >= max_entries {
-            Self::evict_fifo_entry(&self.active_validators_cache, &self.active_validators_cache_order);
+            Self::evict_fifo_entry(
+                &self.active_validators_cache,
+                &self.active_validators_cache_order,
+            );
         }
         self.active_validators_cache
             .insert(start_hash.clone(), computed.clone());
@@ -767,7 +773,9 @@ impl RuntimeManager {
     pub async fn get_data(&self, hash: StateHash, channel: &Par) -> Result<Vec<Par>, CasperError> {
         let mut runtime = self.spawn_runtime().await;
 
-        runtime.reset(&Blake2b256Hash::from_bytes_prost(&hash)).await?;
+        runtime
+            .reset(&Blake2b256Hash::from_bytes_prost(&hash))
+            .await?;
 
         let runtime_ops = RuntimeOps::new(runtime);
         let computed = runtime_ops.get_data_par(channel).await;
@@ -781,7 +789,9 @@ impl RuntimeManager {
     ) -> Result<Vec<(Vec<BindPattern>, Par)>, CasperError> {
         let mut runtime = self.spawn_runtime().await;
 
-        runtime.reset(&Blake2b256Hash::from_bytes_prost(&hash)).await?;
+        runtime
+            .reset(&Blake2b256Hash::from_bytes_prost(&hash))
+            .await?;
 
         let runtime_ops = RuntimeOps::new(runtime);
         let computed = runtime_ops.get_continuation_par(channels).await;
@@ -796,6 +806,7 @@ impl RuntimeManager {
     pub fn get_or_compute_block_index(
         &self,
         block_hash: &BlockHash,
+        block_number: i64,
         usr_processed_deploys: &Vec<ProcessedDeploy>,
         sys_processed_deploys: &Vec<ProcessedSystemDeploy>,
         pre_state_hash: &Blake2b256Hash,
@@ -812,6 +823,7 @@ impl RuntimeManager {
         // Cache miss - compute the BlockIndex.
         let block_index = crate::rust::merging::block_index::new(
             block_hash,
+            block_number,
             usr_processed_deploys,
             sys_processed_deploys,
             pre_state_hash,
@@ -902,7 +914,7 @@ impl RuntimeManager {
                     .map(|x| {
                         x.channels
                             .into_iter()
-                            .map(|y| (y.hash, y.diff))
+                            .map(|y| (y.hash, (y.diff, y.merge_type)))
                             .collect::<BTreeMap<_, _>>()
                     })
                     .collect::<Vec<_>>();
@@ -967,7 +979,11 @@ impl RuntimeManager {
             .map(|data| {
                 let channels: Vec<NumberChannel> = data
                     .into_iter()
-                    .map(|(hash, diff)| NumberChannel { hash, diff })
+                    .map(|(hash, (diff, merge_type))| NumberChannel {
+                        hash,
+                        diff,
+                        merge_type,
+                    })
                     .collect::<Vec<_>>();
 
                 DeployMergeableData { channels }
@@ -1005,12 +1021,14 @@ impl RuntimeManager {
         pre_state_hash: &Blake2b256Hash,
     ) -> Result<Vec<NumberChannelsDiff>, CasperError> {
         let history_repo = self.history_repo.clone();
-        let reader = history_repo.get_history_reader(pre_state_hash).map_err(|e| {
-            CasperError::RuntimeError(format!(
-                "Failed to get history reader for pre-state hash: {:?}",
-                e
-            ))
-        })?;
+        let reader = history_repo
+            .get_history_reader(pre_state_hash)
+            .map_err(|e| {
+                CasperError::RuntimeError(format!(
+                    "Failed to get history reader for pre-state hash: {:?}",
+                    e
+                ))
+            })?;
 
         // Build a one-shot base-value map to avoid repeatedly creating history readers per key.
         let unique_channels = channels_data
@@ -1020,7 +1038,10 @@ impl RuntimeManager {
         let mut initial_values: BTreeMap<Blake2b256Hash, i64> = BTreeMap::new();
         for ch in unique_channels {
             let data = reader.get_data(&ch).map_err(|e| {
-                CasperError::RuntimeError(format!("Error getting data for channel {:?}: {:?}", ch, e))
+                CasperError::RuntimeError(format!(
+                    "Error getting data for channel {:?}: {:?}",
+                    ch, e
+                ))
             })?;
             if data.len() > 1 {
                 return Err(CasperError::RuntimeError(format!(
@@ -1060,7 +1081,7 @@ impl RuntimeManager {
         replay_rspace: ReplayRSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>,
         history_repo: RhoHistoryRepository,
         mergeable_store: MergeableStore,
-        mergeable_tag_name: Par,
+        mergeable_tags: std::sync::Arc<std::collections::HashMap<Par, rspace_plus_plus::rspace::merger::merging_logic::MergeType>>,
         external_services: ExternalServices,
     ) -> RuntimeManager {
         let replay_cache_size = Self::max_replay_cache_entries();
@@ -1071,7 +1092,7 @@ impl RuntimeManager {
             replay_space: replay_rspace,
             history_repo,
             mergeable_store,
-            mergeable_tag_name,
+            mergeable_tags,
             block_index_cache: Arc::new(DashMap::new()),
             block_index_cache_order: Arc::new(Mutex::new(VecDeque::new())),
             active_validators_cache: Arc::new(DashMap::new()),
@@ -1091,13 +1112,13 @@ impl RuntimeManager {
     pub fn create_with_store(
         store: RSpaceStore,
         mergeable_store: MergeableStore,
-        mergeable_tag_name: Par,
+        mergeable_tags: std::sync::Arc<std::collections::HashMap<Par, rspace_plus_plus::rspace::merger::merging_logic::MergeType>>,
         external_services: ExternalServices,
     ) -> RuntimeManager {
         let (rt_manager, _) = Self::create_with_history(
             store,
             mergeable_store,
-            mergeable_tag_name,
+            mergeable_tags,
             external_services,
         );
         rt_manager
@@ -1106,7 +1127,7 @@ impl RuntimeManager {
     pub fn create_with_history(
         store: RSpaceStore,
         mergeable_store: MergeableStore,
-        mergeable_tag_name: Par,
+        mergeable_tags: std::sync::Arc<std::collections::HashMap<Par, rspace_plus_plus::rspace::merger::merging_logic::MergeType>>,
         external_services: ExternalServices,
     ) -> (RuntimeManager, RhoHistoryRepository) {
         let (rspace, replay_rspace) =
@@ -1120,7 +1141,7 @@ impl RuntimeManager {
             replay_rspace,
             history_repo.clone(),
             mergeable_store,
-            mergeable_tag_name,
+            mergeable_tags,
             external_services,
         );
 

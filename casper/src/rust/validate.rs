@@ -326,7 +326,13 @@ impl Validate {
     }
 
     /// Validate no deploy with the same sig has been produced in the chain
-    /// Agnostic of non-parent justifications
+    /// Agnostic of non-parent justifications.
+    ///
+    /// Exception: sigs present in `s.rejected_in_scope` (rejected by a
+    /// descendant merge within deploy_lifespan) are legitimate recovery
+    /// candidates. The rejected-deploy buffer pipeline re-includes them
+    /// and their effects were not in canonical state from the original
+    /// inclusion, so flagging them as repeats would break the recovery path.
     pub fn repeat_deploy(
         block: &BlockMessage,
         s: &mut CasperSnapshot,
@@ -337,7 +343,8 @@ impl Validate {
             .body
             .deploys
             .iter()
-            .map(|deploy| deploy.deploy.sig.to_vec())
+            .filter(|pd| !s.rejected_in_scope.contains(&pd.deploy.sig))
+            .map(|pd| pd.deploy.sig.to_vec())
             .collect();
         if deploy_key_set.is_empty() {
             return Either::Right(ValidBlock::Valid);

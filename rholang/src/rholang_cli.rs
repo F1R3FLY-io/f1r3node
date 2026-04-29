@@ -100,7 +100,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let mut rho_runtime = create_runtime_from_kv_store(
             stores,
-            Par::default(),
+            Arc::new(std::collections::HashMap::new()),
             true,
             &mut additional_system_processes,
             matcher,
