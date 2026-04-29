@@ -7,7 +7,7 @@ use rspace_plus_plus::rspace::{
     },
 };
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     sync::Arc,
 };
 

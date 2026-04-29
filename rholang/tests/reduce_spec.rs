@@ -1,7 +1,7 @@
 // See rholang/src/test/scala/coop/rchain/rholang/interpreter/ReduceSpec.scala
 
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashMap},
     i64,
     sync::Arc,
 };

@@ -1,7 +1,7 @@
 // See casper/src/main/scala/coop/rchain/casper/rholang/RuntimeReplaySyntax.scala
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     future::Future,
     time::Instant,
 };

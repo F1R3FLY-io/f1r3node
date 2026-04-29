@@ -226,7 +226,6 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
 
     // Runtime for `rnode eval`
     let eval_runtime = {
-        use models::rhoapi::Par;
         use rholang::rust::interpreter::{matcher::r#match::Matcher, rho_runtime};
         use rspace_plus_plus::rspace::shared::key_value_store_manager::KeyValueStoreManager;
 

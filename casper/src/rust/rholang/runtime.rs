@@ -1,7 +1,7 @@
 // See casper/src/main/scala/coop/rchain/casper/rholang/RuntimeSyntax.scala
 
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, HashMap},
     future::Future,
     mem,
     sync::OnceLock,

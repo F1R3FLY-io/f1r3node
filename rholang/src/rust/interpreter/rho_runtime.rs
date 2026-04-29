@@ -23,7 +23,7 @@ use rspace_plus_plus::rspace::rspace::RSpaceStore;
 use rspace_plus_plus::rspace::rspace_interface::ISpace;
 use rspace_plus_plus::rspace::trace::Log;
 use rspace_plus_plus::rspace::tuplespace_interface::Tuplespace;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 

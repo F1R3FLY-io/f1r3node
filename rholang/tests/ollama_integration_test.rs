@@ -1,4 +1,3 @@
-use models::rhoapi::Par;
 use rholang::rust::interpreter::errors::InterpreterError;
 use rholang::rust::interpreter::external_services::ExternalServices;
 use rholang::rust::interpreter::grpc_client_service::GrpcClientService;
