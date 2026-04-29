@@ -328,22 +328,90 @@ impl Validate {
     /// Validate no deploy with the same sig has been produced in the chain
     /// Agnostic of non-parent justifications.
     ///
-    /// Exception: sigs present in `s.rejected_in_scope` (rejected by a
-    /// descendant merge within deploy_lifespan) are legitimate recovery
-    /// candidates. The rejected-deploy buffer pipeline re-includes them
-    /// and their effects were not in canonical state from the original
-    /// inclusion, so flagging them as repeats would break the recovery path.
+    /// Recovery exemption: sigs present in `s.rejected_in_scope` (rejected
+    /// by a descendant merge within deploy_lifespan) may be legitimate
+    /// recovery candidates — the rejected-deploy buffer pipeline re-includes
+    /// them so their effects can land in canonical state. Without this
+    /// exemption, every recovery-path block would fail `InvalidRepeatDeploy`.
+    ///
+    /// The exemption is gated on the sig's current finalization status. A
+    /// sig in `rejected_in_scope` falls into one of two cases:
+    ///
+    ///   - `Pending` / `Expired` / `Failed`: the deploy's effects are NOT
+    ///     in canonical state (no clean canonical inclusion that survived
+    ///     descendant rejection). Re-inclusion is the only way to land
+    ///     them. Exempt from the repeat check.
+    ///
+    ///   - `Finalized`: the deploy has a clean canonical inclusion that
+    ///     was NOT invalidated by a canonical-descendant rejection. Its
+    ///     effects ARE already in canonical state. Re-inclusion would be
+    ///     double-execution, not recovery. Do NOT exempt — let the
+    ///     ancestor scan find the canonical inclusion and flag the
+    ///     repeat. The catchup gate (`should_admit_to_rejected_buffer`)
+    ///     is the primary defense against this; the validator-side
+    ///     check is the second line of defense.
     pub fn repeat_deploy(
         block: &BlockMessage,
         s: &mut CasperSnapshot,
         block_store: &KeyValueBlockStore,
         expiration_threshold: i32,
     ) -> ValidBlockProcessing {
+        use crate::rust::api::deploy_finalization_status::{
+            resolve as resolve_finalization_status, DeployFinalizationState,
+        };
+
         let deploy_key_set: HashSet<Vec<u8>> = block
             .body
             .deploys
             .iter()
-            .filter(|pd| !s.rejected_in_scope.contains(&pd.deploy.sig))
+            .filter(|pd| {
+                if !s.rejected_in_scope.contains(&pd.deploy.sig) {
+                    return true; // not rejected — must check
+                }
+                // Sig is in rejected_in_scope. Apply the exemption only if
+                // the sig is NOT Finalized — otherwise re-inclusion is
+                // double-execution and the repeat check must catch it.
+                match resolve_finalization_status(
+                    &s.dag,
+                    block_store,
+                    expiration_threshold as i64,
+                    &pd.deploy.sig,
+                ) {
+                    Ok(status)
+                        if status.state == DeployFinalizationState::Finalized =>
+                    {
+                        let canonical_block_str = status
+                            .latest_block_hash
+                            .as_ref()
+                            .map(|h| PrettyPrinter::build_string_bytes(h))
+                            .unwrap_or_else(|| "<none>".to_string());
+                        tracing::warn!(
+                            "repeat_deploy: sig {} is in rejected_in_scope but \
+                             resolves to Finalized (clean canonical inclusion at \
+                             {}); declining the recovery exemption to prevent \
+                             double-execution",
+                            hex::encode(&pd.deploy.sig),
+                            canonical_block_str,
+                        );
+                        true // keep in check set so the ancestor scan finds the repeat
+                    }
+                    Ok(_) => false, // status != Finalized → exempt (recovery)
+                    Err(err) => {
+                        // Resolver failures are conservative-fail: keep the sig
+                        // in the check set so an inconsistency surfaces as
+                        // InvalidRepeatDeploy rather than being silently
+                        // exempted as a recovery candidate.
+                        tracing::warn!(
+                            "repeat_deploy: deploy_finalization_status::resolve \
+                             failed for sig {}: {} — keeping sig in check set \
+                             rather than granting recovery exemption",
+                            hex::encode(&pd.deploy.sig),
+                            err,
+                        );
+                        true
+                    }
+                }
+            })
             .map(|pd| pd.deploy.sig.to_vec())
             .collect();
         if deploy_key_set.is_empty() {
