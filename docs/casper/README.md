@@ -164,6 +164,21 @@ The merge scope cannot rely on local finalization status because different valid
 
 **Deterministic ordering**: Merge paths in `conflict_set_merger.rs` and casper-buffer eviction enforce deterministic tie-breaks to ensure consistent behavior across nodes.
 
+### Mergeable Channels
+
+Not every overlapping channel touch is a conflict. Some channels carry data with commutative update semantics — two concurrent writes can be combined rather than one rejected. The merge engine tags such channels with a `MergeType` (defined in `rspace++/src/rspace/merger/merging_logic.rs`), and the rholang interpreter detects them at evaluation time via `is_mergeable_channel` (`rholang/src/rust/interpreter/reduce.rs`):
+
+| `MergeType` | Channel pattern | Combine rule |
+|-------------|-----------------|--------------|
+| `IntegerAdd` | Vault balances, gas accumulators, per-purse counters | Sum the deltas across chains |
+| `BitmaskOr` | Registry `TreeHashMap` interior-node bitmaps (`@(*bitmaskTag, node, *storeToken)`) | OR-merge the bitmaps |
+
+When the conflict-set merger inspects a shared channel, it looks up the channel's tag against this table. If a `MergeType` is found, the deploys are merged rather than treated as conflicting. If not, ordinary conflict resolution applies (one deploy is kept, the other rejected).
+
+`BitmaskOr` was added to handle a class of failure where two registry inserts from sibling blocks both touched the same `TreeHashMap` interior node. Without bitmask merging, one of the inserts would be rejected at multi-parent merge — even though the inserts were at different keys and logically commute. The regression is captured at unit level by `casper/tests/multi_node/bridge_contract_concurrent_merge.rs`.
+
+To diagnose a suspected merge rejection, run with `RUST_LOG=f1r3fly.merge.tag_check=trace` to see which channels match a `MergeType` and which do not.
+
 ### Performance
 
 Merge cost is O(visible_blocks^2 x deploys^2) for the conflict resolution phase, dominated by pairwise conflict detection across deploys in the visible block set. LCA scoping keeps the visible block count bounded, preventing merge cost from degrading under sustained load.
