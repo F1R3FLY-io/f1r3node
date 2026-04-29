@@ -124,11 +124,20 @@ Before building a block, the proposer verifies:
 `block_creator::prepare_user_deploys()`:
 
 1. Read unfinalized deploys from `KeyValueDeployStorage`
-2. **Filter**: Not future (`valid_after_block_number`), not expired by height, not expired by time
-3. **Exclude**: Deploys already in scope (prevents re-inclusion across branches)
-4. **Sort deterministically**: `(valid_after_block_number, timestamp, signature)` — every validator selects the same deploys in the same order
-5. **Cap**: `max_user_deploys_per_block`
-6. **Adaptive cap**: EMA-based controller targets 1-second block creation latency. When blocks take longer, cap decreases. Small batches bypass the cap entirely. A backlog floor prevents deploy starvation.
+2. **Pull recovered deploys** from the `KeyValueRejectedDeployBuffer` —
+   sigs that a prior multi-parent merge conflict-rejected. Their
+   effects never landed in canonical state and they are eligible for
+   re-inclusion in a fresh proposer's body.
+3. **Filter**: Not future (`valid_after_block_number`), not expired by height, not expired by time
+4. **Exclude**: Deploys already in scope (prevents re-inclusion across
+   branches), EXCEPT sigs in `casper_snapshot.rejected_in_scope` —
+   those were conflict-rejected by a descendant merge and are the
+   recovery candidates from step 2. The same exemption is applied
+   when filtering against the proposer's own self-chain via
+   `collect_self_chain_deploy_sigs`.
+5. **Sort deterministically**: `(valid_after_block_number, timestamp, signature)` — every validator selects the same deploys in the same order
+6. **Cap**: `max_user_deploys_per_block`
+7. **Adaptive cap**: EMA-based controller targets 1-second block creation latency. When blocks take longer, cap decreases. Small batches bypass the cap entirely. A backlog floor prevents deploy starvation.
 
 **Why deterministic ordering?** All validators must select identical deploys for identical parent sets, or state hashes diverge and blocks get rejected.
 
@@ -259,7 +268,12 @@ In a multi-parent DAG, different validators may have included different deploys 
 1. **Identify visible blocks**: All blocks between the LCA and the parents (exclusive of LCA, inclusive of parents)
 2. **Collect deploys**: Extract user deploys from all visible blocks
 3. **Detect conflicts**: Branches conflict if they contain the **same user deploy ID** (not content — just the deploy signature)
-4. **Resolve**: `ConflictSetMerger` selects the highest-value subset of non-conflicting deploys. Dependents of rejected deploys are also rejected.
+4. **Resolve**: `ConflictSetMerger` selects the highest-value subset
+   of non-conflicting deploys. Dependents of rejected deploys are
+   also rejected. Rejected sigs land in the
+   `KeyValueRejectedDeployBuffer` so a subsequent proposer can
+   re-include them via `prepare_user_deploys` (see Block Creation
+   step 3).
 5. **Merge**: Replay selected deploys via RSpace merger to compute combined post-state
 
 ### Determinism Constraint
@@ -270,7 +284,7 @@ The merge scope is derived entirely from DAG structure (parent pointers and bloc
 
 - Merge cost: O(visible_blocks^2 x deploys^2) for conflict resolution
 - LCA scoping keeps visible_blocks bounded
-- **Fallback**: If visible_blocks > 512 or LCA distance > 256, falls back to latest parent's post-state (discards non-selected parent deploys — they'll be re-proposed)
+- **Fallback**: If visible_blocks > 512 or LCA distance > 256, falls back to latest parent's post-state (discards non-selected parent deploys — they land in the rejected-deploy buffer and a subsequent proposer re-includes them via `prepare_user_deploys`)
 
 ### System Deploys
 
