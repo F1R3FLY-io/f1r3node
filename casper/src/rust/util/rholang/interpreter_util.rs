@@ -43,39 +43,59 @@ pub fn mk_term(rho: &str, normalizer_env: HashMap<String, Par>) -> Result<Par, I
     Compiler::source_to_adt_with_normalizer_env(rho, normalizer_env)
 }
 
-/// Returns `true` if the given user-deploy sig should be admitted to the
-/// rejected-deploy buffer. Terminal states (Finalized / Failed / Expired)
-/// mean the sig has already been resolved in the local canonical view and
-/// must not be re-proposed — re-proposal would either waste a slot or, in
-/// the catchup case, cause re-execution of already-canonical work against
-/// a different pre-state. Resolver errors are treated conservatively as
-/// "do not admit" so that transient failures do not open the re-execution
-/// hazard; the sig will be retried on the next merge rejection if still
-/// live.
-fn should_admit_to_rejected_buffer(
+/// Pre-compute admit decisions for a batch of rejected-deploy sigs in a
+/// single canonical-chain scan. The returned set contains the sigs that
+/// *should* be admitted to the rejected-deploy buffer — those whose
+/// current finalization state is `Pending`. Sigs whose state is terminal
+/// (`Finalized` / `Failed` / `Expired`) are absent from the returned
+/// set: they have already been resolved in the local canonical view and
+/// must not be re-proposed (re-proposal would either waste a slot or,
+/// in the catchup case, cause re-execution of already-canonical work
+/// against a different pre-state).
+///
+/// Catastrophic resolver failures (LFB lookup, block-store IO during
+/// the prelude) are treated conservatively as "do not admit" for any
+/// sig in the batch — transient failures must not open the
+/// re-execution hazard; sigs will be retried on the next merge
+/// rejection if still live.
+///
+/// This is the batched replacement for the previous per-sig
+/// `should_admit_to_rejected_buffer`. Cost: one BFS over the
+/// `deploy_lifespan` window regardless of sig count, instead of one
+/// BFS per sig. For an N-rejected merge with M-block window, this is
+/// O(M + N) block fetches versus O(N · M).
+fn compute_rejected_buffer_admits(
     dag: &block_storage::rust::dag::block_dag_key_value_storage::KeyValueDagRepresentation,
     block_store: &KeyValueBlockStore,
     deploy_lifespan: i64,
-    sig: &Bytes,
-) -> bool {
-    use crate::rust::api::deploy_finalization_status::{resolve, DeployFinalizationState};
-    match resolve(dag, block_store, deploy_lifespan, sig) {
-        Ok(status) if status.state == DeployFinalizationState::Pending => true,
-        Ok(status) => {
-            tracing::debug!(
-                "RejectedDeployBuffer populate: skipping sig {} (state={:?}) — already resolved in canonical view",
-                hex::encode(sig),
-                status.state
-            );
-            false
-        }
+    sigs: &HashSet<Bytes>,
+) -> HashSet<Bytes> {
+    use crate::rust::api::deploy_finalization_status::{resolve_batch, DeployFinalizationState};
+    if sigs.is_empty() {
+        return HashSet::new();
+    }
+    match resolve_batch(dag, block_store, deploy_lifespan, sigs) {
+        Ok(statuses) => statuses
+            .into_iter()
+            .filter_map(|(sig, status)| {
+                if status.state == DeployFinalizationState::Pending {
+                    Some(sig)
+                } else {
+                    tracing::debug!(
+                        "RejectedDeployBuffer populate: skipping sig {} (state={:?}) — already resolved in canonical view",
+                        hex::encode(&sig),
+                        status.state
+                    );
+                    None
+                }
+            })
+            .collect(),
         Err(err) => {
             tracing::warn!(
-                "RejectedDeployBuffer populate: status check failed for sig {}: {} — skipping",
-                hex::encode(sig),
+                "RejectedDeployBuffer populate: batched status check failed: {} — admitting nothing for this merge",
                 err
             );
-            false
+            HashSet::new()
         }
     }
 }
@@ -1132,6 +1152,25 @@ pub fn compute_parents_post_state(
             // different pre-state.
             if let Some(buffer) = rejected_deploy_buffer {
                 if !rejected_user_pairs.is_empty() {
+                    // Pre-compute admit decisions for all rejected sigs in
+                    // one batched canonical-chain scan, before the
+                    // per-block iteration below. Without batching, the
+                    // catchup hot path was O(rejected_count × DAG_size)
+                    // — a 50-rejected merge with a 200-block deploy-
+                    // lifespan window would do 10 000 block fetches.
+                    // After batching: one BFS regardless of N, then
+                    // dictionary lookups.
+                    let candidate_sigs: HashSet<Bytes> = rejected_user_pairs
+                        .iter()
+                        .map(|(sig, _)| sig.clone())
+                        .collect();
+                    let admit_set: HashSet<Bytes> = compute_rejected_buffer_admits(
+                        &s.dag,
+                        block_store,
+                        s.on_chain_state.shard_conf.deploy_lifespan,
+                        &candidate_sigs,
+                    );
+
                     let mut by_block: HashMap<BlockHash, Vec<Bytes>> = HashMap::new();
                     for (sig, src_block) in &rejected_user_pairs {
                         by_block
@@ -1146,12 +1185,7 @@ pub fn compute_parents_post_state(
                             Ok(Some(block)) => {
                                 for pd in &block.body.deploys {
                                     if sig_set.contains(&pd.deploy.sig)
-                                        && should_admit_to_rejected_buffer(
-                                            &s.dag,
-                                            block_store,
-                                            s.on_chain_state.shard_conf.deploy_lifespan,
-                                            &pd.deploy.sig,
-                                        )
+                                        && admit_set.contains(&pd.deploy.sig)
                                     {
                                         deploys_to_buffer.push(pd.deploy.clone());
                                     }
