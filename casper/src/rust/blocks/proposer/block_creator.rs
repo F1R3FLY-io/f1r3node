@@ -485,7 +485,16 @@ pub async fn create(
             collect_self_chain_deploy_sigs(casper_snapshot, validator_identity, block_store)?;
         if !self_chain_deploy_sigs.is_empty() {
             let before = v.len();
-            v.retain(|deploy| !self_chain_deploy_sigs.contains(&deploy.sig));
+            // A sig in the proposer's self-chain is normally a duplicate and
+            // must be filtered out. The exception is a sig in
+            // `rejected_in_scope`: the merge engine conflict-rejected it, so
+            // its effects never landed in canonical state and re-proposing
+            // it is correct. Mirror the same exemption that
+            // `prepare_user_deploys` applies upstream.
+            v.retain(|deploy| {
+                !self_chain_deploy_sigs.contains(&deploy.sig)
+                    || casper_snapshot.rejected_in_scope.contains(&deploy.sig)
+            });
             let skipped = before.saturating_sub(v.len());
             if skipped > 0 {
                 tracing::info!(
