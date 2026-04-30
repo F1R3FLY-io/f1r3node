@@ -6,5 +6,6 @@ pub mod limited_parent_depth_spec;
 pub mod lmdb_key_value_store_spec;
 pub mod recovery_cycle_spec;
 pub mod rholang_build_test;
+pub mod slash_recovery_spec;
 pub mod single_parent_casper_spec;
 pub mod validate_test;
