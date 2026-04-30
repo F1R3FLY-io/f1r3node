@@ -582,14 +582,18 @@ pub async fn create(
     let (_pre_state, _rejected_user_sigs, rejected_slashes) = merge_pre_info;
 
     // Union own slashes with merge-rejected slashes, dedup by
-    // (invalid_block_hash, issuer_public_key). Own detections take priority
-    // and the dedup set drops any merge-rejected slash that is already
-    // covered by prepare_slashing_deploys.
-    let own_slash_keys = slashing_deploys
+    // `invalid_block_hash`. Own detections take priority — any
+    // merge-rejected slash for an equivocator already covered by
+    // prepare_slashing_deploys is dropped. `filter_recoverable` also
+    // collapses multiple rejected slashes for the same equivocator
+    // (e.g., from different original issuers) down to a single entry.
+    let own_invalid_block_hashes = slashing_deploys
         .iter()
-        .map(|sd| (sd.invalid_block_hash.clone(), sd.pk.bytes.to_vec()));
-    let recovered_rejected_slashes =
-        crate::rust::merging::rejected_slash::filter_recoverable(rejected_slashes, own_slash_keys);
+        .map(|sd| sd.invalid_block_hash.clone());
+    let recovered_rejected_slashes = crate::rust::merging::rejected_slash::filter_recoverable(
+        rejected_slashes,
+        own_invalid_block_hashes,
+    );
 
     // Make sure closeBlock is the last system Deploy
     let mut system_deploys_converted: Vec<SystemDeployEnum> = Vec::new();
