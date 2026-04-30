@@ -1,10 +1,6 @@
-// Proof tests for BlockAPI::deploy_finalization_status.
-//
-// Covers the API-surface states that can be triggered with the existing
-// single-node TestNode fixture. Deep end-to-end coverage (multi-
-// equivocation, cost-starvation simulation, merge-rejection-then-
-// recovery) requires additional test infrastructure and is tracked
-// separately.
+// Proof tests for BlockAPI::deploy_finalization_status. Covers the
+// API-surface states that can be triggered with the existing
+// single-node TestNode fixture.
 
 use std::collections::HashMap;
 use std::sync::Arc;
