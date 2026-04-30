@@ -4,6 +4,7 @@ pub mod estimator_test;
 pub mod finalizer_test;
 pub mod limited_parent_depth_spec;
 pub mod lmdb_key_value_store_spec;
+pub mod multi_validator_recovery_spec;
 pub mod recovery_cycle_spec;
 pub mod rholang_build_test;
 pub mod slash_recovery_spec;
