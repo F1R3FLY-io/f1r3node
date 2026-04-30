@@ -323,11 +323,16 @@ fn bfs_finalized_window(
 /// Apply the per-sig post-loop rules: canonical-descendant invalidation
 /// of clean inclusions, latest_block_hash fallback to the first-seen
 /// block, expiry rule, and final state determination.
+///
+/// Returns `ApiErr` rather than swallowing failures from `is_in_main_chain`.
+/// The resolver's `state` field is consensus-relevant — `repeat_deploy`
+/// validation reads it via the `rejected_in_scope` exemption — so two
+/// validators must not silently disagree on it under transient I/O.
 fn finalize_sig_state(
     dag: &KeyValueDagRepresentation,
     deploy_lifespan: i64,
     state: ResolverState,
-) -> DeployFinalizationStatus {
+) -> ApiErr<DeployFinalizationStatus> {
     // A rejection invalidates a clean inclusion only when the
     // rejection block is a CANONICAL-CHAIN DESCENDANT of the clean
     // block. Two reasons height alone is wrong:
@@ -367,15 +372,11 @@ fn finalize_sig_state(
         (&state.clean_finalized_event, &state.latest_rejected_event)
     {
         let lfb_hash = dag.last_finalized_block();
-        let reject_is_canonical = reject_block == &lfb_hash
-            || dag
-                .is_in_main_chain(reject_block, &lfb_hash)
-                .unwrap_or(false);
+        let reject_is_canonical =
+            reject_block == &lfb_hash || dag.is_in_main_chain(reject_block, &lfb_hash)?;
         let reject_is_canonical_descendant = clean_block != reject_block
             && reject_is_canonical
-            && dag
-                .is_in_main_chain(clean_block, reject_block)
-                .unwrap_or(false);
+            && dag.is_in_main_chain(clean_block, reject_block)?;
         if reject_is_canonical_descendant {
             clean_finalized_height = None;
         }
@@ -419,11 +420,11 @@ fn finalize_sig_state(
 
     let _ = state.sig_bytes; // no longer needed past finalize
 
-    DeployFinalizationStatus {
+    Ok(DeployFinalizationStatus {
         state: final_state,
         rejection_count: state.rejection_count,
         latest_block_hash: latest_event.map(|(_, h)| h),
-    }
+    })
 }
 
 /// Pure resolver for deploy finalization state, single-sig entry point.
@@ -470,7 +471,7 @@ pub fn resolve(
         .into_iter()
         .next()
         .expect("per_sig was populated with one entry above");
-    Ok(finalize_sig_state(dag, deploy_lifespan, state))
+    finalize_sig_state(dag, deploy_lifespan, state)
 }
 
 /// Batched resolver for many sigs in a single canonical-chain scan.
@@ -525,7 +526,7 @@ pub fn resolve_batch(
 
     // Per-sig post-processing.
     for (sig, state) in per_sig {
-        results.insert(sig, finalize_sig_state(dag, deploy_lifespan, state));
+        results.insert(sig, finalize_sig_state(dag, deploy_lifespan, state)?);
     }
 
     Ok(results)
