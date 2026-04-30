@@ -389,6 +389,7 @@ async fn prepare_slashing_deploys(
             initial_rand: system_deploy_util::generate_slash_deploy_random_seed(
                 self_id.clone(),
                 seq_num,
+                &invalid_block_hash,
             ),
         };
 
@@ -632,6 +633,7 @@ pub async fn create(
             initial_rand: system_deploy_util::generate_slash_deploy_random_seed(
                 self_id.clone(),
                 next_seq_num,
+                &rs.invalid_block_hash,
             ),
         };
         tracing::info!(

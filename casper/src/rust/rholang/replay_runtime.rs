@@ -420,6 +420,7 @@ impl ReplayRuntimeOps {
                     initial_rand: system_deploy_util::generate_slash_deploy_random_seed(
                         block_data.sender.bytes.clone(),
                         block_data.seq_num,
+                        invalid_block_hash,
                     ),
                 };
 
