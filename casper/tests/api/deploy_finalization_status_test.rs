@@ -281,7 +281,7 @@ async fn resolve_finds_sig_in_secondary_parent_branch() {
 ///
 /// `resolve_batch` lifts the per-sig BFS state into a struct so a single
 /// canonical-chain walk can update many sigs at once (one BFS per merge
-/// step instead of one per rejected deploy — see PR #488 review #4).
+/// step instead of one per rejected deploy).
 /// Both entry points share `run_prelude`, `bfs_finalized_window`, and
 /// `finalize_sig_state`; this test ensures the *external* contract
 /// stays the same — for every sig, `resolve(sig)` returns the same
