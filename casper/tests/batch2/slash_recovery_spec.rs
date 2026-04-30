@@ -401,3 +401,160 @@ async fn e1c_re_issues_merge_rejected_slash() {
         succeeded_slash_for_invalid_block
     );
 }
+
+// Regression for the empty-block skip path. A heartbeat-disabled proposer
+// (allow_empty_blocks=false, the production default) used to fast-fail on
+// `NoNewDeploys` whenever it had no user deploys and no own-detected
+// slashes — even when the parent merge had produced rejected slashes that
+// only this proposer could re-issue. The fix moves the merge above the
+// skip check so `recovered_rejected_slashes` can keep the proposer alive.
+//
+// Setup mirrors `e1c_re_issues_merge_rejected_slash` (cache-injected
+// RejectedSlash, own-detection filtered by bond floor) but omits the
+// keep-alive user deploy. Pre-fix this test would error on `NoNewDeploys`;
+// post-fix the proposer must still emit the cache-supplied SlashDeploy.
+#[tokio::test]
+async fn rejected_slash_recovery_keeps_empty_proposer_alive() {
+    let ctx = TestContext::new().await;
+
+    let mut nodes = TestNode::create_network(ctx.genesis.clone(), 3, None, None, None, None)
+        .await
+        .expect("create_network(3)");
+    let alt_issuer_pk = nodes[2]
+        .validator_id_opt
+        .as_ref()
+        .expect("node 2 has validator identity")
+        .public_key
+        .clone();
+
+    let deploy_data = construct_deploy::basic_deploy_data(0, None, Some(ctx.shard_id.clone()))
+        .expect("build deploy");
+    nodes[0]
+        .casper
+        .deploy(deploy_data)
+        .expect("validator 0 deploy");
+    let signed_block = nodes[0]
+        .create_block_unsafe(&[])
+        .await
+        .expect("validator 0 creates signed_block");
+    let invalid_block = {
+        let mut b = signed_block.clone();
+        b.seq_num = 47;
+        b
+    };
+    nodes[1]
+        .process_block(invalid_block.clone())
+        .await
+        .expect("node 1 processes invalid_block");
+    nodes[2]
+        .process_block(invalid_block.clone())
+        .await
+        .expect("node 2 processes invalid_block");
+
+    let deploy_a = construct_deploy::basic_deploy_data(1, None, Some(ctx.shard_id.clone()))
+        .expect("build deploy a");
+    nodes[1]
+        .casper
+        .deploy(deploy_a)
+        .expect("validator 1 deploy a");
+    let block_a = nodes[1]
+        .create_block_unsafe(&[])
+        .await
+        .expect("validator 1 creates block_a");
+    nodes[1]
+        .process_block(block_a.clone())
+        .await
+        .expect("node 1 processes its own block_a");
+
+    let deploy_b = construct_deploy::basic_deploy_data(2, None, Some(ctx.shard_id.clone()))
+        .expect("build deploy b");
+    nodes[2]
+        .casper
+        .deploy(deploy_b)
+        .expect("validator 2 deploy b");
+    let block_b = nodes[2]
+        .create_block_unsafe(&[])
+        .await
+        .expect("validator 2 creates block_b");
+    nodes[1]
+        .process_block(block_b.clone())
+        .await
+        .expect("node 1 processes block_b");
+
+    let snapshot = nodes[1].casper.get_snapshot().await.expect("get_snapshot");
+    assert!(
+        snapshot.parents.len() >= 2,
+        "test setup requires multi-parent proposer view; got {} parent(s)",
+        snapshot.parents.len()
+    );
+    let mut sorted_parent_hashes: Vec<prost::bytes::Bytes> = snapshot
+        .parents
+        .iter()
+        .map(|p| p.block_hash.clone())
+        .collect();
+    sorted_parent_hashes.sort();
+    let cache_key = ParentsPostStateCacheKey {
+        sorted_parent_hashes,
+        snapshot_lfb_hash: snapshot.last_finalized_block.clone(),
+        disable_late_block_filtering: snapshot
+            .on_chain_state
+            .shard_conf
+            .disable_late_block_filtering,
+    };
+
+    let (merged_state, merged_rejected, _) =
+        casper::rust::util::rholang::interpreter_util::compute_parents_post_state(
+            &nodes[1].block_store,
+            snapshot.parents.clone(),
+            &snapshot,
+            &nodes[1].runtime_manager,
+            None,
+            Some(&nodes[1].rejected_deploy_buffer),
+        )
+        .expect("real merge to seed cache value");
+
+    let synthetic = RejectedSlash {
+        invalid_block_hash: invalid_block.block_hash.clone(),
+        issuer_public_key: alt_issuer_pk,
+        source_block_hash: invalid_block.block_hash.clone(),
+    };
+    nodes[1]
+        .runtime_manager
+        .put_cached_parents_post_state(cache_key, (merged_state, merged_rejected, vec![synthetic]));
+    drop(snapshot);
+
+    // No user deploy. With allow_empty_blocks=false (TestNode default) and
+    // own-detection filtered out by bond floor, the only thing keeping
+    // the proposer alive is the cache-injected RejectedSlash flowing
+    // through `recovered_rejected_slashes`. If the skip check is still
+    // pre-merge, `create_block` returns NoNewDeploys and `create_block_unsafe`
+    // errors here.
+    let block = nodes[1].create_block_unsafe(&[]).await.expect(
+        "validator 1 must propose a block even with no user deploys and no own-detected \
+         slashes — a pending merge-rejected slash should keep the proposer alive. If this \
+         fails with NoNewDeploys, the empty-block skip check is running before the merge \
+         and dropping rejected-slash recovery.",
+    );
+
+    let succeeded_slash_for_invalid_block = block
+        .body
+        .system_deploys
+        .iter()
+        .filter(|psd| {
+            matches!(
+                psd,
+                ProcessedSystemDeploy::Succeeded {
+                    system_deploy: SystemDeployData::Slash { invalid_block_hash, .. },
+                    ..
+                } if *invalid_block_hash == invalid_block.block_hash
+            )
+        })
+        .count();
+    assert_eq!(
+        succeeded_slash_for_invalid_block, 1,
+        "block.body must contain exactly one Succeeded SlashDeploy for invalid_block. \
+         Got {} entries — the skip check should have allowed the proposer through on \
+         the strength of recovered_rejected_slashes alone.",
+        succeeded_slash_for_invalid_block
+    );
+}

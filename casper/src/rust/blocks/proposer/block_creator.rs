@@ -573,24 +573,18 @@ pub async fn create(
     // Add dummy deploys
     all_deploys.extend(dummy_deploys);
 
-    // Check if we have any new work to process.
-    // If empty blocks are disabled, skip closeBlock-only proposals to avoid no-op checkpoint cost.
-    // If empty blocks are enabled (heartbeat/liveness mode), continue and emit closeBlock.
-    let has_slashing_deploys = !slashing_deploys.is_empty();
-    if all_deploys.is_empty() && !has_slashing_deploys {
-        if !allow_empty_blocks {
-            tracing::info!(
-                "Skipping empty block creation: no new user deploys and no slashing deploys"
-            );
-            return Ok(BlockCreatorResult::NoNewDeploys);
-        }
-    }
-
-    // Merge the parents once up front to discover slashes that were rejected
-    // by cost-optimal resolution. The result is cached so the downstream
-    // compute_deploys_checkpoint call below hits the cache. Rejected slashes
-    // are re-issued by this proposer (below) so the slash effect lands in
-    // the merge block regardless of the merge's rejection decision.
+    // Merge the parents once up front. Two reasons to do this before the
+    // empty-block skip check below:
+    //   1. To discover slashes that were rejected by cost-optimal merge
+    //      resolution — those slashes must be re-issued by this proposer
+    //      so the slash effect lands in the merge block regardless of the
+    //      merge's rejection decision.
+    //   2. To include rejected-slash recovery in the "do we have work?"
+    //      decision. A heartbeat-disabled proposer that wakes with no user
+    //      deploys and no own-detected slashes would otherwise skip,
+    //      stranding any merge-rejected slashes from parent merging.
+    // The merge result is cached so the downstream compute_deploys_checkpoint
+    // call hits the cache.
     let merge_pre_info = interpreter_util::compute_parents_post_state(
         block_store,
         parents.clone(),
@@ -614,6 +608,25 @@ pub async fn create(
         rejected_slashes,
         own_invalid_block_hashes,
     );
+
+    // Check if we have any new work to process.
+    // If empty blocks are disabled, skip closeBlock-only proposals to avoid no-op checkpoint cost.
+    // If empty blocks are enabled (heartbeat/liveness mode), continue and emit closeBlock.
+    // Recovered rejected slashes count as work — without this check, a
+    // heartbeat-disabled proposer would silently drop merge-rejected slashes
+    // on a wake with no other pending work.
+    let has_slashing_deploys = !slashing_deploys.is_empty();
+    let has_recovered_rejected_slashes = !recovered_rejected_slashes.is_empty();
+    if all_deploys.is_empty()
+        && !has_slashing_deploys
+        && !has_recovered_rejected_slashes
+        && !allow_empty_blocks
+    {
+        tracing::info!(
+            "Skipping empty block creation: no new user deploys, no slashing deploys, no merge-rejected slashes to recover"
+        );
+        return Ok(BlockCreatorResult::NoNewDeploys);
+    }
 
     // Make sure closeBlock is the last system Deploy
     let mut system_deploys_converted: Vec<SystemDeployEnum> = Vec::new();
