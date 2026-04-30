@@ -207,11 +207,22 @@ async fn prepare_user_deploys(
         .collect();
     if !all_expired.is_empty() {
         tracing::info!(
-            "Removing {} expired deploy(s) from storage",
+            "Removing {} expired deploy(s) from storage and rejected-deploy buffer",
             all_expired.len()
         );
         let expired_list: Vec<Signed<DeployData>> = all_expired.into_iter().cloned().collect();
-        deploy_storage_guard.remove(expired_list)?;
+        deploy_storage_guard.remove(expired_list.clone())?;
+
+        // Also purge expired sigs from the rejected-deploy buffer.
+        // Reads above already filter expired sigs out of `valid_unique`, so
+        // they don't get re-proposed, but on-disk LMDB entries persist
+        // unless explicitly removed. Without this, a sustained-load
+        // adversary that keeps generating conflicts can grow the buffer
+        // unbounded.
+        let mut buffer_guard = rejected_deploy_buffer
+            .lock()
+            .map_err(|e| CasperError::LockError(e.to_string()))?;
+        buffer_guard.remove(expired_list)?;
     }
 
     let max_deploys = casper_snapshot
