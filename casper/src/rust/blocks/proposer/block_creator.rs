@@ -2,7 +2,10 @@
 
 use prost::bytes::Bytes;
 use std::sync::{Arc, Mutex};
-use std::{collections::HashSet, time::SystemTime};
+use std::{
+    collections::{HashMap, HashSet},
+    time::SystemTime,
+};
 use tracing;
 
 use block_storage::rust::{
@@ -10,11 +13,13 @@ use block_storage::rust::{
     key_value_block_store::KeyValueBlockStore,
 };
 use crypto::rust::{private_key::PrivateKey, signatures::signed::Signed};
+use models::rust::block_hash::BlockHash;
 use models::rust::casper::pretty_printer;
 use models::rust::casper::protocol::casper_message::{
     BlockMessage, Body, Bond, DeployData, F1r3flyState, Header, Justification, ProcessedDeploy,
     ProcessedSystemDeploy, RejectedDeploy,
 };
+use models::rust::validator::Validator;
 
 use rholang::rust::interpreter::system_processes::BlockData;
 
@@ -337,6 +342,31 @@ fn collect_self_chain_deploy_sigs(
     Ok(deploy_sigs)
 }
 
+/// Pure-function filter extracted for unit testing. Keeps an
+/// invalid-latest-message entry only if the equivocator is still
+/// slashable in the parent post-state — i.e., bonded with positive
+/// stake AND in the PoS active-validator set. The active-validator
+/// check matters when bond floor > 0: a validator slashed in a parent
+/// retains stake at the floor, satisfying the bonded check, but PoS
+/// has removed them from active_validators so they shouldn't be
+/// re-slashed. Without this, the proposer emits a redundant SlashDeploy
+/// every block until the equivocator's invalid latest message ages
+/// out of the DAG view, saved by PoS slash idempotency but inflating
+/// body and wasting execution.
+fn filter_slashable_invalid_messages(
+    invalid_latest_messages: HashMap<Validator, BlockHash>,
+    bonds_map: &HashMap<Validator, i64>,
+    active_validators: &[Validator],
+) -> Vec<(Validator, BlockHash)> {
+    invalid_latest_messages
+        .into_iter()
+        .filter(|(validator, _)| {
+            bonds_map.get(validator).copied().unwrap_or(0) > 0
+                && active_validators.contains(validator)
+        })
+        .collect()
+}
+
 async fn prepare_slashing_deploys(
     casper_snapshot: &CasperSnapshot,
     validator_identity: &ValidatorIdentity,
@@ -344,26 +374,15 @@ async fn prepare_slashing_deploys(
 ) -> Result<Vec<SlashDeploy>, CasperError> {
     let self_id = Bytes::copy_from_slice(&validator_identity.public_key.bytes);
 
-    // Get invalid latest messages from DAG
     let invalid_latest_messages = casper_snapshot.dag.invalid_latest_messages()?;
+    let slashable_invalid_messages = filter_slashable_invalid_messages(
+        invalid_latest_messages,
+        &casper_snapshot.on_chain_state.bonds_map,
+        &casper_snapshot.on_chain_state.active_validators,
+    );
 
-    // Filter to only include bonded validators
-    let bonded_invalid_messages: Vec<_> = invalid_latest_messages
-        .into_iter()
-        .filter(|(validator, _)| {
-            casper_snapshot
-                .on_chain_state
-                .bonds_map
-                .get(validator)
-                .map(|stake| *stake > 0)
-                .unwrap_or(false)
-        })
-        .collect();
-
-    // TODO: Add `slashingDeploys` to DeployStorage - OLD
-    // Create SlashDeploy objects
     let mut slashing_deploys = Vec::new();
-    for (_, invalid_block_hash) in bonded_invalid_messages {
+    for (_, invalid_block_hash) in slashable_invalid_messages {
         let slash_deploy = SlashDeploy {
             invalid_block_hash: invalid_block_hash.clone(),
             pk: validator_identity.public_key.clone(),
@@ -798,4 +817,102 @@ fn not_expired_deploy(earliest_block_number: i64, deploy_data: &DeployData) -> b
 
 fn not_future_deploy(current_block_number: i64, deploy_data: &DeployData) -> bool {
     deploy_data.valid_after_block_number < current_block_number
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn validator(byte: u8) -> Validator {
+        Bytes::from(vec![byte; 32])
+    }
+
+    fn invalid_block_hash(byte: u8) -> BlockHash {
+        Bytes::from(vec![byte; 32])
+    }
+
+    /// A bonded validator that PoS still considers active is slashable
+    /// when their latest message is invalid. Baseline behavior.
+    #[test]
+    fn bonded_active_equivocator_is_slashable() {
+        let equivocator = validator(0xAA);
+        let invalid_block = invalid_block_hash(0x11);
+
+        let mut invalid_latest_messages = HashMap::new();
+        invalid_latest_messages.insert(equivocator.clone(), invalid_block.clone());
+
+        let mut bonds_map = HashMap::new();
+        bonds_map.insert(equivocator.clone(), 5);
+
+        let active_validators = vec![equivocator.clone()];
+
+        let out = filter_slashable_invalid_messages(
+            invalid_latest_messages,
+            &bonds_map,
+            &active_validators,
+        );
+
+        assert_eq!(out.len(), 1, "bonded active equivocator must be slashable");
+        assert_eq!(out[0].0, equivocator);
+        assert_eq!(out[0].1, invalid_block);
+    }
+
+    /// An equivocator with stake 0 is excluded by the bonded check,
+    /// regardless of active-validator membership. Existing behavior.
+    #[test]
+    fn unbonded_equivocator_filtered_out() {
+        let equivocator = validator(0xBB);
+        let invalid_block = invalid_block_hash(0x22);
+
+        let mut invalid_latest_messages = HashMap::new();
+        invalid_latest_messages.insert(equivocator.clone(), invalid_block);
+
+        let mut bonds_map = HashMap::new();
+        bonds_map.insert(equivocator.clone(), 0);
+
+        let active_validators = vec![equivocator];
+
+        let out = filter_slashable_invalid_messages(
+            invalid_latest_messages,
+            &bonds_map,
+            &active_validators,
+        );
+
+        assert!(out.is_empty(), "stake-0 equivocator must not be slashable");
+    }
+
+    /// An equivocator already slashed in a parent block retains stake
+    /// at the bond floor (e.g., 1 in production), satisfying the
+    /// stake > 0 check, but PoS removes them from active_validators.
+    /// The active-validator filter is what stops the proposer from
+    /// emitting redundant SlashDeploys block after block.
+    #[test]
+    fn bonded_but_already_slashed_equivocator_filtered_out() {
+        let equivocator = validator(0xCC);
+        let invalid_block = invalid_block_hash(0x33);
+
+        let mut invalid_latest_messages = HashMap::new();
+        invalid_latest_messages.insert(equivocator.clone(), invalid_block);
+
+        // Bond floor > 0 — equivocator's stake stays at 1 after slash.
+        let mut bonds_map = HashMap::new();
+        bonds_map.insert(equivocator.clone(), 1);
+
+        // PoS has removed the slashed validator from the active set.
+        let active_validators: Vec<Validator> = vec![];
+
+        let out = filter_slashable_invalid_messages(
+            invalid_latest_messages,
+            &bonds_map,
+            &active_validators,
+        );
+
+        assert!(
+            out.is_empty(),
+            "already-slashed equivocator (not in active_validators) must not be \
+             re-slashed even when bond floor > 0 keeps their stake nonzero. If this \
+             fires, prepare_slashing_deploys will emit redundant SlashDeploys every \
+             block until the invalid latest message ages out of the DAG view."
+        );
+    }
 }
