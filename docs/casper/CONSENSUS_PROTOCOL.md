@@ -420,9 +420,31 @@ When the synchrony constraint blocks proposals:
 
 1. Equivocation detected during block validation
 2. `EquivocationRecord` created and stored persistently
-3. Next block from any honest validator includes `SlashDeploy` system deploy
+3. Honest validators emit a `SlashDeploy` from their `invalid_latest_messages` (`prepare_slashing_deploys` in `block_creator.rs`); only validators with non-zero stake who are in `active_validators` can be slashed
 4. `SlashDeploy` executes PoS contract to remove equivocator from bonds
-5. Equivocator loses entire stake
+5. Equivocator loses entire stake; PoS slash is idempotent for already-slashed validators (returns true with no further state change)
+
+### Multi-Parent Merge & Slash Recovery
+
+A `SlashDeploy` issued in one parent can be **rejected** by cost-optimal merge resolution when the merge proposer combines parents — the slash chain may be the loser of a conflict and dropped from canonical state. PR #488 closes this gap with a recovery loop in `block_creator::create`:
+
+1. Before block assembly, the proposer runs `compute_parents_post_state` on its tip set. The merge engine returns `(pre_state, rejected_user_sigs, rejected_slashes)`.
+2. `merging::rejected_slash::filter_recoverable` deduplicates rejected slashes by `invalid_block_hash` and drops any that the proposer's own `prepare_slashing_deploys` already covers.
+3. The proposer re-issues each surviving `RejectedSlash` under its own validator identity, so the slash effect lands in the merge block regardless of the merge's rejection decision.
+4. Re-issued slashes ride the same code path as own-detected slashes; PoS idempotency makes the re-issue safe even if the equivocator has already been slashed in a parent.
+
+### Multi-Slash Blocks
+
+A single block can carry more than one `SlashDeploy`:
+- own + recovered for distinct equivocators, or
+- two own slashes for two equivocators in `invalid_latest_messages`, or
+- recovered slashes for multiple equivocators surfaced by the merge.
+
+Each `SlashDeploy`'s RNG is keyed on `(validator, seq_num, invalid_block_hash)` (`util::rholang::system_deploy_util::generate_slash_deploy_random_seed`). Without `invalid_block_hash` in the seed, two slashes in the same block from the same proposer would alias the unforgeable channel names allocated by the slash contract, corrupting tuplespace state and the per-slash return-channel routing.
+
+### Empty-Block Skip
+
+Heartbeat-disabled proposers (`allow_empty_blocks = false`, the production default) skip block creation when there is no work — but recovered rejected slashes count as work. The skip predicate evaluates `all_deploys.is_empty() && !has_slashing_deploys && recovered_rejected_slashes.is_empty()`, so a proposer that wakes with no user deploys and no own-detected slashes still proposes when the parent merge has produced rejected slashes that need recovery.
 
 ### Two-Level Slashing
 
@@ -494,13 +516,21 @@ See [F1R3FLY-io/f1r3node issues](https://github.com/F1R3FLY-io/f1r3node/issues) 
 | `casper/src/rust/safety/clique_oracle.rs` | Clique oracle, fault tolerance computation |
 | `casper/src/rust/finality/finalizer.rs` | Finalization search with work budgets |
 | `casper/src/rust/synchrony_constraint_checker.rs` | Synchrony constraint + recovery bypass |
-| `casper/src/rust/equivocation_detector.rs` | Equivocation types and detection |
 
 ### Merging
 | File | Role |
 |------|------|
 | `casper/src/rust/merging/dag_merger.rs` | Multi-parent state merge |
 | `casper/src/rust/merging/conflict_set_merger.rs` | Deploy conflict resolution |
+| `casper/src/rust/merging/rejected_slash.rs` | `RejectedSlash` type and `filter_recoverable` dedup for slash recovery |
+
+### Slashing
+| File | Role |
+|------|------|
+| `casper/src/rust/equivocation_detector.rs` | Equivocation types and detection |
+| `casper/src/rust/util/rholang/system_deploy_util.rs` | System-deploy RNG seeds (slash seed keyed on `invalid_block_hash`) |
+| `casper/src/rust/util/rholang/costacc/slash_deploy.rs` | `SlashDeploy` system-deploy definition |
+| `casper/src/rust/blocks/proposer/block_creator.rs` | `prepare_slashing_deploys`, `filter_slashable_invalid_messages`, slash recovery loop |
 
 ### Liveness
 | File | Role |
