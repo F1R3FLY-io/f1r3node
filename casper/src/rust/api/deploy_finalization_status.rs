@@ -81,7 +81,11 @@ struct ResolverState {
 }
 
 impl ResolverState {
-    fn new(sig_bytes: Bytes, first_seen_block_hash: BlockHash, valid_after_block_number: i64) -> Self {
+    fn new(
+        sig_bytes: Bytes,
+        first_seen_block_hash: BlockHash,
+        valid_after_block_number: i64,
+    ) -> Self {
         Self {
             sig_bytes,
             valid_after_block_number,
@@ -364,10 +368,14 @@ fn finalize_sig_state(
     {
         let lfb_hash = dag.last_finalized_block();
         let reject_is_canonical = reject_block == &lfb_hash
-            || dag.is_in_main_chain(reject_block, &lfb_hash).unwrap_or(false);
+            || dag
+                .is_in_main_chain(reject_block, &lfb_hash)
+                .unwrap_or(false);
         let reject_is_canonical_descendant = clean_block != reject_block
             && reject_is_canonical
-            && dag.is_in_main_chain(clean_block, reject_block).unwrap_or(false);
+            && dag
+                .is_in_main_chain(clean_block, reject_block)
+                .unwrap_or(false);
         if reject_is_canonical_descendant {
             clean_finalized_height = None;
         }

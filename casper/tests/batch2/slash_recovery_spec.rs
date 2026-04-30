@@ -12,9 +12,7 @@ use casper::rust::casper::Casper;
 use casper::rust::merging::rejected_slash::RejectedSlash;
 use casper::rust::util::construct_deploy;
 use casper::rust::util::rholang::runtime_manager::ParentsPostStateCacheKey;
-use models::rust::casper::protocol::casper_message::{
-    ProcessedSystemDeploy, SystemDeployData,
-};
+use models::rust::casper::protocol::casper_message::{ProcessedSystemDeploy, SystemDeployData};
 
 use crate::helper::test_node::TestNode;
 use crate::util::genesis_builder::{GenesisBuilder, GenesisContext};
@@ -182,7 +180,9 @@ async fn slash_for_equivocator_survives_multi_parent_merge() {
     // multi-parent merge.
     let post_merge_bonds = nodes[1]
         .runtime_manager
-        .compute_bonds(&casper::rust::util::proto_util::post_state_hash(&merge_block))
+        .compute_bonds(&casper::rust::util::proto_util::post_state_hash(
+            &merge_block,
+        ))
         .await
         .expect("compute_bonds");
     let equivocator_stake = post_merge_bonds
@@ -312,11 +312,7 @@ async fn e1c_re_issues_merge_rejected_slash() {
     // real merged pre-state and rejected-deploy list — overwriting the
     // cache entry then lets us augment rejected_slashes without
     // disturbing the rest of the merged-state computation.
-    let snapshot = nodes[1]
-        .casper
-        .get_snapshot()
-        .await
-        .expect("get_snapshot");
+    let snapshot = nodes[1].casper.get_snapshot().await.expect("get_snapshot");
     assert!(
         snapshot.parents.len() >= 2,
         "test setup requires multi-parent proposer view; got {} parent(s)",
@@ -353,10 +349,9 @@ async fn e1c_re_issues_merge_rejected_slash() {
         issuer_public_key: alt_issuer_pk,
         source_block_hash: invalid_block.block_hash.clone(),
     };
-    nodes[1].runtime_manager.put_cached_parents_post_state(
-        cache_key,
-        (merged_state, merged_rejected, vec![synthetic]),
-    );
+    nodes[1]
+        .runtime_manager
+        .put_cached_parents_post_state(cache_key, (merged_state, merged_rejected, vec![synthetic]));
     drop(snapshot);
 
     // Propose. A user deploy keeps `create_block` from short-circuiting

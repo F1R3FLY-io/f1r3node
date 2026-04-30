@@ -847,8 +847,11 @@ impl BlockDagKeyValueStorage {
 
                 let _lock_guard = self.global_lock.lock().unwrap();
                 let mut block_metadata_index_guard = self.block_metadata_index.write().unwrap();
-                block_metadata_index_guard
-                    .record_finalized(directly_finalized_hash.clone(), indirectly_finalized, ft_value)
+                block_metadata_index_guard.record_finalized(
+                    directly_finalized_hash.clone(),
+                    indirectly_finalized,
+                    ft_value,
+                )
             };
 
         let mut effect_applied: HashSet<BlockHash> = HashSet::new();
@@ -906,10 +909,7 @@ impl BlockDagKeyValueStorage {
         )))
     }
 
-    fn propagate_ft_to_finalized_blocks(
-        &self,
-        ft_value: f32,
-    ) -> Result<(), KvStoreError> {
+    fn propagate_ft_to_finalized_blocks(&self, ft_value: f32) -> Result<(), KvStoreError> {
         let _lock_guard = self.global_lock.lock().unwrap();
 
         // Update ALL finalized blocks with lower FT, not just ancestors of the

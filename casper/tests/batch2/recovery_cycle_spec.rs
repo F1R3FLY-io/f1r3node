@@ -170,15 +170,11 @@ async fn recovery_cycle_rejected_deploy_is_buffered_and_re_proposed() {
     // a parent in its next propose.
     {
         let (a, b) = nodes.split_at_mut(1);
-        a[0].sync_with_one(&mut b[0])
-            .await
-            .expect("sync 0 -> 1");
+        a[0].sync_with_one(&mut b[0]).await.expect("sync 0 -> 1");
     }
     {
         let (a, b) = nodes.split_at_mut(1);
-        b[0].sync_with_one(&mut a[0])
-            .await
-            .expect("sync 1 -> 0");
+        b[0].sync_with_one(&mut a[0]).await.expect("sync 1 -> 0");
     }
     assert!(
         nodes[0].contains(&block_b.block_hash),
@@ -251,7 +247,8 @@ async fn recovery_cycle_rejected_deploy_is_buffered_and_re_proposed() {
         .cloned()
         .expect("the rejected sig must be one of the two conflicting deploys");
     assert_eq!(
-        conflict_sig, sig_a,
+        conflict_sig,
+        sig_a,
         "the rejected sig must be deploy_a's (the lex-larger sig that \
          `fold_rejection` processes second). Got rejected sigs={:?}, \
          sig_a={}, sig_b={}",
@@ -280,10 +277,7 @@ async fn recovery_cycle_rejected_deploy_is_buffered_and_re_proposed() {
 
     // Validator 0's buffer must contain the rejected sig after sync.
     {
-        let buffer_guard = nodes[0]
-            .rejected_deploy_buffer
-            .lock()
-            .expect("buffer lock");
+        let buffer_guard = nodes[0].rejected_deploy_buffer.lock().expect("buffer lock");
         let contains_rejected = buffer_guard
             .contains_sig(&conflict_sig)
             .expect("buffer.contains_sig");
@@ -325,7 +319,10 @@ async fn recovery_cycle_rejected_deploy_is_buffered_and_re_proposed() {
          and `collect_self_chain_deploy_sigs` exempt `rejected_in_scope` \
          sigs from their in-scope dedup filters",
         hex::encode(&conflict_sig),
-        recovery_sigs.iter().map(|s| hex::encode(s.as_ref())).collect::<Vec<_>>()
+        recovery_sigs
+            .iter()
+            .map(|s| hex::encode(s.as_ref()))
+            .collect::<Vec<_>>()
     );
 
     // The surviving sig must remain reachable in the canonical view via

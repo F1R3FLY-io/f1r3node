@@ -44,9 +44,7 @@ use casper::rust::{
 };
 use dashmap::{DashMap, DashSet};
 use models::rust::{
-    block::state_hash::StateHash,
-    block_hash::BlockHash,
-    block_implicits,
+    block::state_hash::StateHash, block_hash::BlockHash, block_implicits,
     casper::protocol::casper_message::ProcessedDeploy,
 };
 use rholang::rust::interpreter::{
@@ -54,8 +52,7 @@ use rholang::rust::interpreter::{
 };
 
 use crate::util::rholang::resources::{
-    block_dag_storage_from_dyn, mergeable_store_from_dyn,
-    mk_test_rnode_store_manager_from_genesis,
+    block_dag_storage_from_dyn, mergeable_store_from_dyn, mk_test_rnode_store_manager_from_genesis,
 };
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -192,7 +189,10 @@ for(@_v <- @"dedup-orphan-shared") { Nil }
     )
     .expect("build deploy_w");
     let sig_w = deploy_w.sig.clone();
-    assert_ne!(sig_v, sig_w, "deploy_v and deploy_w must have distinct sigs");
+    assert_ne!(
+        sig_v, sig_w,
+        "deploy_v and deploy_w must have distinct sigs"
+    );
 
     // ── block_a: body.deploys = [X, V] ──
     let block_a_raw = block_implicits::get_random_block(
@@ -244,9 +244,7 @@ for(@_v <- @"dedup-orphan-shared") { Nil }
     block_a.body.system_deploys = sys_pd_a;
     block_a.body.state.bonds = bonds_a;
     block_store.put_block_message(&block_a).expect("store A");
-    dag_storage
-        .insert(&block_a, false, false)
-        .expect("dag A");
+    dag_storage.insert(&block_a, false, false).expect("dag A");
 
     // ── block_b: body.deploys = [X, W] ──
     let block_b_raw = block_implicits::get_random_block(
@@ -298,9 +296,7 @@ for(@_v <- @"dedup-orphan-shared") { Nil }
     block_b.body.system_deploys = sys_pd_b;
     block_b.body.state.bonds = bonds_b;
     block_store.put_block_message(&block_b).expect("store B");
-    dag_storage
-        .insert(&block_b, false, false)
-        .expect("dag B");
+    dag_storage.insert(&block_b, false, false).expect("dag B");
 
     assert_ne!(
         block_a.block_hash, block_b.block_hash,
@@ -366,9 +362,7 @@ for(@_v <- @"dedup-orphan-shared") { Nil }
     // sig is admitted.
     let orphaned_sig = if v_orphaned { &sig_v } else { &sig_w };
     let buffer_contains = {
-        let guard = rejected_deploy_buffer
-            .lock()
-            .expect("buffer lock");
+        let guard = rejected_deploy_buffer.lock().expect("buffer lock");
         guard
             .contains_sig(orphaned_sig)
             .expect("buffer.contains_sig")
@@ -386,12 +380,8 @@ for(@_v <- @"dedup-orphan-shared") { Nil }
     // The shared deploy_x must NOT be in the buffer — it has a fresher
     // copy and isn't a recovery candidate.
     let buffer_has_x = {
-        let guard = rejected_deploy_buffer
-            .lock()
-            .expect("buffer lock");
-        guard
-            .contains_sig(&sig_x)
-            .expect("buffer.contains_sig")
+        let guard = rejected_deploy_buffer.lock().expect("buffer lock");
+        guard.contains_sig(&sig_x).expect("buffer.contains_sig")
     };
     assert!(
         !buffer_has_x,

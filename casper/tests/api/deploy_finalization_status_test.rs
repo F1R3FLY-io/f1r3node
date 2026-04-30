@@ -419,10 +419,8 @@ async fn resolve_and_resolve_batch_agree_across_states() {
 
     let sig_clean_via_secondary = deploy_clean_via_secondary.sig.clone();
     let sig_failed = deploy_failed.sig.clone();
-    let sig_clean_canonical_reject_canonical =
-        deploy_clean_canonical_reject_canonical.sig.clone();
-    let sig_clean_canonical_reject_sibling =
-        deploy_clean_canonical_reject_sibling.sig.clone();
+    let sig_clean_canonical_reject_canonical = deploy_clean_canonical_reject_canonical.sig.clone();
+    let sig_clean_canonical_reject_sibling = deploy_clean_canonical_reject_sibling.sig.clone();
     let sig_unknown = Bytes::from(vec![0xCDu8; 32]);
 
     // ProcessedDeploy::empty defaults is_failed=false; flip for the
@@ -567,10 +565,8 @@ async fn resolve_and_resolve_batch_agree_across_states() {
     };
     let single_clean_via_secondary = single(&sig_clean_via_secondary);
     let single_failed = single(&sig_failed);
-    let single_clean_canonical_reject_canonical =
-        single(&sig_clean_canonical_reject_canonical);
-    let single_clean_canonical_reject_sibling =
-        single(&sig_clean_canonical_reject_sibling);
+    let single_clean_canonical_reject_canonical = single(&sig_clean_canonical_reject_canonical);
+    let single_clean_canonical_reject_sibling = single(&sig_clean_canonical_reject_sibling);
     let single_unknown = single(&sig_unknown);
 
     // Sanity: state assignments match the coverage matrix above. If
@@ -692,11 +688,7 @@ async fn resolve_and_resolve_batch_agree_across_states() {
     single_set.insert(sig_clean_via_secondary.clone());
     let one = resolve_batch(&dag, &block_store, deploy_lifespan, &single_set)
         .expect("single-element batch should not fail");
-    assert_eq!(
-        one.len(),
-        1,
-        "single-element batch must return one entry"
-    );
+    assert_eq!(one.len(), 1, "single-element batch must return one entry");
     assert_parity(
         "single-element-batch",
         &single_clean_via_secondary,

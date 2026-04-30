@@ -126,10 +126,7 @@ mod tests {
             mk_slash(5, 6), // not covered
             mk_slash(7, 8), // covered by own
         ];
-        let own_invalid_block_hashes = vec![
-            Bytes::from(vec![1u8; 32]),
-            Bytes::from(vec![7u8; 32]),
-        ];
+        let own_invalid_block_hashes = vec![Bytes::from(vec![1u8; 32]), Bytes::from(vec![7u8; 32])];
         let out = filter_recoverable(rejected, own_invalid_block_hashes);
         assert_eq!(out.len(), 2, "exactly the uncovered slashes must survive");
         // Sorted by invalid_block_hash for deterministic body composition.

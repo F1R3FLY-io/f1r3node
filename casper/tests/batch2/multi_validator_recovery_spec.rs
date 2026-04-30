@@ -42,9 +42,7 @@ use casper::rust::{
 };
 use dashmap::{DashMap, DashSet};
 use models::rust::{
-    block::state_hash::StateHash,
-    block_hash::BlockHash,
-    block_implicits,
+    block::state_hash::StateHash, block_hash::BlockHash, block_implicits,
     casper::protocol::casper_message::ProcessedDeploy,
 };
 use rholang::rust::interpreter::{
@@ -52,8 +50,7 @@ use rholang::rust::interpreter::{
 };
 
 use crate::util::rholang::resources::{
-    block_dag_storage_from_dyn, mergeable_store_from_dyn,
-    mk_test_rnode_store_manager_from_genesis,
+    block_dag_storage_from_dyn, mergeable_store_from_dyn, mk_test_rnode_store_manager_from_genesis,
 };
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -243,9 +240,7 @@ for(@_v <- @"multi-validator-shared") { Nil }
     r0.body.system_deploys = sys_pd_r0;
     r0.body.state.bonds = bonds_r0;
     block_store.put_block_message(&r0).expect("store R0");
-    dag_storage
-        .insert(&r0, false, false)
-        .expect("dag R0");
+    dag_storage.insert(&r0, false, false).expect("dag R0");
 
     // ── Recovery block R1 (sender = validator 1, body = [deploy_x, marker_v1]) ──
     let r1_raw = block_implicits::get_random_block(
@@ -297,9 +292,7 @@ for(@_v <- @"multi-validator-shared") { Nil }
     r1.body.system_deploys = sys_pd_r1;
     r1.body.state.bonds = bonds_r1;
     block_store.put_block_message(&r1).expect("store R1");
-    dag_storage
-        .insert(&r1, false, false)
-        .expect("dag R1");
+    dag_storage.insert(&r1, false, false).expect("dag R1");
 
     assert_ne!(
         r0.block_hash, r1.block_hash,

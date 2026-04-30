@@ -377,9 +377,7 @@ impl Validate {
                     expiration_threshold as i64,
                     &pd.deploy.sig,
                 ) {
-                    Ok(status)
-                        if status.state == DeployFinalizationState::Finalized =>
-                    {
+                    Ok(status) if status.state == DeployFinalizationState::Finalized => {
                         let canonical_block_str = status
                             .latest_block_hash
                             .as_ref()

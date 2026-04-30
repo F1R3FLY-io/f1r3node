@@ -316,15 +316,16 @@ async fn run_compute_parents_post_state_finalized_skew_regression() {
     );
     snapshot_without_skew.dag.last_finalized_block_hash = genesis_block.block_hash.clone();
 
-    let (state_without_skew, rejected_without_skew, _rejected_slashes) = compute_parents_post_state(
-        &block_store,
-        parents.clone(),
-        &snapshot_without_skew,
-        &runtime_manager,
-        None,
-        None,
-    )
-    .expect("Failed to compute parents post-state without finalized skew");
+    let (state_without_skew, rejected_without_skew, _rejected_slashes) =
+        compute_parents_post_state(
+            &block_store,
+            parents.clone(),
+            &snapshot_without_skew,
+            &runtime_manager,
+            None,
+            None,
+        )
+        .expect("Failed to compute parents post-state without finalized skew");
 
     runtime_manager.parents_post_state_cache.clear();
     runtime_manager.block_index_cache.clear();

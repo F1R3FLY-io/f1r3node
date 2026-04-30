@@ -334,10 +334,12 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
             latest_msgs_hashes
                 .iter()
                 .filter(|(validator, _)| bonded_validators.contains_key(*validator))
-                .map(|(validator, block_hash): (&Validator, &BlockHash)| Justification {
-                    validator: validator.clone(),
-                    latest_block_hash: block_hash.clone(),
-                })
+                .map(
+                    |(validator, block_hash): (&Validator, &BlockHash)| Justification {
+                        validator: validator.clone(),
+                        latest_block_hash: block_hash.clone(),
+                    },
+                )
                 .collect::<dashmap::DashSet<_>>()
         };
 
@@ -1917,8 +1919,16 @@ fn block_event(
 
 /// Create BlockCreated event for a block.
 pub fn created_event(block: &BlockMessage) -> F1r3flyEvent {
-    let (block_hash, block_number, timestamp, parent_hashes, justification_hashes, deploys, creator, seq_num) =
-        block_event(block);
+    let (
+        block_hash,
+        block_number,
+        timestamp,
+        parent_hashes,
+        justification_hashes,
+        deploys,
+        creator,
+        seq_num,
+    ) = block_event(block);
     F1r3flyEvent::block_created(
         block_hash,
         block_number,
@@ -1933,8 +1943,16 @@ pub fn created_event(block: &BlockMessage) -> F1r3flyEvent {
 
 /// Create BlockAdded event for a block.
 pub fn added_event(block: &BlockMessage) -> F1r3flyEvent {
-    let (block_hash, block_number, timestamp, parent_hashes, justification_hashes, deploys, creator, seq_num) =
-        block_event(block);
+    let (
+        block_hash,
+        block_number,
+        timestamp,
+        parent_hashes,
+        justification_hashes,
+        deploys,
+        creator,
+        seq_num,
+    ) = block_event(block);
     F1r3flyEvent::block_added(
         block_hash,
         block_number,
@@ -1949,8 +1967,16 @@ pub fn added_event(block: &BlockMessage) -> F1r3flyEvent {
 
 /// Create BlockFinalised event for a block.
 pub fn finalised_event(block: &BlockMessage) -> F1r3flyEvent {
-    let (block_hash, block_number, timestamp, parent_hashes, justification_hashes, deploys, creator, seq_num) =
-        block_event(block);
+    let (
+        block_hash,
+        block_number,
+        timestamp,
+        parent_hashes,
+        justification_hashes,
+        deploys,
+        creator,
+        seq_num,
+    ) = block_event(block);
     F1r3flyEvent::block_finalised(
         block_hash,
         block_number,

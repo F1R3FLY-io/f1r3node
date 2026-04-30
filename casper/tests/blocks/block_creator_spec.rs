@@ -393,7 +393,11 @@ async fn should_remove_expired_deploys_from_rejected_deploy_buffer() {
             .expect("Failed to add deploys to buffer");
 
         let deploys_before = buf.read_all().expect("Failed to read buffer");
-        assert_eq!(deploys_before.len(), 2, "Expected 2 deploys in buffer before create");
+        assert_eq!(
+            deploys_before.len(),
+            2,
+            "Expected 2 deploys in buffer before create"
+        );
     }
 
     let snapshot = create_snapshot(100, validator_id);
