@@ -398,7 +398,7 @@ fn rho_spec_deploy() -> Signed<DeployData> {
     let sk_bytes = hex::decode(RHO_SPEC_PRIVATE_KEY).expect("Invalid RHO_SPEC_PRIVATE_KEY hex");
     let sk = PrivateKey::from_bytes(&sk_bytes);
 
-    let code = CompiledRholangSource::load_source("RhoSpecContract.rho")
+    let code = crate::util::rholang::test_rho_loader::load_test_rho("RhoSpecContract.rho")
         .expect("Failed to load RhoSpecContract.rho");
 
     let compiled =

@@ -199,7 +199,9 @@ impl From<TlsConf> for comm::rust::transport::tls_conf::TlsConf {
     }
 }
 
-/// Metrics configuration
+/// Metrics configuration. Combines reporter toggles with the (formerly
+/// `kamon.conf`-resident) reporter endpoints — there is now one source of
+/// truth for metrics config inside `defaults.conf`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Metrics {
     pub prometheus: bool,
@@ -208,6 +210,82 @@ pub struct Metrics {
     pub influxdb_udp: bool,
     pub zipkin: bool,
     pub sigar: bool,
+
+    /// How often the metric reporters poll and emit. Drives the InfluxDB
+    /// HTTP/UDP and Sigar (system-metrics) reporters.
+    #[serde(rename = "tick-interval", default = "default_tick_interval", with = "duration_secs")]
+    pub tick_interval: Duration,
+
+    /// Endpoint settings for the InfluxDB reporters (HTTP and UDP). Both
+    /// reporters share the same hostname/port pair; protocol/auth/database
+    /// only apply to the HTTP reporter.
+    #[serde(rename = "influxdb-endpoint", default)]
+    pub influxdb_endpoint: InfluxDbEndpoint,
+}
+
+fn default_tick_interval() -> Duration {
+    Duration::from_secs(10)
+}
+
+mod duration_secs {
+    use serde::{Deserialize, Deserializer, Serializer};
+    use std::time::Duration;
+
+    pub fn serialize<S: Serializer>(d: &Duration, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_u64(d.as_secs())
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Duration, D::Error> {
+        // HOCON "10 seconds" deserializes via serde as a string in some
+        // setups and as a u64 in others; accept either.
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Repr {
+            Secs(u64),
+            Text(String),
+        }
+        match Repr::deserialize(d)? {
+            Repr::Secs(s) => Ok(Duration::from_secs(s)),
+            Repr::Text(t) => parse_duration_string(&t).map_err(serde::de::Error::custom),
+        }
+    }
+
+    fn parse_duration_string(s: &str) -> Result<Duration, String> {
+        let parts: Vec<&str> = s.trim().split_whitespace().collect();
+        if parts.len() != 2 {
+            return Err(format!("invalid duration: {}", s));
+        }
+        let n: u64 = parts[0].parse().map_err(|_| format!("invalid number: {}", parts[0]))?;
+        let mult = match parts[1].to_lowercase().as_str() {
+            "second" | "seconds" | "s" => 1,
+            "minute" | "minutes" | "m" => 60,
+            "hour" | "hours" | "h" => 3600,
+            other => return Err(format!("unknown unit: {}", other)),
+        };
+        Ok(Duration::from_secs(n * mult))
+    }
+}
+
+/// InfluxDB reporter endpoint. Mirrors the legacy `kamon.influxdb` schema
+/// fields that the Rust reporter implementations actually consume.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct InfluxDbEndpoint {
+    #[serde(default)]
+    pub hostname: String,
+    #[serde(default)]
+    pub port: u16,
+    #[serde(default)]
+    pub database: String,
+    #[serde(default = "default_influxdb_protocol")]
+    pub protocol: String,
+    #[serde(default)]
+    pub user: Option<String>,
+    #[serde(default)]
+    pub password: Option<String>,
+}
+
+fn default_influxdb_protocol() -> String {
+    "http".to_string()
 }
 
 /// Development configuration
