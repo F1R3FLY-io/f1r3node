@@ -365,6 +365,7 @@ jobs:
             -v --tb=short --log-cli-level=WARNING \
             -n 3 --dist=loadgroup \
             --deselect=integration-tests/test/test_convergence.py::test_network_converges_after_slow_deploy \
+            --keep-running \
             --startup-timeout=600 --command-timeout=300 --timeout=1200 $SCALE_FLAG
 
       - name: Upload Integration Test Logs
@@ -420,10 +421,14 @@ jobs:
         if: always()
         shell: bash {0}
         run: |
-          docker rm -f rnode.bootstrap rnode.validator1 rnode.validator2 rnode.validator3 rnode.readonly \
-            rnode.standalone rnode.custom.boot rnode.custom.validator1 rnode.custom.validator2 \
-            rnode.custom.validator3 rnode.custom.joiner 2>/dev/null
-          docker network rm f1r3fly-shard_f1r3fly-test-shard f1r3fly-standalone_f1r3fly-test-standalone f1r3fly-custom_f1r3fly-test-custom 2>/dev/null
+          # Canonical cleanup. Handles --keep-running leftovers from the
+          # pytest invocation above by running shardctl test-reset, which
+          # force-removes every framework container/network/volume regardless
+          # of state (Docker provider's `force_cleanup_all_test_resources`).
+          # Critical on self-hosted runners that persist across jobs.
+          cd system-integration
+          poetry run shardctl test-reset || true
+          cd ..
           sudo rm -rf system-integration/integration-tests/data
 
   # ===========================================================================
