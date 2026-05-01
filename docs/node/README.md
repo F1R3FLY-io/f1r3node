@@ -41,8 +41,8 @@ main()
 3. Default config (`defaults.conf` baked into the binary)
 
 **Config build pipeline** (`configuration/mod.rs::build()`):
-1. Load `defaults.conf` via HOCON → `HoconLoader::load_file()`
-2. Merge user config on top (if `rnode.conf` exists in data dir) → `default_config.load_file(config_file)`
+1. Load embedded `defaults.conf` via HOCON → `HoconLoader::new().load_str(EMBEDDED_DEFAULTS)`. The defaults are baked into the binary at compile time via `include_str!`; no `node/src/main/resources/` directory is required at runtime.
+2. Merge user config on top (if `--config-file` is passed or `<data_dir>/rnode.conf` exists) → `default_config.load_file(config_file)`
 3. Resolve HOCON substitutions (e.g. `protocol-client.network-id = ${protocol-server.network-id}`)
 4. Deserialize merged HOCON into `NodeConf` struct → `merged_config.resolve()`
 5. Apply CLI overrides → `node_conf.override_config_values(options)` (via `config_mapper.rs`)

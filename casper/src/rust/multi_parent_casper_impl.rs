@@ -315,21 +315,31 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
             .await?;
 
         // Justifications include the latest message from every bonded validator,
-        // including those whose latest message is invalid. Parent selection
-        // filters invalid-latest validators (see valid_latest_msgs above), but
-        // justifications are the creator's observed view of the DAG and must
-        // reflect all validators to satisfy the `justification_follows`
-        // invariant (justified_validators == bonded_validators).
+        // including those whose latest message is invalid. This is safe for fork
+        // choice because parent selection (above, ~line 160) filters
+        // `latest_msgs_hashes` through `valid_latest_msgs`, so invalid blocks
+        // never become candidate parents — only valid-latest blocks influence
+        // parent choice and the Estimator's fork-choice scoring. Justifications,
+        // by contrast, must reflect the creator's complete observed view: the
+        // `justification_follows` invariant requires
+        // `justified_validators == bonded_validators`, so omitting any bonded
+        // validator (even one whose latest is invalid) would cause validation
+        // to reject the block.
+        //
+        // See `block_dag_key_value_storage.rs::insert` for the upstream
+        // invariant that allows invalid blocks into the LMM in the first place.
         let justifications = {
             let bonded_validators = &on_chain_state.bonds_map;
 
             latest_msgs_hashes
                 .iter()
                 .filter(|(validator, _)| bonded_validators.contains_key(*validator))
-                .map(|(validator, block_hash): (&Validator, &BlockHash)| Justification {
-                    validator: validator.clone(),
-                    latest_block_hash: block_hash.clone(),
-                })
+                .map(
+                    |(validator, block_hash): (&Validator, &BlockHash)| Justification {
+                        validator: validator.clone(),
+                        latest_block_hash: block_hash.clone(),
+                    },
+                )
                 .collect::<dashmap::DashSet<_>>()
         };
 
@@ -338,8 +348,11 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
         let max_block_num = proto_util::max_block_number_metadata(&parent_metas);
 
         // max_seq_nums reads every validator's latest message, not just the
-        // valid-latest subset. Validators whose latest is invalid still have a
-        // recorded sequence number that must be accounted for downstream.
+        // valid-latest subset. Sequence numbers must be monotonic per-validator
+        // across both valid and invalid blocks: filtering invalid-latest
+        // validators would let an equivocator "reset" their sequence-number
+        // floor, defeating the equivocation detector that relies on seq numbers
+        // to identify divergent chains from the same sender.
         let max_seq_nums = latest_msgs_hashes
             .iter()
             .filter_map(|(validator, hash): (&Validator, &BlockHash)| {
@@ -1906,8 +1919,16 @@ fn block_event(
 
 /// Create BlockCreated event for a block.
 pub fn created_event(block: &BlockMessage) -> F1r3flyEvent {
-    let (block_hash, block_number, timestamp, parent_hashes, justification_hashes, deploys, creator, seq_num) =
-        block_event(block);
+    let (
+        block_hash,
+        block_number,
+        timestamp,
+        parent_hashes,
+        justification_hashes,
+        deploys,
+        creator,
+        seq_num,
+    ) = block_event(block);
     F1r3flyEvent::block_created(
         block_hash,
         block_number,
@@ -1922,8 +1943,16 @@ pub fn created_event(block: &BlockMessage) -> F1r3flyEvent {
 
 /// Create BlockAdded event for a block.
 pub fn added_event(block: &BlockMessage) -> F1r3flyEvent {
-    let (block_hash, block_number, timestamp, parent_hashes, justification_hashes, deploys, creator, seq_num) =
-        block_event(block);
+    let (
+        block_hash,
+        block_number,
+        timestamp,
+        parent_hashes,
+        justification_hashes,
+        deploys,
+        creator,
+        seq_num,
+    ) = block_event(block);
     F1r3flyEvent::block_added(
         block_hash,
         block_number,
@@ -1938,8 +1967,16 @@ pub fn added_event(block: &BlockMessage) -> F1r3flyEvent {
 
 /// Create BlockFinalised event for a block.
 pub fn finalised_event(block: &BlockMessage) -> F1r3flyEvent {
-    let (block_hash, block_number, timestamp, parent_hashes, justification_hashes, deploys, creator, seq_num) =
-        block_event(block);
+    let (
+        block_hash,
+        block_number,
+        timestamp,
+        parent_hashes,
+        justification_hashes,
+        deploys,
+        creator,
+        seq_num,
+    ) = block_event(block);
     F1r3flyEvent::block_finalised(
         block_hash,
         block_number,

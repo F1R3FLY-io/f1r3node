@@ -938,13 +938,9 @@ impl BlockAPI {
                     .collect();
 
                 for block in blocks_at_height {
-                    let block_info = BlockAPI::get_block_info_with_dag(
-                        casper,
-                        &dag,
-                        &block,
-                        constructor,
-                    )
-                    .await?;
+                    let block_info =
+                        BlockAPI::get_block_info_with_dag(casper, &dag, &block, constructor)
+                            .await?;
                     block_infos_at_height_acc.push(block_info);
                 }
             }

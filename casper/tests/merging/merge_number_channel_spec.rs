@@ -278,7 +278,6 @@ async fn test_case(
     println!("LEFT DEPLOY CHAINS: {:?}", left_deploy_chains.len());
     println!("RIGHT DEPLOY CHAINS: {:?}", right_deploy_chains.len());
 
-
     let branches_are_conflicting =
         |a: &HashableSet<DeployChainIndex>, b: &HashableSet<DeployChainIndex>| {
             merging_logic::are_conflicting(

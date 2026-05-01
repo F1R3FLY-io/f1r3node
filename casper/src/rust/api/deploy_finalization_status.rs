@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use block_storage::rust::{
     dag::block_dag_key_value_storage::KeyValueDagRepresentation,
@@ -63,51 +63,77 @@ impl DeployFinalizationStatus {
     }
 }
 
-/// Pure resolver for deploy finalization state. Does not depend on the
-/// engine cell; callable from any context that has a DAG representation,
-/// a block store, and the shard-level `deploy_lifespan`. The gRPC / HTTP
-/// wrappers call this under their async unwrap of the Casper instance;
-/// the catchup gate in `compute_parents_post_state` calls it directly.
-///
-/// The state machine is a canonical-chain scan:
-///
-/// 1. Look up the sig in the deploy index. Unknown sig → `Pending`.
-/// 2. Fetch the first-seen block to read `valid_after_block_number`.
-///    Consistency errors here (sig indexed but missing from body) are
-///    surfaced as `Err`.
-/// 3. Walk the finalized chain from LFB backward for `deploy_lifespan`
-///    blocks, tallying clean inclusions, failed inclusions, rejections,
-///    and `latest_block_hash`.
-/// 4. Apply the state rules: failed finalized → `Failed`; clean finalized
-///    without a later rejection → `Finalized`; beyond lifespan without a
-///    clean inclusion → `Expired`; otherwise → `Pending`.
-pub fn resolve(
+/// Per-sig BFS state accumulated during the finalized-window scan.
+/// Lifted out of `resolve` so the same scan can update many sigs in one
+/// pass (`resolve_batch`).
+struct ResolverState {
+    sig_bytes: Bytes,
+    valid_after_block_number: i64,
+    first_seen_block_hash: BlockHash,
+    rejection_count: u32,
+    has_failed_finalized: bool,
+    /// Highest-block-number clean inclusion + its block hash. Tracked
+    /// together so the post-loop invalidation step can do a canonical-
+    /// descendant ancestry comparison against `latest_rejected_event`.
+    clean_finalized_event: Option<(i64, BlockHash)>,
+    latest_event: Option<(i64, BlockHash)>,
+    latest_rejected_event: Option<(i64, BlockHash)>,
+}
+
+impl ResolverState {
+    fn new(
+        sig_bytes: Bytes,
+        first_seen_block_hash: BlockHash,
+        valid_after_block_number: i64,
+    ) -> Self {
+        Self {
+            sig_bytes,
+            valid_after_block_number,
+            first_seen_block_hash,
+            rejection_count: 0,
+            has_failed_finalized: false,
+            clean_finalized_event: None,
+            latest_event: None,
+            latest_rejected_event: None,
+        }
+    }
+}
+
+/// Outcome of looking up a sig's deploy-index entry and reading its
+/// first-seen block.
+enum PreludeOutcome {
+    /// Sig is in the deploy index and the first-seen block was readable.
+    /// Carries initialized scan state.
+    Active(ResolverState),
+    /// Sig is unknown (deploy index miss) or first-seen block is absent
+    /// from the store; either way, status is `pending_unknown()`.
+    Unknown,
+}
+
+/// Per-sig prelude: deploy-index lookup, first-seen block fetch, and
+/// extraction of `valid_after_block_number`. Shared by `resolve` and
+/// `resolve_batch` so both entry points have identical error
+/// semantics — IO failures and deploy-index inconsistencies propagate
+/// as `Err`; truly missing data (unknown sig, first-seen body absent
+/// from store) returns `PreludeOutcome::Unknown`. The batch caller
+/// translates `Err` into "skip this merge" rather than degrading
+/// individual sigs to `Pending`, so corrupted sigs are surfaced
+/// honestly rather than silently masquerading as never-deployed.
+fn run_prelude(
     dag: &KeyValueDagRepresentation,
     block_store: &KeyValueBlockStore,
-    deploy_lifespan: i64,
     sig: &[u8],
-) -> ApiErr<DeployFinalizationStatus> {
-    // The deploy index keys are `Vec<u8>` (`DeployId`); comparisons
-    // against `pd.deploy.sig` need `Bytes`. Copy the input slice once
-    // for each representation — status queries are rare enough that a
-    // single O(sig.len()) allocation is immaterial against the block-
-    // walk cost that follows.
+) -> ApiErr<PreludeOutcome> {
     let sig_vec: Vec<u8> = sig.to_vec();
     let sig_bytes: Bytes = Bytes::copy_from_slice(sig);
 
-    // Unknown sig → Pending with empty fields.
     let Some(first_seen_block_hash) = dag
         .lookup_by_deploy_id(&sig_vec)
         .map_err(|e| eyre::eyre!("deploy index lookup failed: {}", e))?
     else {
-        return Ok(DeployFinalizationStatus::pending_unknown());
+        return Ok(PreludeOutcome::Unknown);
     };
 
-    // Fetch the first-seen block to pull valid_after_block_number.
-    // A sig can appear in multiple blocks post-recovery, but each shares
-    // the same DeployData (same content). Any one block suffices. An
-    // IO error here is a real storage failure — propagate it so callers
-    // can distinguish it from a deploy that is legitimately unknown.
     let first_seen_block = match block_store.get(&first_seen_block_hash) {
         Ok(Some(b)) => b,
         Ok(None) => {
@@ -116,7 +142,7 @@ pub fn resolve(
                 hex::encode(&sig_bytes),
                 PrettyPrinter::build_string_bytes(&first_seen_block_hash)
             );
-            return Ok(DeployFinalizationStatus::pending_unknown());
+            return Ok(PreludeOutcome::Unknown);
         }
         Err(e) => {
             return Err(eyre::eyre!(
@@ -133,6 +159,12 @@ pub fn resolve(
         .find(|pd| pd.deploy.sig == sig_bytes)
         .map(|pd| pd.deploy.data.valid_after_block_number)
         .ok_or_else(|| {
+            // Indexed-but-missing-from-body is a real corruption case
+            // (deploy index points at a block that no longer claims the
+            // sig in body.deploys). Surface honestly so the operator
+            // sees the bug; do not silently degrade to `pending_unknown`,
+            // which would make a corrupted sig indistinguishable from a
+            // never-deployed one.
             eyre::eyre!(
                 "deploy_finalization_status: sig {} is indexed at block {} \
                  but missing from that block's body.deploys (inconsistent state)",
@@ -141,11 +173,31 @@ pub fn resolve(
             )
         })?;
 
-    // Walk the set of finalized ancestors of LFB through all parents
-    // (main + secondary), bounded by deploy_lifespan depth. A linear
-    // main-parent walk is insufficient: in a multi-parent DAG a block's
-    // deploys can reach canonical state via a secondary-parent merge,
-    // and that block will not appear on the main-parent chain from LFB.
+    Ok(PreludeOutcome::Active(ResolverState::new(
+        sig_bytes,
+        first_seen_block_hash,
+        valid_after_block_number,
+    )))
+}
+
+/// Walk finalized ancestors of LFB once, updating each active sig's
+/// `ResolverState` for events found in `body.deploys` and
+/// `body.rejected_deploys`. The caller passes the per-sig states keyed
+/// by sig; this function mutates those states in place.
+///
+/// Cost: one block fetch per visited block in the deploy_lifespan
+/// window, regardless of how many sigs are being tracked. Sig matching
+/// inside each block is a HashSet membership check.
+fn bfs_finalized_window(
+    dag: &KeyValueDagRepresentation,
+    block_store: &KeyValueBlockStore,
+    deploy_lifespan: i64,
+    per_sig: &mut HashMap<Bytes, ResolverState>,
+) -> ApiErr<()> {
+    if per_sig.is_empty() {
+        return Ok(());
+    }
+
     let lfb_hash = dag.last_finalized_block();
     let lfb_height = dag.block_number(&lfb_hash).ok_or_else(|| {
         eyre::eyre!(
@@ -155,21 +207,10 @@ pub fn resolve(
     })?;
     let scan_floor = (lfb_height - deploy_lifespan).max(0);
 
-    // Event tallies.
-    let mut rejection_count: u32 = 0;
-    let mut has_failed_finalized = false;
-    // Track the highest-block-number clean inclusion together with its
-    // block hash so we can do an ancestry comparison against rejections
-    // in the post-loop invalidation step. A clean inclusion is
-    // invalidated only when a rejection lands in a CANONICAL DESCENDANT
-    // of the clean block — sibling rejections at the same or higher
-    // height on a different chain do not invalidate.
-    let mut clean_finalized_event: Option<(i64, BlockHash)> = None;
-    let mut latest_event: Option<(i64, BlockHash)> = None;
-    let mut latest_rejected_event: Option<(i64, BlockHash)> = None;
+    // Active sigs as a HashSet for O(1) membership checks during body scans.
+    // Cloning sig bytes once here avoids per-block-per-sig clones.
+    let active_sigs: HashSet<Bytes> = per_sig.keys().cloned().collect();
 
-    // BFS from LFB through every parent slot. `visited` deduplicates the
-    // frontier because multi-parent ancestries share common ancestors.
     let mut visited: HashSet<BlockHash> = HashSet::new();
     let mut frontier: Vec<BlockHash> = vec![lfb_hash.clone()];
     while let Some(candidate_hash) = frontier.pop() {
@@ -219,46 +260,79 @@ pub fn resolve(
             }
         }
 
-        let mut seen_here = false;
+        // Sigs found in this block — used to update each sig's
+        // `latest_event` once after both scans (a sig may appear in
+        // both body.deploys and body.rejected_deploys of the same block
+        // in pathological dedup paths; we still only bump latest_event
+        // once for that sig at this height).
+        let mut seen_sigs_here: HashSet<Bytes> = HashSet::new();
+
         for pd in &candidate_block.body.deploys {
-            if pd.deploy.sig == sig_bytes {
-                seen_here = true;
+            if active_sigs.contains(&pd.deploy.sig) {
+                seen_sigs_here.insert(pd.deploy.sig.clone());
+                let state = per_sig
+                    .get_mut(&pd.deploy.sig)
+                    .expect("active_sigs and per_sig must agree on key set");
                 if pd.is_failed {
-                    has_failed_finalized = true;
-                } else if clean_finalized_event
+                    state.has_failed_finalized = true;
+                } else if state
+                    .clean_finalized_event
                     .as_ref()
                     .map(|(h, _)| height > *h)
                     .unwrap_or(true)
                 {
-                    clean_finalized_event = Some((height, candidate_hash.clone()));
+                    state.clean_finalized_event = Some((height, candidate_hash.clone()));
                 }
-                break;
             }
         }
         for rd in &candidate_block.body.rejected_deploys {
-            if rd.sig == sig_bytes {
-                seen_here = true;
-                rejection_count = rejection_count.saturating_add(1);
-                if latest_rejected_event
+            if active_sigs.contains(&rd.sig) {
+                seen_sigs_here.insert(rd.sig.clone());
+                let state = per_sig
+                    .get_mut(&rd.sig)
+                    .expect("active_sigs and per_sig must agree on key set");
+                state.rejection_count = state.rejection_count.saturating_add(1);
+                if state
+                    .latest_rejected_event
                     .as_ref()
                     .map(|(h, _)| height > *h)
                     .unwrap_or(true)
                 {
-                    latest_rejected_event = Some((height, candidate_hash.clone()));
+                    state.latest_rejected_event = Some((height, candidate_hash.clone()));
                 }
-                break;
             }
         }
-        if seen_here
-            && latest_event
+        for sig in &seen_sigs_here {
+            let state = per_sig
+                .get_mut(sig)
+                .expect("seen_sigs_here is drawn from active_sigs / per_sig");
+            if state
+                .latest_event
                 .as_ref()
                 .map(|(h, _)| height > *h)
                 .unwrap_or(true)
-        {
-            latest_event = Some((height, candidate_hash.clone()));
+            {
+                state.latest_event = Some((height, candidate_hash.clone()));
+            }
         }
     }
 
+    Ok(())
+}
+
+/// Apply the per-sig post-loop rules: canonical-descendant invalidation
+/// of clean inclusions, latest_block_hash fallback to the first-seen
+/// block, expiry rule, and final state determination.
+///
+/// Returns `ApiErr` rather than swallowing failures from `is_in_main_chain`.
+/// The resolver's `state` field is consensus-relevant — `repeat_deploy`
+/// validation reads it via the `rejected_in_scope` exemption — so two
+/// validators must not silently disagree on it under transient I/O.
+fn finalize_sig_state(
+    dag: &KeyValueDagRepresentation,
+    deploy_lifespan: i64,
+    state: ResolverState,
+) -> ApiErr<DeployFinalizationStatus> {
     // A rejection invalidates a clean inclusion only when the
     // rejection block is a CANONICAL-CHAIN DESCENDANT of the clean
     // block. Two reasons height alone is wrong:
@@ -273,39 +347,56 @@ pub fn resolve(
     //     the clean inclusion creates a positive feedback loop where
     //     the deploy stays Pending while the buffer keeps re-proposing.
     //
-    // `is_in_main_chain(ancestor, descendant)` walks main parents from
-    // `descendant` down to `ancestor`'s height and checks for landing
-    // on `ancestor`. If true, the rejection block is a canonical
-    // descendant of the clean block. Same-block (clean and rejection
-    // in the SAME block — e.g., a recovery proposal whose merge step
-    // also dedup-rejected an older copy in scope) is not a "descendant"
-    // and must not invalidate.
-    let mut clean_finalized_height: Option<i64> = clean_finalized_event.as_ref().map(|(h, _)| *h);
+    // Two conditions must BOTH hold for a rejection to invalidate a
+    // clean inclusion:
+    //
+    //   (a) `is_in_main_chain(clean_block, reject_block)` — clean is
+    //       in reject's main-parent ancestry. Necessary so the
+    //       rejection is "downstream" of the clean inclusion.
+    //   (b) `is_in_main_chain(reject_block, lfb)` — reject is itself
+    //       on LFB's main-parent chain (i.e., canonical). Necessary
+    //       because (a) alone is satisfied even by non-canonical
+    //       sibling blocks: a sibling fork B' that has the canonical
+    //       clean block A as its main parent will pass (a) yet sit
+    //       outside LFB's main chain. Without (b) the resolver
+    //       reports false-Pending for sigs that are genuinely in
+    //       canonical state — exactly the recovery-cycle case the
+    //       comment above warns about.
+    //
+    // Same-block (clean and rejection in the SAME block — e.g., a
+    // recovery proposal whose merge step also dedup-rejected an older
+    // copy in scope) is not a "descendant" and must not invalidate.
+    let mut clean_finalized_height: Option<i64> =
+        state.clean_finalized_event.as_ref().map(|(h, _)| *h);
     if let (Some((_, clean_block)), Some((_, reject_block))) =
-        (&clean_finalized_event, &latest_rejected_event)
+        (&state.clean_finalized_event, &state.latest_rejected_event)
     {
+        let lfb_hash = dag.last_finalized_block();
+        let reject_is_canonical =
+            reject_block == &lfb_hash || dag.is_in_main_chain(reject_block, &lfb_hash)?;
         let reject_is_canonical_descendant = clean_block != reject_block
-            && dag.is_in_main_chain(clean_block, reject_block).unwrap_or(false);
+            && reject_is_canonical
+            && dag.is_in_main_chain(clean_block, reject_block)?;
         if reject_is_canonical_descendant {
             clean_finalized_height = None;
         }
     }
-    let _ = clean_finalized_event;
 
-    // Also account for latest_block_hash via the first-seen lookup —
+    // Account for latest_block_hash via the first-seen lookup —
     // covers the case where the sig lives only in a non-finalized
     // block (outside the finalized scan). If the first-seen block
     // somehow has no height entry, skip this fallback rather than
     // record a block_number=0 which would mis-sort against real
     // canonical events.
+    let mut latest_event = state.latest_event;
     if latest_event.is_none() {
-        if let Some(first_seen_height) = dag.block_number(&first_seen_block_hash) {
-            latest_event = Some((first_seen_height, first_seen_block_hash.clone()));
+        if let Some(first_seen_height) = dag.block_number(&state.first_seen_block_hash) {
+            latest_event = Some((first_seen_height, state.first_seen_block_hash.clone()));
         } else {
             tracing::debug!(
                 "deploy_finalization_status: first-seen block {} has no block_number — \
                  leaving latest_block_hash empty rather than record with bogus height",
-                PrettyPrinter::build_string_bytes(&first_seen_block_hash)
+                PrettyPrinter::build_string_bytes(&state.first_seen_block_hash)
             );
         }
     }
@@ -314,10 +405,10 @@ pub fn resolve(
     // AND no clean finalized inclusion. Use the DAG's overall latest
     // block number (may be higher than LFB height) as tip.
     let tip_height = dag.latest_block_number();
-    let expired =
-        tip_height > valid_after_block_number + deploy_lifespan && clean_finalized_height.is_none();
+    let expired = tip_height > state.valid_after_block_number + deploy_lifespan
+        && clean_finalized_height.is_none();
 
-    let state = if has_failed_finalized {
+    let final_state = if state.has_failed_finalized {
         DeployFinalizationState::Failed
     } else if clean_finalized_height.is_some() {
         DeployFinalizationState::Finalized
@@ -327,11 +418,118 @@ pub fn resolve(
         DeployFinalizationState::Pending
     };
 
+    let _ = state.sig_bytes; // no longer needed past finalize
+
     Ok(DeployFinalizationStatus {
-        state,
-        rejection_count,
+        state: final_state,
+        rejection_count: state.rejection_count,
         latest_block_hash: latest_event.map(|(_, h)| h),
     })
+}
+
+/// Pure resolver for deploy finalization state, single-sig entry point.
+/// Does not depend on the engine cell; callable from any context that
+/// has a DAG representation, a block store, and the shard-level
+/// `deploy_lifespan`. The gRPC / HTTP wrappers call this under their
+/// async unwrap of the Casper instance.
+///
+/// Error semantics shared with `resolve_batch`: deploy-index
+/// inconsistencies (sig indexed at a block whose body does not contain
+/// the sig) propagate as `Err` so corruption is surfaced rather than
+/// hidden behind `pending_unknown`. Truly absent data (unknown sig,
+/// first-seen body missing from the store) returns `pending_unknown`.
+///
+/// The state machine is a canonical-chain scan:
+///
+/// 1. Look up the sig in the deploy index. Unknown sig → `Pending`.
+/// 2. Fetch the first-seen block to read `valid_after_block_number`.
+/// 3. Walk the finalized chain from LFB backward for `deploy_lifespan`
+///    blocks, tallying clean inclusions, failed inclusions, rejections,
+///    and `latest_block_hash`.
+/// 4. Apply the state rules: failed finalized → `Failed`; clean finalized
+///    without a later canonical-descendant rejection → `Finalized`;
+///    beyond lifespan without a clean inclusion → `Expired`; otherwise
+///    → `Pending`.
+pub fn resolve(
+    dag: &KeyValueDagRepresentation,
+    block_store: &KeyValueBlockStore,
+    deploy_lifespan: i64,
+    sig: &[u8],
+) -> ApiErr<DeployFinalizationStatus> {
+    let prelude = run_prelude(dag, block_store, sig)?;
+    let state = match prelude {
+        PreludeOutcome::Unknown => return Ok(DeployFinalizationStatus::pending_unknown()),
+        PreludeOutcome::Active(s) => s,
+    };
+
+    let mut per_sig: HashMap<Bytes, ResolverState> = HashMap::new();
+    per_sig.insert(state.sig_bytes.clone(), state);
+
+    bfs_finalized_window(dag, block_store, deploy_lifespan, &mut per_sig)?;
+
+    let (_, state) = per_sig
+        .into_iter()
+        .next()
+        .expect("per_sig was populated with one entry above");
+    finalize_sig_state(dag, deploy_lifespan, state)
+}
+
+/// Batched resolver for many sigs in a single canonical-chain scan.
+/// Optimizes the catchup-heavy hot path in
+/// `compute_parents_post_state::should_admit_to_rejected_buffer`, where
+/// every rejected deploy in a merge would otherwise trigger an
+/// independent BFS over the same finalized window.
+///
+/// Cost vs. calling `resolve` per sig: with N sigs and M blocks in the
+/// `deploy_lifespan` window, this is O(M + N) block fetches instead of
+/// O(N · M). For a 50-rejected merge with M=200, that is 200 fetches
+/// instead of 10 000.
+///
+/// Error semantics match `resolve`: any failure during the prelude (IO,
+/// deploy-index inconsistency, LFB lookup) propagates as `Err` for the
+/// whole batch. Sigs that are simply not in the deploy index (or whose
+/// first-seen block is missing) yield
+/// `DeployFinalizationStatus::pending_unknown()` for that sig — those
+/// are absences, not corruptions.
+///
+/// The `compute_parents_post_state` caller wraps the batch call in a
+/// "skip on Err" fallback (admit nothing for the merge step), so a
+/// single corrupted sig does pause admit decisions for that one merge
+/// rather than silently mislabeling the corruption as a healthy
+/// `Pending`.
+pub fn resolve_batch(
+    dag: &KeyValueDagRepresentation,
+    block_store: &KeyValueBlockStore,
+    deploy_lifespan: i64,
+    sigs: &HashSet<Bytes>,
+) -> ApiErr<HashMap<Bytes, DeployFinalizationStatus>> {
+    let mut results: HashMap<Bytes, DeployFinalizationStatus> = HashMap::new();
+    if sigs.is_empty() {
+        return Ok(results);
+    }
+
+    // Per-sig prelude (lenient: inconsistencies → Unknown).
+    let mut per_sig: HashMap<Bytes, ResolverState> = HashMap::new();
+    for sig in sigs {
+        match run_prelude(dag, block_store, sig.as_ref())? {
+            PreludeOutcome::Unknown => {
+                results.insert(sig.clone(), DeployFinalizationStatus::pending_unknown());
+            }
+            PreludeOutcome::Active(state) => {
+                per_sig.insert(state.sig_bytes.clone(), state);
+            }
+        }
+    }
+
+    // Single BFS pass — the whole point of this function.
+    bfs_finalized_window(dag, block_store, deploy_lifespan, &mut per_sig)?;
+
+    // Per-sig post-processing.
+    for (sig, state) in per_sig {
+        results.insert(sig, finalize_sig_state(dag, deploy_lifespan, state)?);
+    }
+
+    Ok(results)
 }
 
 #[cfg(test)]

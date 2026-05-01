@@ -17,7 +17,8 @@ use crate::rust::util::proto_util;
 use super::{
     blocks::proposer::propose_result::CheckProposeConstraintsResult,
     casper::{CasperShardConf, CasperSnapshot},
-    errors::CasperError, util::rholang::runtime_manager::RuntimeManager,
+    errors::CasperError,
+    util::rholang::runtime_manager::RuntimeManager,
     validator_identity::ValidatorIdentity,
 };
 
@@ -51,12 +52,12 @@ impl SynchronyRecoveryState {
         self.first_failure_at = Some(first_failure_at);
         self.consecutive_failures = self.consecutive_failures.saturating_add(1);
 
-        let stalled_long_enough = now.duration_since(first_failure_at)
-            >= conf.synchrony_recovery_stall_window;
+        let stalled_long_enough =
+            now.duration_since(first_failure_at) >= conf.synchrony_recovery_stall_window;
 
-        let in_cooldown = self.last_bypass_at.is_some_and(|last| {
-            now.duration_since(last) < conf.synchrony_recovery_cooldown
-        });
+        let in_cooldown = self
+            .last_bypass_at
+            .is_some_and(|last| now.duration_since(last) < conf.synchrony_recovery_cooldown);
         if !stalled_long_enough || in_cooldown {
             return false;
         }
@@ -129,8 +130,8 @@ mod tests {
         let now = Instant::now();
         let stall_window = conf.synchrony_recovery_stall_window.as_secs();
         let cooldown = conf.synchrony_recovery_cooldown.as_secs();
-        let elapsed = Duration::from_secs(stall_window.max(cooldown))
-            .saturating_add(Duration::from_secs(1));
+        let elapsed =
+            Duration::from_secs(stall_window.max(cooldown)).saturating_add(Duration::from_secs(1));
 
         let mut state = SynchronyRecoveryState {
             last_known_hash: vec![1],
@@ -273,9 +274,7 @@ fn can_use_finalized_baseline(
     height_constraint_threshold: i64,
     max_distance: u64,
 ) -> bool {
-    let allowed_ahead = height_constraint_threshold
-        .max(0)
-        .min(max_distance as i64);
+    let allowed_ahead = height_constraint_threshold.max(0).min(max_distance as i64);
     let proposer_ahead_of_finalized = last_proposed_block_number - last_finalized_block_number;
     proposer_ahead_of_finalized <= allowed_ahead
 }
@@ -448,9 +447,7 @@ pub async fn check(
                             return Ok(CheckProposeConstraintsResult::success());
                         }
                     } else if can_use_finalized {
-                        tracing::debug!(
-                            "Finalized-baseline synchrony fallback disabled in config"
-                        );
+                        tracing::debug!("Finalized-baseline synchrony fallback disabled in config");
                     } else {
                         tracing::warn!(
                             "Skipping finalized-baseline synchrony fallback: validator is too far ahead of finalized (proposed #{}, finalized #{})",
