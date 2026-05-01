@@ -384,6 +384,38 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+      # Debug: preserve LMDB volumes from each validator container so we can
+      # inspect rspace/block-storage state when the test_shard_degradation flake
+      # fires. Only runs on failure to keep happy-path runs cheap. Each LMDB
+      # store is tens of MB; ~50-100MB total per arch when artifact uploads.
+      - name: Preserve Docker volumes on failure
+        if: failure()
+        shell: bash {0}
+        run: |
+          mkdir -p /tmp/preserved-volumes
+          # Capture every framework-prefixed volume currently on the runner.
+          # Names match the framework's session-prefixed pattern (test-*-data,
+          # f1r3fly-test-*) — catches both static-shard and custom-shard volumes.
+          for vol in $(docker volume ls -q | grep -E '^test-|^f1r3fly-test-' || true); do
+            echo "Preserving volume: $vol"
+            docker run --rm \
+              -v "$vol":/data \
+              -v /tmp/preserved-volumes:/out \
+              alpine:3.20 \
+              sh -c "tar czf /out/$vol.tar.gz -C /data ." || \
+              echo "  WARN: failed to archive $vol — continuing"
+          done
+          ls -la /tmp/preserved-volumes/ || true
+
+      - name: Upload preserved volumes
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: preserved-volumes-${{ matrix.arch }}
+          path: /tmp/preserved-volumes/
+          if-no-files-found: ignore
+          retention-days: 7
+
       - name: Clean Docker state
         if: always()
         shell: bash {0}
