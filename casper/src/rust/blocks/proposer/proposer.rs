@@ -4,7 +4,10 @@ use std::sync::{Arc, Mutex};
 use tracing;
 
 use block_storage::rust::{
-    deploy::key_value_deploy_storage::KeyValueDeployStorage,
+    deploy::{
+        key_value_deploy_storage::KeyValueDeployStorage,
+        key_value_rejected_deploy_buffer::KeyValueRejectedDeployBuffer,
+    },
     key_value_block_store::KeyValueBlockStore,
 };
 use comm::rust::{
@@ -521,6 +524,7 @@ pub fn new_proposer<T: TransportLayer + Send + Sync + 'static>(
     runtime_manager: RuntimeManager,
     block_store: KeyValueBlockStore,
     deploy_storage: Arc<Mutex<KeyValueDeployStorage>>,
+    rejected_deploy_buffer: Arc<Mutex<KeyValueRejectedDeployBuffer>>,
     block_retriever: BlockRetriever<T>,
     transport: Arc<T>,
     connections_cell: ConnectionsCell,
@@ -541,7 +545,12 @@ pub fn new_proposer<T: TransportLayer + Send + Sync + 'static>(
             validator_arc.clone(),
         ),
         ProductionHeightChecker::new(validator_arc),
-        ProductionBlockCreator::new(deploy_storage, runtime_manager.clone(), block_store.clone()),
+        ProductionBlockCreator::new(
+            deploy_storage,
+            rejected_deploy_buffer,
+            runtime_manager.clone(),
+            block_store.clone(),
+        ),
         ProductionBlockValidator,
         ProductionProposeEffectHandler::new(
             block_store,
@@ -640,6 +649,7 @@ impl HeightChecker for ProductionHeightChecker {
 
 pub struct ProductionBlockCreator {
     deploy_storage: Arc<Mutex<KeyValueDeployStorage>>,
+    rejected_deploy_buffer: Arc<Mutex<KeyValueRejectedDeployBuffer>>,
     runtime_manager: RuntimeManager,
     block_store: KeyValueBlockStore,
 }
@@ -647,11 +657,13 @@ pub struct ProductionBlockCreator {
 impl ProductionBlockCreator {
     pub fn new(
         deploy_storage: Arc<Mutex<KeyValueDeployStorage>>,
+        rejected_deploy_buffer: Arc<Mutex<KeyValueRejectedDeployBuffer>>,
         runtime_manager: RuntimeManager,
         block_store: KeyValueBlockStore,
     ) -> Self {
         Self {
             deploy_storage,
+            rejected_deploy_buffer,
             runtime_manager,
             block_store,
         }
@@ -671,6 +683,7 @@ impl BlockCreator for ProductionBlockCreator {
             validator_identity,
             dummy_deploy_opt,
             self.deploy_storage.clone(),
+            self.rejected_deploy_buffer.clone(),
             &mut self.runtime_manager,
             &mut self.block_store,
             allow_empty_blocks,

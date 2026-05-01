@@ -172,6 +172,15 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
         (deploy_storage, deploy_storage_arc)
     };
 
+    // Buffer of deploys rejected during multi-parent merge; re-proposed in
+    // subsequent blocks to avoid silent loss of otherwise-valid user deploys.
+    let rejected_deploy_buffer_arc = {
+        use block_storage::rust::deploy::key_value_rejected_deploy_buffer::KeyValueRejectedDeployBuffer;
+
+        let buffer = KeyValueRejectedDeployBuffer::new(&mut rnode_store_manager).await?;
+        Arc::new(Mutex::new(buffer))
+    };
+
     // Safety oracle (clique oracle implementation)
     let oracle = {
         use casper::rust::safety_oracle::CliqueOracleImpl;
@@ -359,6 +368,7 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
             runtime_manager.clone(),
             block_store.clone(),
             deploy_storage_arc.clone(),
+            rejected_deploy_buffer_arc.clone(),
             block_retriever.clone(),
             transport_layer.clone(),
             rp_connections.clone(),
@@ -492,6 +502,7 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
             block_store.clone(),
             block_dag_storage.clone(),
             deploy_storage,
+            rejected_deploy_buffer_arc.clone(),
             casper_buffer_storage.clone(),
             rspace_state_manager,
             Arc::new(tokio::sync::Mutex::new(runtime_manager.clone())),
@@ -837,7 +848,9 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
             synchrony_recovery_cooldown: conf.casper.synchrony_recovery_cooldown,
             synchrony_recovery_max_bypasses: conf.casper.synchrony_recovery_max_bypasses,
             synchrony_finalized_baseline_enabled: conf.casper.synchrony_finalized_baseline_enabled,
-            synchrony_finalized_baseline_max_distance: conf.casper.synchrony_finalized_baseline_max_distance,
+            synchrony_finalized_baseline_max_distance: conf
+                .casper
+                .synchrony_finalized_baseline_max_distance,
             max_user_deploys_per_block: conf.casper.max_user_deploys_per_block,
             native_token_name: conf.casper.genesis_block_data.native_token_name.clone(),
             native_token_symbol: conf.casper.genesis_block_data.native_token_symbol.clone(),

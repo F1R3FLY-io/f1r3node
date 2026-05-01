@@ -104,7 +104,9 @@ impl RuntimeOps {
      * fixed channels in the state.
      */
     pub async fn empty_state_hash(&mut self) -> Result<StateHash, CasperError> {
-        self.runtime.reset(&RadixHistory::empty_root_node_hash()).await?;
+        self.runtime
+            .reset(&RadixHistory::empty_root_node_hash())
+            .await?;
 
         bootstrap_registry(&self.runtime).await;
         let checkpoint = self.runtime.create_checkpoint().await;
@@ -132,9 +134,8 @@ impl RuntimeOps {
         CasperError,
     > {
         let mem_profile_enabled = crate::rust::util::rholang::mem_profiler::mem_profile_enabled();
-        let read_vm_rss_kb = || -> Option<usize> {
-            crate::rust::util::rholang::mem_profiler::read_vm_rss_kb()
-        };
+        let read_vm_rss_kb =
+            || -> Option<usize> { crate::rust::util::rholang::mem_profiler::read_vm_rss_kb() };
         let mut rss_baseline = if mem_profile_enabled {
             read_vm_rss_kb()
         } else {
@@ -287,9 +288,8 @@ impl RuntimeOps {
         terms: Vec<Signed<DeployData>>,
     ) -> Result<(StateHash, Vec<(ProcessedDeploy, NumberChannelsEndVal)>), CasperError> {
         let mem_profile_enabled = crate::rust::util::rholang::mem_profiler::mem_profile_enabled();
-        let read_vm_rss_kb = || -> Option<usize> {
-            crate::rust::util::rholang::mem_profiler::read_vm_rss_kb()
-        };
+        let read_vm_rss_kb =
+            || -> Option<usize> { crate::rust::util::rholang::mem_profiler::read_vm_rss_kb() };
         let mut rss_baseline = if mem_profile_enabled {
             read_vm_rss_kb()
         } else {
@@ -321,7 +321,8 @@ impl RuntimeOps {
         tracing::info!(target: "f1r3fly.casper.play-deploys", "play-deploys-started");
         log_mem_step("start");
         self.runtime
-            .reset(&Blake2b256Hash::from_bytes_prost(start_hash)).await?;
+            .reset(&Blake2b256Hash::from_bytes_prost(start_hash))
+            .await?;
         log_mem_step("after_reset");
 
         let mut res = Vec::with_capacity(terms.len());
@@ -359,7 +360,8 @@ impl RuntimeOps {
         // Using tracing events for async - Span[F].withMarks("play-deploys") from Scala
         tracing::info!(target: "f1r3fly.casper.play-deploys-genesis", "play-deploys-genesis-started");
         self.runtime
-            .reset(&Blake2b256Hash::from_bytes_prost(start_hash)).await?;
+            .reset(&Blake2b256Hash::from_bytes_prost(start_hash))
+            .await?;
 
         let mut res = Vec::with_capacity(terms.len());
         for deploy in terms {
@@ -378,9 +380,8 @@ impl RuntimeOps {
         deploy: Signed<DeployData>,
     ) -> Result<(ProcessedDeploy, NumberChannelsEndVal), CasperError> {
         let mem_profile_enabled = crate::rust::util::rholang::mem_profiler::mem_profile_enabled();
-        let read_vm_rss_kb = || -> Option<usize> {
-            crate::rust::util::rholang::mem_profiler::read_vm_rss_kb()
-        };
+        let read_vm_rss_kb =
+            || -> Option<usize> { crate::rust::util::rholang::mem_profiler::read_vm_rss_kb() };
         let mut rss_baseline = if mem_profile_enabled {
             read_vm_rss_kb()
         } else {
@@ -484,7 +485,8 @@ impl RuntimeOps {
                     Either::Right(_) => {
                         // Get mergeable channels data
                         let mergeable_channels_data = self
-                            .get_number_channels_data(&eval_collector_state.mergeable_channels).await?;
+                            .get_number_channels_data(&eval_collector_state.mergeable_channels)
+                            .await?;
 
                         let deploy_log = mem::take(&mut eval_collector_state.event_log);
                         log_mem_step("after_collect_result");
@@ -529,8 +531,9 @@ impl RuntimeOps {
 
                 // Update result with accumulated event logs
                 // Get mergeable channels data
-                let mergeable_channels_data =
-                    self.get_number_channels_data(&eval_collector_state.mergeable_channels).await?;
+                let mergeable_channels_data = self
+                    .get_number_channels_data(&eval_collector_state.mergeable_channels)
+                    .await?;
 
                 let deploy_log = mem::take(&mut eval_collector_state.event_log);
 
@@ -661,7 +664,8 @@ impl RuntimeOps {
         system_deploy: &mut S,
     ) -> Result<SystemDeployResult<S::Result>, CasperError> {
         self.runtime
-            .reset(&Blake2b256Hash::from_bytes_prost(&state_hash)).await?;
+            .reset(&Blake2b256Hash::from_bytes_prost(&state_hash))
+            .await?;
 
         let (event_log, result, mergeable_channels) =
             self.play_system_deploy_internal(system_deploy).await?;
@@ -724,9 +728,8 @@ impl RuntimeOps {
         CasperError,
     > {
         let mem_profile_enabled = crate::rust::util::rholang::mem_profiler::mem_profile_enabled();
-        let read_vm_rss_kb = || -> Option<usize> {
-            crate::rust::util::rholang::mem_profiler::read_vm_rss_kb()
-        };
+        let read_vm_rss_kb =
+            || -> Option<usize> { crate::rust::util::rholang::mem_profiler::read_vm_rss_kb() };
         let deploy_type = std::any::type_name::<S>();
         let mut rss_baseline = if mem_profile_enabled {
             read_vm_rss_kb()
@@ -781,9 +784,8 @@ impl RuntimeOps {
         system_deploy: &mut S,
     ) -> Result<SysEvalResult<S>, CasperError> {
         let mem_profile_enabled = crate::rust::util::rholang::mem_profiler::mem_profile_enabled();
-        let read_vm_rss_kb = || -> Option<usize> {
-            crate::rust::util::rholang::mem_profiler::read_vm_rss_kb()
-        };
+        let read_vm_rss_kb =
+            || -> Option<usize> { crate::rust::util::rholang::mem_profiler::read_vm_rss_kb() };
         let deploy_type = std::any::type_name::<S>();
         let mut rss_baseline = if mem_profile_enabled {
             read_vm_rss_kb()
@@ -894,9 +896,8 @@ impl RuntimeOps {
         hash: &StateHash,
     ) -> Result<Vec<Par>, CasperError> {
         let mem_profile_enabled = crate::rust::util::rholang::mem_profiler::mem_profile_enabled();
-        let read_vm_rss_kb = || -> Option<usize> {
-            crate::rust::util::rholang::mem_profiler::read_vm_rss_kb()
-        };
+        let read_vm_rss_kb =
+            || -> Option<usize> { crate::rust::util::rholang::mem_profiler::read_vm_rss_kb() };
         let mut rss_baseline = if mem_profile_enabled {
             read_vm_rss_kb()
         } else {
@@ -926,7 +927,8 @@ impl RuntimeOps {
         log_mem_step("start");
 
         self.runtime
-            .reset(&Blake2b256Hash::from_bytes_prost(hash)).await?;
+            .reset(&Blake2b256Hash::from_bytes_prost(hash))
+            .await?;
         log_mem_step("after_reset");
         self.runtime.cost().set(Cost::unsafe_max());
         log_mem_step("after_set_cost");
@@ -957,7 +959,8 @@ impl RuntimeOps {
         let _ = self.runtime.take_event_log().await;
         log_mem_step("after_take_event_log");
         self.runtime
-            .reset(&Blake2b256Hash::from_bytes_prost(hash)).await?;
+            .reset(&Blake2b256Hash::from_bytes_prost(hash))
+            .await?;
         log_mem_step("after_post_query_reset");
 
         result
@@ -1033,7 +1036,8 @@ impl RuntimeOps {
         name: &Par,
     ) -> Result<(Vec<Par>, u64), CasperError> {
         self.runtime
-            .reset(&Blake2b256Hash::from_bytes_prost(start)).await?;
+            .reset(&Blake2b256Hash::from_bytes_prost(start))
+            .await?;
 
         let eval_res = self.evaluate(deploy).await?;
         if !eval_res.errors.is_empty() {
@@ -1074,9 +1078,8 @@ impl RuntimeOps {
         system_deploy: &mut S,
     ) -> Result<EvaluateResult, CasperError> {
         let mem_profile_enabled = crate::rust::util::rholang::mem_profiler::mem_profile_enabled();
-        let read_vm_rss_kb = || -> Option<usize> {
-            crate::rust::util::rholang::mem_profiler::read_vm_rss_kb()
-        };
+        let read_vm_rss_kb =
+            || -> Option<usize> { crate::rust::util::rholang::mem_profiler::read_vm_rss_kb() };
         let deploy_type = std::any::type_name::<S>();
         let mut rss_baseline = if mem_profile_enabled {
             read_vm_rss_kb()
@@ -1161,7 +1164,10 @@ impl RuntimeOps {
         channel: Par,
         pattern: BindPattern,
     ) -> Result<Option<(TaggedContinuation, Vec<ListParWithRandom>)>, CasperError> {
-        Ok(self.runtime.consume_result(vec![channel], vec![pattern]).await?)
+        Ok(self
+            .runtime
+            .consume_result(vec![channel], vec![pattern])
+            .await?)
     }
 
     pub async fn consume_system_result<S: SystemDeployTrait>(
@@ -1170,7 +1176,9 @@ impl RuntimeOps {
     ) -> Result<Option<(TaggedContinuation, Vec<ListParWithRandom>)>, CasperError> {
         let consume_start = Instant::now();
         let return_channel = system_deploy.return_channel()?;
-        let result = self.consume_result(return_channel, system_deploy_consume_all_pattern()).await;
+        let result = self
+            .consume_result(return_channel, system_deploy_consume_all_pattern())
+            .await;
         metrics::histogram!(BLOCK_REPLAY_SYSDEPLOY_EVAL_CONSUME_RESULT_TIME_METRIC, "source" => CASPER_METRICS_SOURCE)
             .record(consume_start.elapsed().as_secs_f64());
         result

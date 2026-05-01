@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::rust::{
     block_status::{BlockError, InvalidBlock, ValidBlock},
-    casper::{Casper, CasperSnapshot, DeployError, MultiParentCasper},
+    casper::{Casper, CasperShardConf, CasperSnapshot, DeployError, MultiParentCasper},
     errors::CasperError,
     util::rholang::runtime_manager::RuntimeManager,
 };
@@ -38,6 +38,7 @@ pub struct NoOpsCasperEffect {
     shared_block_data: Arc<Mutex<HashMap<Vec<u8>, Vec<u8>>>>,
     shared_approved_block_data: Arc<Mutex<HashMap<Vec<u8>, Vec<u8>>>>,
     block_dag_storage: KeyValueDagRepresentation,
+    shard_conf: CasperShardConf,
 }
 
 // For testing purposes, we'll implement Clone manually by creating stub instances
@@ -64,6 +65,7 @@ impl Clone for NoOpsCasperEffect {
             shared_block_data: self.shared_block_data.clone(),
             shared_approved_block_data: self.shared_approved_block_data.clone(),
             block_dag_storage: self.block_dag_storage.clone(),
+            shard_conf: self.shard_conf.clone(),
         }
     }
 }
@@ -99,6 +101,7 @@ impl NoOpsCasperEffect {
             shared_block_data,
             shared_approved_block_data,
             block_dag_storage,
+            shard_conf: CasperShardConf::new(),
         }
     }
 
@@ -125,6 +128,7 @@ impl NoOpsCasperEffect {
             shared_block_data: shared_kvm_data.clone(),
             shared_approved_block_data: shared_kvm_data.clone(),
             block_dag_storage,
+            shard_conf: CasperShardConf::new(),
         }
     }
 }
@@ -152,6 +156,10 @@ impl MultiParentCasper for NoOpsCasperEffect {
 
     fn block_store(&self) -> &KeyValueBlockStore {
         &self.block_store
+    }
+
+    fn casper_shard_conf(&self) -> &CasperShardConf {
+        &self.shard_conf
     }
 
     fn get_validator(&self) -> Option<ValidatorIdentity> {

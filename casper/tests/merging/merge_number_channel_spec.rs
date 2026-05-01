@@ -244,6 +244,8 @@ async fn test_case(
                 &base_cp.root,
                 &left_post_state,
                 history_repo.clone(),
+                prost::bytes::Bytes::from(vec![0xAAu8; 32]),
+                1,
             )
             .unwrap()
         })
@@ -258,6 +260,8 @@ async fn test_case(
                 &base_cp.root,
                 &right_post_state,
                 history_repo.clone(),
+                prost::bytes::Bytes::from(vec![0xBBu8; 32]),
+                2,
             )
             .unwrap()
         })
@@ -265,7 +269,6 @@ async fn test_case(
 
     println!("LEFT DEPLOY CHAINS: {:?}", left_deploy_chains.len());
     println!("RIGHT DEPLOY CHAINS: {:?}", right_deploy_chains.len());
-
 
     let branches_are_conflicting =
         |a: &HashableSet<DeployChainIndex>, b: &HashableSet<DeployChainIndex>| {

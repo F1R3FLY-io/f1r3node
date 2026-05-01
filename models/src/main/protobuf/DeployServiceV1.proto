@@ -55,6 +55,10 @@ service DeployService {
   rpc lastFinalizedBlock(LastFinalizedBlockQuery) returns (LastFinalizedBlockResponse) {}
   // Check if a given block is finalized.
   rpc isFinalized(IsFinalizedQuery) returns (IsFinalizedResponse) {}
+  // Query the canonical-state finalization status of a deploy by its signature.
+  // Prefer this over isFinalized for deploy tracking — isFinalized can return
+  // true for a block whose deploy effects were dropped by merge rejection.
+  rpc deployFinalizationStatus(DeployFinalizationStatusQuery) returns (DeployFinalizationStatusResponse) {}
   // Check if a given validator is bonded.
   // Returns on success BondStatusResponse
   rpc bondStatus(BondStatusQuery) returns (BondStatusResponse) {}
@@ -182,6 +186,14 @@ message IsFinalizedResponse {
   oneof message {
     servicemodelapi.ServiceError error = 1;
     bool isFinalized   = 2;
+  }
+}
+
+// deployFinalizationStatus
+message DeployFinalizationStatusResponse {
+  oneof message {
+    servicemodelapi.ServiceError error = 1;
+    DeployFinalizationStatusInfo status = 2;
   }
 }
 

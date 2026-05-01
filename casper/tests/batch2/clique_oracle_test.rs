@@ -78,9 +78,18 @@ async fn finalized_block_ft_should_not_change_with_dag_state() {
         let v2 = generate_validator(Some("FT Stable V2"));
         let v3 = generate_validator(Some("FT Stable V3"));
         let bonds = vec![
-            Bond { validator: v1.clone(), stake: 100 },
-            Bond { validator: v2.clone(), stake: 100 },
-            Bond { validator: v3.clone(), stake: 100 },
+            Bond {
+                validator: v1.clone(),
+                stake: 100,
+            },
+            Bond {
+                validator: v2.clone(),
+                stake: 100,
+            },
+            Bond {
+                validator: v3.clone(),
+                stake: 100,
+            },
         ];
 
         let genesis = create_genesis_block(
@@ -88,7 +97,12 @@ async fn finalized_block_ft_should_not_change_with_dag_state() {
             &mut block_dag_storage,
             None,
             Some(bonds.clone()),
-            None, None, None, None, None, None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
         );
 
         let creator1 = create_block(&bonds, &genesis, &v1);
@@ -101,27 +115,37 @@ async fn finalized_block_ft_should_not_change_with_dag_state() {
         let b1 = creator1(&mut block_store, &mut block_dag_storage, &genesis, &gj);
 
         let b2 = creator2(
-            &mut block_store, &mut block_dag_storage, &b1,
+            &mut block_store,
+            &mut block_dag_storage,
+            &b1,
             &HashMap::from([(&v1, &b1), (&v2, &genesis), (&v3, &genesis)]),
         );
 
         let b3 = creator3(
-            &mut block_store, &mut block_dag_storage, &b2,
+            &mut block_store,
+            &mut block_dag_storage,
+            &b2,
             &HashMap::from([(&v1, &b1), (&v2, &b2), (&v3, &genesis)]),
         );
 
         let b4 = creator1(
-            &mut block_store, &mut block_dag_storage, &b3,
+            &mut block_store,
+            &mut block_dag_storage,
+            &b3,
             &HashMap::from([(&v1, &b1), (&v2, &b2), (&v3, &b3)]),
         );
 
         let b5 = creator2(
-            &mut block_store, &mut block_dag_storage, &b4,
+            &mut block_store,
+            &mut block_dag_storage,
+            &b4,
             &HashMap::from([(&v1, &b4), (&v2, &b2), (&v3, &b3)]),
         );
 
         let _b6 = creator3(
-            &mut block_store, &mut block_dag_storage, &b5,
+            &mut block_store,
+            &mut block_dag_storage,
+            &b5,
             &HashMap::from([(&v1, &b4), (&v2, &b5), (&v3, &b3)]),
         );
 
@@ -140,11 +164,7 @@ async fn finalized_block_ft_should_not_change_with_dag_state() {
 
         // Finalize b1 with the computed FT — this caches it in BlockMetadata
         block_dag_storage
-            .record_directly_finalized(
-                b1.block_hash.clone(),
-                ft_phase1,
-                |_| async { Ok(()) },
-            )
+            .record_directly_finalized(b1.block_hash.clone(), ft_phase1, |_| async { Ok(()) })
             .await
             .unwrap();
 
@@ -162,12 +182,16 @@ async fn finalized_block_ft_should_not_change_with_dag_state() {
 
         // Phase 2: V2 and V3 create blocks forking off genesis (not through b1).
         let f1 = creator2(
-            &mut block_store, &mut block_dag_storage, &genesis,
+            &mut block_store,
+            &mut block_dag_storage,
+            &genesis,
             &HashMap::from([(&v1, &genesis), (&v2, &genesis), (&v3, &genesis)]),
         );
 
         let _f2 = creator3(
-            &mut block_store, &mut block_dag_storage, &f1,
+            &mut block_store,
+            &mut block_dag_storage,
+            &f1,
             &HashMap::from([(&v1, &genesis), (&v2, &f1), (&v3, &genesis)]),
         );
 
@@ -771,9 +795,18 @@ async fn orphaned_finalized_block_should_still_get_ft_updated() {
         let v2 = generate_validator(Some("Orphan V2"));
         let v3 = generate_validator(Some("Orphan V3"));
         let bonds = vec![
-            Bond { validator: v1.clone(), stake: 100 },
-            Bond { validator: v2.clone(), stake: 100 },
-            Bond { validator: v3.clone(), stake: 100 },
+            Bond {
+                validator: v1.clone(),
+                stake: 100,
+            },
+            Bond {
+                validator: v2.clone(),
+                stake: 100,
+            },
+            Bond {
+                validator: v3.clone(),
+                stake: 100,
+            },
         ];
 
         let genesis = create_genesis_block(
@@ -781,7 +814,12 @@ async fn orphaned_finalized_block_should_still_get_ft_updated() {
             &mut block_dag_storage,
             None,
             Some(bonds.clone()),
-            None, None, None, None, None, None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
         );
 
         let creator1 = create_block(&bonds, &genesis, &v1);
@@ -811,7 +849,9 @@ async fn orphaned_finalized_block_should_still_get_ft_updated() {
 
         // Build b2 on top of b1_v3 (NOT b1_v1) — the DAG diverges
         let b2 = creator1(
-            &mut block_store, &mut block_dag_storage, &b1_v3,
+            &mut block_store,
+            &mut block_dag_storage,
+            &b1_v3,
             &HashMap::from([(&v1, &b1_v1), (&v2, &genesis), (&v3, &b1_v3)]),
         );
 

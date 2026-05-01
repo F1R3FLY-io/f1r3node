@@ -3,13 +3,13 @@ use models::casper::v1::deploy_service_client::DeployServiceClient;
 use models::casper::v1::{
     block_info_response, block_response, bond_status_response, continuation_at_name_response,
     deploy_response, find_deploy_response, is_finalized_response, last_finalized_block_response,
-    machine_verify_response, rho_data_response, status_response,
-    visualize_blocks_response, RhoDataPayload,
+    machine_verify_response, rho_data_response, status_response, visualize_blocks_response,
+    RhoDataPayload,
 };
 use models::casper::{
     BlockQuery, BlocksQuery, BondStatusQuery, ContinuationAtNameQuery, ContinuationsWithBlockInfo,
-    DataAtNameByBlockQuery, FindDeployQuery, IsFinalizedQuery,
-    LastFinalizedBlockQuery, LightBlockInfo, MachineVerifyQuery, VisualizeDagQuery,
+    DataAtNameByBlockQuery, FindDeployQuery, IsFinalizedQuery, LastFinalizedBlockQuery,
+    LightBlockInfo, MachineVerifyQuery, VisualizeDagQuery,
 };
 use models::rhoapi::Par;
 use models::rust::casper::protocol::casper_message::DeployData;

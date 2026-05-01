@@ -1,4 +1,4 @@
-> Last updated: 2026-04-19
+> Last updated: 2026-04-29
 
 # Crate: casper (Consensus Layer)
 
@@ -43,11 +43,19 @@ pub struct CasperSnapshot {
     pub lca: BlockHash,
     pub tips: Vec<BlockHash>,
     pub parents: Vec<BlockMessage>,
-    pub justifications: HashSet<Justification>,
-    pub invalid_blocks: HashMap<Validator, BlockHash>,
-    pub deploys_in_scope: HashSet<Signed<DeployData>>,
+    pub justifications: DashSet<Justification>,
+    pub invalid_blocks: HashMap<BlockHash, Validator>,
+    /// Signatures of deploys seen in the ancestry window above LCA.
+    pub deploys_in_scope: Arc<DashSet<Bytes>>,
+    /// Signatures of deploys that appeared in a merge block's
+    /// `rejected_deploys` list within the ancestry window. Intersects
+    /// with `deploys_in_scope` when a deploy was executed in one block
+    /// and rejected during a descendant merge; the block creator uses
+    /// this set to know which in-scope deploys are eligible for
+    /// re-inclusion via the rejected-deploy buffer.
+    pub rejected_in_scope: Arc<DashSet<Bytes>>,
     pub max_block_num: i64,
-    pub max_seq_nums: HashMap<Validator, u64>,
+    pub max_seq_nums: DashMap<Validator, u64>,
     pub on_chain_state: OnChainCasperState,
 }
 ```
@@ -56,9 +64,18 @@ pub struct CasperSnapshot {
 
 1. **Deploy selection** (`prepare_user_deploys`):
    - Read unfinalized deploys from storage
+   - Pull recovered deploys from the rejected-deploy buffer (sigs that
+     a prior multi-parent merge conflict-rejected — their effects never
+     landed in canonical state and they are eligible for re-inclusion)
    - Filter by validity window (block number, expiration timestamp)
-   - Exclude deploys already in scope (prevent duplication)
+   - Exclude deploys already in scope (prevent duplication), with one
+     exception: sigs in `casper_snapshot.rejected_in_scope` are NOT
+     excluded — those were conflict-rejected by a descendant merge and
+     are the recovery candidates pulled from the buffer above
    - Remove expired deploys
+   - Apply the same `rejected_in_scope` exemption to
+     `collect_self_chain_deploy_sigs` so a recovered sig is not dropped
+     just because it lives in the proposer's own prior block
    - **Adaptive deploy cap**: EMA-based controller dynamically adjusts per-block deploy count to maintain a 1-second latency target. Parameters are hardcoded (target: 1000ms, min cap: 1, small batch bypass: 3 deploys, backlog floor enabled with trigger: 2, divisor: 2, min: 2, max: 8). Small batches bypass the cap. A backlog floor mechanism prevents deploy starvation when many deploys are pending.
 
 2. **System deploy preparation**:
