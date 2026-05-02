@@ -50,17 +50,17 @@ use crate::rust::{
  *  3. Extract all valid deploys that aren't already in all ancestors of S (the parents).
  *  4. Create a new block that contains the deploys from the previous step.
  */
-struct PreparedUserDeploys {
-    deploys: HashSet<Signed<DeployData>>,
-    effective_cap: usize,
-    cap_hit: bool,
+pub struct PreparedUserDeploys {
+    pub deploys: HashSet<Signed<DeployData>>,
+    pub effective_cap: usize,
+    pub cap_hit: bool,
 }
 
 fn deploy_selection_reserve_tail_enabled() -> bool {
     true
 }
 
-async fn prepare_user_deploys(
+pub async fn prepare_user_deploys(
     casper_snapshot: &CasperSnapshot,
     block_number: i64,
     current_time_millis: i64,
@@ -68,6 +68,7 @@ async fn prepare_user_deploys(
     rejected_deploy_buffer: Arc<
         Mutex<block_storage::rust::deploy::key_value_rejected_deploy_buffer::KeyValueRejectedDeployBuffer>,
     >,
+    block_store: &KeyValueBlockStore,
 ) -> Result<PreparedUserDeploys, CasperError> {
     let mut deploy_storage_guard = deploy_storage
         .lock()
@@ -128,15 +129,69 @@ async fn prepare_user_deploys(
 
     let valid_count = valid.len();
 
-    // Remove deploys that are already in scope to prevent resending. Exception:
-    // deploys that appear in a descendant's `rejected_deploys` list are eligible
-    // for re-inclusion — their state effects never made it into canonical state,
-    // so proposing them again is correct.
+    // Remove deploys that are already in scope to prevent resending.
+    //
+    // Exception: a deploy whose sig appears in a descendant's `rejected_deploys`
+    // is eligible for re-inclusion — its state effects never made it into
+    // canonical state, so re-proposing it is correct.
+    //
+    // The exemption MUST decline when the rejection is non-canonical: a sibling
+    // block can put the sig in `rejected_in_scope` (the ancestor scan unions
+    // all blocks' `rejected_deploys`) while the deploy's effects are already
+    // in canonical state via a different chain. Re-including in that case
+    // would be double-execution and the resulting block would be flagged
+    // `InvalidRepeatDeploy` by `validate.rs::repeat_deploy` — too late to
+    // avoid the slashable proposal. Mirror the validator-side gate here.
+    let exemption_candidates: HashSet<Bytes> = valid
+        .iter()
+        .filter(|d| {
+            casper_snapshot.deploys_in_scope.contains(&d.sig)
+                && casper_snapshot.rejected_in_scope.contains(&d.sig)
+        })
+        .map(|d| d.sig.clone())
+        .collect();
+
+    let stale_recoveries: HashSet<Bytes> = if exemption_candidates.is_empty() {
+        HashSet::new()
+    } else {
+        use crate::rust::api::deploy_finalization_status::{
+            resolve_batch, DeployFinalizationState,
+        };
+        let lifespan = casper_snapshot.on_chain_state.shard_conf.deploy_lifespan;
+        match resolve_batch(
+            &casper_snapshot.dag,
+            block_store,
+            lifespan,
+            &exemption_candidates,
+        ) {
+            Ok(statuses) => statuses
+                .into_iter()
+                .filter_map(|(sig, st)| match st.state {
+                    DeployFinalizationState::Finalized => Some(sig),
+                    _ => None,
+                })
+                .collect(),
+            // Resolver failure: decline the exemption for all candidates
+            // rather than risk double-execution. They'll be retried next cycle.
+            Err(err) => {
+                tracing::warn!(
+                    "prepare_user_deploys: resolve_batch failed: {} — declining \
+                     recovery exemption for all {} candidate(s) this cycle",
+                    err,
+                    exemption_candidates.len()
+                );
+                exemption_candidates.clone()
+            }
+        }
+    };
+
     let already_in_scope: Vec<Signed<DeployData>> = valid
         .iter()
         .filter(|deploy| {
-            casper_snapshot.deploys_in_scope.contains(&deploy.sig)
-                && !casper_snapshot.rejected_in_scope.contains(&deploy.sig)
+            let sig = &deploy.sig;
+            casper_snapshot.deploys_in_scope.contains(sig)
+                && (!casper_snapshot.rejected_in_scope.contains(sig)
+                    || stale_recoveries.contains(sig))
         })
         .map(|deploy| (*deploy).clone())
         .collect();
@@ -145,7 +200,8 @@ async fn prepare_user_deploys(
         .filter(|deploy| {
             let sig = &deploy.sig;
             !casper_snapshot.deploys_in_scope.contains(sig)
-                || casper_snapshot.rejected_in_scope.contains(sig)
+                || (casper_snapshot.rejected_in_scope.contains(sig)
+                    && !stale_recoveries.contains(sig))
         })
         .collect();
 
@@ -509,6 +565,7 @@ pub async fn create(
             now_millis,
             deploy_storage.clone(),
             rejected_deploy_buffer.clone(),
+            block_store,
         )
         .await?;
         let mut v = prepared.deploys;
