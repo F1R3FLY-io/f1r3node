@@ -410,11 +410,12 @@ impl ChromaDBService {
         }
     }
 
-    /// Upserts the given entries into the identified collection. See [`ChromaCollection::query`]
+    /// Queries the identified collection for documents similar to the input texts.
+    /// See [`ChromaCollection::query`]
     ///
     /// # Arguments
     ///
-    /// * `collection_name` - The name of the collection to create
+    /// * `collection_name` - The name of the collection to query
     /// * `doc_texts` - The document texts to get the closest neighbors of.
     ///
     /// The embeddings are auto generated using SBERT.

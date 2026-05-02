@@ -4,6 +4,23 @@ In this document, we detail the ChromaDB integration for F1r3fly. We will descri
 ## Intended Use
 Retrieval-Augmented Generation (RAG) is a technique that allows an LLM to access information from sources that it was not trained on. An important piece of RAG technology is the database that can identify relevant documents and supply them for augmentation in the LLM pipeline. SingularityNet, a partner of F1r3fly, wishes to be able to use RAG with F1r3fly.
 
+## Using Chroma With F1r3fly
+By default, F1r3fly will not build with ChromaDB support. This is because ChromaDB has a lot of dependencies that need to be pulled during compilation. In situations where ChromaDB support is not needed, this can cause compile times to be longer than necessary.
+
+To compile F1r3fly with ChromaDB support, you can use cargo's `feature` flag: `cargo run --package rholang --release --features "chromadb"`. In order to use ChromaDB, you must have a running ChromaDB instance. You can start one by invoking `docker compose -f docker/shard.yml --profile chromadb up`.
+
+Additionally, when starting F1r3fly for the first time with ChromaDB support, the SBERT embeddings used for vector search will be downloaded, which will take about 80MB. This only happens once.
+
+### Environment Variables
+The `chroma` crate uses environment variables to identify how to communicate with ChromaDB. The following table lists the environment variables along with their default values if the environment variable cannot be found.
+
+| Variable          | Default                 |
+| -------------------| -------------------------|
+| `CHROMA_ENDPOINT` | `http://localhost:8000` |
+| `CHROMA_TENANT`   | `"default_tenant"`      |
+| `CHROMA_DATABASE` | `"default_database"`    |
+
+
 ## Design Assumptions and Consensus Semantics
 This section clarifies how ChromaDB integrates with F1r3fly’s execution, validation, and replay model. The following reflects the assumptions under which the current design operates.
 
