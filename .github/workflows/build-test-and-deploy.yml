@@ -386,11 +386,12 @@ jobs:
           retention-days: 7
 
       # Debug: preserve LMDB volumes from each validator container so we can
-      # inspect rspace/block-storage state when the test_shard_degradation flake
-      # fires. Only runs on failure to keep happy-path runs cheap. Each LMDB
-      # store is tens of MB; ~50-100MB total per arch when artifact uploads.
-      - name: Preserve Docker volumes on failure
-        if: failure()
+      # inspect rspace/block-storage state. Runs on every CI run (success and
+      # failure) so we can verify the preservation mechanism works even when
+      # the test_shard_degradation flake doesn't fire. Each LMDB store is tens
+      # of MB; ~50-100MB total per arch per run.
+      - name: Preserve Docker volumes
+        if: always()
         shell: bash {0}
         run: |
           mkdir -p /tmp/preserved-volumes
@@ -409,7 +410,7 @@ jobs:
           ls -la /tmp/preserved-volumes/ || true
 
       - name: Upload preserved volumes
-        if: failure()
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: preserved-volumes-${{ matrix.arch }}
