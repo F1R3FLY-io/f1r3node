@@ -8,7 +8,10 @@ use rspace_plus_plus::rspace::{
     hot_store_trie_action::HotStoreTrieAction,
     internal::Datum,
     merger::{
-        merging_logic::{combine_mergeable_value, MergeType, NumberChannelsDiff},
+        merging_logic::{
+        combine_mergeable_state_bytes, combine_mergeable_value, MergeType, NumberChannelsDiff,
+        StateChannelsDiff,
+    },
         state_change::StateChange,
     },
 };
@@ -284,9 +287,11 @@ pub fn compute_merged_state<R, C, P, A, K>(
     resolved: &ResolvedConflicts<R>,
     state_changes: &impl Fn(&R) -> Result<StateChange, HistoryError>,
     mergeable_channels: &impl Fn(&R) -> NumberChannelsDiff,
+    state_channels: &impl Fn(&R) -> StateChannelsDiff,
     compute_trie_actions: &impl Fn(
         StateChange,
         NumberChannelsDiff,
+        StateChannelsDiff,
     ) -> Result<Vec<HotStoreTrieAction<C, P, A, K>>, HistoryError>,
     apply_trie_actions: &impl Fn(
         Vec<HotStoreTrieAction<C, P, A, K>>,
@@ -359,9 +364,36 @@ where
         }
     }
 
+    // Combine all state channels via byte-level lowest-Blake2b256-of-bincode
+    // wins; equivalent to the typed `combine_mergeable_state` because the
+    // storage bytes are `bincode(Datum)`.
+    let mut all_state_channels = StateChannelsDiff::new();
+    for item in &to_merge_items {
+        let item_state_channels = state_channels(item);
+        for (key, value) in item_state_channels.iter() {
+            let (incoming_bytes, incoming_mt) = value;
+            all_state_channels
+                .entry(key.clone())
+                .and_modify(|existing| {
+                    assert_eq!(
+                        existing.1, *incoming_mt,
+                        "MergeType mismatch on state channel {:?}: {:?} vs {:?}",
+                        key, existing.1, incoming_mt,
+                    );
+                    existing.0 = combine_mergeable_state_bytes(&existing.0, incoming_bytes);
+                })
+                .or_insert_with(|| (incoming_bytes.clone(), *incoming_mt));
+        }
+    }
+
     // Compute and apply trie actions with timing
-    let (trie_actions, compute_actions_time) =
-        measure_result_time(|| compute_trie_actions(all_changes, all_mergeable_channels.clone()))?;
+    let (trie_actions, compute_actions_time) = measure_result_time(|| {
+        compute_trie_actions(
+            all_changes,
+            all_mergeable_channels.clone(),
+            all_state_channels.clone(),
+        )
+    })?;
 
     let (new_state, apply_actions_time) =
         measure_result_time(|| apply_trie_actions(trie_actions.clone()))?;
@@ -415,9 +447,11 @@ pub fn merge<
     cost: impl Fn(&R) -> u64,
     state_changes: impl Fn(&R) -> Result<StateChange, HistoryError>,
     mergeable_channels: impl Fn(&R) -> NumberChannelsDiff,
+    state_channels: impl Fn(&R) -> StateChannelsDiff,
     compute_trie_actions: impl Fn(
         StateChange,
         NumberChannelsDiff,
+        StateChannelsDiff,
     ) -> Result<Vec<HotStoreTrieAction<C, P, A, K>>, HistoryError>,
     apply_trie_actions: impl Fn(
         Vec<HotStoreTrieAction<C, P, A, K>>,
@@ -445,6 +479,7 @@ pub fn merge<
         &resolved,
         &state_changes,
         &mergeable_channels,
+        &state_channels,
         &compute_trie_actions,
         &apply_trie_actions,
     )?;
@@ -572,6 +607,10 @@ fn cal_merged_result<R: Clone + Eq + std::hash::Hash>(
                         ba.insert(channel.clone(), result);
                         Some(ba)
                     }
+                    MergeType::MutexState => unreachable!(
+                        "MutexState channels do not flow through the i64 conflict-merger \
+                         path; they use the parallel state-channel pipeline"
+                    ),
                 }
             })
         })
@@ -723,7 +762,10 @@ mod tests {
                 diff.insert(base_channel.clone(), (delta, MergeType::IntegerAdd));
                 diff
             },
-            |_state_change, _channels| Ok(Vec::<HotStoreTrieAction<i32, i32, i32, i32>>::new()),
+            |_r| StateChannelsDiff::new(), // no state-channel data in this test
+            |_state_change, _channels, _state_channels| {
+                Ok(Vec::<HotStoreTrieAction<i32, i32, i32, i32>>::new())
+            },
             |_actions: Vec<HotStoreTrieAction<i32, i32, i32, i32>>| {
                 Ok(Blake2b256Hash::from_bytes(vec![9u8; 32]))
             },

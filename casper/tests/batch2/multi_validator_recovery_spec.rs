@@ -17,10 +17,10 @@
 // them. The dedup logic is then the only mechanism that can avoid
 // surfacing the shared sig as a conflict-rejected duplicate.
 //
-// TDD red-green: disabling the dedup retain logic at
-// dag_merger.rs:201-213 routes the shared sig through
-// `conflict_set_merger`'s `same_deploy` short-circuit, surfacing it
-// in `rejected_user_deploys` and failing the assertion.
+// Disabling the dedup retain logic at dag_merger.rs:201-213 routes
+// the shared sig through `conflict_set_merger`'s `same_deploy`
+// short-circuit, surfacing it in `rejected_user_deploys` and failing
+// the assertion.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};

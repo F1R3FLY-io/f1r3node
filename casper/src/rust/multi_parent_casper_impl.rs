@@ -204,34 +204,11 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
             }
         });
 
-        // Filter to blocks with matching bond maps (required for merge compatibility)
-        // If no parent blocks exist (genesis case), use approved block as the parent
+        // If no parent blocks exist (genesis case), use approved block as the parent.
         let unfiltered_parents = if sorted_parents_list.is_empty() {
             vec![self.approved_block.clone()]
         } else {
-            // Use the newest block as the bond-reference baseline.
-            // Relying on the first (hash-sorted near-tip) block can select an older
-            // parent and regress snapshot max_block_num when a joiner/fresh bond-map
-            // divergence is present.
-            let reference_bonds = sorted_parents_list
-                .iter()
-                .max_by(|a, b| {
-                    a.body
-                        .state
-                        .block_number
-                        .cmp(&b.body.state.block_number)
-                        .then_with(|| a.block_hash.cmp(&b.block_hash))
-                })
-                .expect("sorted_parents_list is non-empty after is_empty() check")
-                .body
-                .state
-                .bonds
-                .clone();
-
             sorted_parents_list
-                .into_iter()
-                .filter(|block| block.body.state.bonds == reference_bonds)
-                .collect()
         };
 
         let unfiltered_parents_count = unfiltered_parents.len();
@@ -754,7 +731,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
                 );
 
                 match maybe_mergeable {
-                    Ok(mergeable_chs) => {
+                    Ok((mergeable_chs, state_chs)) => {
                         if let Err(err) = self.runtime_manager.get_or_compute_block_index(
                             &block.block_hash,
                             block.body.state.block_number,
@@ -763,6 +740,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
                             &Blake2b256Hash::from_bytes_prost(&block.body.state.pre_state_hash),
                             &Blake2b256Hash::from_bytes_prost(&block.body.state.post_state_hash),
                             &mergeable_chs,
+                            &state_chs,
                         ) {
                             tracing::warn!(
                                 "Skipping block index cache update for block {}: {}",
@@ -977,7 +955,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
                 );
 
                 match maybe_mergeable {
-                    Ok(mergeable_chs) => {
+                    Ok((mergeable_chs, state_chs)) => {
                         if let Err(err) = self.runtime_manager.get_or_compute_block_index(
                             &block.block_hash,
                             block.body.state.block_number,
@@ -986,6 +964,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
                             &Blake2b256Hash::from_bytes_prost(&block.body.state.pre_state_hash),
                             &Blake2b256Hash::from_bytes_prost(&block.body.state.post_state_hash),
                             &mergeable_chs,
+                            &state_chs,
                         ) {
                             tracing::warn!(
                                 "Skipping block index cache update for self-created block {}: {}",

@@ -13,7 +13,10 @@ use rspace_plus_plus::rspace::{
     hashing::{blake2b256_hash::Blake2b256Hash, stable_hash_provider},
     hot_store_trie_action::HotStoreTrieAction,
     internal::Datum,
-    merger::{channel_change::ChannelChange, merging_logic::MergeType},
+    merger::{
+        channel_change::ChannelChange,
+        merging_logic::{combine_mergeable_state, MergeType},
+    },
     serializers::serializers,
     trace::event::Produce,
 };
@@ -67,7 +70,14 @@ impl RholangMergingLogic {
                     if let Some(prev_val) = state.get(&ch) {
                         let diff = match merge_type {
                             MergeType::IntegerAdd => end_val.wrapping_sub(*prev_val),
-                            MergeType::BitmaskOr => ((end_val as u64) & !(*prev_val as u64)) as i64,
+                            MergeType::BitmaskOr => {
+                                ((end_val as u64) & !(*prev_val as u64)) as i64
+                            }
+                            MergeType::MutexState => unreachable!(
+                                "MutexState channels do not flow through the \
+                                 number-channel diff path; they use the parallel \
+                                 state-channel pipeline (StateChannelsDiff)"
+                            ),
                         };
                         diffs.insert(ch.clone(), (diff, merge_type));
                         state.insert(ch, end_val);
@@ -104,6 +114,10 @@ impl RholangMergingLogic {
         let new_val = match merge_type {
             MergeType::IntegerAdd => init_num.wrapping_add(diff),
             MergeType::BitmaskOr => ((init_num as u64) | (diff as u64)) as i64,
+            MergeType::MutexState => unreachable!(
+                "MutexState channels do not flow through calculate_number_channel_merge; \
+                 they use calculate_state_channel_merge in the parallel state pipeline"
+            ),
         };
 
         // Calculate merged random generator (use only unique changes as input)
@@ -141,6 +155,61 @@ impl RholangMergingLogic {
                 hash: channel_hash.clone(),
                 data: vec![datum_encoded],
             }),
+        ))
+    }
+
+    /// Merge a state-channel value across multiple parents under the
+    /// `MutexState` strategy. Reads base state, decodes incoming sibling
+    /// Datums, and folds via `combine_mergeable_state` (lowest-hash winner).
+    /// The winner's `random_state` is preserved as-is.
+    ///
+    /// Symmetric to `calculate_number_channel_merge` but for `Datum<P>`-valued
+    /// channels rather than `i64`-valued ones.
+    pub fn calculate_state_channel_merge(
+        channel_hash: &Blake2b256Hash,
+        diff_bytes: Vec<u8>,
+        merge_type: MergeType,
+        changes: &ChannelChange<Vec<u8>>,
+        get_base_data: impl Fn(&Blake2b256Hash) -> Result<Vec<Datum<ListParWithRandom>>, HistoryError>,
+    ) -> HotStoreTrieAction<Par, BindPattern, ListParWithRandom, TaggedContinuation> {
+        debug_assert!(
+            matches!(merge_type, MergeType::MutexState),
+            "calculate_state_channel_merge only supports MutexState; got {:?}",
+            merge_type,
+        );
+
+        // 1. Decode base state (current Datums on this channel, if any).
+        let base = get_base_data(channel_hash).unwrap_or_default();
+
+        // 2. Decode this branch's diff and the sibling-added bytes.
+        let diff_datum: Datum<ListParWithRandom> =
+            serializers::decode_datum(&diff_bytes);
+        let added_datums: Vec<Datum<ListParWithRandom>> = changes
+            .added
+            .iter()
+            .map(|b| serializers::decode_datum(&b.to_vec()))
+            .collect();
+
+        // 3. Reduce all candidates {base..., diff_datum, added...} via
+        //    combine_mergeable_state (lowest Blake2b256-of-bincode wins).
+        //    The reducer is associative+commutative+idempotent, so order is safe.
+        let candidates: Vec<Datum<ListParWithRandom>> = base
+            .into_iter()
+            .chain(std::iter::once(diff_datum))
+            .chain(added_datums)
+            .collect();
+        let winner = candidates
+            .into_iter()
+            .reduce(|a, b| combine_mergeable_state(&a, &b, MergeType::MutexState))
+            .expect("calculate_state_channel_merge: at least one candidate must exist");
+
+        // 4. Re-encode winner as the single surviving Datum on the channel.
+        let winner_bytes = serializers::encode_datum(&winner);
+        HotStoreTrieAction::TrieInsertAction(TrieInsertAction::TrieInsertBinaryProduce(
+            TrieInsertBinaryProduce {
+                hash: channel_hash.clone(),
+                data: vec![winner_bytes],
+            },
         ))
     }
 
@@ -246,12 +315,28 @@ impl RholangMergingLogic {
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct DeployMergeableData {
     pub channels: Vec<NumberChannel>,
+    /// State-channel diffs (parallel pipeline for `MutexState`-tagged
+    /// channels). Empty for deploys that touch no such channel.
+    /// Adding this field changed the on-disk bincode layout; chains
+    /// created with the older format must be re-genesised.
+    pub state_channels: Vec<StateChannel>,
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct NumberChannel {
     pub hash: Blake2b256Hash,
     pub diff: i64,
+    pub merge_type: MergeType,
+}
+
+/// Per-deploy state-channel record. Parallel to `NumberChannel` for the
+/// MutexState pipeline. `bytes` is the bincode-serialized
+/// `Datum<ListParWithRandom>` that won the lowest-hash pick at extraction
+/// time.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub struct StateChannel {
+    pub hash: Blake2b256Hash,
+    pub bytes: Vec<u8>,
     pub merge_type: MergeType,
 }
 

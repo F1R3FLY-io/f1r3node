@@ -1204,24 +1204,47 @@ where
     let maps_and_refs = setup_maps_and_refs(&extra_system_processes);
     let (block_data_ref, invalid_blocks, deploy_data_ref, mut urn_map, proc_defs) = maps_and_refs;
 
-    // Expose the bitmask-OR mergeable tag to system contracts (Registry.rho)
-    // via a URI binding. Genesis-defined tags are unforgeable names; they must
-    // be created at runtime startup and threaded into both the merge engine's
-    // tag registry and the URN map so contracts can bind them via
-    // `bootstrapName(`rho:system:...`)`.
+    // Expose mergeable tags to system contracts via URI bindings. Genesis-
+    // defined tags are unforgeable names; they must be created at runtime
+    // startup and threaded into both the merge engine's tag registry and the
+    // URN map so contracts can bind them via `bootstrapName(`rho:system:...`)`.
+    //
+    // - `rho:system:bitmaskMergeableTag` — used by Registry.rho's TreeHashMap
+    //   interior-node bitmaps (BitmaskOr merge).
+    // - `rho:system:mutexStateMergeableTag` — used by PoS.rhox's `stateCh`
+    //   (MutexState merge).
+    //
+    // The IntegerAdd tag (NonNegativeNumber) is bound via the
+    // NonNegativeNumber.rho contract import path, not via URI.
     for (tag_par, merge_type) in mergeable_tags.iter() {
-        if let MergeType::BitmaskOr = merge_type {
-            tracing::info!(
-                target: "f1r3fly.merge.tag_check",
-                "URI binding inserted: rho:system:bitmaskMergeableTag -> Par(unforgeables={}, exprs={}, bundles={})",
-                tag_par.unforgeables.len(),
-                tag_par.exprs.len(),
-                tag_par.bundles.len(),
-            );
-            urn_map.insert(
-                "rho:system:bitmaskMergeableTag".to_string(),
-                tag_par.clone(),
-            );
+        match merge_type {
+            MergeType::BitmaskOr => {
+                tracing::info!(
+                    target: "f1r3fly.merge.tag_check",
+                    "URI binding inserted: rho:system:bitmaskMergeableTag -> Par(unforgeables={}, exprs={}, bundles={})",
+                    tag_par.unforgeables.len(),
+                    tag_par.exprs.len(),
+                    tag_par.bundles.len(),
+                );
+                urn_map.insert(
+                    "rho:system:bitmaskMergeableTag".to_string(),
+                    tag_par.clone(),
+                );
+            }
+            MergeType::MutexState => {
+                tracing::info!(
+                    target: "f1r3fly.merge.tag_check",
+                    "URI binding inserted: rho:system:mutexStateMergeableTag -> Par(unforgeables={}, exprs={}, bundles={})",
+                    tag_par.unforgeables.len(),
+                    tag_par.exprs.len(),
+                    tag_par.bundles.len(),
+                );
+                urn_map.insert(
+                    "rho:system:mutexStateMergeableTag".to_string(),
+                    tag_par.clone(),
+                );
+            }
+            MergeType::IntegerAdd => { /* bound via NonNegativeNumber.rho */ }
         }
     }
 

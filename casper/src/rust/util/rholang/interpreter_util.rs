@@ -855,7 +855,7 @@ pub fn compute_parents_post_state(
                 let sender = b.sender.clone();
                 let seq_num = b.seq_num;
 
-                let mergeable_chs =
+                let (mergeable_chs, state_chs) =
                     runtime_manager.load_mergeable_channels(post_state, sender, seq_num)?;
 
                 let block_index = crate::rust::merging::block_index::new(
@@ -867,6 +867,7 @@ pub fn compute_parents_post_state(
                     &Blake2b256Hash::from_bytes_prost(post_state),
                     &runtime_manager.history_repo,
                     &mergeable_chs,
+                    &state_chs,
                 )?;
 
                 // Cache the result
