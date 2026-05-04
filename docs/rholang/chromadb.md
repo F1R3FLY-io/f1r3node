@@ -11,6 +11,8 @@ To compile F1r3fly with ChromaDB support, you can use cargo's `feature` flag: `c
 
 Additionally, when starting F1r3fly for the first time with ChromaDB support, the SBERT embeddings used for vector search will be downloaded, which will take about 80MB. This only happens once.
 
+If, for whatever reason, the F1r3fly node is unable to interact with the ChromaDB service, a log message is recorded with `info!` and all subsequent `rho:chroma:*` calls will behave as NoOps. 
+
 ### Environment Variables
 The `chroma` crate uses environment variables to identify how to communicate with ChromaDB. The following table lists the environment variables along with their default values if the environment variable cannot be found.
 
