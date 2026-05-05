@@ -39,6 +39,8 @@ pub enum CasperMessage {
     // Last finalized state messages
     StoreItemsMessageRequest(StoreItemsMessageRequest),
     StoreItemsMessage(StoreItemsMessage),
+    MergeableEntryRequest(MergeableEntryRequest),
+    MergeableEntryResponse(MergeableEntryResponse),
 }
 
 impl CasperMessage {
@@ -110,6 +112,14 @@ impl CasperMessage {
 
     pub fn from_store_items_message(proto: StoreItemsMessageProto) -> Self {
         CasperMessage::StoreItemsMessage(StoreItemsMessage::from_proto(proto))
+    }
+
+    pub fn from_mergeable_entry_request(proto: MergeableEntryRequestProto) -> Self {
+        CasperMessage::MergeableEntryRequest(MergeableEntryRequest::from_proto(proto))
+    }
+
+    pub fn from_mergeable_entry_response(proto: MergeableEntryResponseProto) -> Self {
+        CasperMessage::MergeableEntryResponse(MergeableEntryResponse::from_proto(proto))
     }
 }
 
@@ -1243,6 +1253,49 @@ impl StoreItemsMessage {
                     value,
                 })
                 .collect(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct MergeableEntryRequest {
+    pub block_hash: ByteString,
+}
+
+impl MergeableEntryRequest {
+    pub fn from_proto(proto: MergeableEntryRequestProto) -> Self {
+        Self {
+            block_hash: proto.block_hash,
+        }
+    }
+
+    pub fn to_proto(self) -> MergeableEntryRequestProto {
+        MergeableEntryRequestProto {
+            block_hash: self.block_hash,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct MergeableEntryResponse {
+    pub block_hash: ByteString,
+    /// Bincode of `Vec<DeployMergeableData>`. Empty bytes = peer has the block
+    /// but no entry for it.
+    pub serialized_entry: ByteString,
+}
+
+impl MergeableEntryResponse {
+    pub fn from_proto(proto: MergeableEntryResponseProto) -> Self {
+        Self {
+            block_hash: proto.block_hash,
+            serialized_entry: proto.serialized_entry,
+        }
+    }
+
+    pub fn to_proto(self) -> MergeableEntryResponseProto {
+        MergeableEntryResponseProto {
+            block_hash: self.block_hash,
+            serialized_entry: self.serialized_entry,
         }
     }
 }

@@ -275,3 +275,18 @@ message StoreItemsMessageProto {
 }
 
 // --------- End Last finalized state  --------
+
+// --------- Mergeable channels store sync --------
+
+message MergeableEntryRequestProto {
+  option (scalapb.message).extends = "CasperMessageProto";
+  bytes block_hash = 1;
+}
+
+message MergeableEntryResponseProto {
+  option (scalapb.message).extends = "CasperMessageProto";
+  bytes block_hash       = 1;
+  // bincode of Vec<DeployMergeableData>. Empty bytes = peer has the block but
+  // no entry for it.
+  bytes serialized_entry = 2;
+}

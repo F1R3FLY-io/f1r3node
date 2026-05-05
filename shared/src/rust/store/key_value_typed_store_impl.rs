@@ -2,7 +2,7 @@
 
 use std::{collections::HashMap, marker::PhantomData, sync::Arc};
 
-use crate::rust::{store::key_value_store::KeyValueStore, BitVector};
+use crate::rust::{BitVector, store::key_value_store::KeyValueStore};
 
 use super::{key_value_store::KvStoreError, key_value_typed_store::KeyValueTypedStore};
 
@@ -119,6 +119,18 @@ where
             }
         })?;
         Ok(matched)
+    }
+
+    /// Read a value by its already-encoded key bytes, returning the raw value
+    /// bytes without decoding. Bypasses the typed K/V serialization layer.
+    pub fn raw_get(&self, key_bytes: &[u8]) -> Result<Option<Vec<u8>>, KvStoreError> {
+        self.store.get_one(&key_bytes.to_vec())
+    }
+
+    /// Write a value under its already-encoded key bytes without re-serializing.
+    /// Companion to [`raw_get`].
+    pub fn raw_put(&self, key_bytes: Vec<u8>, value_bytes: Vec<u8>) -> Result<(), KvStoreError> {
+        self.store.put(vec![(key_bytes, value_bytes)])
     }
 }
 

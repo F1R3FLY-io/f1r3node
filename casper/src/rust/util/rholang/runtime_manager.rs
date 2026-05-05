@@ -31,10 +31,10 @@ use rspace_plus_plus::rspace::merger::merging_logic::{NumberChannelsDiff, Number
 use rspace_plus_plus::rspace::replay_rspace::ReplayRSpace;
 use rspace_plus_plus::rspace::rspace::{RSpace, RSpaceStore};
 use rspace_plus_plus::rspace::shared::key_value_store_manager::KeyValueStoreManager;
+use shared::rust::ByteVector;
 use shared::rust::store::key_value_store::KvStoreError;
 use shared::rust::store::key_value_typed_store::KeyValueTypedStore;
 use shared::rust::store::key_value_typed_store_impl::KeyValueTypedStoreImpl;
-use shared::rust::ByteVector;
 
 use crate::rust::errors::CasperError;
 use crate::rust::merging::block_index::BlockIndex;
@@ -627,9 +627,9 @@ impl RuntimeManager {
                             &pre_state_hash,
                         )?;
                         tracing::warn!(
-                        "[CACHE] StateHashCache hit without mergeable entry for empty block (seq={}); synthesized empty mergeable metadata",
-                        seq_num
-                    );
+                            "[CACHE] StateHashCache hit without mergeable entry for empty block (seq={}); synthesized empty mergeable metadata",
+                            seq_num
+                        );
                         return Ok(cached_post);
                     }
                 }
@@ -942,6 +942,46 @@ impl RuntimeManager {
                 Err(CasperError::KvStoreError(KvStoreError::KeyNotFound(msg)))
             }
         }
+    }
+
+    /// Build the mergeable-store key bytes for a block.
+    pub fn mergeable_key_bytes_for_block(
+        block: &models::rust::casper::protocol::casper_message::BlockMessage,
+    ) -> Result<Vec<u8>, CasperError> {
+        let key = MergeableKey {
+            state_hash: StateHashSerde(block.body.state.post_state_hash.clone()),
+            creator: block.sender.clone(),
+            seq_num: block.seq_num,
+        };
+        bincode::serialize(&key)
+            .map_err(|e| CasperError::KvStoreError(KvStoreError::SerializationError(e.to_string())))
+    }
+
+    /// Look up the raw bincode bytes of a block's mergeable-channels entry.
+    /// Returns `(key_bytes, Some(value_bytes))` if present, `(key_bytes, None)`
+    /// if the key is absent.
+    pub fn get_mergeable_entry_raw(
+        &self,
+        block: &models::rust::casper::protocol::casper_message::BlockMessage,
+    ) -> Result<(Vec<u8>, Option<Vec<u8>>), CasperError> {
+        let key_bytes = Self::mergeable_key_bytes_for_block(block)?;
+        let value_bytes = self.mergeable_store.raw_get(&key_bytes)?;
+        Ok((key_bytes, value_bytes))
+    }
+
+    /// Write a mergeable-channels entry from raw bincode bytes (without
+    /// re-serializing). Skips empty `value_bytes`.
+    pub fn put_mergeable_entry_raw(
+        &self,
+        key_bytes: Vec<u8>,
+        value_bytes: Vec<u8>,
+    ) -> Result<(), CasperError> {
+        if value_bytes.is_empty() {
+            return Ok(());
+        }
+        self.mergeable_store
+            .raw_put(key_bytes, value_bytes)
+            .map_err(CasperError::KvStoreError)
     }
 
     /// Delete mergeable channels entry keyed by (post-state-hash, creator, seq-num).
