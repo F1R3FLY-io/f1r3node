@@ -213,7 +213,11 @@ pub struct Metrics {
 
     /// How often the metric reporters poll and emit. Drives the InfluxDB
     /// HTTP/UDP and Sigar (system-metrics) reporters.
-    #[serde(rename = "tick-interval", default = "default_tick_interval", with = "duration_secs")]
+    #[serde(
+        rename = "tick-interval",
+        default = "default_tick_interval",
+        with = "duration_secs"
+    )]
     pub tick_interval: Duration,
 
     /// Endpoint settings for the InfluxDB reporters (HTTP and UDP). Both
@@ -255,7 +259,9 @@ mod duration_secs {
         if parts.len() != 2 {
             return Err(format!("invalid duration: {}", s));
         }
-        let n: u64 = parts[0].parse().map_err(|_| format!("invalid number: {}", parts[0]))?;
+        let n: u64 = parts[0]
+            .parse()
+            .map_err(|_| format!("invalid number: {}", parts[0]))?;
         let mult = match parts[1].to_lowercase().as_str() {
             "second" | "seconds" | "s" => 1,
             "minute" | "minutes" | "m" => 60,

@@ -38,14 +38,8 @@ impl ConfigMapper<Options> for NodeConf {
             // to keep them in sync at load time, but by this point the
             // substitution has already resolved, so overriding only
             // protocol_server leaves the client stuck on the HOCON default.
-            Self::try_override_value(
-                &mut self.protocol_server.network_id,
-                run.network_id.clone(),
-            );
-            Self::try_override_value(
-                &mut self.protocol_client.network_id,
-                run.network_id,
-            );
+            Self::try_override_value(&mut self.protocol_server.network_id, run.network_id.clone());
+            Self::try_override_value(&mut self.protocol_client.network_id, run.network_id);
             Self::try_override_option(&mut self.protocol_server.host, run.host);
             Self::try_override_bool(
                 &mut self.protocol_server.use_random_ports,
@@ -347,6 +341,26 @@ impl ConfigMapper<Options> for NodeConf {
                 &mut self.casper.heartbeat_conf.max_lfb_age,
                 run.heartbeat_max_lfb_age,
             );
+            Self::try_override_value(
+                &mut self.casper.heartbeat_conf.stale_recovery_min_interval,
+                run.heartbeat_stale_recovery_interval,
+            );
+            Self::try_override_value(
+                &mut self.casper.heartbeat_conf.deploy_finalization_grace,
+                run.heartbeat_deploy_finalization_grace,
+            );
+            Self::try_override_value(
+                &mut self.casper.heartbeat_conf.advanced.frontier_chase_max_lag,
+                run.heartbeat_advanced_frontier_chase_max_lag,
+            );
+            Self::try_override_value(
+                &mut self.casper.heartbeat_conf.advanced.pending_deploy_max_lag,
+                run.heartbeat_advanced_pending_deploy_max_lag,
+            );
+            Self::try_override_value(
+                &mut self.casper.heartbeat_conf.advanced.deploy_recovery_max_lag,
+                run.heartbeat_advanced_deploy_recovery_max_lag,
+            );
         }
     }
 
@@ -463,7 +477,12 @@ mod tests {
         "--heartbeat-enabled",
         "--heartbeat-disabled",
         "--heartbeat-check-interval=111111seconds",
-        "--heartbeat-max-lfb-age=222222seconds"
+        "--heartbeat-max-lfb-age=222222seconds",
+        "--heartbeat-stale-recovery-interval=333333seconds",
+        "--heartbeat-deploy-finalization-grace=444444seconds",
+        "--heartbeat-advanced-frontier-chase-max-lag=111",
+        "--heartbeat-advanced-pending-deploy-max-lag=222",
+        "--heartbeat-advanced-deploy-recovery-max-lag=333"
         ];
 
         let res = Options::try_parse_from(argv);
@@ -606,6 +625,11 @@ mod tests {
                 heartbeat_disabled: true,
                 heartbeat_check_interval: Some(Duration::from_secs(111111)),
                 heartbeat_max_lfb_age: Some(Duration::from_secs(222222)),
+                heartbeat_stale_recovery_interval: Some(Duration::from_secs(333333)),
+                heartbeat_deploy_finalization_grace: Some(Duration::from_secs(444444)),
+                heartbeat_advanced_frontier_chase_max_lag: Some(111),
+                heartbeat_advanced_pending_deploy_max_lag: Some(222),
+                heartbeat_advanced_deploy_recovery_max_lag: Some(333),
             })),
         };
 
@@ -721,6 +745,7 @@ mod tests {
                     check_interval: Duration::from_secs(30),
                     max_lfb_age: Duration::from_secs(60),
                     self_propose_cooldown: Duration::from_secs(15),
+                    ..casper::rust::casper_conf::HeartbeatConf::default()
                 },
                 disable_late_block_filtering: true,
                 enable_mergeable_channel_gc: false,
@@ -933,6 +958,44 @@ mod tests {
         assert_eq!(
             default_config.casper.heartbeat_conf.max_lfb_age,
             Duration::from_secs(222222)
+        );
+        assert_eq!(
+            default_config
+                .casper
+                .heartbeat_conf
+                .stale_recovery_min_interval,
+            Duration::from_secs(333333)
+        );
+        assert_eq!(
+            default_config
+                .casper
+                .heartbeat_conf
+                .deploy_finalization_grace,
+            Duration::from_secs(444444)
+        );
+        assert_eq!(
+            default_config
+                .casper
+                .heartbeat_conf
+                .advanced
+                .frontier_chase_max_lag,
+            111
+        );
+        assert_eq!(
+            default_config
+                .casper
+                .heartbeat_conf
+                .advanced
+                .pending_deploy_max_lag,
+            222
+        );
+        assert_eq!(
+            default_config
+                .casper
+                .heartbeat_conf
+                .advanced
+                .deploy_recovery_max_lag,
+            333
         );
 
         // Round robin dispatcher fields

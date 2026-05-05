@@ -476,6 +476,44 @@ pub struct RunOptions {
     /// Maximum age of last finalized block before triggering heartbeat
     #[arg(long = "heartbeat-max-lfb-age", value_parser = ValueParser::new(parse_duration))]
     pub heartbeat_max_lfb_age: Option<Duration>,
+
+    /// Minimum age of LFB/frontier before stale-recovery, leader-recovery,
+    /// and pending-deploy backstop are allowed to fire. Debounces empty-block
+    /// churn when the cluster is healthy.
+    #[arg(long = "heartbeat-stale-recovery-interval", value_parser = ValueParser::new(parse_duration))]
+    pub heartbeat_stale_recovery_interval: Option<Duration>,
+
+    /// When pending deploys land, opens a grace window during which lag caps
+    /// relax to advanced.deploy-recovery-max-lag and self-propose-cooldown
+    /// is bypassable. Burst-tolerance budget.
+    #[arg(long = "heartbeat-deploy-finalization-grace", value_parser = ValueParser::new(parse_duration))]
+    pub heartbeat_deploy_finalization_grace: Option<Duration>,
+
+    /// EXPERIMENTAL: when this validator is already ahead of LFB, blocks of
+    /// lag tolerated before "frontier-follow" proposing is throttled.
+    #[arg(
+        long = "heartbeat-advanced-frontier-chase-max-lag",
+        hide_short_help = true
+    )]
+    pub heartbeat_advanced_frontier_chase_max_lag: Option<i64>,
+
+    /// EXPERIMENTAL: if validator has pending deploys but is > N blocks
+    /// ahead of LFB, suppress pending-deploy proposing. Lower → harder
+    /// load-relief valve.
+    #[arg(
+        long = "heartbeat-advanced-pending-deploy-max-lag",
+        hide_short_help = true
+    )]
+    pub heartbeat_advanced_pending_deploy_max_lag: Option<i64>,
+
+    /// EXPERIMENTAL: during an active deploy-finalization grace window,
+    /// the lag cap widens to this value. The "absolute safe lag during
+    /// recovery" ceiling.
+    #[arg(
+        long = "heartbeat-advanced-deploy-recovery-max-lag",
+        hide_short_help = true
+    )]
+    pub heartbeat_advanced_deploy_recovery_max_lag: Option<i64>,
 }
 
 /// Keygen subcommand - Generates a public/private key pair
