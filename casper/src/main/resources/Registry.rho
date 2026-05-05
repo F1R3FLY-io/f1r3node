@@ -17,16 +17,28 @@ in {
   // We can't define it in another file like MakeMint or NonNegativeNumber because
   // that method assumes the registry already exists.
 
-  // Rholang map desiderata: speedy insert & lookup,  no conflicts on lookup, no conflicts on inserts to different keys
+  // Rholang map desiderata: speedy insert & lookup, no conflicts on lookup, no conflicts on inserts to different keys
   // This implementation: O(log n) insert & lookup; also provides O(1) lookup when it is known that the value at a key exists.
   // Conflict analysis
   //   Lookup
   //     When looking up a value, only peeks are used, so lookups will not conflict.
   //   Insert
-  //     When inserting, only peeks are used on existing nodes (except the last
-  //     shared one in the path), while newly created nodes have a different name.
-  //     So there's conflict only if the keys share a common prefix that hadn't
-  //     already been populated.
+  //     Inserts use peeks on existing interior nodes and only acquire a write
+  //     lock at the last shared interior node in the path. The interior-node
+  //     channel `@(*bitmaskTag, node, *storeToken)` carries an i64 bitmap
+  //     (one bit per child slot); concurrent writes from sibling blocks merge
+  //     by bitwise OR, so two inserts at different keys that share an
+  //     interior prefix commute even when both need to flip a bit at the
+  //     same shared node. Newly created leaf nodes have unforgeable names
+  //     and never collide.
+  //   Channel typing
+  //     The same `@(*bitmaskTag, node, *storeToken)` template is used for
+  //     interior nodes (i64 bitmap) and leaf nodes (Rholang Map). The
+  //     bitmask tag tells the merger to use BitmaskOr semantics for the
+  //     numeric case; for the Map case the merger's numeric path skips
+  //     non-numeric values and falls through to the standard
+  //     conflict-rejection path, so a same-key write race on a leaf is
+  //     still rejected as a real semantic conflict.
   // Usage
   // new o(`rho:io:stdout`), mapCh in {
   //   o!("Initializing map") |
