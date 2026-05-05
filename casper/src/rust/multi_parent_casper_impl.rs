@@ -1157,6 +1157,18 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
                 )
             }
 
+            // Cascading invalidation. Not slashable (the creator may not have
+            // known the parent was invalid in their view), but MUST be inserted
+            // into the DAG with invalid=true so further descendants also
+            // cascade — otherwise the chain can re-enter validation and hit
+            // the original parent-child mergeable-entry race.
+            InvalidBlock::InvalidParent => handle_invalid_block_effect(
+                &self.block_dag_storage,
+                &self.casper_buffer_storage,
+                status,
+                block,
+            ),
+
             _ => {
                 let block_hash_serde = BlockHashSerde(block.block_hash.clone());
                 self.casper_buffer_storage.remove(block_hash_serde)?;

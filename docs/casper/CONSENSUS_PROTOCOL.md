@@ -199,8 +199,10 @@ The block retriever (`block_retriever.rs`) handles missing dependencies:
 - Check field validity: hash length, timestamp within ±15s of local time, required fields present
 
 ### Step 3: Dependency Resolution
-- All parent blocks must be in the DAG
-- If missing: store block in **casper buffer** (max ~16K entries), request missing parents from peers
+- All parent blocks must be in the DAG **and recorded valid**
+- If a parent is in the DAG but flagged invalid (in `invalid_blocks_set` or the equivocation tracker): the block is **cascade-invalidated** as `InvalidBlock::InvalidParent` (non-slashable) immediately, without entering validation. Invalid parents have no mergeable-channels entry written, so allowing the child through would deterministically fail merge with `Missing mergeable entry` and mis-record the child as `InvalidTransaction` (slashable). The cascade closes that race at the gate.
+- If a parent is missing locally: store the block in the **casper buffer** (max ~16K entries) with the missing-parent dependencies, request missing parents from peers
+- Justifications can reference invalid blocks without triggering cascade — only *parents* are state dependencies (justifications are latest-message acknowledgments and don't require mergeable entries)
 - Casper buffer tracks retry attempts per dependency and quarantines blocks after budget exhaustion
 
 ### Step 4: Snapshot Computation
