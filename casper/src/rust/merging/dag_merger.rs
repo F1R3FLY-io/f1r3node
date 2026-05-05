@@ -281,7 +281,9 @@ pub fn merge(
         combined_event_log: rspace_plus_plus::rspace::merger::event_log_index::EventLogIndex,
     }
 
-    fn compute_branch_derived(branch: &HashableSet<DeployChainIndex>) -> BranchDerived {
+    fn compute_branch_derived(
+        branch: &HashableSet<DeployChainIndex>,
+    ) -> Result<BranchDerived, rspace_plus_plus::rspace::errors::HistoryError> {
         let user_deploy_ids: HashSet<_> = branch
             .0
             .iter()
@@ -300,19 +302,19 @@ pub fn merge(
                     .all(|d| !is_system_deploy_id(&d.deploy_id))
             })
             .map(|chain| &chain.event_log_index)
-            .fold(
+            .try_fold(
                 rspace_plus_plus::rspace::merger::event_log_index::EventLogIndex::empty(),
                 |acc, index| {
                     rspace_plus_plus::rspace::merger::event_log_index::EventLogIndex::combine(
                         &acc, index,
                     )
                 },
-            );
+            )?;
 
-        BranchDerived {
+        Ok(BranchDerived {
             user_deploy_ids,
             combined_event_log,
-        }
+        })
     }
 
     // Lazy caches keyed by pointer address. Safe because:
@@ -335,14 +337,16 @@ pub fn merge(
         addr
     };
 
-    let get_branch_derived = |branch: &HashableSet<DeployChainIndex>| -> usize {
-        let addr = std::ptr::addr_of!(*branch) as usize;
-        let mut cache = branch_cache.borrow_mut();
-        cache
-            .entry(addr)
-            .or_insert_with(|| compute_branch_derived(branch));
-        addr
-    };
+    let get_branch_derived =
+        |branch: &HashableSet<DeployChainIndex>| -> Result<usize, rspace_plus_plus::rspace::errors::HistoryError> {
+            let addr = std::ptr::addr_of!(*branch) as usize;
+            let mut cache = branch_cache.borrow_mut();
+            if !cache.contains_key(&addr) {
+                let derived = compute_branch_derived(branch)?;
+                cache.insert(addr, derived);
+            }
+            Ok(addr)
+        };
 
     // Create history reader for base state
     let history_reader = std::sync::Arc::new(
@@ -390,10 +394,13 @@ pub fn merge(
 
     let conflicts_fn = |as_set: &HashableSet<DeployChainIndex>,
                         bs_set: &HashableSet<DeployChainIndex>|
-     -> bool {
-        // Cached branch conflicts: pre-computes deploy IDs and combined event log
-        let a_addr = get_branch_derived(as_set);
-        let b_addr = get_branch_derived(bs_set);
+     -> Result<bool, rspace_plus_plus::rspace::errors::HistoryError> {
+        // Cached branch conflicts: pre-computes deploy IDs and combined event
+        // log. EventLogIndex::combine is fallible (MergeType mismatch), so
+        // propagate any failure up through resolve_conflicts to reject the
+        // merge rather than silently absorbing the invariant violation.
+        let a_addr = get_branch_derived(as_set)?;
+        let b_addr = get_branch_derived(bs_set)?;
         let cache = branch_cache.borrow();
         let a_derived = cache.get(&a_addr).unwrap();
         let b_derived = cache.get(&b_addr).unwrap();
@@ -405,10 +412,13 @@ pub fn merge(
             .is_some();
 
         if same_deploy {
-            return true;
+            return Ok(true);
         }
 
-        merging_logic::are_conflicting(&a_derived.combined_event_log, &b_derived.combined_event_log)
+        Ok(merging_logic::are_conflicting(
+            &a_derived.combined_event_log,
+            &b_derived.combined_event_log,
+        ))
     };
 
     let state_changes_fn = |chain: &DeployChainIndex| Ok(chain.state_changes.clone());
@@ -433,7 +443,7 @@ pub fn merge(
                             merge_type,
                             channel_changes,
                             base_get_data,
-                        )))
+                        )?))
                     } else {
                         Ok(None)
                     }

@@ -283,14 +283,16 @@ async fn test_case(
             merging_logic::are_conflicting(
                 &a.0.iter()
                     .map(|x| &x.event_log_index)
-                    .fold(EventLogIndex::empty(), |acc, x| {
+                    .try_fold(EventLogIndex::empty(), |acc, x| {
                         EventLogIndex::combine(&acc, x)
-                    }),
+                    })
+                    .expect("EventLogIndex::combine MergeType mismatch in test"),
                 &b.0.iter()
                     .map(|x| &x.event_log_index)
-                    .fold(EventLogIndex::empty(), |acc, x| {
+                    .try_fold(EventLogIndex::empty(), |acc, x| {
                         EventLogIndex::combine(&acc, x)
-                    }),
+                    })
+                    .expect("EventLogIndex::combine MergeType mismatch in test"),
             )
         };
 
@@ -309,7 +311,7 @@ async fn test_case(
                         merge_type,
                         changes,
                         |_hash| base_reader.get_data(_hash),
-                    )))
+                    )?))
                 }
                 None => Ok(None),
             }
@@ -349,7 +351,7 @@ async fn test_case(
         Vec::new(),
         |target, source| merging_logic::depends(&target.event_log_index, &source.event_log_index),
         |arg0: &HashableSet<DeployChainIndex>, arg1: &HashableSet<DeployChainIndex>| {
-            branches_are_conflicting(arg0, arg1)
+            Ok(branches_are_conflicting(arg0, arg1))
         },
         dag_merger::cost_optimal_rejection_alg(),
         |r| Ok(r.state_changes.clone()),

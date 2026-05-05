@@ -86,11 +86,15 @@ pub struct ResolvedConflicts<R: Clone + Eq + std::hash::Hash> {
 /// Conflict detection and optimal rejection selection. Returns the set of
 /// chains to merge along with those rejected. Callers can adjust the result
 /// before calling `compute_merged_state`.
+///
+/// `conflicts` is fallible: a `MergeType` mismatch (or any other invariant
+/// violation surfaced by event-log combination) is propagated as a hard error
+/// so the merge is rejected rather than silently absorbed.
 pub fn resolve_conflicts<R: Clone + Eq + std::hash::Hash + PartialOrd + Ord>(
     actual_seq: Vec<R>,
     late_seq: Vec<R>,
     depends: &impl Fn(&R, &R) -> bool,
-    conflicts: &impl Fn(&HashableSet<R>, &HashableSet<R>) -> bool,
+    conflicts: &impl Fn(&HashableSet<R>, &HashableSet<R>) -> Result<bool, HistoryError>,
     cost: &impl Fn(&R) -> u64,
     mergeable_channels: &impl Fn(&R) -> NumberChannelsDiff,
     get_data: &impl Fn(Blake2b256Hash) -> Result<Vec<Datum<ListParWithRandom>>, HistoryError>,
@@ -125,11 +129,33 @@ pub fn resolve_conflicts<R: Clone + Eq + std::hash::Hash + PartialOrd + Ord>(
     )
     .record(branches_time.as_secs_f64());
 
-    // Compute relation map for conflicting branches with timing
+    // Compute relation map for conflicting branches with timing.
+    // `compute_relation_map` requires an infallible predicate, but our
+    // `conflicts` closure is fallible (see EventLogIndex::combine). We capture
+    // the first error via RefCell and short-circuit the predicate; after the
+    // call returns, propagate any captured error so the merge is rejected.
     use rspace_plus_plus::rspace::merger::merging_logic::compute_relation_map;
     let branches_set = HashableSet(branches.0.iter().cloned().collect());
-    let (conflict_map, conflicts_map_time) =
-        measure_time(|| compute_relation_map(&branches_set, |a, b| conflicts(a, b)));
+    let conflict_err: std::cell::RefCell<Option<HistoryError>> = std::cell::RefCell::new(None);
+    let (conflict_map, conflicts_map_time) = measure_time(|| {
+        compute_relation_map(&branches_set, |a, b| {
+            if conflict_err.borrow().is_some() {
+                // Already failed; short-circuit. Returning false here doesn't affect
+                // correctness because we will propagate the captured Err below.
+                return false;
+            }
+            match conflicts(a, b) {
+                Ok(c) => c,
+                Err(e) => {
+                    *conflict_err.borrow_mut() = Some(e);
+                    false
+                }
+            }
+        })
+    });
+    if let Some(err) = conflict_err.into_inner() {
+        return Err(err);
+    }
     metrics::histogram!(
         crate::rust::metrics_constants::DAG_MERGE_CONFLICTS_MAP_TIME_METRIC,
         "source" => crate::rust::metrics_constants::MERGING_METRICS_SOURCE
@@ -169,17 +195,13 @@ pub fn resolve_conflicts<R: Clone + Eq + std::hash::Hash + PartialOrd + Ord>(
     let get_data_ref = |hash: &Blake2b256Hash| get_data(hash.clone());
     let read_number = RholangMergingLogic::convert_to_read_number(get_data_ref);
 
-    // Read channel numbers from storage in sorted order
+    // Read channel numbers from storage in sorted order. `read_number` distinguishes
+    // three outcomes: Ok(Some(n)) = numeric value present; Ok(None) = channel doesn't
+    // exist (legitimate, start from 0); Err(_) = invariant violation or I/O error
+    // (propagate to reject the merge rather than silently substituting 0).
     for channel_hash in &all_channel_keys {
-        match read_number(channel_hash) {
-            Some(value) => {
-                base_mergeable_ch_res.insert(channel_hash.clone(), value);
-            }
-            None => {
-                // If the channel doesn't exist yet, we can use 0 as a starting value
-                base_mergeable_ch_res.insert(channel_hash.clone(), 0);
-            }
-        }
+        let value = read_number(channel_hash)?.unwrap_or(0);
+        base_mergeable_ch_res.insert(channel_hash.clone(), value);
     }
 
     metrics::histogram!(
@@ -325,23 +347,28 @@ where
 
     // Combine all mergeable channels (in sorted order). Per-channel `MergeType`
     // determines how diffs combine: integer-add uses wrapping addition; bitmask-OR
-    // uses bitwise OR through u64.
+    // uses bitwise OR through u64. Branches must agree on merge_type for a given
+    // channel; disagreement yields a tagged error so callers reject the merge
+    // rather than crashing the validator.
     let mut all_mergeable_channels = NumberChannelsDiff::new();
     for item in &to_merge_items {
         let item_channels = mergeable_channels(item);
         for (key, value) in item_channels.iter() {
             let (incoming_diff, incoming_mt) = *value;
-            all_mergeable_channels
-                .entry(key.clone())
-                .and_modify(|existing| {
-                    assert_eq!(
-                        existing.1, incoming_mt,
-                        "MergeType mismatch on channel {:?}: {:?} vs {:?}",
-                        key, existing.1, incoming_mt,
-                    );
+            match all_mergeable_channels.get_mut(key) {
+                Some(existing) => {
+                    if existing.1 != incoming_mt {
+                        return Err(HistoryError::MergeError(format!(
+                            "MergeType mismatch on channel {:?}: {:?} vs {:?}",
+                            key, existing.1, incoming_mt,
+                        )));
+                    }
                     existing.0 = combine_mergeable_value(existing.0, incoming_diff, incoming_mt);
-                })
-                .or_insert((incoming_diff, incoming_mt));
+                }
+                None => {
+                    all_mergeable_channels.insert(key.clone(), (incoming_diff, incoming_mt));
+                }
+            }
         }
     }
 
@@ -398,7 +425,7 @@ pub fn merge<
     actual_seq: Vec<R>,
     late_seq: Vec<R>,
     depends: impl Fn(&R, &R) -> bool,
-    conflicts: impl Fn(&HashableSet<R>, &HashableSet<R>) -> bool,
+    conflicts: impl Fn(&HashableSet<R>, &HashableSet<R>) -> Result<bool, HistoryError>,
     cost: impl Fn(&R) -> u64,
     state_changes: impl Fn(&R) -> Result<StateChange, HistoryError>,
     mergeable_channels: impl Fn(&R) -> NumberChannelsDiff,
@@ -519,11 +546,8 @@ fn cal_merged_result<R: Clone + Eq + std::hash::Hash>(
                 let (incoming_diff, incoming_mt) = v;
                 acc.entry(k)
                     .and_modify(|existing| {
-                        existing.0 = combine_mergeable_value(
-                            existing.0,
-                            incoming_diff,
-                            incoming_mt,
-                        );
+                        existing.0 =
+                            combine_mergeable_value(existing.0, incoming_diff, incoming_mt);
                     })
                     .or_insert((incoming_diff, incoming_mt));
             }
@@ -695,9 +719,9 @@ mod tests {
         let result = merge(
             actual_seq,
             late_seq,
-            |_a, _b| false, // depends
-            |_a, _b| false, // conflicts
-            |_r| 1,         // cost
+            |_a, _b| false,     // depends
+            |_a, _b| Ok(false), // conflicts
+            |_r| 1,             // cost
             |_r| Ok(StateChange::empty()),
             |r| {
                 let mut diff = BTreeMap::new();

@@ -7,8 +7,9 @@ use rayon::prelude::*;
 use shared::rust::hashable_set::HashableSet;
 
 use super::merging_logic::{
-    combine_mergeable_value, combine_produces_copied_by_peek, NumberChannelsDiff,
+    NumberChannelsDiff, combine_mergeable_value, combine_produces_copied_by_peek,
 };
+use crate::rspace::errors::HistoryError;
 use crate::rspace::trace::event::{Consume, Event, IOEvent, Produce};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -290,8 +291,36 @@ impl EventLogIndex {
         }
     }
 
-    pub fn combine(x: &Self, y: &Self) -> Self {
-        EventLogIndex {
+    pub fn combine(x: &Self, y: &Self) -> Result<Self, HistoryError> {
+        // Merge number channels (combine differences according to per-channel
+        // merge strategy: IntegerAdd uses wrapping addition, BitmaskOr uses
+        // bitwise OR through u64). Both branches must agree on merge_type for
+        // a given channel; disagreement yields a tagged error so callers can
+        // reject the merge instead of crashing the validator.
+        let mut number_channels_data = NumberChannelsDiff::new();
+        for (key, value) in x
+            .number_channels_data
+            .iter()
+            .chain(y.number_channels_data.iter())
+        {
+            let (incoming_diff, incoming_mt) = *value;
+            match number_channels_data.get_mut(key) {
+                Some(existing) => {
+                    if existing.1 != incoming_mt {
+                        return Err(HistoryError::MergeError(format!(
+                            "MergeType mismatch on channel {:?}: {:?} vs {:?}",
+                            key, existing.1, incoming_mt,
+                        )));
+                    }
+                    existing.0 = combine_mergeable_value(existing.0, incoming_diff, incoming_mt);
+                }
+                None => {
+                    number_channels_data.insert(key.clone(), (incoming_diff, incoming_mt));
+                }
+            }
+        }
+
+        Ok(EventLogIndex {
             produces_linear: HashableSet(
                 x.produces_linear
                     .0
@@ -366,35 +395,8 @@ impl EventLogIndex {
                     .cloned()
                     .collect(),
             ),
-            // Merge number channels (combine differences according to per-channel
-            // merge strategy: IntegerAdd uses wrapping addition, BitmaskOr uses
-            // bitwise OR through u64).
-            number_channels_data: x
-                .number_channels_data
-                .iter()
-                .chain(y.number_channels_data.iter())
-                .fold(NumberChannelsDiff::new(), |mut acc, (key, value)| {
-                    let (incoming_diff, incoming_mt) = *value;
-                    acc.entry(key.clone())
-                        .and_modify(|existing| {
-                            // Both branches must agree on merge_type for a given
-                            // channel. If they ever disagree, this is a bug —
-                            // panic loudly rather than silently picking one.
-                            assert_eq!(
-                                existing.1, incoming_mt,
-                                "MergeType mismatch on channel {:?}: {:?} vs {:?}",
-                                key, existing.1, incoming_mt,
-                            );
-                            existing.0 = combine_mergeable_value(
-                                existing.0,
-                                incoming_diff,
-                                incoming_mt,
-                            );
-                        })
-                        .or_insert((incoming_diff, incoming_mt));
-                    acc
-                }),
-        }
+            number_channels_data,
+        })
     }
 }
 
@@ -415,6 +417,17 @@ mod tests {
         eli.number_channels_data = data
             .into_iter()
             .map(|(k, v)| (k, (v, super::super::merging_logic::MergeType::IntegerAdd)))
+            .collect();
+        eli
+    }
+
+    /// Helper: same as `empty_with_channels` but tags every entry with
+    /// `BitmaskOr` semantics — used by the bitmap-monotonicity tests.
+    fn empty_with_bitmask_channels(data: BTreeMap<Blake2b256Hash, i64>) -> EventLogIndex {
+        let mut eli = EventLogIndex::empty();
+        eli.number_channels_data = data
+            .into_iter()
+            .map(|(k, v)| (k, (v, super::super::merging_logic::MergeType::BitmaskOr)))
             .collect();
         eli
     }
@@ -458,5 +471,113 @@ mod tests {
 
         // Antisymmetry: compare(a,b) == reverse of compare(b,a)
         assert_eq!(b.cmp(&a), result1.reverse(), "ordering must be antisymmetric");
+    }
+
+    // --- BitmaskOr merger property tests ----------------------------------
+    //
+    // When two event-log indices touch the same `BitmaskOr` channel, the
+    // combined diff must be the bitwise OR of both inputs. This is what
+    // allows concurrent registry inserts at different keys that share an
+    // interior node to merge without rejection. Registry.rho only adds
+    // bits at interior nodes; these tests verify the merger faithfully
+    // aggregates those additions.
+
+    #[test]
+    fn combine_or_folds_two_bitmask_diffs_on_same_channel() {
+        // Two diffs setting different bits on the same interior channel —
+        // the merger must produce the bitwise OR.
+        let ch = mk_hash(42);
+        let a = empty_with_bitmask_channels(BTreeMap::from([(ch.clone(), 0b00010001)]));
+        let b = empty_with_bitmask_channels(BTreeMap::from([(ch.clone(), 0b00100010)]));
+        let combined = EventLogIndex::combine(&a, &b).expect("combine must not fail");
+        let (val, mt) = combined.number_channels_data[&ch];
+        assert_eq!(val, 0b00110011, "BitmaskOr must produce OR of both diffs, not max");
+        assert_eq!(
+            mt,
+            super::super::merging_logic::MergeType::BitmaskOr,
+            "merge type preserved through combine",
+        );
+    }
+
+    #[test]
+    fn combine_bitmask_is_commutative() {
+        let ch = mk_hash(7);
+        let a = empty_with_bitmask_channels(BTreeMap::from([(ch.clone(), 0b1010_1010)]));
+        let b = empty_with_bitmask_channels(BTreeMap::from([(ch.clone(), 0b0101_0101)]));
+        let ab = EventLogIndex::combine(&a, &b).unwrap();
+        let ba = EventLogIndex::combine(&b, &a).unwrap();
+        assert_eq!(
+            ab.number_channels_data[&ch].0, ba.number_channels_data[&ch].0,
+            "BitmaskOr combine must be commutative",
+        );
+    }
+
+    #[test]
+    fn combine_bitmask_is_associative_and_monotonic() {
+        // Drive a sequence of N diffs (each setting a distinct bit on the
+        // same channel) through combine. Assert: (1) the running combined
+        // value is bitwise non-decreasing across the sequence — no bit ever
+        // gets cleared; (2) reordering produces the same final value.
+        let ch = mk_hash(99);
+        let diffs: Vec<i64> = (0..16).map(|i| 1i64 << i).collect();
+
+        let indices: Vec<EventLogIndex> = diffs
+            .iter()
+            .map(|d| empty_with_bitmask_channels(BTreeMap::from([(ch.clone(), *d)])))
+            .collect();
+
+        // Monotonicity: each successive combine never clears a previously-set bit.
+        let mut acc = EventLogIndex::empty();
+        let mut prev_val: u64 = 0;
+        for index in &indices {
+            acc = EventLogIndex::combine(&acc, index).unwrap();
+            let cur_val = acc
+                .number_channels_data
+                .get(&ch)
+                .map(|(v, _)| *v as u64)
+                .unwrap_or(0);
+            assert_eq!(
+                cur_val & prev_val,
+                prev_val,
+                "monotonicity violated: a previously-set bit was cleared",
+            );
+            prev_val = cur_val;
+        }
+        // After all 16 diffs, every low bit must be set.
+        assert_eq!(prev_val, 0xFFFF, "all 16 bits must be present after combining 16 diffs");
+
+        // Reordering should produce the same final value (commutativity at scale).
+        let mut reversed = indices.clone();
+        reversed.reverse();
+        let folded_reverse = reversed
+            .iter()
+            .fold(EventLogIndex::empty(), |a, b| EventLogIndex::combine(&a, b).unwrap());
+        assert_eq!(
+            acc.number_channels_data[&ch].0, folded_reverse.number_channels_data[&ch].0,
+            "BitmaskOr combine fold must be order-independent",
+        );
+    }
+
+    #[test]
+    fn combine_bitmask_is_idempotent_on_same_index() {
+        // Combining an index with itself must not change its bitmap value.
+        let ch = mk_hash(33);
+        let a = empty_with_bitmask_channels(BTreeMap::from([(ch.clone(), 0b1100_1100)]));
+        let aa = EventLogIndex::combine(&a, &a).unwrap();
+        assert_eq!(
+            aa.number_channels_data[&ch].0, a.number_channels_data[&ch].0,
+            "BitmaskOr combine must be idempotent",
+        );
+    }
+
+    #[test]
+    fn combine_returns_err_on_mergetype_mismatch() {
+        // Same channel hash with disagreeing MergeType in two indices must
+        // yield Err, not panic, not silent pick-one.
+        let ch = mk_hash(55);
+        let a = empty_with_channels(BTreeMap::from([(ch.clone(), 5i64)])); // IntegerAdd
+        let b = empty_with_bitmask_channels(BTreeMap::from([(ch.clone(), 5i64)])); // BitmaskOr
+        let result = EventLogIndex::combine(&a, &b);
+        assert!(result.is_err(), "MergeType mismatch on the same channel must produce Err",);
     }
 }

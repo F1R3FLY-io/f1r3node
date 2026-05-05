@@ -67,9 +67,7 @@ impl RholangMergingLogic {
                     if let Some(prev_val) = state.get(&ch) {
                         let diff = match merge_type {
                             MergeType::IntegerAdd => end_val.wrapping_sub(*prev_val),
-                            MergeType::BitmaskOr => {
-                                ((end_val as u64) & !(*prev_val as u64)) as i64
-                            }
+                            MergeType::BitmaskOr => ((end_val as u64) & !(*prev_val as u64)) as i64,
                         };
                         diffs.insert(ch.clone(), (diff, merge_type));
                         state.insert(ch, end_val);
@@ -94,12 +92,15 @@ impl RholangMergingLogic {
         merge_type: MergeType,
         changes: &ChannelChange<Vec<u8>>,
         get_base_data: impl Fn(&Blake2b256Hash) -> Result<Vec<Datum<ListParWithRandom>>, HistoryError>,
-    ) -> HotStoreTrieAction<Par, BindPattern, ListParWithRandom, TaggedContinuation> {
-        // Read initial value of number channel from base state
-        let init_val_opt = Self::convert_to_read_number(get_base_data)(&channel_hash);
-
-        // Calculate number channel new value
-        let init_num = init_val_opt.unwrap_or(0);
+    ) -> Result<
+        HotStoreTrieAction<Par, BindPattern, ListParWithRandom, TaggedContinuation>,
+        HistoryError,
+    > {
+        // Read initial value of number channel from base state.
+        // None = channel doesn't exist yet (treat as 0); Err = invariant
+        // violation (non-numeric or multi-value pre-state) — propagate so the
+        // merge is rejected rather than silently substituting 0.
+        let init_num = Self::convert_to_read_number(get_base_data)(&channel_hash)?.unwrap_or(0);
         let new_val = match merge_type {
             MergeType::IntegerAdd => init_num.wrapping_add(diff),
             MergeType::BitmaskOr => ((init_num as u64) | (diff as u64)) as i64,
@@ -135,11 +136,11 @@ impl RholangMergingLogic {
         let datum_encoded = Self::create_datum_encoded(&channel_hash, new_val, new_rnd);
 
         // Create update store action
-        HotStoreTrieAction::TrieInsertAction(TrieInsertAction::TrieInsertBinaryProduce(
-            TrieInsertBinaryProduce {
+        Ok(HotStoreTrieAction::TrieInsertAction(
+            TrieInsertAction::TrieInsertBinaryProduce(TrieInsertBinaryProduce {
                 hash: channel_hash.clone(),
                 data: vec![datum_encoded],
-            },
+            }),
         ))
     }
 
@@ -149,25 +150,11 @@ impl RholangMergingLogic {
         rnd
     }
 
-    pub fn get_number_with_rnd(par_with_rnd: &ListParWithRandom) -> (i64, Blake2b512Random) {
-        assert!(
-            par_with_rnd.pars.len() == 1,
-            "Number channel should contain single Int term, found {:?}",
-            par_with_rnd.pars
-        );
-        let num = RhoNumber::unapply(&par_with_rnd.pars[0]).unwrap();
-        (
-            num,
-            Blake2b512Random::from_bytes(&par_with_rnd.random_state),
-        )
-    }
-
-    /// Like `get_number_with_rnd` but returns None when the channel value is
-    /// not an integer. Used by readers that opportunistically check whether a
-    /// mergeable-tagged channel currently holds a numeric value — for example,
-    /// the registry's TreeHashMap, where interior-node bitmaps are i64-typed
-    /// but leaf-node values are Rholang Maps. Non-numeric values fall through
-    /// to the existing conflict-rejection path rather than wedging the merger.
+    /// Returns the i64 + RNG pair for a single-Par integer channel value, or
+    /// None when the value isn't a single-Par integer (e.g., a Rholang Map on
+    /// a registry leaf node tagged with the bitmask tag). Non-numeric values
+    /// fall through to the existing conflict-rejection path rather than
+    /// wedging the merger.
     pub fn try_get_number_with_rnd(
         par_with_rnd: &ListParWithRandom,
     ) -> Option<(i64, Blake2b512Random)> {
@@ -175,7 +162,10 @@ impl RholangMergingLogic {
             return None;
         }
         RhoNumber::unapply(&par_with_rnd.pars[0]).map(|num| {
-            (num, Blake2b512Random::from_bytes(&par_with_rnd.random_state))
+            (
+                num,
+                Blake2b512Random::from_bytes(&par_with_rnd.random_state),
+            )
         })
     }
 
@@ -216,24 +206,39 @@ impl RholangMergingLogic {
         serializers::encode_datum(&datum)
     }
 
-    /**
-     * Converts function to get all data on a channel to function to get single number value.
-     */
-    pub fn convert_to_read_number<F>(get_data_func: F) -> impl Fn(&Blake2b256Hash) -> Option<i64>
+    /// Adapter from a fallible channel-data reader to a fallible single-number
+    /// reader. Three result cases:
+    /// - `Ok(None)` — channel has no data (legitimate; treat downstream as 0).
+    /// - `Ok(Some(n))` — channel holds a single numeric value.
+    /// - `Err(_)` — invariant violation (multi-value pre-state, non-numeric
+    ///   value where numeric expected) or upstream I/O error. Caller must
+    ///   propagate to reject the merge rather than silently substitute 0.
+    pub fn convert_to_read_number<F>(
+        get_data_func: F,
+    ) -> impl Fn(&Blake2b256Hash) -> Result<Option<i64>, HistoryError>
     where
         F: Fn(&Blake2b256Hash) -> Result<Vec<Datum<ListParWithRandom>>, HistoryError>,
     {
         move |hash: &Blake2b256Hash| {
-            let data = get_data_func(hash)
-                .unwrap_or_else(|error| panic!("Error getting data: {:?}", error));
-            assert!(
-                data.len() <= 1,
-                "To calculate difference on a number channel, single value is expected, found {:?}",
-                data
-            );
-            data.first()
-                .map(|datum| Self::get_number_with_rnd(&datum.a))
-                .map(|(num, _)| num)
+            let data = get_data_func(hash)?;
+            if data.len() > 1 {
+                return Err(HistoryError::MergeError(format!(
+                    "Number channel {:?} has {} pre-state values; single-value invariant violated",
+                    hash,
+                    data.len(),
+                )));
+            }
+            match data.first() {
+                None => Ok(None),
+                Some(datum) => match Self::try_get_number_with_rnd(&datum.a) {
+                    Some((n, _)) => Ok(Some(n)),
+                    None => Err(HistoryError::MergeError(format!(
+                        "Number channel {:?} pre-state value is non-numeric; \
+                         channel-type invariant violated",
+                        hash,
+                    ))),
+                },
+            }
         }
     }
 }
@@ -343,8 +348,7 @@ mod tests {
 
         let mut map0 = BTreeMap::new();
         map0.insert(ch.clone(), (0b0101i64, mt));
-        let result =
-            RholangMergingLogic::calculate_num_channel_diff(vec![map0], get_initial);
+        let result = RholangMergingLogic::calculate_num_channel_diff(vec![map0], get_initial);
 
         let mut expected_map0 = BTreeMap::new();
         expected_map0.insert(ch.clone(), (0b0100i64, mt));

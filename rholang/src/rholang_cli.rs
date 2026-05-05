@@ -6,6 +6,7 @@ use rholang::rust::interpreter::compiler::compiler::Compiler;
 use rholang::rust::interpreter::errors::InterpreterError;
 use rholang::rust::interpreter::external_services::ExternalServices;
 use rholang::rust::interpreter::matcher::r#match::Matcher;
+use rholang::rust::interpreter::merging::mergeable_tags::default_mergeable_tags;
 use rholang::rust::interpreter::pretty_printer::PrettyPrinter;
 use rholang::rust::interpreter::rho_runtime::{
     create_runtime_from_kv_store, RhoRuntime, RhoRuntimeImpl,
@@ -100,7 +101,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let mut rho_runtime = create_runtime_from_kv_store(
             stores,
-            Arc::new(std::collections::HashMap::new()),
+            Arc::new(default_mergeable_tags()),
             true,
             &mut additional_system_processes,
             matcher,

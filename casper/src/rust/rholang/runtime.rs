@@ -594,20 +594,42 @@ impl RuntimeOps {
 
     pub async fn get_number_channels_data(
         &self,
-        channels: &std::collections::HashMap<Par, rspace_plus_plus::rspace::merger::merging_logic::MergeType>,
+        channels: &std::collections::HashMap<
+            Par,
+            rspace_plus_plus::rspace::merger::merging_logic::MergeType,
+        >,
     ) -> Result<NumberChannelsEndVal, CasperError> {
         let mut result = BTreeMap::new();
         for (channel, merge_type) in channels {
-            if let Some((hash, value)) = self.get_number_channel(channel).await? {
+            if let Some((hash, value)) = self.get_number_channel(channel, *merge_type).await? {
                 result.insert(hash, (value, *merge_type));
             }
         }
         Ok(result)
     }
 
+    /// Deterministic multi-value fold for a mergeable channel that holds more
+    /// than one numeric Datum at observation time. Dispatches by `MergeType`:
+    /// `IntegerAdd` picks the max (conservative for vault balances);
+    /// `BitmaskOr` OR-folds all bitmaps (no set bit is lost). Returns `None`
+    /// for an empty input.
+    pub fn fold_multi_value(values: &[i64], merge_type: MergeType) -> Option<i64> {
+        if values.is_empty() {
+            return None;
+        }
+        let folded = match merge_type {
+            MergeType::IntegerAdd => *values.iter().max().unwrap(),
+            MergeType::BitmaskOr => values
+                .iter()
+                .fold(0i64, |acc, v| ((acc as u64) | (*v as u64)) as i64),
+        };
+        Some(folded)
+    }
+
     pub async fn get_number_channel(
         &self,
         channel: &Par,
+        merge_type: MergeType,
     ) -> Result<Option<(Blake2b256Hash, i64)>, CasperError> {
         let ch_values = self.runtime.get_data(channel).await;
 
@@ -616,26 +638,26 @@ impl RuntimeOps {
         } else {
             let ch_hash = stable_hash_provider::hash(channel);
             if ch_values.len() != 1 {
-                // Liveness-first fallback: ambiguous mergeable channel values should not wedge proposing.
-                // Keep behavior deterministic by selecting the maximum observed numeric value.
-                // Non-numeric values are skipped — they aren't candidates for the integer merge path
-                // and will fall through to existing conflict handling.
-                let num_opt = ch_values
+                // Liveness-first fallback: ambiguous mergeable channel values should not wedge
+                // proposing. Non-numeric values are skipped — they aren't candidates for the
+                // numeric merge path and fall through to existing conflict handling.
+                let nums: Vec<i64> = ch_values
                     .iter()
                     .filter_map(|datum| {
                         RholangMergingLogic::try_get_number_with_rnd(&datum.a).map(|(n, _)| n)
                     })
-                    .max();
+                    .collect();
 
-                let num = match num_opt {
+                let num = match Self::fold_multi_value(&nums, merge_type) {
                     Some(n) => n,
                     None => return Ok(None),
                 };
 
                 tracing::warn!(
                     target: "f1r3fly.mergeable_channel.sanitize",
-                    "NumberChannel has {} values; selecting deterministic max={} for channel {}",
+                    "NumberChannel has {} values; merge_type={:?} dispatched value={} for channel {}",
                     ch_values.len(),
+                    merge_type,
                     num,
                     hex::encode(ch_hash.clone().bytes()),
                 );
@@ -1361,5 +1383,86 @@ impl RuntimeOps {
                 }
             })
             .collect::<Result<Vec<_>, _>>()?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fold_multi_value_empty_returns_none() {
+        assert_eq!(
+            RuntimeOps::fold_multi_value(&[], MergeType::IntegerAdd),
+            None
+        );
+        assert_eq!(
+            RuntimeOps::fold_multi_value(&[], MergeType::BitmaskOr),
+            None
+        );
+    }
+
+    #[test]
+    fn fold_multi_value_single_returns_value() {
+        assert_eq!(
+            RuntimeOps::fold_multi_value(&[42], MergeType::IntegerAdd),
+            Some(42)
+        );
+        assert_eq!(
+            RuntimeOps::fold_multi_value(&[42], MergeType::BitmaskOr),
+            Some(42)
+        );
+    }
+
+    #[test]
+    fn fold_multi_value_integer_add_returns_max() {
+        // Vault-balance semantics: pick the largest observed value.
+        assert_eq!(
+            RuntimeOps::fold_multi_value(&[10, 5, 20, 15], MergeType::IntegerAdd),
+            Some(20)
+        );
+    }
+
+    #[test]
+    fn fold_multi_value_bitmask_or_returns_or_fold_not_max() {
+        // BitmaskOr must OR-fold all bitmaps; using max() would silently lose
+        // bits set only in non-max values.
+        let a = 0b00010001i64; // bits {0, 4}
+        let b = 0b00100010i64; // bits {1, 5}
+                               // max(a, b) = b = 0b00100010 — would lose bits {0, 4}.
+                               // OR fold = 0b00110011 — bits {0, 1, 4, 5}. Correct.
+        assert_eq!(
+            RuntimeOps::fold_multi_value(&[a, b], MergeType::BitmaskOr),
+            Some(0b00110011),
+        );
+        // Three-way fold sanity.
+        let c = 0b01000000i64;
+        assert_eq!(
+            RuntimeOps::fold_multi_value(&[a, b, c], MergeType::BitmaskOr),
+            Some(0b01110011),
+        );
+    }
+
+    #[test]
+    fn fold_multi_value_bitmask_or_commutes() {
+        // Result must not depend on observation order.
+        let xs = [0b0001_0001i64, 0b0010_0010, 0b0100_0100, 0b1000_1000];
+        let mut ys = xs;
+        ys.reverse();
+        assert_eq!(
+            RuntimeOps::fold_multi_value(&xs, MergeType::BitmaskOr),
+            RuntimeOps::fold_multi_value(&ys, MergeType::BitmaskOr),
+        );
+    }
+
+    #[test]
+    fn fold_multi_value_bitmask_or_negative_high_bits_preserved() {
+        // i64::MIN sets only the sign bit (bit 63). OR with a positive bitmap
+        // must keep bit 63 set — no narrowing or sign-extension surprise.
+        let neg = i64::MIN;
+        let pos = 0b1010i64;
+        let folded = RuntimeOps::fold_multi_value(&[neg, pos], MergeType::BitmaskOr).unwrap();
+        assert_eq!(folded as u64, (neg as u64) | (pos as u64));
+        assert_ne!(folded & i64::MIN, 0, "sign bit must remain set");
     }
 }

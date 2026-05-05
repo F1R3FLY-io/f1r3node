@@ -65,7 +65,9 @@ pub struct RuntimeManager {
     pub replay_space: ReplayRSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>,
     pub history_repo: RhoHistoryRepository,
     pub mergeable_store: MergeableStore,
-    pub mergeable_tags: std::sync::Arc<std::collections::HashMap<Par, rspace_plus_plus::rspace::merger::merging_logic::MergeType>>,
+    pub mergeable_tags: std::sync::Arc<
+        std::collections::HashMap<Par, rspace_plus_plus::rspace::merger::merging_logic::MergeType>,
+    >,
     // TODO: make proper storage for block indices - OLD
     pub block_index_cache: Arc<DashMap<BlockHash, BlockIndex>>,
     pub block_index_cache_order: Arc<Mutex<VecDeque<BlockHash>>>,
@@ -1050,10 +1052,23 @@ impl RuntimeManager {
                     data.len()
                 )));
             }
-            let value = data
-                .first()
-                .map(|datum| RholangMergingLogic::get_number_with_rnd(&datum.a).0)
-                .unwrap_or(0);
+            // None = channel doesn't exist (legitimate; start from 0). Some-but-non-numeric
+            // is an invariant violation (channel-type stability is a contract-level
+            // guarantee — interior nodes always numeric, leaves always Map). Treat as
+            // hard failure so the merge is rejected rather than silently substituting 0.
+            let value = match data.first() {
+                None => 0,
+                Some(datum) => match RholangMergingLogic::try_get_number_with_rnd(&datum.a) {
+                    Some((n, _)) => n,
+                    None => {
+                        return Err(CasperError::RuntimeError(format!(
+                            "Pre-state value for number channel {:?} is non-numeric; \
+                             channel-type invariant violated",
+                            ch,
+                        )));
+                    }
+                },
+            };
             initial_values.insert(ch, value);
         }
 
@@ -1081,7 +1096,12 @@ impl RuntimeManager {
         replay_rspace: ReplayRSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>,
         history_repo: RhoHistoryRepository,
         mergeable_store: MergeableStore,
-        mergeable_tags: std::sync::Arc<std::collections::HashMap<Par, rspace_plus_plus::rspace::merger::merging_logic::MergeType>>,
+        mergeable_tags: std::sync::Arc<
+            std::collections::HashMap<
+                Par,
+                rspace_plus_plus::rspace::merger::merging_logic::MergeType,
+            >,
+        >,
         external_services: ExternalServices,
     ) -> RuntimeManager {
         let replay_cache_size = Self::max_replay_cache_entries();
@@ -1112,22 +1132,28 @@ impl RuntimeManager {
     pub fn create_with_store(
         store: RSpaceStore,
         mergeable_store: MergeableStore,
-        mergeable_tags: std::sync::Arc<std::collections::HashMap<Par, rspace_plus_plus::rspace::merger::merging_logic::MergeType>>,
+        mergeable_tags: std::sync::Arc<
+            std::collections::HashMap<
+                Par,
+                rspace_plus_plus::rspace::merger::merging_logic::MergeType,
+            >,
+        >,
         external_services: ExternalServices,
     ) -> RuntimeManager {
-        let (rt_manager, _) = Self::create_with_history(
-            store,
-            mergeable_store,
-            mergeable_tags,
-            external_services,
-        );
+        let (rt_manager, _) =
+            Self::create_with_history(store, mergeable_store, mergeable_tags, external_services);
         rt_manager
     }
 
     pub fn create_with_history(
         store: RSpaceStore,
         mergeable_store: MergeableStore,
-        mergeable_tags: std::sync::Arc<std::collections::HashMap<Par, rspace_plus_plus::rspace::merger::merging_logic::MergeType>>,
+        mergeable_tags: std::sync::Arc<
+            std::collections::HashMap<
+                Par,
+                rspace_plus_plus::rspace::merger::merging_logic::MergeType,
+            >,
+        >,
         external_services: ExternalServices,
     ) -> (RuntimeManager, RhoHistoryRepository) {
         let (rspace, replay_rspace) =

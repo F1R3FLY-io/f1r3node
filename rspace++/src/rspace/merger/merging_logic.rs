@@ -22,7 +22,7 @@ use crate::rspace::trace::event::{Consume, Produce};
     Ord,
     PartialOrd,
     serde::Serialize,
-    serde::Deserialize,
+    serde::Deserialize
 )]
 pub enum MergeType {
     IntegerAdd,
@@ -33,15 +33,11 @@ pub type NumberChannelsEndVal = BTreeMap<Blake2b256Hash, (i64, MergeType)>;
 
 pub type NumberChannelsDiff = BTreeMap<Blake2b256Hash, (i64, MergeType)>;
 
-/// Combine two values according to the strategy. Used by `EventLogIndex::combine`
-/// to aggregate diffs within a chain and by the merge engine to combine across
-/// chains. For `IntegerAdd` semantics, this performs wrapping addition; for
-/// `BitmaskOr` it performs a bitwise OR through `u64`.
-pub fn combine_mergeable_value(
-    a: i64,
-    b: i64,
-    merge_type: MergeType,
-) -> i64 {
+/// Combine two values according to the strategy. Used by
+/// `EventLogIndex::combine` to aggregate diffs within a chain and by the merge
+/// engine to combine across chains. For `IntegerAdd` semantics, this performs
+/// wrapping addition; for `BitmaskOr` it performs a bitwise OR through `u64`.
+pub fn combine_mergeable_value(a: i64, b: i64, merge_type: MergeType) -> i64 {
     match merge_type {
         MergeType::IntegerAdd => a.wrapping_add(b),
         MergeType::BitmaskOr => ((a as u64) | (b as u64)) as i64,
@@ -1307,6 +1303,58 @@ mod tests {
 
         for r in &results[1..] {
             assert_eq!(results[0], *r, "compute_rejection_options must be deterministic");
+        }
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn bitmask_or_is_commutative(a: i64, b: i64) {
+            proptest::prop_assert_eq!(
+                combine_mergeable_value(a, b, MergeType::BitmaskOr),
+                combine_mergeable_value(b, a, MergeType::BitmaskOr),
+            );
+        }
+
+        #[test]
+        fn bitmask_or_is_associative(a: i64, b: i64, c: i64) {
+            let ab = combine_mergeable_value(a, b, MergeType::BitmaskOr);
+            let ab_c = combine_mergeable_value(ab, c, MergeType::BitmaskOr);
+            let bc = combine_mergeable_value(b, c, MergeType::BitmaskOr);
+            let a_bc = combine_mergeable_value(a, bc, MergeType::BitmaskOr);
+            proptest::prop_assert_eq!(ab_c, a_bc);
+        }
+
+        #[test]
+        fn bitmask_or_is_idempotent(a: i64) {
+            proptest::prop_assert_eq!(
+                combine_mergeable_value(a, a, MergeType::BitmaskOr),
+                a,
+            );
+        }
+
+        #[test]
+        fn bitmask_or_dominates_each_input(a: i64, b: i64) {
+            // a | b must have every bit that's set in a OR in b.
+            let combined = combine_mergeable_value(a, b, MergeType::BitmaskOr) as u64;
+            proptest::prop_assert_eq!(combined & (a as u64), a as u64);
+            proptest::prop_assert_eq!(combined & (b as u64), b as u64);
+        }
+
+        #[test]
+        fn integer_add_is_commutative(a: i64, b: i64) {
+            proptest::prop_assert_eq!(
+                combine_mergeable_value(a, b, MergeType::IntegerAdd),
+                combine_mergeable_value(b, a, MergeType::IntegerAdd),
+            );
+        }
+
+        #[test]
+        fn integer_add_is_associative(a: i64, b: i64, c: i64) {
+            let ab = combine_mergeable_value(a, b, MergeType::IntegerAdd);
+            let ab_c = combine_mergeable_value(ab, c, MergeType::IntegerAdd);
+            let bc = combine_mergeable_value(b, c, MergeType::IntegerAdd);
+            let a_bc = combine_mergeable_value(a, bc, MergeType::IntegerAdd);
+            proptest::prop_assert_eq!(ab_c, a_bc);
         }
     }
 }
