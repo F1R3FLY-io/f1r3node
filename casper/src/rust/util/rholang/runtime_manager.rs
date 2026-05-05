@@ -642,6 +642,16 @@ impl RuntimeManager {
         }
 
         // Step 2: Check replay cache (deterministic replay delta)
+        //
+        // Same safety constraint as StateHashCache (Step 1): a fast-return
+        // here would skip `save_mergeable_channels`, leaving a block in the
+        // DAG with no mergeable entry. Subsequent children whose validation
+        // reads this block's mergeable entry would fail with
+        // "Missing mergeable entry ..." — the exact failure mode the cache
+        // was designed not to introduce. Mirror the StateHashCache check:
+        // only fast-return if the mergeable entry already exists for this
+        // block key; otherwise fall through to full replay so the entry
+        // gets written.
         let replay_cache_key = ReplayCacheKey::new(
             start_hash.clone(),
             sender.bytes.to_vec(),
@@ -650,18 +660,37 @@ impl RuntimeManager {
         );
         if let Some(ref cache) = self.replay_cache {
             if let Some(entry) = cache.get(&replay_cache_key) {
-                tracing::info!("[CACHE] ReplayCache hit for sender seq={}", seq_num);
+                let mergeable_key = MergeableKey {
+                    state_hash: StateHashSerde(entry.post_state.clone()),
+                    creator: sender.bytes.clone(),
+                    seq_num,
+                };
+                let mergeable_key_encoded = bincode::serialize(&mergeable_key).map_err(|e| {
+                    CasperError::KvStoreError(KvStoreError::SerializationError(e.to_string()))
+                })?;
 
-                // Rig the replay runtime with cached event log
-                let replay_runtime = self.spawn_replay_runtime().await;
-                let rspace_events: Vec<_> = entry
-                    .event_log
-                    .iter()
-                    .map(crate::rust::util::event_converter::to_rspace_event)
-                    .collect();
-                replay_runtime.rig(rspace_events).await?;
+                if self
+                    .mergeable_store
+                    .contains_key(mergeable_key_encoded.clone())?
+                {
+                    tracing::info!("[CACHE] ReplayCache hit for sender seq={}", seq_num);
 
-                return Ok(entry.post_state);
+                    // Rig the replay runtime with cached event log
+                    let replay_runtime = self.spawn_replay_runtime().await;
+                    let rspace_events: Vec<_> = entry
+                        .event_log
+                        .iter()
+                        .map(crate::rust::util::event_converter::to_rspace_event)
+                        .collect();
+                    replay_runtime.rig(rspace_events).await?;
+
+                    return Ok(entry.post_state);
+                }
+
+                tracing::warn!(
+                    "[CACHE] ReplayCache hit without mergeable entry for seq={}; falling back to full replay",
+                    seq_num
+                );
             }
         }
 
