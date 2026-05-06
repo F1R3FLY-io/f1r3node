@@ -62,18 +62,38 @@ pub struct CasperConf {
     #[serde(rename = "finalizer", default)]
     pub finalizer: FinalizerConf,
 
-    #[serde(rename = "synchrony-recovery-stall-window", deserialize_with = "de_duration", default = "default_synchrony_recovery_stall_window")]
+    #[serde(
+        rename = "synchrony-recovery-stall-window",
+        deserialize_with = "de_duration",
+        default = "default_synchrony_recovery_stall_window"
+    )]
     pub synchrony_recovery_stall_window: Duration,
-    #[serde(rename = "synchrony-recovery-cooldown", deserialize_with = "de_duration", default = "default_synchrony_recovery_cooldown")]
+    #[serde(
+        rename = "synchrony-recovery-cooldown",
+        deserialize_with = "de_duration",
+        default = "default_synchrony_recovery_cooldown"
+    )]
     pub synchrony_recovery_cooldown: Duration,
-    #[serde(rename = "synchrony-recovery-max-bypasses", default = "default_synchrony_recovery_max_bypasses")]
+    #[serde(
+        rename = "synchrony-recovery-max-bypasses",
+        default = "default_synchrony_recovery_max_bypasses"
+    )]
     pub synchrony_recovery_max_bypasses: u32,
-    #[serde(rename = "synchrony-finalized-baseline-enabled", default = "default_synchrony_finalized_baseline_enabled")]
+    #[serde(
+        rename = "synchrony-finalized-baseline-enabled",
+        default = "default_synchrony_finalized_baseline_enabled"
+    )]
     pub synchrony_finalized_baseline_enabled: bool,
-    #[serde(rename = "synchrony-finalized-baseline-max-distance", default = "default_synchrony_finalized_baseline_max_distance")]
+    #[serde(
+        rename = "synchrony-finalized-baseline-max-distance",
+        default = "default_synchrony_finalized_baseline_max_distance"
+    )]
     pub synchrony_finalized_baseline_max_distance: u64,
 
-    #[serde(rename = "max-user-deploys-per-block", default = "default_max_user_deploys_per_block")]
+    #[serde(
+        rename = "max-user-deploys-per-block",
+        default = "default_max_user_deploys_per_block"
+    )]
     pub max_user_deploys_per_block: u32,
 
     /// Disable late block filtering in DagMerger.
@@ -245,9 +265,7 @@ impl GenesisBlockData {
                 "native-token-decimals={} exceeds maximum of {} (industry standard; \
                  ETH=18, BTC=8, SOL=9, ATOM=6); values above {} exceed IEEE-754 \
                  double safe-integer range and break JavaScript clients",
-                self.native_token_decimals,
-                MAX_NATIVE_TOKEN_DECIMALS,
-                MAX_NATIVE_TOKEN_DECIMALS
+                self.native_token_decimals, MAX_NATIVE_TOKEN_DECIMALS, MAX_NATIVE_TOKEN_DECIMALS
             ));
         }
         Ok(())
@@ -283,7 +301,11 @@ pub struct HeartbeatConf {
     pub check_interval: Duration,
     #[serde(rename = "max-lfb-age", deserialize_with = "de_duration")]
     pub max_lfb_age: Duration,
-    #[serde(rename = "self-propose-cooldown", deserialize_with = "de_duration", default = "default_self_propose_cooldown")]
+    #[serde(
+        rename = "self-propose-cooldown",
+        deserialize_with = "de_duration",
+        default = "default_self_propose_cooldown"
+    )]
     pub self_propose_cooldown: Duration,
 }
 
@@ -293,13 +315,29 @@ fn default_self_propose_cooldown() -> Duration {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FinalizerConf {
-    #[serde(rename = "work-budget", deserialize_with = "de_duration", default = "default_finalizer_work_budget")]
+    #[serde(
+        rename = "work-budget",
+        deserialize_with = "de_duration",
+        default = "default_finalizer_work_budget"
+    )]
     pub work_budget: Duration,
-    #[serde(rename = "step-timeout", deserialize_with = "de_duration", default = "default_finalizer_step_timeout")]
+    #[serde(
+        rename = "step-timeout",
+        deserialize_with = "de_duration",
+        default = "default_finalizer_step_timeout"
+    )]
     pub step_timeout: Duration,
-    #[serde(rename = "catchup-work-budget", deserialize_with = "de_duration", default = "default_finalizer_catchup_work_budget")]
+    #[serde(
+        rename = "catchup-work-budget",
+        deserialize_with = "de_duration",
+        default = "default_finalizer_catchup_work_budget"
+    )]
     pub catchup_work_budget: Duration,
-    #[serde(rename = "catchup-step-timeout", deserialize_with = "de_duration", default = "default_finalizer_catchup_step_timeout")]
+    #[serde(
+        rename = "catchup-step-timeout",
+        deserialize_with = "de_duration",
+        default = "default_finalizer_catchup_step_timeout"
+    )]
     pub catchup_step_timeout: Duration,
 }
 

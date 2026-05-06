@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 #[tokio::test]
 async fn token_metadata_spec() {
-    let test_object = CompiledRholangSource::load_source("TokenMetadataTest.rho")
+    let test_object = crate::util::rholang::test_rho_loader::load_test_rho("TokenMetadataTest.rho")
         .expect("Failed to load TokenMetadataTest.rho");
 
     let compiled = CompiledRholangSource::new(

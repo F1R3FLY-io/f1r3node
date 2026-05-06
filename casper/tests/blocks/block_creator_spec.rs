@@ -109,6 +109,7 @@ fn create_snapshot(max_block_num: i64, validator_id: Bytes) -> CasperSnapshot {
         justifications: DashSet::new(),
         invalid_blocks: HashMap::new(),
         deploys_in_scope: Arc::new(DashSet::new()),
+        rejected_in_scope: Arc::new(DashSet::new()),
         max_block_num,
         max_seq_nums,
         on_chain_state,
@@ -138,6 +139,11 @@ async fn should_remove_block_expired_deploys_while_keeping_valid_ones() {
             .await
             .expect("Failed to create deploy storage"),
     ));
+    let rejected_deploy_buffer = Arc::new(Mutex::new(
+        block_storage::rust::deploy::key_value_rejected_deploy_buffer::KeyValueRejectedDeployBuffer::new(&mut kvm)
+            .await
+            .expect("Failed to create rejected deploy buffer"),
+    ));
 
     let block_store = KeyValueBlockStore::create_from_kvm(&mut kvm)
         .await
@@ -154,7 +160,7 @@ async fn should_remove_block_expired_deploys_while_keeping_valid_ones() {
     let (mut runtime_manager, _) = RuntimeManager::create_with_history(
         rspace_store,
         mergeable_store,
-        casper::rust::genesis::genesis::Genesis::non_negative_mergeable_tag_name(),
+        std::sync::Arc::new(casper::rust::genesis::genesis::Genesis::default_mergeable_tags()),
         rholang::rust::interpreter::external_services::ExternalServices::noop(),
     );
 
@@ -186,6 +192,7 @@ async fn should_remove_block_expired_deploys_while_keeping_valid_ones() {
         &validator_identity,
         None,
         deploy_storage.clone(),
+        rejected_deploy_buffer.clone(),
         &mut runtime_manager,
         &mut block_store.clone(),
         false,
@@ -231,6 +238,11 @@ async fn should_remove_both_block_expired_and_time_expired_deploys() {
             .await
             .expect("Failed to create deploy storage"),
     ));
+    let rejected_deploy_buffer = Arc::new(Mutex::new(
+        block_storage::rust::deploy::key_value_rejected_deploy_buffer::KeyValueRejectedDeployBuffer::new(&mut kvm)
+            .await
+            .expect("Failed to create rejected deploy buffer"),
+    ));
 
     let block_store = KeyValueBlockStore::create_from_kvm(&mut kvm)
         .await
@@ -247,7 +259,7 @@ async fn should_remove_both_block_expired_and_time_expired_deploys() {
     let (mut runtime_manager, _) = RuntimeManager::create_with_history(
         rspace_store,
         mergeable_store,
-        casper::rust::genesis::genesis::Genesis::non_negative_mergeable_tag_name(),
+        std::sync::Arc::new(casper::rust::genesis::genesis::Genesis::default_mergeable_tags()),
         rholang::rust::interpreter::external_services::ExternalServices::noop(),
     );
 
@@ -290,6 +302,7 @@ async fn should_remove_both_block_expired_and_time_expired_deploys() {
         &validator_identity,
         None,
         deploy_storage.clone(),
+        rejected_deploy_buffer.clone(),
         &mut runtime_manager,
         &mut block_store.clone(),
         false,
@@ -310,6 +323,112 @@ async fn should_remove_both_block_expired_and_time_expired_deploys() {
         assert_eq!(
             remaining_deploy.sig, valid_deploy.sig,
             "Expected valid deploy to remain"
+        );
+    }
+}
+
+/// Test: expired sigs are purged from the rejected-deploy buffer too.
+///
+/// Sets up a deploy that is in the rejected-deploy buffer but NOT in
+/// deploy_storage — the realistic scenario after a sig has been
+/// conflict-rejected by the merge engine and the original storage entry
+/// has aged out via prior expired-removal sweeps. Without the buffer
+/// purge, a sustained-load adversary that keeps generating conflicts
+/// can grow the buffer's LMDB store unbounded — the read path filters
+/// expired sigs out so they aren't re-proposed, but on-disk entries
+/// would persist.
+///
+/// snapshot maxBlockNum = 100, deployLifespan = 50 → earliestBlockNumber = 51
+/// Expired buffer deploy: validAfterBlockNumber = 0 (<= 51, expired)
+/// Valid buffer deploy:   validAfterBlockNumber = 60 (> 51, valid)
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn should_remove_expired_deploys_from_rejected_deploy_buffer() {
+    crate::init_logger();
+
+    let validator_sk = DEFAULT_VALIDATOR_SKS[0].clone();
+    let validator_identity = ValidatorIdentity::new(&validator_sk);
+    let validator_id: Bytes = validator_identity.public_key.bytes.clone().into();
+
+    let mut kvm = InMemoryStoreManager::new();
+
+    let deploy_storage = Arc::new(Mutex::new(
+        KeyValueDeployStorage::new(&mut kvm)
+            .await
+            .expect("Failed to create deploy storage"),
+    ));
+    let rejected_deploy_buffer = Arc::new(Mutex::new(
+        block_storage::rust::deploy::key_value_rejected_deploy_buffer::KeyValueRejectedDeployBuffer::new(&mut kvm)
+            .await
+            .expect("Failed to create rejected deploy buffer"),
+    ));
+
+    let block_store = KeyValueBlockStore::create_from_kvm(&mut kvm)
+        .await
+        .expect("Failed to create block store");
+
+    let rspace_store = kvm
+        .r_space_stores()
+        .await
+        .expect("Failed to get rspace store");
+    let mergeable_store = resources::mergeable_store_from_dyn(&mut kvm)
+        .await
+        .expect("Failed to create mergeable store");
+
+    let (mut runtime_manager, _) = RuntimeManager::create_with_history(
+        rspace_store,
+        mergeable_store,
+        std::sync::Arc::new(casper::rust::genesis::genesis::Genesis::default_mergeable_tags()),
+        rholang::rust::interpreter::external_services::ExternalServices::noop(),
+    );
+
+    let expired_deploy = create_deploy(0, None, &validator_sk);
+    let valid_deploy = create_deploy(60, None, &validator_sk);
+
+    // Buffer-only: deploys live in the rejected-deploy buffer, not in
+    // deploy_storage. This is the regression-relevant case — without
+    // the buffer-purge fix, the expired sig persists in LMDB.
+    {
+        let mut buf = rejected_deploy_buffer.lock().unwrap();
+        buf.add(vec![expired_deploy.clone(), valid_deploy.clone()])
+            .expect("Failed to add deploys to buffer");
+
+        let deploys_before = buf.read_all().expect("Failed to read buffer");
+        assert_eq!(
+            deploys_before.len(),
+            2,
+            "Expected 2 deploys in buffer before create"
+        );
+    }
+
+    let snapshot = create_snapshot(100, validator_id);
+
+    let _ = block_creator::create(
+        &snapshot,
+        &validator_identity,
+        None,
+        deploy_storage.clone(),
+        rejected_deploy_buffer.clone(),
+        &mut runtime_manager,
+        &mut block_store.clone(),
+        false,
+    )
+    .await;
+
+    // Verify: expired sig removed from buffer, valid sig retained.
+    {
+        let buf = rejected_deploy_buffer.lock().unwrap();
+        assert!(
+            !buf.contains_sig(&expired_deploy.sig)
+                .expect("Failed to query buffer for expired sig"),
+            "Expired sig must NOT remain in the rejected-deploy buffer after create. \
+             If this fires, the expired-removal sweep in `prepare_user_deploys` is not \
+             extending to the buffer — sustained-load adversaries can grow the buffer \
+             unbounded."
+        );
+        assert!(
+            buf.contains_sig(&valid_deploy.sig)
+                .expect("Failed to query buffer for valid sig"),
+            "Valid (unexpired) sig must remain in the rejected-deploy buffer"
         );
     }
 }

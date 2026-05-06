@@ -1,7 +1,7 @@
 // See casper/src/main/scala/coop/rchain/casper/rholang/RuntimeSyntax.scala
 
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, HashMap},
     future::Future,
     mem,
     sync::OnceLock,
@@ -48,7 +48,7 @@ use rholang::rust::interpreter::{
 use rspace_plus_plus::rspace::{
     hashing::{blake2b256_hash::Blake2b256Hash, stable_hash_provider},
     history::{instances::radix_history::RadixHistory, Either},
-    merger::merging_logic::NumberChannelsEndVal,
+    merger::merging_logic::{MergeType, NumberChannelsEndVal},
 };
 
 use crate::rust::{
@@ -104,7 +104,9 @@ impl RuntimeOps {
      * fixed channels in the state.
      */
     pub async fn empty_state_hash(&mut self) -> Result<StateHash, CasperError> {
-        self.runtime.reset(&RadixHistory::empty_root_node_hash()).await?;
+        self.runtime
+            .reset(&RadixHistory::empty_root_node_hash())
+            .await?;
 
         bootstrap_registry(&self.runtime).await;
         let checkpoint = self.runtime.create_checkpoint().await;
@@ -132,9 +134,8 @@ impl RuntimeOps {
         CasperError,
     > {
         let mem_profile_enabled = crate::rust::util::rholang::mem_profiler::mem_profile_enabled();
-        let read_vm_rss_kb = || -> Option<usize> {
-            crate::rust::util::rholang::mem_profiler::read_vm_rss_kb()
-        };
+        let read_vm_rss_kb =
+            || -> Option<usize> { crate::rust::util::rholang::mem_profiler::read_vm_rss_kb() };
         let mut rss_baseline = if mem_profile_enabled {
             read_vm_rss_kb()
         } else {
@@ -287,9 +288,8 @@ impl RuntimeOps {
         terms: Vec<Signed<DeployData>>,
     ) -> Result<(StateHash, Vec<(ProcessedDeploy, NumberChannelsEndVal)>), CasperError> {
         let mem_profile_enabled = crate::rust::util::rholang::mem_profiler::mem_profile_enabled();
-        let read_vm_rss_kb = || -> Option<usize> {
-            crate::rust::util::rholang::mem_profiler::read_vm_rss_kb()
-        };
+        let read_vm_rss_kb =
+            || -> Option<usize> { crate::rust::util::rholang::mem_profiler::read_vm_rss_kb() };
         let mut rss_baseline = if mem_profile_enabled {
             read_vm_rss_kb()
         } else {
@@ -321,7 +321,8 @@ impl RuntimeOps {
         tracing::info!(target: "f1r3fly.casper.play-deploys", "play-deploys-started");
         log_mem_step("start");
         self.runtime
-            .reset(&Blake2b256Hash::from_bytes_prost(start_hash)).await?;
+            .reset(&Blake2b256Hash::from_bytes_prost(start_hash))
+            .await?;
         log_mem_step("after_reset");
 
         let mut res = Vec::with_capacity(terms.len());
@@ -359,7 +360,8 @@ impl RuntimeOps {
         // Using tracing events for async - Span[F].withMarks("play-deploys") from Scala
         tracing::info!(target: "f1r3fly.casper.play-deploys-genesis", "play-deploys-genesis-started");
         self.runtime
-            .reset(&Blake2b256Hash::from_bytes_prost(start_hash)).await?;
+            .reset(&Blake2b256Hash::from_bytes_prost(start_hash))
+            .await?;
 
         let mut res = Vec::with_capacity(terms.len());
         for deploy in terms {
@@ -378,9 +380,8 @@ impl RuntimeOps {
         deploy: Signed<DeployData>,
     ) -> Result<(ProcessedDeploy, NumberChannelsEndVal), CasperError> {
         let mem_profile_enabled = crate::rust::util::rholang::mem_profiler::mem_profile_enabled();
-        let read_vm_rss_kb = || -> Option<usize> {
-            crate::rust::util::rholang::mem_profiler::read_vm_rss_kb()
-        };
+        let read_vm_rss_kb =
+            || -> Option<usize> { crate::rust::util::rholang::mem_profiler::read_vm_rss_kb() };
         let mut rss_baseline = if mem_profile_enabled {
             read_vm_rss_kb()
         } else {
@@ -484,7 +485,8 @@ impl RuntimeOps {
                     Either::Right(_) => {
                         // Get mergeable channels data
                         let mergeable_channels_data = self
-                            .get_number_channels_data(&eval_collector_state.mergeable_channels).await?;
+                            .get_number_channels_data(&eval_collector_state.mergeable_channels)
+                            .await?;
 
                         let deploy_log = mem::take(&mut eval_collector_state.event_log);
                         log_mem_step("after_collect_result");
@@ -529,8 +531,9 @@ impl RuntimeOps {
 
                 // Update result with accumulated event logs
                 // Get mergeable channels data
-                let mergeable_channels_data =
-                    self.get_number_channels_data(&eval_collector_state.mergeable_channels).await?;
+                let mergeable_channels_data = self
+                    .get_number_channels_data(&eval_collector_state.mergeable_channels)
+                    .await?;
 
                 let deploy_log = mem::take(&mut eval_collector_state.event_log);
 
@@ -548,7 +551,7 @@ impl RuntimeOps {
     pub async fn process_deploy(
         &mut self,
         deploy: Signed<DeployData>,
-    ) -> Result<(ProcessedDeploy, HashSet<Par>), CasperError> {
+    ) -> Result<(ProcessedDeploy, HashMap<Par, MergeType>), CasperError> {
         // Keep a soft checkpoint before user deploy execution so failed deploy rollback
         // preserves pre-charge side effects required by refundDeploy.
         let fallback = self.runtime.create_soft_checkpoint().await;
@@ -591,20 +594,42 @@ impl RuntimeOps {
 
     pub async fn get_number_channels_data(
         &self,
-        channels: &HashSet<Par>,
+        channels: &std::collections::HashMap<
+            Par,
+            rspace_plus_plus::rspace::merger::merging_logic::MergeType,
+        >,
     ) -> Result<NumberChannelsEndVal, CasperError> {
         let mut result = BTreeMap::new();
-        for channel in channels {
-            if let Some((hash, value)) = self.get_number_channel(channel).await? {
-                result.insert(hash, value);
+        for (channel, merge_type) in channels {
+            if let Some((hash, value)) = self.get_number_channel(channel, *merge_type).await? {
+                result.insert(hash, (value, *merge_type));
             }
         }
         Ok(result)
     }
 
+    /// Deterministic multi-value fold for a mergeable channel that holds more
+    /// than one numeric Datum at observation time. Dispatches by `MergeType`:
+    /// `IntegerAdd` picks the max (conservative for vault balances);
+    /// `BitmaskOr` OR-folds all bitmaps (no set bit is lost). Returns `None`
+    /// for an empty input.
+    pub fn fold_multi_value(values: &[i64], merge_type: MergeType) -> Option<i64> {
+        if values.is_empty() {
+            return None;
+        }
+        let folded = match merge_type {
+            MergeType::IntegerAdd => *values.iter().max().unwrap(),
+            MergeType::BitmaskOr => values
+                .iter()
+                .fold(0i64, |acc, v| ((acc as u64) | (*v as u64)) as i64),
+        };
+        Some(folded)
+    }
+
     pub async fn get_number_channel(
         &self,
         channel: &Par,
+        merge_type: MergeType,
     ) -> Result<Option<(Blake2b256Hash, i64)>, CasperError> {
         let ch_values = self.runtime.get_data(channel).await;
 
@@ -613,25 +638,26 @@ impl RuntimeOps {
         } else {
             let ch_hash = stable_hash_provider::hash(channel);
             if ch_values.len() != 1 {
-                // Liveness-first fallback: ambiguous mergeable channel values should not wedge proposing.
-                // Keep behavior deterministic by selecting the maximum observed numeric value.
-                let num = ch_values
+                // Liveness-first fallback: ambiguous mergeable channel values should not wedge
+                // proposing. Non-numeric values are skipped — they aren't candidates for the
+                // numeric merge path and fall through to existing conflict handling.
+                let nums: Vec<i64> = ch_values
                     .iter()
-                    .map(|datum| {
-                        let (n, _) = RholangMergingLogic::get_number_with_rnd(&datum.a);
-                        n
+                    .filter_map(|datum| {
+                        RholangMergingLogic::try_get_number_with_rnd(&datum.a).map(|(n, _)| n)
                     })
-                    .max()
-                    .ok_or_else(|| {
-                        CasperError::RuntimeError(
-                            "NumberChannel had values but max() returned none.".to_string(),
-                        )
-                    })?;
+                    .collect();
+
+                let num = match Self::fold_multi_value(&nums, merge_type) {
+                    Some(n) => n,
+                    None => return Ok(None),
+                };
 
                 tracing::warn!(
                     target: "f1r3fly.mergeable_channel.sanitize",
-                    "NumberChannel has {} values; selecting deterministic max={} for channel {}",
+                    "NumberChannel has {} values; merge_type={:?} dispatched value={} for channel {}",
                     ch_values.len(),
+                    merge_type,
                     num,
                     hex::encode(ch_hash.clone().bytes()),
                 );
@@ -644,9 +670,14 @@ impl RuntimeOps {
                 return Ok(Some((ch_hash, num)));
             }
 
+            // Single value: opportunistic numeric read. Non-numeric values
+            // (e.g., TreeHashMap leaf Maps tagged with the bitmask tag) are
+            // skipped here and fall through to the existing conflict path.
             let num_par = &ch_values[0].a;
-            let (num, _) = RholangMergingLogic::get_number_with_rnd(num_par);
-            Ok(Some((ch_hash, num)))
+            match RholangMergingLogic::try_get_number_with_rnd(num_par) {
+                Some((num, _)) => Ok(Some((ch_hash, num))),
+                None => Ok(None),
+            }
         }
     }
 
@@ -661,7 +692,8 @@ impl RuntimeOps {
         system_deploy: &mut S,
     ) -> Result<SystemDeployResult<S::Result>, CasperError> {
         self.runtime
-            .reset(&Blake2b256Hash::from_bytes_prost(&state_hash)).await?;
+            .reset(&Blake2b256Hash::from_bytes_prost(&state_hash))
+            .await?;
 
         let (event_log, result, mergeable_channels) =
             self.play_system_deploy_internal(system_deploy).await?;
@@ -719,14 +751,13 @@ impl RuntimeOps {
         (
             Vec<Event>,
             Either<SystemDeployUserError, S::Result>,
-            HashSet<Par>,
+            HashMap<Par, MergeType>,
         ),
         CasperError,
     > {
         let mem_profile_enabled = crate::rust::util::rholang::mem_profiler::mem_profile_enabled();
-        let read_vm_rss_kb = || -> Option<usize> {
-            crate::rust::util::rholang::mem_profiler::read_vm_rss_kb()
-        };
+        let read_vm_rss_kb =
+            || -> Option<usize> { crate::rust::util::rholang::mem_profiler::read_vm_rss_kb() };
         let deploy_type = std::any::type_name::<S>();
         let mut rss_baseline = if mem_profile_enabled {
             read_vm_rss_kb()
@@ -781,9 +812,8 @@ impl RuntimeOps {
         system_deploy: &mut S,
     ) -> Result<SysEvalResult<S>, CasperError> {
         let mem_profile_enabled = crate::rust::util::rholang::mem_profiler::mem_profile_enabled();
-        let read_vm_rss_kb = || -> Option<usize> {
-            crate::rust::util::rholang::mem_profiler::read_vm_rss_kb()
-        };
+        let read_vm_rss_kb =
+            || -> Option<usize> { crate::rust::util::rholang::mem_profiler::read_vm_rss_kb() };
         let deploy_type = std::any::type_name::<S>();
         let mut rss_baseline = if mem_profile_enabled {
             read_vm_rss_kb()
@@ -894,9 +924,8 @@ impl RuntimeOps {
         hash: &StateHash,
     ) -> Result<Vec<Par>, CasperError> {
         let mem_profile_enabled = crate::rust::util::rholang::mem_profiler::mem_profile_enabled();
-        let read_vm_rss_kb = || -> Option<usize> {
-            crate::rust::util::rholang::mem_profiler::read_vm_rss_kb()
-        };
+        let read_vm_rss_kb =
+            || -> Option<usize> { crate::rust::util::rholang::mem_profiler::read_vm_rss_kb() };
         let mut rss_baseline = if mem_profile_enabled {
             read_vm_rss_kb()
         } else {
@@ -926,7 +955,8 @@ impl RuntimeOps {
         log_mem_step("start");
 
         self.runtime
-            .reset(&Blake2b256Hash::from_bytes_prost(hash)).await?;
+            .reset(&Blake2b256Hash::from_bytes_prost(hash))
+            .await?;
         log_mem_step("after_reset");
         self.runtime.cost().set(Cost::unsafe_max());
         log_mem_step("after_set_cost");
@@ -957,7 +987,8 @@ impl RuntimeOps {
         let _ = self.runtime.take_event_log().await;
         log_mem_step("after_take_event_log");
         self.runtime
-            .reset(&Blake2b256Hash::from_bytes_prost(hash)).await?;
+            .reset(&Blake2b256Hash::from_bytes_prost(hash))
+            .await?;
         log_mem_step("after_post_query_reset");
 
         result
@@ -1033,7 +1064,8 @@ impl RuntimeOps {
         name: &Par,
     ) -> Result<(Vec<Par>, u64), CasperError> {
         self.runtime
-            .reset(&Blake2b256Hash::from_bytes_prost(start)).await?;
+            .reset(&Blake2b256Hash::from_bytes_prost(start))
+            .await?;
 
         let eval_res = self.evaluate(deploy).await?;
         if !eval_res.errors.is_empty() {
@@ -1074,9 +1106,8 @@ impl RuntimeOps {
         system_deploy: &mut S,
     ) -> Result<EvaluateResult, CasperError> {
         let mem_profile_enabled = crate::rust::util::rholang::mem_profiler::mem_profile_enabled();
-        let read_vm_rss_kb = || -> Option<usize> {
-            crate::rust::util::rholang::mem_profiler::read_vm_rss_kb()
-        };
+        let read_vm_rss_kb =
+            || -> Option<usize> { crate::rust::util::rholang::mem_profiler::read_vm_rss_kb() };
         let deploy_type = std::any::type_name::<S>();
         let mut rss_baseline = if mem_profile_enabled {
             read_vm_rss_kb()
@@ -1161,7 +1192,10 @@ impl RuntimeOps {
         channel: Par,
         pattern: BindPattern,
     ) -> Result<Option<(TaggedContinuation, Vec<ListParWithRandom>)>, CasperError> {
-        Ok(self.runtime.consume_result(vec![channel], vec![pattern]).await?)
+        Ok(self
+            .runtime
+            .consume_result(vec![channel], vec![pattern])
+            .await?)
     }
 
     pub async fn consume_system_result<S: SystemDeployTrait>(
@@ -1170,7 +1204,9 @@ impl RuntimeOps {
     ) -> Result<Option<(TaggedContinuation, Vec<ListParWithRandom>)>, CasperError> {
         let consume_start = Instant::now();
         let return_channel = system_deploy.return_channel()?;
-        let result = self.consume_result(return_channel, system_deploy_consume_all_pattern()).await;
+        let result = self
+            .consume_result(return_channel, system_deploy_consume_all_pattern())
+            .await;
         metrics::histogram!(BLOCK_REPLAY_SYSDEPLOY_EVAL_CONSUME_RESULT_TIME_METRIC, "source" => CASPER_METRICS_SOURCE)
             .record(consume_start.elapsed().as_secs_f64());
         result
@@ -1347,5 +1383,86 @@ impl RuntimeOps {
                 }
             })
             .collect::<Result<Vec<_>, _>>()?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fold_multi_value_empty_returns_none() {
+        assert_eq!(
+            RuntimeOps::fold_multi_value(&[], MergeType::IntegerAdd),
+            None
+        );
+        assert_eq!(
+            RuntimeOps::fold_multi_value(&[], MergeType::BitmaskOr),
+            None
+        );
+    }
+
+    #[test]
+    fn fold_multi_value_single_returns_value() {
+        assert_eq!(
+            RuntimeOps::fold_multi_value(&[42], MergeType::IntegerAdd),
+            Some(42)
+        );
+        assert_eq!(
+            RuntimeOps::fold_multi_value(&[42], MergeType::BitmaskOr),
+            Some(42)
+        );
+    }
+
+    #[test]
+    fn fold_multi_value_integer_add_returns_max() {
+        // Vault-balance semantics: pick the largest observed value.
+        assert_eq!(
+            RuntimeOps::fold_multi_value(&[10, 5, 20, 15], MergeType::IntegerAdd),
+            Some(20)
+        );
+    }
+
+    #[test]
+    fn fold_multi_value_bitmask_or_returns_or_fold_not_max() {
+        // BitmaskOr must OR-fold all bitmaps; using max() would silently lose
+        // bits set only in non-max values.
+        let a = 0b00010001i64; // bits {0, 4}
+        let b = 0b00100010i64; // bits {1, 5}
+                               // max(a, b) = b = 0b00100010 — would lose bits {0, 4}.
+                               // OR fold = 0b00110011 — bits {0, 1, 4, 5}. Correct.
+        assert_eq!(
+            RuntimeOps::fold_multi_value(&[a, b], MergeType::BitmaskOr),
+            Some(0b00110011),
+        );
+        // Three-way fold sanity.
+        let c = 0b01000000i64;
+        assert_eq!(
+            RuntimeOps::fold_multi_value(&[a, b, c], MergeType::BitmaskOr),
+            Some(0b01110011),
+        );
+    }
+
+    #[test]
+    fn fold_multi_value_bitmask_or_commutes() {
+        // Result must not depend on observation order.
+        let xs = [0b0001_0001i64, 0b0010_0010, 0b0100_0100, 0b1000_1000];
+        let mut ys = xs;
+        ys.reverse();
+        assert_eq!(
+            RuntimeOps::fold_multi_value(&xs, MergeType::BitmaskOr),
+            RuntimeOps::fold_multi_value(&ys, MergeType::BitmaskOr),
+        );
+    }
+
+    #[test]
+    fn fold_multi_value_bitmask_or_negative_high_bits_preserved() {
+        // i64::MIN sets only the sign bit (bit 63). OR with a positive bitmap
+        // must keep bit 63 set — no narrowing or sign-extension surprise.
+        let neg = i64::MIN;
+        let pos = 0b1010i64;
+        let folded = RuntimeOps::fold_multi_value(&[neg, pos], MergeType::BitmaskOr).unwrap();
+        assert_eq!(folded as u64, (neg as u64) | (pos as u64));
+        assert_ne!(folded & i64::MIN, 0, "sign bit must remain set");
     }
 }

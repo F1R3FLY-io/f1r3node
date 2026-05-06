@@ -78,6 +78,9 @@ pub struct TestNode {
     pub block_store: KeyValueBlockStore,
     pub block_dag_storage: BlockDagKeyValueStorage,
     pub deploy_storage: Arc<Mutex<KeyValueDeployStorage>>,
+    pub rejected_deploy_buffer: Arc<
+        Mutex<block_storage::rust::deploy::key_value_rejected_deploy_buffer::KeyValueRejectedDeployBuffer>,
+    >,
     pub runtime_manager: RuntimeManager,
     // Note: no log field, logging will come from log crate
     pub requested_blocks: RequestedBlocks,
@@ -124,6 +127,7 @@ impl TestNode {
             &validator,
             None, // dummy_deploy_opt
             self.deploy_storage.clone(),
+            self.rejected_deploy_buffer.clone(),
             &mut self.runtime_manager.clone(),
             &mut self.block_store.clone(),
             false,
@@ -755,6 +759,12 @@ impl TestNode {
         max_parent_depth: Option<i32>,
         with_read_only_size: Option<usize>,
     ) -> Result<Vec<TestNode>, CasperError> {
+        // Initialize the shared tracing subscriber once per test process.
+        // Without this, tracing calls in production code are silently
+        // dropped during tests, defeating diagnostic intent. Tests opt
+        // in by going through create_network; RUST_LOG is honored.
+        crate::init_logger();
+
         let test_network = TestNetwork::empty();
 
         // Take the required number of validator keys
@@ -905,6 +915,12 @@ impl TestNode {
                 .unwrap(),
         ));
 
+        let rejected_deploy_buffer = Arc::new(Mutex::new(
+            resources::key_value_rejected_deploy_buffer_from_dyn(&mut *kvm)
+                .await
+                .unwrap(),
+        ));
+
         let casper_buffer_storage = resources::casper_buffer_storage_from_dyn(&mut *kvm)
             .await
             .unwrap();
@@ -917,7 +933,7 @@ impl TestNode {
         let (runtime_manager, _rho_history_repository) = RuntimeManager::create_with_history(
             rspace_store,
             mergeable_store,
-            Genesis::non_negative_mergeable_tag_name(),
+            std::sync::Arc::new(Genesis::default_mergeable_tags()),
             rholang::rust::interpreter::external_services::ExternalServices::noop(),
         );
 
@@ -952,6 +968,7 @@ impl TestNode {
                 runtime_manager.clone(),
                 block_store.clone(),
                 deploy_storage.clone(),
+                rejected_deploy_buffer.clone(),
                 block_retriever.clone(),
                 tle.clone(),
                 connections_cell.clone(),
@@ -1031,6 +1048,7 @@ impl TestNode {
             block_store: block_store.clone(),
             block_dag_storage: block_dag_storage.clone(),
             deploy_storage: deploy_storage.clone(),
+            rejected_deploy_buffer: rejected_deploy_buffer.clone(),
             casper_buffer_storage: casper_buffer_storage.clone(),
             validator_id: validator_id_opt.clone(),
             casper_shard_conf: shard_conf,
@@ -1091,6 +1109,7 @@ impl TestNode {
             block_store,
             block_dag_storage,
             deploy_storage,
+            rejected_deploy_buffer,
             runtime_manager,
             requested_blocks,
             connections_cell,

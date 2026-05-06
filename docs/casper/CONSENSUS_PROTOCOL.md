@@ -124,11 +124,20 @@ Before building a block, the proposer verifies:
 `block_creator::prepare_user_deploys()`:
 
 1. Read unfinalized deploys from `KeyValueDeployStorage`
-2. **Filter**: Not future (`valid_after_block_number`), not expired by height, not expired by time
-3. **Exclude**: Deploys already in scope (prevents re-inclusion across branches)
-4. **Sort deterministically**: `(valid_after_block_number, timestamp, signature)` — every validator selects the same deploys in the same order
-5. **Cap**: `max_user_deploys_per_block`
-6. **Adaptive cap**: EMA-based controller targets 1-second block creation latency. When blocks take longer, cap decreases. Small batches bypass the cap entirely. A backlog floor prevents deploy starvation.
+2. **Pull recovered deploys** from the `KeyValueRejectedDeployBuffer` —
+   sigs that a prior multi-parent merge conflict-rejected. Their
+   effects never landed in canonical state and they are eligible for
+   re-inclusion in a fresh proposer's body.
+3. **Filter**: Not future (`valid_after_block_number`), not expired by height, not expired by time
+4. **Exclude**: Deploys already in scope (prevents re-inclusion across
+   branches), EXCEPT sigs in `casper_snapshot.rejected_in_scope` —
+   those were conflict-rejected by a descendant merge and are the
+   recovery candidates from step 2. The same exemption is applied
+   when filtering against the proposer's own self-chain via
+   `collect_self_chain_deploy_sigs`.
+5. **Sort deterministically**: `(valid_after_block_number, timestamp, signature)` — every validator selects the same deploys in the same order
+6. **Cap**: `max_user_deploys_per_block`
+7. **Adaptive cap**: EMA-based controller targets 1-second block creation latency. When blocks take longer, cap decreases. Small batches bypass the cap entirely. A backlog floor prevents deploy starvation.
 
 **Why deterministic ordering?** All validators must select identical deploys for identical parent sets, or state hashes diverge and blocks get rejected.
 
@@ -259,7 +268,12 @@ In a multi-parent DAG, different validators may have included different deploys 
 1. **Identify visible blocks**: All blocks between the LCA and the parents (exclusive of LCA, inclusive of parents)
 2. **Collect deploys**: Extract user deploys from all visible blocks
 3. **Detect conflicts**: Branches conflict if they contain the **same user deploy ID** (not content — just the deploy signature)
-4. **Resolve**: `ConflictSetMerger` selects the highest-value subset of non-conflicting deploys. Dependents of rejected deploys are also rejected.
+4. **Resolve**: `ConflictSetMerger` selects the highest-value subset
+   of non-conflicting deploys. Dependents of rejected deploys are
+   also rejected. Rejected sigs land in the
+   `KeyValueRejectedDeployBuffer` so a subsequent proposer can
+   re-include them via `prepare_user_deploys` (see Block Creation
+   step 3).
 5. **Merge**: Replay selected deploys via RSpace merger to compute combined post-state
 
 ### Determinism Constraint
@@ -270,7 +284,7 @@ The merge scope is derived entirely from DAG structure (parent pointers and bloc
 
 - Merge cost: O(visible_blocks^2 x deploys^2) for conflict resolution
 - LCA scoping keeps visible_blocks bounded
-- **Fallback**: If visible_blocks > 512 or LCA distance > 256, falls back to latest parent's post-state (discards non-selected parent deploys — they'll be re-proposed)
+- **Fallback**: If visible_blocks > 512 or LCA distance > 256, falls back to latest parent's post-state (discards non-selected parent deploys — they land in the rejected-deploy buffer and a subsequent proposer re-includes them via `prepare_user_deploys`)
 
 ### System Deploys
 
@@ -406,9 +420,31 @@ When the synchrony constraint blocks proposals:
 
 1. Equivocation detected during block validation
 2. `EquivocationRecord` created and stored persistently
-3. Next block from any honest validator includes `SlashDeploy` system deploy
+3. Honest validators emit a `SlashDeploy` from their `invalid_latest_messages` (`prepare_slashing_deploys` in `block_creator.rs`); only validators with non-zero stake who are in `active_validators` can be slashed
 4. `SlashDeploy` executes PoS contract to remove equivocator from bonds
-5. Equivocator loses entire stake
+5. Equivocator loses entire stake; PoS slash is idempotent for already-slashed validators (returns true with no further state change)
+
+### Multi-Parent Merge & Slash Recovery
+
+A `SlashDeploy` issued in one parent can be **rejected** by cost-optimal merge resolution when the merge proposer combines parents — the slash chain may be the loser of a conflict and dropped from canonical state. PR #488 closes this gap with a recovery loop in `block_creator::create`:
+
+1. Before block assembly, the proposer runs `compute_parents_post_state` on its tip set. The merge engine returns `(pre_state, rejected_user_sigs, rejected_slashes)`.
+2. `merging::rejected_slash::filter_recoverable` deduplicates rejected slashes by `invalid_block_hash` and drops any that the proposer's own `prepare_slashing_deploys` already covers.
+3. The proposer re-issues each surviving `RejectedSlash` under its own validator identity, so the slash effect lands in the merge block regardless of the merge's rejection decision.
+4. Re-issued slashes ride the same code path as own-detected slashes; PoS idempotency makes the re-issue safe even if the equivocator has already been slashed in a parent.
+
+### Multi-Slash Blocks
+
+A single block can carry more than one `SlashDeploy`:
+- own + recovered for distinct equivocators, or
+- two own slashes for two equivocators in `invalid_latest_messages`, or
+- recovered slashes for multiple equivocators surfaced by the merge.
+
+Each `SlashDeploy`'s RNG is keyed on `(validator, seq_num, invalid_block_hash)` (`util::rholang::system_deploy_util::generate_slash_deploy_random_seed`). Without `invalid_block_hash` in the seed, two slashes in the same block from the same proposer would alias the unforgeable channel names allocated by the slash contract, corrupting tuplespace state and the per-slash return-channel routing.
+
+### Empty-Block Skip
+
+Heartbeat-disabled proposers (`allow_empty_blocks = false`, the production default) skip block creation when there is no work — but recovered rejected slashes count as work. The skip predicate evaluates `all_deploys.is_empty() && !has_slashing_deploys && recovered_rejected_slashes.is_empty()`, so a proposer that wakes with no user deploys and no own-detected slashes still proposes when the parent merge has produced rejected slashes that need recovery.
 
 ### Two-Level Slashing
 
@@ -480,13 +516,21 @@ See [F1R3FLY-io/f1r3node issues](https://github.com/F1R3FLY-io/f1r3node/issues) 
 | `casper/src/rust/safety/clique_oracle.rs` | Clique oracle, fault tolerance computation |
 | `casper/src/rust/finality/finalizer.rs` | Finalization search with work budgets |
 | `casper/src/rust/synchrony_constraint_checker.rs` | Synchrony constraint + recovery bypass |
-| `casper/src/rust/equivocation_detector.rs` | Equivocation types and detection |
 
 ### Merging
 | File | Role |
 |------|------|
 | `casper/src/rust/merging/dag_merger.rs` | Multi-parent state merge |
 | `casper/src/rust/merging/conflict_set_merger.rs` | Deploy conflict resolution |
+| `casper/src/rust/merging/rejected_slash.rs` | `RejectedSlash` type and `filter_recoverable` dedup for slash recovery |
+
+### Slashing
+| File | Role |
+|------|------|
+| `casper/src/rust/equivocation_detector.rs` | Equivocation types and detection |
+| `casper/src/rust/util/rholang/system_deploy_util.rs` | System-deploy RNG seeds (slash seed keyed on `invalid_block_hash`) |
+| `casper/src/rust/util/rholang/costacc/slash_deploy.rs` | `SlashDeploy` system-deploy definition |
+| `casper/src/rust/blocks/proposer/block_creator.rs` | `prepare_slashing_deploys`, `filter_slashable_invalid_messages`, slash recovery loop |
 
 ### Liveness
 | File | Role |

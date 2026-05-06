@@ -123,7 +123,15 @@ async fn test_case(
     expected_rejected: HashableSet<prost::bytes::Bytes>,
     expected_final_result: i64,
 ) {
-    let rm = mk_runtime_manager("merging-test", Some(unforgeable_name_seed())).await;
+    let mergeable_tags = {
+        let mut m = std::collections::HashMap::new();
+        m.insert(
+            unforgeable_name_seed(),
+            rspace_plus_plus::rspace::merger::merging_logic::MergeType::IntegerAdd,
+        );
+        std::sync::Arc::new(m)
+    };
+    let rm = mk_runtime_manager("merging-test", Some(mergeable_tags)).await;
     let mut runtime = rm.spawn_runtime().await;
 
     async fn run_rholang(
@@ -244,6 +252,8 @@ async fn test_case(
                 &base_cp.root,
                 &left_post_state,
                 history_repo.clone(),
+                prost::bytes::Bytes::from(vec![0xAAu8; 32]),
+                1,
             )
             .unwrap()
         })
@@ -258,6 +268,8 @@ async fn test_case(
                 &base_cp.root,
                 &right_post_state,
                 history_repo.clone(),
+                prost::bytes::Bytes::from(vec![0xBBu8; 32]),
+                2,
             )
             .unwrap()
         })
@@ -266,20 +278,21 @@ async fn test_case(
     println!("LEFT DEPLOY CHAINS: {:?}", left_deploy_chains.len());
     println!("RIGHT DEPLOY CHAINS: {:?}", right_deploy_chains.len());
 
-
     let branches_are_conflicting =
         |a: &HashableSet<DeployChainIndex>, b: &HashableSet<DeployChainIndex>| {
             merging_logic::are_conflicting(
                 &a.0.iter()
                     .map(|x| &x.event_log_index)
-                    .fold(EventLogIndex::empty(), |acc, x| {
+                    .try_fold(EventLogIndex::empty(), |acc, x| {
                         EventLogIndex::combine(&acc, x)
-                    }),
+                    })
+                    .expect("EventLogIndex::combine MergeType mismatch in test"),
                 &b.0.iter()
                     .map(|x| &x.event_log_index)
-                    .fold(EventLogIndex::empty(), |acc, x| {
+                    .try_fold(EventLogIndex::empty(), |acc, x| {
                         EventLogIndex::combine(&acc, x)
-                    }),
+                    })
+                    .expect("EventLogIndex::combine MergeType mismatch in test"),
             )
         };
 
@@ -291,12 +304,14 @@ async fn test_case(
          number_channels: &NumberChannelsDiff| {
             match number_channels.get(&hash) {
                 Some(number_channel_diff) => {
+                    let (diff, merge_type) = *number_channel_diff;
                     Ok(Some(RholangMergingLogic::calculate_number_channel_merge(
                         hash,
-                        *number_channel_diff,
+                        diff,
+                        merge_type,
                         changes,
                         |_hash| base_reader.get_data(_hash),
-                    )))
+                    )?))
                 }
                 None => Ok(None),
             }
@@ -336,7 +351,7 @@ async fn test_case(
         Vec::new(),
         |target, source| merging_logic::depends(&target.event_log_index, &source.event_log_index),
         |arg0: &HashableSet<DeployChainIndex>, arg1: &HashableSet<DeployChainIndex>| {
-            branches_are_conflicting(arg0, arg1)
+            Ok(branches_are_conflicting(arg0, arg1))
         },
         dag_merger::cost_optimal_rejection_alg(),
         |r| Ok(r.state_changes.clone()),

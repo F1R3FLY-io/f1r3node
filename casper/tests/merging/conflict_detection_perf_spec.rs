@@ -1,6 +1,5 @@
 /// Tests that pre-computing derived sets for depends() and
 /// branch conflict detection produces identical results faster.
-
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
@@ -50,10 +49,11 @@ fn make_chain(idx: usize) -> DeployChainIndex {
 
     DeployChainIndex::from_parts(
         HashableSet(deploys),
-        Blake2b256Hash::from_bytes(vec![0u8; 32]),
         Blake2b256Hash::from_bytes(vec![1u8; 32]),
         event_log,
         rspace_plus_plus::rspace::merger::state_change::StateChange::empty(),
+        Bytes::from(dh.to_vec()),
+        0,
     )
 }
 
@@ -71,7 +71,11 @@ fn baseline_depends_without_cache() {
 
     let total: usize = map.values().map(|s| s.0.len()).sum();
     assert_eq!(total, 0);
-    println!("Baseline (no cache): {} chains, {}ms", n, elapsed.as_millis());
+    println!(
+        "Baseline (no cache): {} chains, {}ms",
+        n,
+        elapsed.as_millis()
+    );
 }
 
 #[test]
@@ -93,25 +97,40 @@ fn cached_depends_is_faster() {
         {
             let mut c = cache.borrow_mut();
             c.entry(source_addr).or_insert_with(|| CachedDerived {
-                produces_created: merging_logic::produces_created_and_not_destroyed(&source.event_log_index),
-                consumes_created: merging_logic::consumes_created_and_not_destroyed(&source.event_log_index),
+                produces_created: merging_logic::produces_created_and_not_destroyed(
+                    &source.event_log_index,
+                ),
+                consumes_created: merging_logic::consumes_created_and_not_destroyed(
+                    &source.event_log_index,
+                ),
             });
         }
         let c = cache.borrow();
         let derived = c.get(&source_addr).unwrap();
 
-        let produces_source: HashSet<_> = derived.produces_created.0
+        let produces_source: HashSet<_> = derived
+            .produces_created
+            .0
             .difference(&source.event_log_index.produces_mergeable.0)
             .collect();
-        let produces_target: HashSet<_> = target.event_log_index.produces_consumed.0
+        let produces_target: HashSet<_> = target
+            .event_log_index
+            .produces_consumed
+            .0
             .difference(&source.event_log_index.produces_mergeable.0)
             .collect();
 
-        if produces_source.intersection(&produces_target).next().is_some() {
+        if produces_source
+            .intersection(&produces_target)
+            .next()
+            .is_some()
+        {
             return true;
         }
 
-        derived.consumes_created.0
+        derived
+            .consumes_created
+            .0
             .intersection(&target.event_log_index.consumes_produced.0)
             .next()
             .is_some()
@@ -144,25 +163,40 @@ fn cached_and_uncached_produce_identical_results() {
         {
             let mut c = cache.borrow_mut();
             c.entry(source_addr).or_insert_with(|| CachedDerived {
-                produces_created: merging_logic::produces_created_and_not_destroyed(&source.event_log_index),
-                consumes_created: merging_logic::consumes_created_and_not_destroyed(&source.event_log_index),
+                produces_created: merging_logic::produces_created_and_not_destroyed(
+                    &source.event_log_index,
+                ),
+                consumes_created: merging_logic::consumes_created_and_not_destroyed(
+                    &source.event_log_index,
+                ),
             });
         }
         let c = cache.borrow();
         let derived = c.get(&source_addr).unwrap();
 
-        let produces_source: HashSet<_> = derived.produces_created.0
+        let produces_source: HashSet<_> = derived
+            .produces_created
+            .0
             .difference(&source.event_log_index.produces_mergeable.0)
             .collect();
-        let produces_target: HashSet<_> = target.event_log_index.produces_consumed.0
+        let produces_target: HashSet<_> = target
+            .event_log_index
+            .produces_consumed
+            .0
             .difference(&source.event_log_index.produces_mergeable.0)
             .collect();
 
-        if produces_source.intersection(&produces_target).next().is_some() {
+        if produces_source
+            .intersection(&produces_target)
+            .next()
+            .is_some()
+        {
             return true;
         }
 
-        derived.consumes_created.0
+        derived
+            .consumes_created
+            .0
             .intersection(&target.event_log_index.consumes_produced.0)
             .next()
             .is_some()

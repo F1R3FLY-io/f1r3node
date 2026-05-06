@@ -1,7 +1,7 @@
 // See casper/src/main/scala/coop/rchain/casper/rholang/RuntimeReplaySyntax.scala
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     future::Future,
     time::Instant,
 };
@@ -24,22 +24,21 @@ use rholang::rust::interpreter::{
 };
 use rspace_plus_plus::rspace::{
     hashing::blake2b256_hash::Blake2b256Hash, history::Either,
-    merger::merging_logic::NumberChannelsEndVal,
+    merger::merging_logic::{MergeType, NumberChannelsEndVal},
 };
 
 use crate::rust::{
     errors::CasperError,
     metrics_constants::{
+        BLOCK_REPLAY_DEPLOY_CHECK_REPLAY_DATA_TIME_METRIC,
+        BLOCK_REPLAY_DEPLOY_DISCARD_EVENT_LOG_TIME_METRIC,
+        BLOCK_REPLAY_DEPLOY_EVALUATE_TIME_METRIC, BLOCK_REPLAY_DEPLOY_PRECHARGE_TIME_METRIC,
+        BLOCK_REPLAY_DEPLOY_REFUND_TIME_METRIC, BLOCK_REPLAY_DEPLOY_RIG_TIME_METRIC,
         BLOCK_REPLAY_PHASE_CREATE_CHECKPOINT_TIME_METRIC, BLOCK_REPLAY_PHASE_RESET_TIME_METRIC,
         BLOCK_REPLAY_PHASE_SYSTEM_DEPLOYS_TIME_METRIC, BLOCK_REPLAY_PHASE_USER_DEPLOYS_TIME_METRIC,
         BLOCK_REPLAY_SYSDEPLOY_CHECKPOINT_MERGEABLE_TIME_METRIC,
         BLOCK_REPLAY_SYSDEPLOY_CHECK_TIME_METRIC, BLOCK_REPLAY_SYSDEPLOY_EVAL_TIME_METRIC,
-        BLOCK_REPLAY_SYSDEPLOY_RIG_TIME_METRIC,
-        BLOCK_REPLAY_DEPLOY_RIG_TIME_METRIC, BLOCK_REPLAY_DEPLOY_PRECHARGE_TIME_METRIC,
-        BLOCK_REPLAY_DEPLOY_EVALUATE_TIME_METRIC, BLOCK_REPLAY_DEPLOY_REFUND_TIME_METRIC,
-        BLOCK_REPLAY_DEPLOY_DISCARD_EVENT_LOG_TIME_METRIC,
-        BLOCK_REPLAY_DEPLOY_CHECK_REPLAY_DATA_TIME_METRIC,
-        CASPER_METRICS_SOURCE,
+        BLOCK_REPLAY_SYSDEPLOY_RIG_TIME_METRIC, CASPER_METRICS_SOURCE,
     },
     util::{
         event_converter,
@@ -136,7 +135,8 @@ impl ReplayRuntimeOps {
         let reset_start = Instant::now();
         self.runtime_ops
             .runtime
-            .reset(&Blake2b256Hash::from_bytes_prost(start_hash)).await?;
+            .reset(&Blake2b256Hash::from_bytes_prost(start_hash))
+            .await?;
         metrics::histogram!(BLOCK_REPLAY_PHASE_RESET_TIME_METRIC, "source" => CASPER_METRICS_SOURCE)
             .record(reset_start.elapsed().as_secs_f64());
 
@@ -204,7 +204,7 @@ impl ReplayRuntimeOps {
         with_cost_accounting: bool,
         processed_deploy: &ProcessedDeploy,
     ) -> Result<NumberChannelsEndVal, CasperError> {
-        let mut mergeable_channels = HashSet::new();
+        let mut mergeable_channels: HashMap<Par, MergeType> = HashMap::new();
 
         let rig_start = Instant::now();
         self.rig(processed_deploy).await?;
@@ -228,7 +228,8 @@ impl ReplayRuntimeOps {
         let checkpoint_mergeable_start = Instant::now();
         let channels_data = self
             .runtime_ops
-            .get_number_channels_data(&mergeable_channels).await?;
+            .get_number_channels_data(&mergeable_channels)
+            .await?;
         metrics::histogram!(BLOCK_REPLAY_SYSDEPLOY_CHECKPOINT_MERGEABLE_TIME_METRIC, "source" => CASPER_METRICS_SOURCE)
             .record(checkpoint_mergeable_start.elapsed().as_secs_f64());
 
@@ -238,7 +239,7 @@ impl ReplayRuntimeOps {
     async fn process_deploy_with_cost_accounting(
         &mut self,
         processed_deploy: &ProcessedDeploy,
-        mergeable_channels: &mut HashSet<Par>,
+        mergeable_channels: &mut HashMap<Par, MergeType>,
     ) -> Result<bool, CasperError> {
         let mut pre_charge_deploy = PreChargeDeploy {
             charge_amount: processed_deploy.deploy.data.total_phlo_charge(),
@@ -331,7 +332,7 @@ impl ReplayRuntimeOps {
     async fn process_deploy_without_cost_accounting(
         &mut self,
         processed_deploy: &ProcessedDeploy,
-        mergeable_channels: &mut HashSet<Par>,
+        mergeable_channels: &mut HashMap<Par, MergeType>,
     ) -> Result<bool, CasperError> {
         self.run_user_deploy(processed_deploy, mergeable_channels)
             .await
@@ -341,7 +342,7 @@ impl ReplayRuntimeOps {
     async fn run_user_deploy(
         &mut self,
         processed_deploy: &ProcessedDeploy,
-        mergeable_channels: &mut HashSet<Par>,
+        mergeable_channels: &mut HashMap<Par, MergeType>,
     ) -> Result<(EvaluateResult, bool), CasperError> {
         // Mirror RuntimeOps behavior: rollback failed user deploy via soft checkpoint
         // so pre-charge context remains available for refund replay.
@@ -363,7 +364,10 @@ impl ReplayRuntimeOps {
                 &processed_deploy.deploy.sig,
                 &user_eval_result.errors,
             );
-            self.runtime_ops.runtime.revert_to_soft_checkpoint(fallback).await;
+            self.runtime_ops
+                .runtime
+                .revert_to_soft_checkpoint(fallback)
+                .await;
         } else {
             mergeable_channels.extend(user_eval_result.mergeable.drain());
         }
@@ -420,6 +424,7 @@ impl ReplayRuntimeOps {
                     initial_rand: system_deploy_util::generate_slash_deploy_random_seed(
                         block_data.sender.bytes.clone(),
                         block_data.seq_num,
+                        invalid_block_hash,
                     ),
                 };
 
@@ -434,11 +439,13 @@ impl ReplayRuntimeOps {
                 let checkpoint_mergeable_start = Instant::now();
                 let map = self
                     .runtime_ops
-                    .get_number_channels_data(&eval_result.mergeable).await?;
+                    .get_number_channels_data(&eval_result.mergeable)
+                    .await?;
                 metrics::histogram!(BLOCK_REPLAY_SYSDEPLOY_CHECKPOINT_MERGEABLE_TIME_METRIC, "source" => CASPER_METRICS_SOURCE)
                     .record(checkpoint_mergeable_start.elapsed().as_secs_f64());
 
-                self.check_replay_data_with_fix(eval_result.errors.is_empty()).await?;
+                self.check_replay_data_with_fix(eval_result.errors.is_empty())
+                    .await?;
                 Ok(map)
             }
 
@@ -457,17 +464,20 @@ impl ReplayRuntimeOps {
                     .replay_system_deploy_internal(&mut close_block_deploy, &None)
                     .await?;
 
-                self.discard_event_log("close-block-system-deploy", false).await;
+                self.discard_event_log("close-block-system-deploy", false)
+                    .await;
 
                 // Time checkpoint-mergeable operation for close block deploy
                 let checkpoint_mergeable_start = Instant::now();
                 let map = self
                     .runtime_ops
-                    .get_number_channels_data(&eval_result.mergeable).await?;
+                    .get_number_channels_data(&eval_result.mergeable)
+                    .await?;
                 metrics::histogram!(BLOCK_REPLAY_SYSDEPLOY_CHECKPOINT_MERGEABLE_TIME_METRIC, "source" => CASPER_METRICS_SOURCE)
                     .record(checkpoint_mergeable_start.elapsed().as_secs_f64());
 
-                self.check_replay_data_with_fix(eval_result.errors.is_empty()).await?;
+                self.check_replay_data_with_fix(eval_result.errors.is_empty())
+                    .await?;
                 Ok(map)
             }
 
@@ -570,19 +580,24 @@ impl ReplayRuntimeOps {
     {
         self.rig_system_deploy(processed_system_deploy).await?;
         let (value, eval_res) = action().await?;
-        self.check_replay_data_with_fix(eval_res.errors.is_empty()).await?;
+        self.check_replay_data_with_fix(eval_res.errors.is_empty())
+            .await?;
         Ok((value, eval_res))
     }
 
     pub async fn rig(&self, processed_deploy: &ProcessedDeploy) -> Result<(), CasperError> {
         let rig_start = Instant::now();
-        let result = self.runtime_ops.runtime.rig(
-            processed_deploy
-                .deploy_log
-                .iter()
-                .map(event_converter::to_rspace_event)
-                .collect(),
-        ).await?;
+        let result = self
+            .runtime_ops
+            .runtime
+            .rig(
+                processed_deploy
+                    .deploy_log
+                    .iter()
+                    .map(event_converter::to_rspace_event)
+                    .collect(),
+            )
+            .await?;
         metrics::histogram!(BLOCK_REPLAY_SYSDEPLOY_RIG_TIME_METRIC, "source" => CASPER_METRICS_SOURCE)
             .record(rig_start.elapsed().as_secs_f64());
         Ok(result)
@@ -597,12 +612,16 @@ impl ReplayRuntimeOps {
             ProcessedSystemDeploy::Failed { event_list, .. } => event_list,
         };
 
-        Ok(self.runtime_ops.runtime.rig(
-            event_list
-                .iter()
-                .map(|event: &Event| event_converter::to_rspace_event(&event))
-                .collect(),
-        ).await?)
+        Ok(self
+            .runtime_ops
+            .runtime
+            .rig(
+                event_list
+                    .iter()
+                    .map(|event: &Event| event_converter::to_rspace_event(&event))
+                    .collect(),
+            )
+            .await?)
     }
 
     pub async fn check_replay_data_with_fix(

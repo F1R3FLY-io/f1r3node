@@ -6,22 +6,22 @@
 
 pub mod commandline;
 pub mod config_check;
-pub mod kamon;
 pub mod model;
 
 pub use commandline::Options;
-pub use kamon::KamonConf;
 pub use model::{NodeConf, Profile};
+
+/// Embedded HOCON defaults — what every node starts from before applying
+/// the optional `<data-dir>/rnode.conf` override and CLI flags. Baked in
+/// at compile time so the binary is self-contained (no `DEFAULT_DIR` env
+/// var, no on-disk `node/src/main/resources/defaults.conf` lookup).
+const EMBEDDED_DEFAULTS: &str = include_str!("../../main/resources/defaults.conf");
 
 /// Configuration building and parsing functionality
 pub mod builder {
     use super::*;
     use crate::rust::configuration::commandline::ConfigMapper;
-    use std::{
-        collections::HashMap,
-        env,
-        path::{Path, PathBuf},
-    };
+    use std::{collections::HashMap, env, path::PathBuf};
 
     /// Builds Configuration instance from CLI options.
     /// If config file is provided as part of CLI options, it shall be parsed and merged
@@ -31,11 +31,10 @@ pub mod builder {
     /// * `options` - CLI options
     ///
     /// # Returns
-    /// * `Result<(NodeConf, Profile, Option<PathBuf>, KamonConf)>` - Configuration tuple
+    /// * `Result<(NodeConf, Profile, Option<PathBuf>)>` - Configuration tuple
     pub fn build(
-        default_dir: &Path,
         options: Options,
-    ) -> eyre::Result<(NodeConf, Profile, Option<PathBuf>, KamonConf)> {
+    ) -> eyre::Result<(NodeConf, Profile, Option<PathBuf>)> {
         let profile = options
             .profile
             .as_ref()
@@ -65,8 +64,6 @@ pub mod builder {
                 )
             });
 
-        let default_config_file = default_dir.join("defaults.conf");
-
         let config_file: Option<PathBuf> = if config_file_path.exists() {
             Some(config_file_path)
         } else {
@@ -75,13 +72,11 @@ pub mod builder {
 
         // Build configuration from multiple sources with proper precedence:
         // 1. CLI options (highest priority)
-        // 2. Config file
-        // 3. Default configuration (lowest priority)
+        // 2. Config file (`<data-dir>/rnode.conf` or `--config-file <path>`)
+        // 3. Embedded defaults baked into the binary (lowest priority)
+        let default_config = hocon::HoconLoader::new().load_str(super::EMBEDDED_DEFAULTS)?;
 
-        // Loading the default configuration
-        let default_config = hocon::HoconLoader::new().load_file(default_config_file)?;
-
-        // Merging the default configuration with the data directory config
+        // Merging the embedded defaults with the optional override
         let merged_config = config_file
             .as_ref()
             .map(|config_file| default_config.load_file(config_file))
@@ -116,10 +111,9 @@ pub mod builder {
         // Validate configuration
         validate_config(&node_conf)?;
 
-        let kamon_config = load_kamon_config(default_dir, &data_dir)?;
         let node_conf = check_dev_mode(node_conf);
 
-        Ok((node_conf, profile, config_file, kamon_config))
+        Ok((node_conf, profile, config_file))
     }
 
     /// Validate configuration parameters
@@ -150,31 +144,6 @@ pub mod builder {
             .map_err(|e| eyre::eyre!("native token config invalid: {}", e))?;
 
         Ok(())
-    }
-
-    /// Load Kamon configuration
-    fn load_kamon_config(default_dir: &Path, data_dir: &Path) -> eyre::Result<KamonConf> {
-        let default_kamon_config_file = default_dir.join("kamon.conf");
-
-        let default_kamon_config =
-            hocon::HoconLoader::new().load_file(default_kamon_config_file)?;
-
-        let kamon_config_file = data_dir.join("kamon.conf");
-
-        let kamon_config_file: Option<PathBuf> = if kamon_config_file.exists() {
-            Some(kamon_config_file)
-        } else {
-            None
-        };
-
-        // Merging the default configuration with the data directory config
-        let merged_config = kamon_config_file
-            .map(|config_file| default_kamon_config.load_file(config_file))
-            .unwrap_or(Ok(default_kamon_config))?;
-
-        let kamon_conf: KamonConf = merged_config.resolve()?;
-
-        Ok(kamon_conf)
     }
 
     /// Check dev mode and adjust configuration accordingly

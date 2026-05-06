@@ -12,10 +12,8 @@ use casper::rust::{
     errors::CasperError,
     rholang::runtime::RuntimeOps,
     util::rholang::{
-        costacc::pre_charge_deploy::PreChargeDeploy,
-        costacc::refund_deploy::RefundDeploy,
-        runtime_manager::RuntimeManager,
-        system_deploy::SystemDeployTrait,
+        costacc::pre_charge_deploy::PreChargeDeploy, costacc::refund_deploy::RefundDeploy,
+        runtime_manager::RuntimeManager, system_deploy::SystemDeployTrait,
         system_deploy_result::SystemDeployResult,
     },
 };

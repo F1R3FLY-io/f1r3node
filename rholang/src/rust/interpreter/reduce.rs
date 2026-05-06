@@ -26,6 +26,7 @@ use models::rust::utils::{
     new_elist_par, new_emap_par, new_gint_expr, new_gint_par, new_gstring_par, union,
 };
 use prost::Message;
+use rspace_plus_plus::rspace::merger::merging_logic::MergeType;
 use rspace_plus_plus::rspace::util::unpack_option_with_peek;
 use std::collections::{BTreeMap, BTreeSet};
 use std::collections::{HashMap, HashSet};
@@ -114,8 +115,8 @@ pub struct DebruijnInterpreter {
     pub space: RhoISpace,
     pub dispatcher: RhoDispatch,
     pub urn_map: Arc<HashMap<String, Par>>,
-    pub merge_chs: Arc<RwLock<HashSet<Par>>>,
-    pub mergeable_tag_name: Par,
+    pub merge_chs: Arc<RwLock<HashMap<Par, MergeType>>>,
+    pub mergeable_tags: Arc<HashMap<Par, MergeType>>,
     pub cost: _cost,
     pub substitute: Substitute,
 }
@@ -772,17 +773,13 @@ impl DebruijnInterpreter {
     /* Collect mergeable channels */
 
     async fn update_mergeable_channels(&self, chan: &Par) -> () {
-        let is_mergeable = self.is_mergeable_channel(chan);
-
-        if is_mergeable {
-            {
-                let mut merge_chs_write = self.merge_chs.write().await;
-                merge_chs_write.insert(chan.clone());
-            }
+        if let Some(merge_type) = self.is_mergeable_channel(chan) {
+            let mut merge_chs_write = self.merge_chs.write().await;
+            merge_chs_write.insert(chan.clone(), merge_type);
         }
     }
 
-    fn is_mergeable_channel(&self, chan: &Par) -> bool {
+    fn is_mergeable_channel(&self, chan: &Par) -> Option<MergeType> {
         let tuple_elms: Vec<Par> = chan
             .exprs
             .iter()
@@ -795,9 +792,45 @@ impl DebruijnInterpreter {
             })
             .collect();
 
-        tuple_elms
+        let result = tuple_elms
             .first()
-            .map_or(false, |head| head == &self.mergeable_tag_name)
+            .and_then(|head| self.mergeable_tags.get(head).copied());
+
+        // Diagnostic trace: every channel write/consume invokes this. Logs
+        // distinguish (a) tuple channels that match a registered tag (mergeable),
+        // (b) tuple channels with a head that ISN'T in the tag registry
+        // (potential bitmask-tag-binding miss), and (c) non-tuple channels
+        // (most channels). Configure with `RUST_LOG=f1r3fly.merge.tag_check=trace`.
+        if !tuple_elms.is_empty() {
+            match result {
+                Some(mt) => tracing::trace!(
+                    target: "f1r3fly.merge.tag_check",
+                    "mergeable channel detected: merge_type={:?}",
+                    mt,
+                ),
+                None => {
+                    use prost::Message;
+                    let head_bytes = tuple_elms[0].encode_to_vec();
+                    let head_hex: String = head_bytes.iter().map(|b| format!("{:02x}", b)).collect();
+                    let tag_hexes: Vec<String> = self
+                        .mergeable_tags
+                        .keys()
+                        .map(|k| {
+                            let bs = k.encode_to_vec();
+                            bs.iter().map(|b| format!("{:02x}", b)).collect()
+                        })
+                        .collect();
+                    tracing::trace!(
+                        target: "f1r3fly.merge.tag_check",
+                        "tuple channel with non-tag head: head_hex={}, registered_tag_hexes={:?}",
+                        head_hex,
+                        tag_hexes,
+                    );
+                }
+            }
+        }
+
+        result
     }
 
     fn aggregate_evaluator_errors(
@@ -1152,7 +1185,19 @@ impl DebruijnInterpreter {
                     }
                 } else {
                     match self.urn_map.get(&urn) {
-                        Some(p) => Ok(new_env.put(p.clone())),
+                        Some(p) => {
+                            if urn == "rho:system:bitmaskMergeableTag" {
+                                use prost::Message;
+                                let bytes = p.encode_to_vec();
+                                let hex: String = bytes.iter().map(|b| format!("{:02x}", b)).collect();
+                                tracing::info!(
+                                    target: "f1r3fly.merge.tag_check",
+                                    "URI lookup at deploy: rho:system:bitmaskMergeableTag -> Par hex={}",
+                                    hex,
+                                );
+                            }
+                            Ok(new_env.put(p.clone()))
+                        }
                         None => Err(InterpreterError::ReduceError(format!(
                             "Unknown urn for new: {}",
                             urn
@@ -6863,8 +6908,8 @@ impl DebruijnInterpreter {
     pub fn new(
         space: RhoISpace,
         urn_map: Arc<HashMap<String, Par>>,
-        merge_chs: Arc<RwLock<HashSet<Par>>>,
-        mergeable_tag_name: Par,
+        merge_chs: Arc<RwLock<HashMap<Par, MergeType>>>,
+        mergeable_tags: Arc<HashMap<Par, MergeType>>,
         cost: _cost,
     ) -> Arc<Self> {
         let reducer_cell = Arc::new(std::sync::OnceLock::new());
@@ -6878,7 +6923,7 @@ impl DebruijnInterpreter {
             dispatcher: dispatcher.clone(),
             urn_map,
             merge_chs,
-            mergeable_tag_name,
+            mergeable_tags,
             cost: cost.clone(),
             substitute: Substitute { cost: cost.clone() },
         });

@@ -49,7 +49,7 @@ impl FailingResultCollectorSpec {
     }
 
     async fn result() -> TestResult {
-        let test_object = CompiledRholangSource::load_source("FailingResultCollectorTest.rho")
+        let test_object = crate::util::rholang::test_rho_loader::load_test_rho("FailingResultCollectorTest.rho")
             .expect("Failed to load FailingResultCollectorTest.rho");
 
         let compiled = CompiledRholangSource::new(

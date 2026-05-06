@@ -1,4 +1,3 @@
-use models::rhoapi::Par;
 use rholang::rust::interpreter::errors::InterpreterError;
 use rholang::rust::interpreter::external_services::ExternalServices;
 use rholang::rust::interpreter::grpc_client_service::GrpcClientService;
@@ -42,7 +41,7 @@ where
 
     let runtime = rho_runtime::create_runtime_from_kv_store(
         rspace_store,
-        Par::default(),
+        Arc::new(std::collections::HashMap::new()),
         false,
         &mut Vec::new(),
         Arc::new(Box::new(Matcher)),

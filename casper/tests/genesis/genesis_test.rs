@@ -86,7 +86,7 @@ where
     let runtime_manager = RuntimeManager::create_with_store(
         r_store,
         m_store,
-        Genesis::non_negative_mergeable_tag_name(),
+        std::sync::Arc::new(Genesis::default_mergeable_tags()),
         rholang::rust::interpreter::external_services::ExternalServices::noop(),
     );
 
@@ -110,6 +110,7 @@ fn mk_casper_snapshot(dag: KeyValueDagRepresentation) -> CasperSnapshot {
         justifications: Default::default(),
         invalid_blocks: HashMap::new(),
         deploys_in_scope: Default::default(),
+        rejected_in_scope: Default::default(),
         max_block_num: 0,
         max_seq_nums: Default::default(),
         on_chain_state: OnChainCasperState {
@@ -416,6 +417,7 @@ async fn genesis_from_input_files_should_create_a_valid_genesis_block() {
                     &block_store,
                     &mut mk_casper_snapshot(dag),
                     &mut runtime_manager,
+                    None,
                 )
                 .await
                 .expect("validate_block_checkpoint should succeed");

@@ -740,6 +740,8 @@ mod tests {
                 influxdb_udp: false,
                 zipkin: false,
                 sigar: false,
+                tick_interval: std::time::Duration::from_secs(10),
+                influxdb_endpoint: crate::rust::configuration::model::InfluxDbEndpoint::default(),
             },
             dev_mode: false,
             dev: crate::rust::configuration::model::DevConf {

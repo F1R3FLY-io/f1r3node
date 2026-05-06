@@ -65,7 +65,7 @@ impl TestDeployDataFixture {
 
         let mut runtime = create_rho_runtime(
             space,
-            Par::default(),
+            Arc::new(std::collections::HashMap::new()),
             true,
             &mut Vec::new(),
             ExternalServices::noop(),

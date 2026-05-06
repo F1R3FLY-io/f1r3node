@@ -642,11 +642,40 @@ impl BlockDagKeyValueStorage {
             PrettyPrinter::build_string_block_message(&block, true)
         );
 
+        // Latest-message updates are NOT gated on `invalid`. Equivocation blocks
+        // (and other invalid blocks) advance the sender's latest message and
+        // register newly-bonded validators just like valid blocks. This matches
+        // the Scala source-of-truth (`BlockDagKeyValueStorage.scala`, where
+        // `newLatestMessages` and `shouldAddAsLatest` never reference `invalid`).
+        //
+        // Safety argument:
+        //   - Fork choice and finalization are unaffected. Parent selection filters
+        //     `latest_messages` through `invalid_latest_messages_from_hashes` to
+        //     produce `valid_latest_msgs` (see
+        //     `multi_parent_casper_impl.rs::create_block_data`, ~line 160). Only
+        //     valid-latest validators contribute candidate parents; invalid blocks
+        //     therefore cannot become parents, cannot enter the ancestor chain of
+        //     any parent, and cannot influence the Estimator's fork-choice scoring
+        //     or finalization depth.
+        //   - Slashing requires invalid blocks to BE in the LMM. The equivocation
+        //     detector reads `invalid_latest_messages` and feeds it to
+        //     `prepare_slashing_deploys`. The pre-fix `if invalid { return empty }`
+        //     guard had no Scala counterpart and silently disabled the slashing
+        //     pipeline (no slashes ever issued, equivocators never punished).
+        //   - `justification_follows` validation requires every bonded validator
+        //     to appear in a new block's justifications. Without the LMM advancing
+        //     on invalid blocks, validators whose latest is invalid would be
+        //     missing from the creator's view and `justification_follows` would
+        //     reject otherwise-valid blocks.
+        //
+        // Companion sites that depend on this invariant:
+        //   - `multi_parent_casper_impl.rs::create_block_data` (justifications
+        //     and max_seq_nums both read the unfiltered `latest_msgs_hashes`).
+        //   - The
+        //     `dag_storage_should_advance_latest_message_to_invalid_block_from_same_sender`
+        //     test in `block-storage/tests/block_dag_storage_test.rs` exercises
+        //     this directly.
         let new_latest_messages = || -> Result<HashMap<Validator, BlockHash>, KvStoreError> {
-            if invalid {
-                return Ok(HashMap::new());
-            }
-
             let block_hash: BlockHash = block.block_hash.clone();
 
             let newly_bonded_set: HashSet<_> = block
@@ -734,7 +763,7 @@ impl BlockDagKeyValueStorage {
                     .put_one(block_hash.clone().into(), block_metadata)?;
             }
 
-            let new_latest_from_sender = if !sender_is_empty && !invalid {
+            let new_latest_from_sender = if !sender_is_empty {
                 // Add LM either if there is no existing message for the sender, or if sequence number advances
                 // - assumes block sender is not valid hash
                 if match self
@@ -818,8 +847,11 @@ impl BlockDagKeyValueStorage {
 
                 let _lock_guard = self.global_lock.lock().unwrap();
                 let mut block_metadata_index_guard = self.block_metadata_index.write().unwrap();
-                block_metadata_index_guard
-                    .record_finalized(directly_finalized_hash.clone(), indirectly_finalized, ft_value)
+                block_metadata_index_guard.record_finalized(
+                    directly_finalized_hash.clone(),
+                    indirectly_finalized,
+                    ft_value,
+                )
             };
 
         let mut effect_applied: HashSet<BlockHash> = HashSet::new();
@@ -877,10 +909,7 @@ impl BlockDagKeyValueStorage {
         )))
     }
 
-    fn propagate_ft_to_finalized_blocks(
-        &self,
-        ft_value: f32,
-    ) -> Result<(), KvStoreError> {
+    fn propagate_ft_to_finalized_blocks(&self, ft_value: f32) -> Result<(), KvStoreError> {
         let _lock_guard = self.global_lock.lock().unwrap();
 
         // Update ALL finalized blocks with lower FT, not just ancestors of the

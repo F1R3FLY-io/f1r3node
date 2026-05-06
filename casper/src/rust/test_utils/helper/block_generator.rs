@@ -81,6 +81,7 @@ async fn compute_block_checkpoint(
         runtime_manager,
         BlockData::from_block(block),
         HashMap::new(),
+        None,
     )
     .await?;
 

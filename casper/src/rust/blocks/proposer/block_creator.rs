@@ -2,7 +2,10 @@
 
 use prost::bytes::Bytes;
 use std::sync::{Arc, Mutex};
-use std::{collections::HashSet, time::SystemTime};
+use std::{
+    collections::{HashMap, HashSet},
+    time::SystemTime,
+};
 use tracing;
 
 use block_storage::rust::{
@@ -10,11 +13,13 @@ use block_storage::rust::{
     key_value_block_store::KeyValueBlockStore,
 };
 use crypto::rust::{private_key::PrivateKey, signatures::signed::Signed};
+use models::rust::block_hash::BlockHash;
 use models::rust::casper::pretty_printer;
 use models::rust::casper::protocol::casper_message::{
     BlockMessage, Body, Bond, DeployData, F1r3flyState, Header, Justification, ProcessedDeploy,
     ProcessedSystemDeploy, RejectedDeploy,
 };
+use models::rust::validator::Validator;
 
 use rholang::rust::interpreter::system_processes::BlockData;
 
@@ -45,21 +50,25 @@ use crate::rust::{
  *  3. Extract all valid deploys that aren't already in all ancestors of S (the parents).
  *  4. Create a new block that contains the deploys from the previous step.
  */
-struct PreparedUserDeploys {
-    deploys: HashSet<Signed<DeployData>>,
-    effective_cap: usize,
-    cap_hit: bool,
+pub struct PreparedUserDeploys {
+    pub deploys: HashSet<Signed<DeployData>>,
+    pub effective_cap: usize,
+    pub cap_hit: bool,
 }
 
 fn deploy_selection_reserve_tail_enabled() -> bool {
     true
 }
 
-async fn prepare_user_deploys(
+pub async fn prepare_user_deploys(
     casper_snapshot: &CasperSnapshot,
     block_number: i64,
     current_time_millis: i64,
     deploy_storage: Arc<Mutex<KeyValueDeployStorage>>,
+    rejected_deploy_buffer: Arc<
+        Mutex<block_storage::rust::deploy::key_value_rejected_deploy_buffer::KeyValueRejectedDeployBuffer>,
+    >,
+    block_store: &KeyValueBlockStore,
 ) -> Result<PreparedUserDeploys, CasperError> {
     let mut deploy_storage_guard = deploy_storage
         .lock()
@@ -67,6 +76,28 @@ async fn prepare_user_deploys(
 
     // Read all unfinalized deploys from storage
     let unfinalized: HashSet<Signed<DeployData>> = deploy_storage_guard.read_all()?;
+
+    // Read recovered deploys from the rejected-deploy buffer. These were dropped
+    // by a prior merge's conflict resolution and are now candidates for
+    // re-inclusion (fresh execution against the current merged base).
+    let recovered: HashSet<Signed<DeployData>> = {
+        let buffer_guard = rejected_deploy_buffer
+            .lock()
+            .map_err(|e| CasperError::LockError(e.to_string()))?;
+        buffer_guard.read_all()?
+    };
+
+    let recovered_count = recovered.len();
+    let unfinalized: HashSet<Signed<DeployData>> = unfinalized
+        .into_iter()
+        .chain(recovered.into_iter())
+        .collect();
+    if recovered_count > 0 {
+        tracing::info!(
+            "Prepare user deploys: {} recovered from rejected-deploy buffer",
+            recovered_count
+        );
+    }
 
     let earliest_block_number =
         block_number - casper_snapshot.on_chain_state.shard_conf.deploy_lifespan;
@@ -98,15 +129,80 @@ async fn prepare_user_deploys(
 
     let valid_count = valid.len();
 
-    // Remove deploys that are already in scope to prevent resending
+    // Remove deploys that are already in scope to prevent resending.
+    //
+    // Exception: a deploy whose sig appears in a descendant's `rejected_deploys`
+    // is eligible for re-inclusion — its state effects never made it into
+    // canonical state, so re-proposing it is correct.
+    //
+    // The exemption MUST decline when the rejection is non-canonical: a sibling
+    // block can put the sig in `rejected_in_scope` (the ancestor scan unions
+    // all blocks' `rejected_deploys`) while the deploy's effects are already
+    // in canonical state via a different chain. Re-including in that case
+    // would be double-execution and the resulting block would be flagged
+    // `InvalidRepeatDeploy` by `validate.rs::repeat_deploy` — too late to
+    // avoid the slashable proposal. Mirror the validator-side gate here.
+    let exemption_candidates: HashSet<Bytes> = valid
+        .iter()
+        .filter(|d| {
+            casper_snapshot.deploys_in_scope.contains(&d.sig)
+                && casper_snapshot.rejected_in_scope.contains(&d.sig)
+        })
+        .map(|d| d.sig.clone())
+        .collect();
+
+    let stale_recoveries: HashSet<Bytes> = if exemption_candidates.is_empty() {
+        HashSet::new()
+    } else {
+        use crate::rust::api::deploy_finalization_status::{
+            resolve_batch, DeployFinalizationState,
+        };
+        let lifespan = casper_snapshot.on_chain_state.shard_conf.deploy_lifespan;
+        match resolve_batch(
+            &casper_snapshot.dag,
+            block_store,
+            lifespan,
+            &exemption_candidates,
+        ) {
+            Ok(statuses) => statuses
+                .into_iter()
+                .filter_map(|(sig, st)| match st.state {
+                    DeployFinalizationState::Finalized => Some(sig),
+                    _ => None,
+                })
+                .collect(),
+            // Resolver failure: decline the exemption for all candidates
+            // rather than risk double-execution. They'll be retried next cycle.
+            Err(err) => {
+                tracing::warn!(
+                    "prepare_user_deploys: resolve_batch failed: {} — declining \
+                     recovery exemption for all {} candidate(s) this cycle",
+                    err,
+                    exemption_candidates.len()
+                );
+                exemption_candidates.clone()
+            }
+        }
+    };
+
     let already_in_scope: Vec<Signed<DeployData>> = valid
         .iter()
-        .filter(|deploy| casper_snapshot.deploys_in_scope.contains(&deploy.sig))
+        .filter(|deploy| {
+            let sig = &deploy.sig;
+            casper_snapshot.deploys_in_scope.contains(sig)
+                && (!casper_snapshot.rejected_in_scope.contains(sig)
+                    || stale_recoveries.contains(sig))
+        })
         .map(|deploy| (*deploy).clone())
         .collect();
     let valid_unique: HashSet<Signed<DeployData>> = valid
         .into_iter()
-        .filter(|deploy| !casper_snapshot.deploys_in_scope.contains(&deploy.sig))
+        .filter(|deploy| {
+            let sig = &deploy.sig;
+            !casper_snapshot.deploys_in_scope.contains(sig)
+                || (casper_snapshot.rejected_in_scope.contains(sig)
+                    && !stale_recoveries.contains(sig))
+        })
         .collect();
 
     let already_in_scope_count = already_in_scope.len();
@@ -172,14 +268,28 @@ async fn prepare_user_deploys(
         .collect();
     if !all_expired.is_empty() {
         tracing::info!(
-            "Removing {} expired deploy(s) from storage",
+            "Removing {} expired deploy(s) from storage and rejected-deploy buffer",
             all_expired.len()
         );
         let expired_list: Vec<Signed<DeployData>> = all_expired.into_iter().cloned().collect();
-        deploy_storage_guard.remove(expired_list)?;
+        deploy_storage_guard.remove(expired_list.clone())?;
+
+        // Also purge expired sigs from the rejected-deploy buffer.
+        // Reads above already filter expired sigs out of `valid_unique`, so
+        // they don't get re-proposed, but on-disk LMDB entries persist
+        // unless explicitly removed. Without this, a sustained-load
+        // adversary that keeps generating conflicts can grow the buffer
+        // unbounded.
+        let mut buffer_guard = rejected_deploy_buffer
+            .lock()
+            .map_err(|e| CasperError::LockError(e.to_string()))?;
+        buffer_guard.remove(expired_list)?;
     }
 
-    let max_deploys = casper_snapshot.on_chain_state.shard_conf.max_user_deploys_per_block as usize;
+    let max_deploys = casper_snapshot
+        .on_chain_state
+        .shard_conf
+        .max_user_deploys_per_block as usize;
     let max_user_deploys = max_deploys;
     if valid_unique.len() <= max_user_deploys {
         return Ok(PreparedUserDeploys {
@@ -288,6 +398,31 @@ fn collect_self_chain_deploy_sigs(
     Ok(deploy_sigs)
 }
 
+/// Pure-function filter extracted for unit testing. Keeps an
+/// invalid-latest-message entry only if the equivocator is still
+/// slashable in the parent post-state — i.e., bonded with positive
+/// stake AND in the PoS active-validator set. The active-validator
+/// check matters when bond floor > 0: a validator slashed in a parent
+/// retains stake at the floor, satisfying the bonded check, but PoS
+/// has removed them from active_validators so they shouldn't be
+/// re-slashed. Without this, the proposer emits a redundant SlashDeploy
+/// every block until the equivocator's invalid latest message ages
+/// out of the DAG view, saved by PoS slash idempotency but inflating
+/// body and wasting execution.
+fn filter_slashable_invalid_messages(
+    invalid_latest_messages: HashMap<Validator, BlockHash>,
+    bonds_map: &HashMap<Validator, i64>,
+    active_validators: &[Validator],
+) -> Vec<(Validator, BlockHash)> {
+    invalid_latest_messages
+        .into_iter()
+        .filter(|(validator, _)| {
+            bonds_map.get(validator).copied().unwrap_or(0) > 0
+                && active_validators.contains(validator)
+        })
+        .collect()
+}
+
 async fn prepare_slashing_deploys(
     casper_snapshot: &CasperSnapshot,
     validator_identity: &ValidatorIdentity,
@@ -295,32 +430,22 @@ async fn prepare_slashing_deploys(
 ) -> Result<Vec<SlashDeploy>, CasperError> {
     let self_id = Bytes::copy_from_slice(&validator_identity.public_key.bytes);
 
-    // Get invalid latest messages from DAG
     let invalid_latest_messages = casper_snapshot.dag.invalid_latest_messages()?;
+    let slashable_invalid_messages = filter_slashable_invalid_messages(
+        invalid_latest_messages,
+        &casper_snapshot.on_chain_state.bonds_map,
+        &casper_snapshot.on_chain_state.active_validators,
+    );
 
-    // Filter to only include bonded validators
-    let bonded_invalid_messages: Vec<_> = invalid_latest_messages
-        .into_iter()
-        .filter(|(validator, _)| {
-            casper_snapshot
-                .on_chain_state
-                .bonds_map
-                .get(validator)
-                .map(|stake| *stake > 0)
-                .unwrap_or(false)
-        })
-        .collect();
-
-    // TODO: Add `slashingDeploys` to DeployStorage - OLD
-    // Create SlashDeploy objects
     let mut slashing_deploys = Vec::new();
-    for (_, invalid_block_hash) in bonded_invalid_messages {
+    for (_, invalid_block_hash) in slashable_invalid_messages {
         let slash_deploy = SlashDeploy {
             invalid_block_hash: invalid_block_hash.clone(),
             pk: validator_identity.public_key.clone(),
             initial_rand: system_deploy_util::generate_slash_deploy_random_seed(
                 self_id.clone(),
                 seq_num,
+                &invalid_block_hash,
             ),
         };
 
@@ -385,6 +510,7 @@ pub async fn create(
     validator_identity: &ValidatorIdentity,
     dummy_deploy_opt: Option<(PrivateKey, String)>,
     deploy_storage: Arc<Mutex<KeyValueDeployStorage>>,
+    rejected_deploy_buffer: Arc<Mutex<block_storage::rust::deploy::key_value_rejected_deploy_buffer::KeyValueRejectedDeployBuffer>>,
     runtime_manager: &mut RuntimeManager,
     block_store: &mut KeyValueBlockStore,
     allow_empty_blocks: bool,
@@ -438,6 +564,8 @@ pub async fn create(
             next_block_num,
             now_millis,
             deploy_storage.clone(),
+            rejected_deploy_buffer.clone(),
+            block_store,
         )
         .await?;
         let mut v = prepared.deploys;
@@ -445,7 +573,16 @@ pub async fn create(
             collect_self_chain_deploy_sigs(casper_snapshot, validator_identity, block_store)?;
         if !self_chain_deploy_sigs.is_empty() {
             let before = v.len();
-            v.retain(|deploy| !self_chain_deploy_sigs.contains(&deploy.sig));
+            // A sig in the proposer's self-chain is normally a duplicate and
+            // must be filtered out. The exception is a sig in
+            // `rejected_in_scope`: the merge engine conflict-rejected it, so
+            // its effects never landed in canonical state and re-proposing
+            // it is correct. Mirror the same exemption that
+            // `prepare_user_deploys` applies upstream.
+            v.retain(|deploy| {
+                !self_chain_deploy_sigs.contains(&deploy.sig)
+                    || casper_snapshot.rejected_in_scope.contains(&deploy.sig)
+            });
             let skipped = before.saturating_sub(v.len());
             if skipped > 0 {
                 tracing::info!(
@@ -493,24 +630,87 @@ pub async fn create(
     // Add dummy deploys
     all_deploys.extend(dummy_deploys);
 
+    // Merge the parents once up front. Two reasons to do this before the
+    // empty-block skip check below:
+    //   1. To discover slashes that were rejected by cost-optimal merge
+    //      resolution — those slashes must be re-issued by this proposer
+    //      so the slash effect lands in the merge block regardless of the
+    //      merge's rejection decision.
+    //   2. To include rejected-slash recovery in the "do we have work?"
+    //      decision. A heartbeat-disabled proposer that wakes with no user
+    //      deploys and no own-detected slashes would otherwise skip,
+    //      stranding any merge-rejected slashes from parent merging.
+    // The merge result is cached so the downstream compute_deploys_checkpoint
+    // call hits the cache.
+    let merge_pre_info = interpreter_util::compute_parents_post_state(
+        block_store,
+        parents.clone(),
+        casper_snapshot,
+        runtime_manager,
+        None,
+        Some(&rejected_deploy_buffer),
+    )?;
+    let (_pre_state, _rejected_user_sigs, rejected_slashes) = merge_pre_info;
+
+    // Union own slashes with merge-rejected slashes, dedup by
+    // `invalid_block_hash`. Own detections take priority — any
+    // merge-rejected slash for an equivocator already covered by
+    // prepare_slashing_deploys is dropped. `filter_recoverable` also
+    // collapses multiple rejected slashes for the same equivocator
+    // (e.g., from different original issuers) down to a single entry.
+    let own_invalid_block_hashes = slashing_deploys
+        .iter()
+        .map(|sd| sd.invalid_block_hash.clone());
+    let recovered_rejected_slashes = crate::rust::merging::rejected_slash::filter_recoverable(
+        rejected_slashes,
+        own_invalid_block_hashes,
+    );
+
     // Check if we have any new work to process.
     // If empty blocks are disabled, skip closeBlock-only proposals to avoid no-op checkpoint cost.
     // If empty blocks are enabled (heartbeat/liveness mode), continue and emit closeBlock.
+    // Recovered rejected slashes count as work — without this check, a
+    // heartbeat-disabled proposer would silently drop merge-rejected slashes
+    // on a wake with no other pending work.
     let has_slashing_deploys = !slashing_deploys.is_empty();
-    if all_deploys.is_empty() && !has_slashing_deploys {
-        if !allow_empty_blocks {
-            tracing::info!(
-                "Skipping empty block creation: no new user deploys and no slashing deploys"
-            );
-            return Ok(BlockCreatorResult::NoNewDeploys);
-        }
+    let has_recovered_rejected_slashes = !recovered_rejected_slashes.is_empty();
+    if all_deploys.is_empty()
+        && !has_slashing_deploys
+        && !has_recovered_rejected_slashes
+        && !allow_empty_blocks
+    {
+        tracing::info!(
+            "Skipping empty block creation: no new user deploys, no slashing deploys, no merge-rejected slashes to recover"
+        );
+        return Ok(BlockCreatorResult::NoNewDeploys);
     }
 
     // Make sure closeBlock is the last system Deploy
     let mut system_deploys_converted: Vec<SystemDeployEnum> = Vec::new();
 
-    // Add slashing deploys
+    // Add own-detected slashes
     for slash_deploy in slashing_deploys {
+        system_deploys_converted.push(SystemDeployEnum::Slash(slash_deploy));
+    }
+
+    // Re-issue slashes that the merge dropped. The proposer signs these
+    // under its own identity, matching the existing slashing convention.
+    let self_id = Bytes::copy_from_slice(&validator_identity.public_key.bytes);
+    for rs in &recovered_rejected_slashes {
+        let slash_deploy = SlashDeploy {
+            invalid_block_hash: rs.invalid_block_hash.clone(),
+            pk: validator_identity.public_key.clone(),
+            initial_rand: system_deploy_util::generate_slash_deploy_random_seed(
+                self_id.clone(),
+                next_seq_num,
+                &rs.invalid_block_hash,
+            ),
+        };
+        tracing::info!(
+            "Recovering merge-rejected slash: invalid_block={}, original_issuer={}",
+            pretty_printer::PrettyPrinter::build_string_bytes(&rs.invalid_block_hash),
+            hex::encode(&rs.issuer_public_key.bytes)
+        );
         system_deploys_converted.push(SystemDeployEnum::Slash(slash_deploy));
     }
 
@@ -544,6 +744,7 @@ pub async fn create(
         runtime_manager,
         block_data.clone(),
         invalid_blocks,
+        Some(&rejected_deploy_buffer),
     )
     .await
     {
@@ -690,3 +891,100 @@ fn not_future_deploy(current_block_number: i64, deploy_data: &DeployData) -> boo
     deploy_data.valid_after_block_number < current_block_number
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn validator(byte: u8) -> Validator {
+        Bytes::from(vec![byte; 32])
+    }
+
+    fn invalid_block_hash(byte: u8) -> BlockHash {
+        Bytes::from(vec![byte; 32])
+    }
+
+    /// A bonded validator that PoS still considers active is slashable
+    /// when their latest message is invalid. Baseline behavior.
+    #[test]
+    fn bonded_active_equivocator_is_slashable() {
+        let equivocator = validator(0xAA);
+        let invalid_block = invalid_block_hash(0x11);
+
+        let mut invalid_latest_messages = HashMap::new();
+        invalid_latest_messages.insert(equivocator.clone(), invalid_block.clone());
+
+        let mut bonds_map = HashMap::new();
+        bonds_map.insert(equivocator.clone(), 5);
+
+        let active_validators = vec![equivocator.clone()];
+
+        let out = filter_slashable_invalid_messages(
+            invalid_latest_messages,
+            &bonds_map,
+            &active_validators,
+        );
+
+        assert_eq!(out.len(), 1, "bonded active equivocator must be slashable");
+        assert_eq!(out[0].0, equivocator);
+        assert_eq!(out[0].1, invalid_block);
+    }
+
+    /// An equivocator with stake 0 is excluded by the bonded check,
+    /// regardless of active-validator membership. Existing behavior.
+    #[test]
+    fn unbonded_equivocator_filtered_out() {
+        let equivocator = validator(0xBB);
+        let invalid_block = invalid_block_hash(0x22);
+
+        let mut invalid_latest_messages = HashMap::new();
+        invalid_latest_messages.insert(equivocator.clone(), invalid_block);
+
+        let mut bonds_map = HashMap::new();
+        bonds_map.insert(equivocator.clone(), 0);
+
+        let active_validators = vec![equivocator];
+
+        let out = filter_slashable_invalid_messages(
+            invalid_latest_messages,
+            &bonds_map,
+            &active_validators,
+        );
+
+        assert!(out.is_empty(), "stake-0 equivocator must not be slashable");
+    }
+
+    /// An equivocator already slashed in a parent block retains stake
+    /// at the bond floor (e.g., 1 in production), satisfying the
+    /// stake > 0 check, but PoS removes them from active_validators.
+    /// The active-validator filter is what stops the proposer from
+    /// emitting redundant SlashDeploys block after block.
+    #[test]
+    fn bonded_but_already_slashed_equivocator_filtered_out() {
+        let equivocator = validator(0xCC);
+        let invalid_block = invalid_block_hash(0x33);
+
+        let mut invalid_latest_messages = HashMap::new();
+        invalid_latest_messages.insert(equivocator.clone(), invalid_block);
+
+        // Bond floor > 0 — equivocator's stake stays at 1 after slash.
+        let mut bonds_map = HashMap::new();
+        bonds_map.insert(equivocator.clone(), 1);
+
+        // PoS has removed the slashed validator from the active set.
+        let active_validators: Vec<Validator> = vec![];
+
+        let out = filter_slashable_invalid_messages(
+            invalid_latest_messages,
+            &bonds_map,
+            &active_validators,
+        );
+
+        assert!(
+            out.is_empty(),
+            "already-slashed equivocator (not in active_validators) must not be \
+             re-slashed even when bond floor > 0 keeps their stake nonzero. If this \
+             fires, prepare_slashing_deploys will emit redundant SlashDeploys every \
+             block until the invalid latest message ages out of the DAG view."
+        );
+    }
+}

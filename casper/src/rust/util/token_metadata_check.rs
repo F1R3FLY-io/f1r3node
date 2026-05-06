@@ -42,9 +42,7 @@ pub async fn read_on_chain_token_metadata(
     // The contract's "all" method returns a single tuple `(name, symbol, decimals)`
     // on the exploratory deploy return channel.
     let tuple_par = result.first().ok_or_else(|| {
-        CasperError::RuntimeError(
-            "TokenMetadata exploratory deploy returned no values".to_string(),
-        )
+        CasperError::RuntimeError("TokenMetadata exploratory deploy returned no values".to_string())
     })?;
 
     parse_all_tuple(tuple_par).ok_or_else(|| {

@@ -12,6 +12,7 @@ mod engine;
 mod genesis;
 mod helper;
 mod merging;
+mod multi_node;
 mod sync;
 mod util;
 
@@ -19,13 +20,12 @@ static INIT: Once = Once::new();
 
 pub fn init_logger() {
     INIT.call_once(|| {
-        let filter = EnvFilter::try_from_default_env()
-            .unwrap_or_else(|_| {
-                EnvFilter::builder()
-                    .with_default_directive(LevelFilter::ERROR.into())
-                    .parse("")
-                    .unwrap()
-            });
+        let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+            EnvFilter::builder()
+                .with_default_directive(LevelFilter::ERROR.into())
+                .parse("")
+                .unwrap()
+        });
 
         tracing_subscriber::registry()
             .with(filter)
