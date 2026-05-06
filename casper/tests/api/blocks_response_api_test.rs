@@ -282,7 +282,7 @@ async fn show_main_chain_should_return_only_blocks_in_the_main_chain() {
 
     let casper_effect = NoOpsCasperEffect::new_with_shared_kvm(
         Some(tips.tips),
-        Arc::new(tokio::sync::Mutex::new(runtime_manager)),
+        Arc::new(runtime_manager),
         block_store.clone(),
         dag.clone(),
         shared_kvm_data.clone(), // shared kvm!
@@ -329,7 +329,7 @@ async fn get_blocks_should_return_all_blocks() {
 
     let casper_effect = NoOpsCasperEffect::new_with_shared_kvm(
         Some(tips.tips),
-        Arc::new(tokio::sync::Mutex::new(runtime_manager)),
+        Arc::new(runtime_manager),
         block_store.clone(),
         dag.clone(),
         shared_kvm_data.clone(),
@@ -374,7 +374,7 @@ async fn get_blocks_should_return_until_depth() {
 
     let casper_effect = NoOpsCasperEffect::new_with_shared_kvm(
         Some(tips.tips),
-        Arc::new(tokio::sync::Mutex::new(runtime_manager)),
+        Arc::new(runtime_manager),
         block_store.clone(),
         dag.clone(),
         shared_kvm_data.clone(),
@@ -424,7 +424,7 @@ async fn get_blocks_by_heights_should_return_blocks_between_start_and_end() {
 
     let casper_effect = NoOpsCasperEffect::new_with_shared_kvm(
         Some(tips.tips),
-        Arc::new(tokio::sync::Mutex::new(runtime_manager)),
+        Arc::new(runtime_manager),
         block_store.clone(),
         dag.clone(),
         shared_kvm_data.clone(),

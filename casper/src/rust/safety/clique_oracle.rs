@@ -216,6 +216,7 @@ impl CliqueOracle {
         dag: &KeyValueDagRepresentation,
         run_cache: &mut CliqueOracleRunCache,
     ) -> Result<i64, KvStoreError> {
+        let __compute_start = std::time::Instant::now();
         // Using tracing events for async - Span[F].traceI("compute-max-clique-weight") from Scala
         tracing::debug!(target: "f1r3fly.casper.safety.clique-oracle", "compute-max-clique-weight-started");
         /// across combination of validators compute pairs that do not have disagreement
@@ -355,6 +356,11 @@ impl CliqueOracle {
                 .await?;
         let max_weight = Clique::find_maximum_clique_by_weight(&edges, agreeing_weight_map);
 
+        metrics::histogram!(
+            crate::rust::metrics_constants::CLIQUE_ORACLE_COMPUTE_TIME_METRIC,
+            "source" => crate::rust::metrics_constants::CASPER_METRICS_SOURCE
+        )
+        .record(__compute_start.elapsed().as_secs_f64());
         Ok(max_weight)
     }
 

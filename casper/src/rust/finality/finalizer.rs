@@ -453,6 +453,11 @@ impl Finalizer {
             parent_lookup_phase_ns,
             next_layer_push_phase_ns
         );
+        metrics::histogram!(
+            crate::rust::metrics_constants::FINALIZER_RUN_TIME_METRIC,
+            "source" => crate::rust::metrics_constants::CASPER_METRICS_SOURCE
+        )
+        .record(total_started.elapsed().as_secs_f64());
 
         Ok(lfb_result)
     }

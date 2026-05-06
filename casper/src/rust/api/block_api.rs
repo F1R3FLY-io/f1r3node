@@ -724,7 +724,7 @@ impl BlockAPI {
 
     async fn get_data_with_block_info(
         casper: &dyn MultiParentCasper,
-        runtime_manager: Arc<tokio::sync::Mutex<RuntimeManager>>,
+        runtime_manager: Arc<RuntimeManager>,
         sorted_listening_name: &Par,
         block: &BlockMessage,
     ) -> ApiErr<Option<DataWithBlockInfo>> {
@@ -732,8 +732,6 @@ impl BlockAPI {
         if BlockAPI::is_listening_name_reduced(block, &[sorted_listening_name.clone()]) {
             let state_hash = proto_util::post_state_hash(block);
             let data = runtime_manager
-                .lock()
-                .await
                 .get_data(state_hash, sorted_listening_name)
                 .await?;
             let block_info = BlockAPI::get_light_block_info(casper, block).await?;
@@ -748,7 +746,7 @@ impl BlockAPI {
 
     async fn get_continuations_with_block_info(
         casper: &dyn MultiParentCasper,
-        runtime_manager: Arc<tokio::sync::Mutex<RuntimeManager>>,
+        runtime_manager: Arc<RuntimeManager>,
         sorted_listening_names: &[Par],
         block: &BlockMessage,
     ) -> ApiErr<Option<ContinuationsWithBlockInfo>> {
@@ -756,8 +754,6 @@ impl BlockAPI {
             let state_hash = proto_util::post_state_hash(block);
 
             let continuations = runtime_manager
-                .lock()
-                .await
                 .get_continuation(state_hash, sorted_listening_names.to_vec())
                 .await?;
 
@@ -1538,11 +1534,7 @@ impl BlockAPI {
             let last_finalized_block = casper.last_finalized_block().await?;
             let runtime_manager = casper.runtime_manager();
             let post_state_hash = &last_finalized_block.body.state.post_state_hash;
-            let bonds = runtime_manager
-                .lock()
-                .await
-                .compute_bonds(post_state_hash)
-                .await?;
+            let bonds = runtime_manager.compute_bonds(post_state_hash).await?;
             let validator_bond_opt = bonds.iter().find(|bond| bond.validator == *public_key);
             Ok(validator_bond_opt.is_some())
         } else {
@@ -1601,13 +1593,12 @@ impl BlockAPI {
                             "exploratoryDeploy: Computing merged state from {} parents",
                             parents.len()
                         );
-                        let runtime_guard = runtime_manager.lock().await;
                         let (merged_state_hash, _rejected, _rejected_slashes) =
                             crate::rust::util::rholang::interpreter_util::compute_parents_post_state(
                                 casper.block_store(),
                                 parents.clone(),
                                 &snapshot,
-                                &runtime_guard,
+                                &runtime_manager,
                                 Some(true), // disable_late_block_filtering = true for exploratory deploy
                                 None,       // exploratory deploy: no buffer populate needed
                             )?;
@@ -1647,8 +1638,6 @@ impl BlockAPI {
                 match target_block {
                     Some(b) => {
                         let (res, cost) = runtime_manager
-                            .lock()
-                            .await
                             .play_exploratory_deploy(term, &state_hash)
                             .await?;
                         let light_block_info =

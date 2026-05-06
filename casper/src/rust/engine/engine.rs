@@ -292,7 +292,7 @@ pub async fn transition_to_initializing<U: TransportLayer + Send + Sync + Clone 
     event_publisher: F1r3flyEvents,
     block_retriever: BlockRetriever<U>,
     engine_cell: &Arc<EngineCell>,
-    runtime_manager_arc: &Arc<tokio::sync::Mutex<RuntimeManager>>,
+    runtime_manager_arc: &Arc<RuntimeManager>,
     estimator: &Estimator,
     heartbeat_signal_ref: &crate::rust::heartbeat_signal::HeartbeatSignalRef,
 ) -> Result<(), CasperError> {
