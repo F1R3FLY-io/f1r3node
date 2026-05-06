@@ -6459,7 +6459,7 @@ impl DebruijnInterpreter {
                 remainder: Option<Var>,
             ) -> Result<Par, InterpreterError> {
                 let key_pairs: Vec<Option<(Par, Par)>> =
-                    ps.into_iter().map(|p| RhoTuple2::unapply(p)).collect();
+                    ps.into_iter().map(|p| RhoTuple2::unapply(&p)).collect();
 
                 if key_pairs.iter().any(|pair| !pair.is_some()) {
                     Err(InterpreterError::MethodNotDefined {
