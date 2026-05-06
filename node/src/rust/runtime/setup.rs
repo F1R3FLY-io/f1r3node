@@ -504,7 +504,7 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
             rejected_deploy_buffer_arc.clone(),
             casper_buffer_storage.clone(),
             rspace_state_manager,
-            Arc::new(tokio::sync::Mutex::new(runtime_manager.clone())),
+            Arc::new(runtime_manager.clone()),
             estimator.clone(),
             // Explicit parameters
             block_processor_queue_tx.clone(),
@@ -590,7 +590,11 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
                         let block_number = finalized.block_number;
                         tokio::spawn(async move {
                             handle_block_finalized(
-                                api, unforgeable, publisher, block_hash, block_number,
+                                api,
+                                unforgeable,
+                                publisher,
+                                block_hash,
+                                block_number,
                             )
                             .await;
                         });
@@ -819,7 +823,7 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
 
         let gc_block_dag_storage = block_dag_storage.clone();
         let gc_block_store = block_store.clone();
-        let gc_runtime_manager = Arc::new(tokio::sync::Mutex::new(runtime_manager.clone()));
+        let gc_runtime_manager = Arc::new(runtime_manager.clone());
         let gc_interval = conf.casper.mergeable_channels_gc_interval;
         let gc_casper_shard_conf = CasperShardConf {
             fault_tolerance_threshold: conf.casper.fault_tolerance_threshold,
@@ -938,9 +942,7 @@ async fn handle_block_finalized(
     block_number: i64,
 ) {
     use crate::rust::web::block_info_enricher::extract_transfers_from_report;
-    use shared::rust::shared::f1r3fly_event::{
-        DeployTransfers, F1r3flyEvent, TransferEvent,
-    };
+    use shared::rust::shared::f1r3fly_event::{DeployTransfers, F1r3flyEvent, TransferEvent};
 
     let block_hash_bytes: prost::bytes::Bytes = match hex::decode(&block_hash) {
         Ok(bytes) => bytes.into(),
@@ -955,8 +957,7 @@ async fn handle_block_finalized(
     };
     match report_api.block_report(block_hash_bytes, false).await {
         Ok(report) => {
-            let transfers_by_deploy =
-                extract_transfers_from_report(&report, &transfer_unforgeable);
+            let transfers_by_deploy = extract_transfers_from_report(&report, &transfer_unforgeable);
 
             let deploy_transfers: Vec<DeployTransfers> = transfers_by_deploy
                 .into_iter()

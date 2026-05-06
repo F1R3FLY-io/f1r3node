@@ -71,10 +71,16 @@ fn compute_rejected_buffer_admits(
     sigs: &HashSet<Bytes>,
 ) -> HashSet<Bytes> {
     use crate::rust::api::deploy_finalization_status::{resolve_batch, DeployFinalizationState};
+    let __admits_start = std::time::Instant::now();
     if sigs.is_empty() {
+        metrics::histogram!(
+            crate::rust::metrics_constants::COMPUTE_REJECTED_BUFFER_ADMITS_TIME_METRIC,
+            "source" => crate::rust::metrics_constants::CASPER_METRICS_SOURCE
+        )
+        .record(__admits_start.elapsed().as_secs_f64());
         return HashSet::new();
     }
-    match resolve_batch(dag, block_store, deploy_lifespan, sigs) {
+    let result = match resolve_batch(dag, block_store, deploy_lifespan, sigs) {
         Ok(statuses) => statuses
             .into_iter()
             .filter_map(|(sig, status)| {
@@ -97,7 +103,13 @@ fn compute_rejected_buffer_admits(
             );
             HashSet::new()
         }
-    }
+    };
+    metrics::histogram!(
+        crate::rust::metrics_constants::COMPUTE_REJECTED_BUFFER_ADMITS_TIME_METRIC,
+        "source" => crate::rust::metrics_constants::CASPER_METRICS_SOURCE
+    )
+    .record(__admits_start.elapsed().as_secs_f64());
+    result
 }
 
 fn with_ancestors_capped(
@@ -137,7 +149,7 @@ pub async fn validate_block_checkpoint(
     block: &BlockMessage,
     block_store: &KeyValueBlockStore,
     s: &mut CasperSnapshot,
-    runtime_manager: &mut RuntimeManager,
+    runtime_manager: &RuntimeManager,
     rejected_deploy_buffer: Option<&std::sync::Arc<std::sync::Mutex<block_storage::rust::deploy::key_value_rejected_deploy_buffer::KeyValueRejectedDeployBuffer>>>,
 ) -> Result<BlockProcessing<Option<StateHash>>, CasperError> {
     tracing::debug!(target: "f1r3fly.casper", "before-unsafe-get-parents");
@@ -338,7 +350,7 @@ async fn replay_block(
     initial_state_hash: StateHash,
     block: &BlockMessage,
     dag: &mut KeyValueDagRepresentation,
-    runtime_manager: &mut RuntimeManager,
+    runtime_manager: &RuntimeManager,
 ) -> Result<Either<ReplayFailure, StateHash>, CasperError> {
     // Extract deploys and system deploys from the block
     let internal_deploys = proto_util::deploys(block);
@@ -599,7 +611,7 @@ pub async fn compute_deploys_checkpoint(
     deploys: Vec<Signed<DeployData>>,
     system_deploys: Vec<super::system_deploy_enum::SystemDeployEnum>,
     s: &CasperSnapshot,
-    runtime_manager: &mut RuntimeManager,
+    runtime_manager: &RuntimeManager,
     block_data: BlockData,
     invalid_blocks: HashMap<BlockHash, Validator>,
     rejected_deploy_buffer: Option<&std::sync::Arc<std::sync::Mutex<block_storage::rust::deploy::key_value_rejected_deploy_buffer::KeyValueRejectedDeployBuffer>>>,
@@ -1098,6 +1110,11 @@ pub fn compute_parents_post_state(
                     PrettyPrinter::build_string_bytes(&fallback_parent.block_hash),
                     fallback_parent.body.state.block_number
                 );
+                metrics::counter!(
+                    crate::rust::metrics_constants::MERGE_SCOPE_TOO_LARGE_FALLBACK_FIRED_METRIC,
+                    "source" => crate::rust::metrics_constants::CASPER_METRICS_SOURCE
+                )
+                .increment(1);
                 let fallback_state = proto_util::post_state_hash(fallback_parent);
                 runtime_manager.put_cached_parents_post_state(
                     cache_key,

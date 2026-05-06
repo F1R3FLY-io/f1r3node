@@ -671,3 +671,39 @@ pub struct ProposeOptions {
     #[arg(long = "print-unmatched-sends")]
     pub print_unmatched_sends: bool,
 }
+
+#[cfg(test)]
+mod native_token_clap_tests {
+    use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn rejects_negative_decimals() {
+        let err = Options::try_parse_from(["f1r3fly", "run", "--native-token-decimals=-1"])
+            .err()
+            .expect("negative decimals should fail clap parse");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("--native-token-decimals") || msg.contains("-1"),
+            "unexpected error: {msg}"
+        );
+    }
+
+    #[test]
+    fn rejects_decimals_above_clap_range() {
+        let err = Options::try_parse_from(["f1r3fly", "run", "--native-token-decimals=19"])
+            .err()
+            .expect("decimals above 18 should fail clap range");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("--native-token-decimals") || msg.contains("19"),
+            "unexpected error: {msg}"
+        );
+    }
+
+    #[test]
+    fn accepts_decimals_at_max() {
+        let res = Options::try_parse_from(["f1r3fly", "run", "--native-token-decimals=18"]);
+        assert!(res.is_ok(), "decimals=18 should parse cleanly");
+    }
+}

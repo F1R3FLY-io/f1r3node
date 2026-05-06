@@ -63,7 +63,7 @@ pub struct GenesisValidator<T: TransportLayer + Send + Sync + Clone + 'static> {
     casper_buffer_storage: CasperBufferKeyValueStorage,
     rspace_state_manager: RSpaceStateManager,
 
-    runtime_manager: Arc<tokio::sync::Mutex<RuntimeManager>>,
+    runtime_manager: Arc<RuntimeManager>,
     estimator: Estimator,
 
     // Bounded set of seen UnapprovedBlock candidates to avoid unbounded memory growth.
@@ -138,7 +138,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisValidator<T> {
         rejected_deploy_buffer: Arc<Mutex<KeyValueRejectedDeployBuffer>>,
         casper_buffer_storage: CasperBufferKeyValueStorage,
         rspace_state_manager: RSpaceStateManager,
-        runtime_manager: Arc<tokio::sync::Mutex<RuntimeManager>>,
+        runtime_manager: Arc<RuntimeManager>,
         estimator: Estimator,
         heartbeat_signal_ref: crate::rust::heartbeat_signal::HeartbeatSignalRef,
     ) -> Self {
@@ -260,18 +260,14 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisValidator<T> {
 
         self.ack(hash);
 
-        {
-            let mut runtime_manager_guard = self.runtime_manager.lock().await;
-
-            self.block_approver
-                .unapproved_block_packet_handler(
-                    &mut *runtime_manager_guard,
-                    &peer,
-                    ub,
-                    &self.casper_shard_conf.shard_name,
-                )
-                .await?;
-        }
+        self.block_approver
+            .unapproved_block_packet_handler(
+                &self.runtime_manager,
+                &peer,
+                ub,
+                &self.casper_shard_conf.shard_name,
+            )
+            .await?;
 
         // Scala: init = noop (empty F[Unit])
         let init = Arc::new(|| {

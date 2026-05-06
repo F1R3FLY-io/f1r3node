@@ -249,74 +249,124 @@ impl Validate {
         block_store: &KeyValueBlockStore,
         disable_validator_progress_check: bool,
     ) -> ValidBlockProcessing {
+        use crate::rust::metrics_constants::*;
+        macro_rules! __step {
+            ($metric:ident, $body:expr) => {{
+                let __t0 = std::time::Instant::now();
+                let __r = $body;
+                metrics::histogram!($metric, "source" => CASPER_METRICS_SOURCE)
+                    .record(__t0.elapsed().as_secs_f64());
+                __r
+            }};
+        }
+
         tracing::debug!(target: "f1r3fly.casper", "before-block-hash-validation");
-        match Self::block_hash(block) {
+        match __step!(
+            BLOCK_VALIDATION_BLOCK_HASH_TIME_METRIC,
+            Self::block_hash(block)
+        ) {
             Either::Left(err) => return Either::Left(err),
             Either::Right(_) => {}
         }
         tracing::debug!(target: "f1r3fly.casper", "before-timestamp-validation");
-        match Self::timestamp(block, block_store) {
+        match __step!(
+            BLOCK_VALIDATION_TIMESTAMP_TIME_METRIC,
+            Self::timestamp(block, block_store)
+        ) {
             Either::Left(err) => return Either::Left(err),
             Either::Right(_) => {}
         }
         tracing::debug!(target: "f1r3fly.casper", "before-shard-identifier-validation");
-        match Self::shard_identifier(block, shard_id) {
+        match __step!(
+            BLOCK_VALIDATION_SHARD_IDENTIFIER_TIME_METRIC,
+            Self::shard_identifier(block, shard_id)
+        ) {
             Either::Left(err) => return Either::Left(err),
             Either::Right(_) => {}
         }
         tracing::debug!(target: "f1r3fly.casper", "before-deploys-shard-identifier-validation");
-        match Self::deploys_shard_identifier(block, shard_id) {
+        match __step!(
+            BLOCK_VALIDATION_DEPLOYS_SHARD_IDENTIFIER_TIME_METRIC,
+            Self::deploys_shard_identifier(block, shard_id)
+        ) {
             Either::Left(err) => return Either::Left(err),
             Either::Right(_) => {}
         }
         tracing::debug!(target: "f1r3fly.casper", "before-repeat-deploy-validation");
-        match Self::repeat_deploy(block, s, block_store, expiration_threshold) {
+        match __step!(
+            BLOCK_VALIDATION_REPEAT_DEPLOY_TIME_METRIC,
+            Self::repeat_deploy(block, s, block_store, expiration_threshold)
+        ) {
             Either::Left(err) => return Either::Left(err),
             Either::Right(_) => {}
         }
         tracing::debug!(target: "f1r3fly.casper", "before-block-number-validation");
-        match Self::block_number(block, s) {
+        match __step!(
+            BLOCK_VALIDATION_BLOCK_NUMBER_TIME_METRIC,
+            Self::block_number(block, s)
+        ) {
             Either::Left(err) => return Either::Left(err),
             Either::Right(_) => {}
         }
         tracing::debug!(target: "f1r3fly.casper", "before-future-transaction-validation");
-        match Self::future_transaction(block) {
+        match __step!(
+            BLOCK_VALIDATION_FUTURE_TRANSACTION_TIME_METRIC,
+            Self::future_transaction(block)
+        ) {
             Either::Left(err) => return Either::Left(err),
             Either::Right(_) => {}
         }
         tracing::debug!(target: "f1r3fly.casper", "before-transaction-expired-validation");
-        match Self::transaction_expiration(block, expiration_threshold) {
+        match __step!(
+            BLOCK_VALIDATION_TRANSACTION_EXPIRATION_TIME_METRIC,
+            Self::transaction_expiration(block, expiration_threshold)
+        ) {
             Either::Left(err) => return Either::Left(err),
             Either::Right(_) => {}
         }
         tracing::debug!(target: "f1r3fly.casper", "before-time-based-expiration-validation");
-        match Self::time_based_expiration(block) {
+        match __step!(
+            BLOCK_VALIDATION_TIME_BASED_EXPIRATION_TIME_METRIC,
+            Self::time_based_expiration(block)
+        ) {
             Either::Left(err) => return Either::Left(err),
             Either::Right(_) => {}
         }
         tracing::debug!(target: "f1r3fly.casper", "before-justification-follows-validation");
-        match Self::justification_follows(block, block_store) {
+        match __step!(
+            BLOCK_VALIDATION_JUSTIFICATION_FOLLOWS_TIME_METRIC,
+            Self::justification_follows(block, block_store)
+        ) {
             Either::Left(err) => return Either::Left(err),
             Either::Right(_) => {}
         }
         tracing::debug!(target: "f1r3fly.casper", "before-parents-validation");
-        match Self::parents(
-            block,
-            genesis,
-            s,
-            max_number_of_parents,
-            disable_validator_progress_check,
+        match __step!(
+            BLOCK_VALIDATION_PARENTS_TIME_METRIC,
+            Self::parents(
+                block,
+                genesis,
+                s,
+                max_number_of_parents,
+                disable_validator_progress_check,
+            )
         ) {
             Either::Left(err) => return Either::Left(err),
             Either::Right(_) => {}
         }
         tracing::debug!(target: "f1r3fly.casper", "before-sequence-number-validation");
-        match Self::sequence_number(block, s) {
+        match __step!(
+            BLOCK_VALIDATION_SEQUENCE_NUMBER_TIME_METRIC,
+            Self::sequence_number(block, s)
+        ) {
             Either::Left(err) => return Either::Left(err),
             Either::Right(_) => {}
         }
         tracing::debug!(target: "f1r3fly.casper", "before-justification-regression-validation");
-        match Self::justification_regressions(block, s) {
+        match __step!(
+            BLOCK_VALIDATION_JUSTIFICATION_REGRESSIONS_TIME_METRIC,
+            Self::justification_regressions(block, s)
+        ) {
             Either::Left(err) => return Either::Left(err),
             Either::Right(_) => {}
         }
