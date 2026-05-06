@@ -8,6 +8,7 @@ on:
       - trying
       - rust/dev
       - rust/main
+      - rust/staging
     tags: "**"
   pull_request:
     branches:
@@ -714,7 +715,8 @@ jobs:
       github.ref == 'refs/heads/trying' ||
       github.ref == 'refs/heads/staging' ||
       github.ref == 'refs/heads/rust/main' ||
-      github.ref == 'refs/heads/rust/dev')
+      github.ref == 'refs/heads/rust/dev' ||
+      github.ref == 'refs/heads/rust/staging')
     runs-on: ubuntu-latest
     steps:
       - name: Load AMD64 Docker Image
@@ -774,6 +776,9 @@ jobs:
           elif [[ "$BRANCH" == "rust/dev" && "$IS_TAG_PUSH" == "false" ]]; then
             # Only prefix dev- for branch pushes (commit hashes), not tag releases
             TAG_PREFIX="dev-"
+          elif [[ "$BRANCH" == "rust/staging" ]]; then
+            # Tag staging builds with staging- prefix (commit hash version)
+            TAG_PREFIX="staging-"
           fi
 
           set -x
@@ -784,6 +789,8 @@ jobs:
           IMG_VERSION="${IMG_VERSION_RAW//[+]/__}"
           if [[ "$BRANCH" == "rust/dev" ]]; then
             IMG_LATEST="$IMAGE_NAME:dev"
+          elif [[ "$BRANCH" == "rust/staging" ]]; then
+            IMG_LATEST="$IMAGE_NAME:staging"
           else
             IMG_LATEST="$IMAGE_NAME:latest"
           fi
