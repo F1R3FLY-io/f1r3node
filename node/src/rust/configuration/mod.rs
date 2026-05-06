@@ -32,9 +32,7 @@ pub mod builder {
     ///
     /// # Returns
     /// * `Result<(NodeConf, Profile, Option<PathBuf>)>` - Configuration tuple
-    pub fn build(
-        options: Options,
-    ) -> eyre::Result<(NodeConf, Profile, Option<PathBuf>)> {
+    pub fn build(options: Options) -> eyre::Result<(NodeConf, Profile, Option<PathBuf>)> {
         let profile = options
             .profile
             .as_ref()
@@ -143,6 +141,31 @@ pub mod builder {
             .validate_native_token()
             .map_err(|e| eyre::eyre!("native token config invalid: {}", e))?;
 
+        // The proposer computes its recovery cap as
+        // `max(pending_deploy_max_lag, deploy_recovery_max_lag)`. When
+        // deploy_recovery is set below pending_deploy, the recovery knob
+        // collapses to the pending floor and has no effect — warn the
+        // operator instead of letting the misconfiguration sit silently.
+        let pending_deploy_max_lag = node_conf
+            .casper
+            .heartbeat_conf
+            .advanced
+            .pending_deploy_max_lag;
+        let deploy_recovery_max_lag = node_conf
+            .casper
+            .heartbeat_conf
+            .advanced
+            .deploy_recovery_max_lag;
+        if deploy_recovery_max_lag < pending_deploy_max_lag {
+            tracing::warn!(
+                "casper.heartbeat.advanced.deploy-recovery-max-lag ({}) is less than \
+                pending-deploy-max-lag ({}); the recovery knob has no effect under this \
+                configuration. Set deploy-recovery-max-lag >= pending-deploy-max-lag.",
+                deploy_recovery_max_lag,
+                pending_deploy_max_lag,
+            );
+        }
+
         Ok(())
     }
 
@@ -200,3 +223,129 @@ pub mod builder {
 
 // Re-export commonly used types
 pub use builder::build;
+
+#[cfg(test)]
+mod heartbeat_conf_hocon_tests {
+    //! Targeted HOCON deserialization tests for the heartbeat tuning fields.
+    //!
+    //! Lives here (rather than in `casper::casper_conf`) because the `hocon`
+    //! crate is a `node` dependency, not a `casper` dependency. Exercises
+    //! the same `serde::Deserialize` path the production binary uses.
+
+    use casper::rust::casper_conf::{HeartbeatAdvancedConf, HeartbeatConf};
+    use std::time::Duration;
+
+    fn parse_heartbeat(hocon_text: &str) -> HeartbeatConf {
+        try_parse_heartbeat(hocon_text).expect("HOCON should deserialize into HeartbeatConf")
+    }
+
+    fn try_parse_heartbeat(hocon_text: &str) -> Result<HeartbeatConf, String> {
+        let loader = hocon::HoconLoader::new()
+            .load_str(hocon_text)
+            .map_err(|e| format!("hocon load: {e}"))?;
+        loader.resolve().map_err(|e| format!("hocon resolve: {e}"))
+    }
+
+    #[test]
+    fn full_block_with_advanced_round_trips() {
+        let cfg = parse_heartbeat(
+            r#"
+            enabled = true
+            check-interval = 7 seconds
+            max-lfb-age = 8 seconds
+            self-propose-cooldown = 9 seconds
+            stale-recovery-min-interval = 11 seconds
+            deploy-finalization-grace = 22 seconds
+            advanced {
+              frontier-chase-max-lag = 1
+              pending-deploy-max-lag = 33
+              deploy-recovery-max-lag = 99
+            }
+            "#,
+        );
+
+        assert!(cfg.enabled);
+        assert_eq!(cfg.check_interval, Duration::from_secs(7));
+        assert_eq!(cfg.max_lfb_age, Duration::from_secs(8));
+        assert_eq!(cfg.self_propose_cooldown, Duration::from_secs(9));
+        assert_eq!(cfg.stale_recovery_min_interval, Duration::from_secs(11));
+        assert_eq!(cfg.deploy_finalization_grace, Duration::from_secs(22));
+        assert_eq!(cfg.advanced.frontier_chase_max_lag, 1);
+        assert_eq!(cfg.advanced.pending_deploy_max_lag, 33);
+        assert_eq!(cfg.advanced.deploy_recovery_max_lag, 99);
+    }
+
+    #[test]
+    fn missing_new_fields_fall_back_to_defaults() {
+        // A HOCON config that omits the new keys must still parse and use
+        // the defaults declared on HeartbeatConf / HeartbeatAdvancedConf.
+        let cfg = parse_heartbeat(
+            r#"
+            enabled = false
+            check-interval = 5 seconds
+            max-lfb-age = 5 seconds
+            "#,
+        );
+
+        assert_eq!(cfg.self_propose_cooldown, Duration::from_secs(15));
+        assert_eq!(cfg.stale_recovery_min_interval, Duration::from_secs(12));
+        assert_eq!(cfg.deploy_finalization_grace, Duration::from_secs(25));
+        // Advanced block absent → all three fields default.
+        assert_eq!(cfg.advanced, HeartbeatAdvancedConf::default());
+    }
+
+    #[test]
+    fn partial_advanced_block_defaults_remaining_fields() {
+        // A partial advanced block fills missing fields with defaults
+        // rather than failing to parse.
+        let cfg = parse_heartbeat(
+            r#"
+            enabled = false
+            check-interval = 5 seconds
+            max-lfb-age = 5 seconds
+            advanced {
+              pending-deploy-max-lag = 7
+            }
+            "#,
+        );
+
+        assert_eq!(cfg.advanced.frontier_chase_max_lag, 0);
+        assert_eq!(cfg.advanced.pending_deploy_max_lag, 7);
+        assert_eq!(cfg.advanced.deploy_recovery_max_lag, 64);
+    }
+
+    #[test]
+    fn negative_advanced_lag_values_are_rejected() {
+        // Negative caps would silently disable the corresponding code
+        // path in the proposer (e.g. `lag <= cap` where cap < 0 is
+        // never true). Each of the three advanced fields rejects at
+        // deserialization time.
+        for field in &[
+            "frontier-chase-max-lag",
+            "pending-deploy-max-lag",
+            "deploy-recovery-max-lag",
+        ] {
+            let hocon = format!(
+                r#"
+                enabled = false
+                check-interval = 5 seconds
+                max-lfb-age = 5 seconds
+                advanced {{
+                  {field} = -1
+                }}
+                "#
+            );
+            let result = try_parse_heartbeat(&hocon);
+            assert!(
+                result.is_err(),
+                "negative {field} should fail HOCON deserialization, got Ok({:?})",
+                result.ok()
+            );
+            let err = result.unwrap_err();
+            assert!(
+                err.contains("value must be >= 0"),
+                "error for {field} should mention non-negative requirement, got: {err}"
+            );
+        }
+    }
+}

@@ -16,6 +16,21 @@ use super::converters::{PrivateKeyConverter, PublicKeyConverter, VecNameConverte
 pub const GRPC_INTERNAL_PORT: u16 = 40402;
 pub const GRPC_EXTERNAL_PORT: u16 = 40401;
 
+/// Parse an `i64` from CLI text, rejecting negative values.
+///
+/// Used for the heartbeat lag-cap flags whose downstream comparison
+/// sites assume the cap is non-negative (`lag <= cap`); a negative
+/// value would silently disable the corresponding code path.
+fn parse_non_negative_i64(s: &str) -> Result<i64, String> {
+    let v: i64 = s
+        .parse()
+        .map_err(|e: std::num::ParseIntError| e.to_string())?;
+    if v < 0 {
+        return Err(format!("value must be >= 0, got {}", v));
+    }
+    Ok(v)
+}
+
 /// F1r3fly node command-line interface
 #[derive(Parser)]
 #[command(
@@ -476,6 +491,50 @@ pub struct RunOptions {
     /// Maximum age of last finalized block before triggering heartbeat
     #[arg(long = "heartbeat-max-lfb-age", value_parser = ValueParser::new(parse_duration))]
     pub heartbeat_max_lfb_age: Option<Duration>,
+
+    /// Minimum age of LFB/frontier before stale-recovery, leader-recovery,
+    /// and pending-deploy backstop are allowed to fire. Debounces empty-block
+    /// churn when the cluster is healthy.
+    #[arg(long = "heartbeat-stale-recovery-min-interval", value_parser = ValueParser::new(parse_duration))]
+    pub heartbeat_stale_recovery_min_interval: Option<Duration>,
+
+    /// When pending deploys land, opens a grace window during which lag caps
+    /// relax to advanced.deploy-recovery-max-lag and self-propose-cooldown
+    /// is bypassable. Burst-tolerance budget.
+    #[arg(long = "heartbeat-deploy-finalization-grace", value_parser = ValueParser::new(parse_duration))]
+    pub heartbeat_deploy_finalization_grace: Option<Duration>,
+
+    /// EXPERIMENTAL: when this validator is already ahead of LFB, blocks of
+    /// lag tolerated before "frontier-follow" proposing is throttled.
+    /// Must be >= 0; negative values are rejected at parse time.
+    #[arg(
+        long = "heartbeat-advanced-frontier-chase-max-lag",
+        value_parser = ValueParser::new(parse_non_negative_i64),
+        hide_short_help = true
+    )]
+    pub heartbeat_advanced_frontier_chase_max_lag: Option<i64>,
+
+    /// EXPERIMENTAL: if validator has pending deploys but is > N blocks
+    /// ahead of LFB, suppress pending-deploy proposing. Lower → harder
+    /// load-relief valve. Must be >= 0; negative values are rejected.
+    #[arg(
+        long = "heartbeat-advanced-pending-deploy-max-lag",
+        value_parser = ValueParser::new(parse_non_negative_i64),
+        hide_short_help = true
+    )]
+    pub heartbeat_advanced_pending_deploy_max_lag: Option<i64>,
+
+    /// EXPERIMENTAL: during an active deploy-finalization grace window,
+    /// the lag cap widens to this value. The "absolute safe lag during
+    /// recovery" ceiling. Should be >= heartbeat-advanced-pending-deploy-
+    /// max-lag to take effect; values below collapse to the pending
+    /// floor and the knob has no effect. Must be >= 0.
+    #[arg(
+        long = "heartbeat-advanced-deploy-recovery-max-lag",
+        value_parser = ValueParser::new(parse_non_negative_i64),
+        hide_short_help = true
+    )]
+    pub heartbeat_advanced_deploy_recovery_max_lag: Option<i64>,
 }
 
 /// Keygen subcommand - Generates a public/private key pair

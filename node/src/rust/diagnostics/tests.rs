@@ -70,6 +70,7 @@ mod tests {
                 check_interval: Duration::from_secs(60),
                 max_lfb_age: Duration::from_secs(300),
                 self_propose_cooldown: Duration::from_secs(15),
+                ..HeartbeatConf::default()
             },
             disable_late_block_filtering: true,
             enable_mergeable_channel_gc: false,

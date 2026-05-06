@@ -72,6 +72,13 @@ The following boolean flags override HOCON configuration at startup. CLI flags a
 | `--disable-mergeable-channel-gc` | `casper.enable_mergeable_channel_gc = false` | Disable mergeable channel GC (takes precedence over `--enable-mergeable-channel-gc`) |
 | `--heartbeat-enabled` | `casper.heartbeat_conf.enabled = true` | Enable heartbeat block proposing for liveness |
 | `--heartbeat-disabled` | `casper.heartbeat_conf.enabled = false` | Disable heartbeat proposing (takes precedence over `--heartbeat-enabled`) |
+| `--heartbeat-check-interval` | `casper.heartbeat_conf.check_interval` | How often the heartbeat loop wakes to evaluate its decision tree |
+| `--heartbeat-max-lfb-age` | `casper.heartbeat_conf.max_lfb_age` | LFB age threshold above which stale-LFB recovery may fire |
+| `--heartbeat-stale-recovery-min-interval` | `casper.heartbeat_conf.stale_recovery_min_interval` | Minimum LFB/frontier age before stale-recovery, leader-recovery, and pending-deploy backstop are allowed to fire |
+| `--heartbeat-deploy-finalization-grace` | `casper.heartbeat_conf.deploy_finalization_grace` | Grace window opened when pending deploys land; relaxes lag caps and bypasses self-propose-cooldown |
+| `--heartbeat-advanced-frontier-chase-max-lag` | `casper.heartbeat_conf.advanced.frontier_chase_max_lag` | EXPERIMENTAL. Max lag tolerated for frontier-chase proposals while ahead of LFB |
+| `--heartbeat-advanced-pending-deploy-max-lag` | `casper.heartbeat_conf.advanced.pending_deploy_max_lag` | EXPERIMENTAL. Lag threshold above which pending-deploy proposals throttle |
+| `--heartbeat-advanced-deploy-recovery-max-lag` | `casper.heartbeat_conf.advanced.deploy_recovery_max_lag` | EXPERIMENTAL. Wider lag cap during the deploy-finalization grace window |
 | `--native-token-name` | `casper.genesis_block_data.native_token_name` | Native token display name (genesis-locked) |
 | `--native-token-symbol` | `casper.genesis_block_data.native_token_symbol` | Native token ticker symbol (genesis-locked) |
 | `--native-token-decimals` | `casper.genesis_block_data.native_token_decimals` | Native token decimal places, 0-18 (genesis-locked) |
@@ -345,15 +352,19 @@ These values are hardcoded (previously configurable via `F1R3_*` env vars, remov
 
 **`ProposerInstance`** -- Dequeues proposal requests. Non-blocking locking (try_lock). 5-minute timeout for stuck proposals. Min-interval between proposals is 250ms (hardcoded).
 
-**`HeartbeatProposer`** -- Periodic proposals for network liveness. Operator-tunable heartbeat settings (enabled, check-interval, max-lfb-age, self-propose-cooldown) are in `defaults.conf` under the `casper.heartbeat` section. The following behavioral parameters are hardcoded:
+**`HeartbeatProposer`** -- Periodic proposals for network liveness. All heartbeat settings live in `defaults.conf` under the `casper.heartbeat` section and accept CLI overrides. Stable knobs are at the top level; experimental tuning knobs are nested under `advanced.*` and may change shape in a future release.
 
-| Parameter | Value | Purpose |
-|-----------|-------|---------|
-| Frontier chase max lag | 0 | Max lag permitting frontier-chase proposals |
-| Pending deploy max lag | 20 | Lag threshold above which pending deploy proposals throttle |
-| Deploy recovery max lag | 64 | Lag threshold for deploy recovery mode |
-| Stale recovery min interval | 12000ms | Min interval for stale-LFB recovery proposals |
-| Deploy finalization grace | 25000ms | Grace period bypassing min-interval during deploy finalization |
+| HOCON key | Default | Purpose |
+|-----------|--------:|---------|
+| `heartbeat.enabled` | `false` | Enable the heartbeat proposer |
+| `heartbeat.check-interval` | 5s | How often the loop evaluates its decision tree |
+| `heartbeat.max-lfb-age` | 5s | LFB age threshold above which stale-LFB recovery may fire |
+| `heartbeat.self-propose-cooldown` | 15s | Min interval between self-proposals |
+| `heartbeat.stale-recovery-min-interval` | 12s | Min LFB/frontier age before stale/leader/backstop recovery may fire |
+| `heartbeat.deploy-finalization-grace` | 25s | Grace window opened when pending deploys land; relaxes lag caps |
+| `heartbeat.advanced.frontier-chase-max-lag` | 0 | EXPERIMENTAL. Max lag for frontier-chase proposals while ahead of LFB |
+| `heartbeat.advanced.pending-deploy-max-lag` | 20 | EXPERIMENTAL. Lag threshold above which pending-deploy proposals throttle |
+| `heartbeat.advanced.deploy-recovery-max-lag` | 64 | EXPERIMENTAL. Wider lag cap during the deploy-finalization grace window. Must be >= `pending-deploy-max-lag` to take effect (else collapses to that floor). |
 
 **Deploy grace window**: When a deploy is proposed or finalization-critical parents observed, a grace window opens (default 25s) that allows proposals which would normally be blocked by cooldown/interval constraints.
 
