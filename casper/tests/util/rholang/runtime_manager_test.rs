@@ -484,7 +484,7 @@ async fn compute_state_should_capture_rholang_errors() {
 #[ignore]
 async fn compute_state_then_compute_bonds_should_be_replayable_after_all() {
     with_runtime_manager(
-        |mut runtime_manager, genesis_context, genesis_block| async move {
+        |runtime_manager, genesis_context, genesis_block| async move {
             let gps = genesis_block.body.state.post_state_hash;
 
             let s0 = "@1!(1)";
@@ -872,7 +872,7 @@ async fn empty_state_hash_should_not_remember_previous_hot_store_state() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn compute_state_should_be_replayed_by_replay_compute_state() {
     with_runtime_manager(
-        |mut runtime_manager, genesis_context, genesis_block| async move {
+        |runtime_manager, genesis_context, genesis_block| async move {
             let deploy = construct_deploy::source_deploy_now_full(
                 r#"
                   new deployerId(`rho:system:deployerId`),
@@ -959,7 +959,7 @@ async fn compute_state_should_be_replayed_by_replay_compute_state() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn compute_state_should_charge_deploys_separately() {
     with_runtime_manager(
-        |mut runtime_manager, genesis_context, genesis_block| async move {
+        |runtime_manager, genesis_context, genesis_block| async move {
             fn deploy_cost(p: &[ProcessedDeploy]) -> u64 {
                 p.iter().map(|d| d.cost.cost).sum()
             }
@@ -1208,7 +1208,7 @@ async fn compute_state_should_just_work() {
 
 async fn invalid_replay(source: String) -> Result<StateHash, CasperError> {
     with_runtime_manager(
-        |mut runtime_manager, genesis_context, genesis_block| async move {
+        |runtime_manager, genesis_context, genesis_block| async move {
             let deploy = construct_deploy::source_deploy_now_full(
                 source,
                 Some(10000),
@@ -1318,7 +1318,7 @@ async fn replaycomputestate_should_not_catch_discrepancies_in_initial_and_replay
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn joins_should_be_replayed_correctly() {
     with_runtime_manager(
-        |mut runtime_manager, genesis_context, genesis_block| async move {
+        |runtime_manager, genesis_context, genesis_block| async move {
             let term = r#"
             new a, b, c, d in {
               for (_ <- a & _ <- b) { Nil } |
@@ -1411,7 +1411,7 @@ async fn replay_on_independent_runtime_should_match_play_cost_for_duplicate_send
     let mut failures = Vec::new();
     for attempt in 0..10 {
         let mut kvm_play = mk_test_rnode_store_manager_from_genesis(&genesis_context);
-        let (mut rm_play, _) = mk_runtime_manager_with_history_at(&mut *kvm_play).await;
+        let (rm_play, _) = mk_runtime_manager_with_history_at(&mut *kvm_play).await;
 
         let deploy = construct_deploy::source_deploy_now_full(
             bridge_rho.clone(),
@@ -1444,7 +1444,7 @@ async fn replay_on_independent_runtime_should_match_play_cost_for_duplicate_send
         let play_cost = play_deploys[0].cost.cost;
 
         let mut kvm_replay = mk_test_rnode_store_manager_from_genesis(&genesis_context);
-        let (mut rm_replay, _) = mk_runtime_manager_with_history_at(&mut *kvm_replay).await;
+        let (rm_replay, _) = mk_runtime_manager_with_history_at(&mut *kvm_replay).await;
 
         let replay_result = rm_replay
             .replay_compute_state(
@@ -1502,7 +1502,7 @@ async fn cross_deploy_bridge_full_admin_flow() {
     .expect("Failed to read bridge.rho");
 
     let mut kvm = mk_test_rnode_store_manager_from_genesis(&genesis_context);
-    let (mut rm, _) = mk_runtime_manager_with_history_at(&mut *kvm).await;
+    let (rm, _) = mk_runtime_manager_with_history_at(&mut *kvm).await;
 
     let uri_regex = regex::Regex::new(r"rho:id:[a-zA-Z0-9]+").unwrap();
 
@@ -2718,7 +2718,7 @@ in {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn parallel_replay_determinism() {
     with_runtime_manager(
-        |mut runtime_manager, genesis_context, genesis_block| async move {
+        |runtime_manager, genesis_context, genesis_block| async move {
             let gps = genesis_block.body.state.post_state_hash;
 
             // Registry lookup — system process with internal parallel composition

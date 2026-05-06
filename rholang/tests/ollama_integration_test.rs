@@ -1,4 +1,3 @@
-use models::rhoapi::Par;
 use rholang::rust::interpreter::chromadb_service::create_noop_chromadb_service;
 use rholang::rust::interpreter::errors::InterpreterError;
 use rholang::rust::interpreter::external_services::ExternalServices;
