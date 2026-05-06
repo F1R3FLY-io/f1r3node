@@ -365,6 +365,7 @@ jobs:
             -v --tb=short --log-cli-level=WARNING \
             -n 3 --dist=loadgroup \
             --deselect=integration-tests/test/test_convergence.py::test_network_converges_after_slow_deploy \
+            --keep-running \
             --startup-timeout=600 --command-timeout=300 --timeout=1200 $SCALE_FLAG
 
       - name: Upload Integration Test Logs
@@ -384,14 +385,51 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+      # Debug: preserve LMDB volumes from each validator container so we can
+      # inspect rspace/block-storage state. Runs on every CI run (success and
+      # failure) so we can verify the preservation mechanism works even when
+      # the test_shard_degradation flake doesn't fire. Each LMDB store is tens
+      # of MB; ~50-100MB total per arch per run.
+      - name: Preserve Docker volumes
+        if: always()
+        shell: bash {0}
+        run: |
+          mkdir -p /tmp/preserved-volumes
+          # Capture every framework-prefixed volume currently on the runner.
+          # Names match the framework's session-prefixed pattern (test-*-data,
+          # f1r3fly-test-*) — catches both static-shard and custom-shard volumes.
+          for vol in $(docker volume ls -q | grep -E '^test-|^f1r3fly-test-' || true); do
+            echo "Preserving volume: $vol"
+            docker run --rm \
+              -v "$vol":/data \
+              -v /tmp/preserved-volumes:/out \
+              alpine:3.20 \
+              sh -c "tar czf /out/$vol.tar.gz -C /data ." || \
+              echo "  WARN: failed to archive $vol — continuing"
+          done
+          ls -la /tmp/preserved-volumes/ || true
+
+      - name: Upload preserved volumes
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: preserved-volumes-${{ matrix.arch }}
+          path: /tmp/preserved-volumes/
+          if-no-files-found: ignore
+          retention-days: 7
+
       - name: Clean Docker state
         if: always()
         shell: bash {0}
         run: |
-          docker rm -f rnode.bootstrap rnode.validator1 rnode.validator2 rnode.validator3 rnode.readonly \
-            rnode.standalone rnode.custom.boot rnode.custom.validator1 rnode.custom.validator2 \
-            rnode.custom.validator3 rnode.custom.joiner 2>/dev/null
-          docker network rm f1r3fly-shard_f1r3fly-test-shard f1r3fly-standalone_f1r3fly-test-standalone f1r3fly-custom_f1r3fly-test-custom 2>/dev/null
+          # Canonical cleanup. Handles --keep-running leftovers from the
+          # pytest invocation above by running shardctl test-reset, which
+          # force-removes every framework container/network/volume regardless
+          # of state (Docker provider's `force_cleanup_all_test_resources`).
+          # Critical on self-hosted runners that persist across jobs.
+          cd system-integration
+          poetry run shardctl test-reset || true
+          cd ..
           sudo rm -rf system-integration/integration-tests/data
 
   # ===========================================================================
