@@ -16,6 +16,14 @@ new
   test_get_or_else_when_key_present,
   test_delete_key,
   test_delete_missing_key,
+  test_set_after_delete_returns_new_value,
+  test_delete_preserves_unrelated_keys,
+  test_set_delete_set_cycles,
+  test_update_after_delete,
+  test_to_map_after_delete,
+  test_treehashmap_depth_1,
+  test_get_or_else_after_delete,
+  test_bulk_insert_then_bulk_delete_then_reinsert,
   test_convert_to_map_0_values,
   test_convert_to_map_1_values,
   test_convert_to_map_2_values,
@@ -41,6 +49,14 @@ in {
         ("GetOrElse when key present", *test_get_or_else_when_key_present),
         ("Delete key", *test_delete_key),
         ("Delete missing key", *test_delete_missing_key),
+        ("Set after delete returns new value", *test_set_after_delete_returns_new_value),
+        ("Delete does not affect unrelated keys", *test_delete_preserves_unrelated_keys),
+        ("Repeated set/delete cycles preserve final value", *test_set_delete_set_cycles),
+        ("Update after delete behaves like update on never-set", *test_update_after_delete),
+        ("ToMap reflects deletions", *test_to_map_after_delete),
+        ("TreeHashMap with depth=1 (max interior sharing)", *test_treehashmap_depth_1),
+        ("GetOrElse returns default after delete", *test_get_or_else_after_delete),
+        ("Bulk insert + bulk delete + bulk reinsert", *test_bulk_insert_then_bulk_delete_then_reinsert),
         ("Convert to map 0 values", *test_convert_to_map_0_values),
         ("Convert to map 1 values", *test_convert_to_map_1_values),
         ("Convert to map 2 values", *test_convert_to_map_2_values),
@@ -274,6 +290,244 @@ in {
           for (@thm <- ret) {
             TreeHashMap!("delete", thm, "some key", *deleteCh) |
             rhoSpec!("assert", (Nil, "== <-", *deleteCh), "deleteCh contains Nil", *ackCh)
+          }
+        }
+      } |
+
+      // Deletion removes the leaf-Map entry but does NOT clear interior
+      // bitmap bits — the same key-path can be re-used by a subsequent set
+      // without rebuilding the interior chain. If a future change starts
+      // clearing parent bits on delete, the re-set would land on a
+      // freshly-MakeNode'd leaf with different unforgeable identities and
+      // break BitmaskOr merging of concurrent inserts on this path.
+      contract test_set_after_delete_returns_new_value(rhoSpec, _, ackCh) = {
+        new ret, set1Ch, deleteCh, set2Ch, getCh in {
+          TreeHashMap!("init", 3, *ret) |
+          for (@thm <- ret) {
+            TreeHashMap!("set", thm, "key", "first_value", *set1Ch) |
+            for (_ <- set1Ch) {
+              TreeHashMap!("delete", thm, "key", *deleteCh) |
+              for (_ <- deleteCh) {
+                TreeHashMap!("set", thm, "key", "second_value", *set2Ch) |
+                for (_ <- set2Ch) {
+                  TreeHashMap!("get", thm, "key", *getCh) |
+                  rhoSpec!("assert", ("second_value", "== <-", *getCh),
+                    "Re-setting a deleted key returns the new value",
+                    *ackCh)
+                }
+              }
+            }
+          }
+        }
+      } |
+
+      // Companion to the no-clear invariant: deleting one key must not
+      // disturb the lookup of unrelated keys. Three keys are inserted, the
+      // middle one is deleted, and the others are queried. If delete
+      // accidentally cleared interior bitmap bits shared with the surviving
+      // keys, those would lose their lookup path and return Nil here.
+      contract test_delete_preserves_unrelated_keys(rhoSpec, _, ackCh) = {
+        new ret, setACh, setBCh, setCCh, deleteCh, getACh, getCCh in {
+          TreeHashMap!("init", 3, *ret) |
+          for (@thm <- ret) {
+            TreeHashMap!("set", thm, "alpha", "A", *setACh) |
+            TreeHashMap!("set", thm, "beta", "B", *setBCh) |
+            TreeHashMap!("set", thm, "gamma", "C", *setCCh) |
+            for (_ <- setACh; _ <- setBCh; _ <- setCCh) {
+              TreeHashMap!("delete", thm, "beta", *deleteCh) |
+              for (_ <- deleteCh) {
+                TreeHashMap!("get", thm, "alpha", *getACh) |
+                TreeHashMap!("get", thm, "gamma", *getCCh) |
+                rhoSpec!("assertMany",
+                  [
+                    (("A", "== <-", *getACh), "alpha survives delete-of-beta"),
+                    (("C", "== <-", *getCCh), "gamma survives delete-of-beta"),
+                  ],
+                  *ackCh)
+              }
+            }
+          }
+        }
+      } |
+
+      // Repeated set/delete cycles on the same key. Interior nodes must
+      // survive arbitrary cycle counts without state drift.
+      contract test_set_delete_set_cycles(rhoSpec, _, ackCh) = {
+        new ret, s1, d1, s2, d2, s3, getCh in {
+          TreeHashMap!("init", 3, *ret) |
+          for (@thm <- ret) {
+            TreeHashMap!("set", thm, "k", "v1", *s1) |
+            for (_ <- s1) {
+              TreeHashMap!("delete", thm, "k", *d1) |
+              for (_ <- d1) {
+                TreeHashMap!("set", thm, "k", "v2", *s2) |
+                for (_ <- s2) {
+                  TreeHashMap!("delete", thm, "k", *d2) |
+                  for (_ <- d2) {
+                    TreeHashMap!("set", thm, "k", "v3", *s3) |
+                    for (_ <- s3) {
+                      TreeHashMap!("get", thm, "k", *getCh) |
+                      rhoSpec!("assert", ("v3", "== <-", *getCh),
+                        "After 3 set/delete cycles get returns the most recent value",
+                        *ackCh)
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      } |
+
+      // After delete, update walks the same code path as update-on-never-set.
+      // With the same `val + 1` update body that yields no result on Nil
+      // input, get must return Nil — matching test_get_after_update_nil.
+      contract test_update_after_delete(rhoSpec, _, ackCh) = {
+        new ret, setCh, delCh, updCh, getCh, update in {
+          TreeHashMap!("init", 3, *ret) |
+          contract update(@val, retCh) = {
+            retCh!(val + 1)
+          } |
+          for (@thm <- ret) {
+            TreeHashMap!("set", thm, "k", 50, *setCh) |
+            for (_ <- setCh) {
+              TreeHashMap!("delete", thm, "k", *delCh) |
+              for (_ <- delCh) {
+                TreeHashMap!("update", thm, "k", *update, *updCh) |
+                for (_ <- updCh) {
+                  TreeHashMap!("get", thm, "k", *getCh) |
+                  rhoSpec!("assert", (Nil, "== <-", *getCh),
+                    "Update after delete behaves like update on never-set",
+                    *ackCh)
+                }
+              }
+            }
+          }
+        }
+      } |
+
+      // toMap traversal must respect deletions. Existing convert_to_map_*
+      // tests only exercise the set path; this one inserts three keys,
+      // deletes the middle one, and asserts toMap reflects the deletion.
+      contract test_to_map_after_delete(rhoSpec, _, ackCh) = {
+        new ret, setACh, setBCh, setCCh, delCh, toMapCh in {
+          TreeHashMap!("init", 3, *ret) |
+          for (@thm <- ret) {
+            TreeHashMap!("set", thm, "a", 1, *setACh) |
+            TreeHashMap!("set", thm, "b", 2, *setBCh) |
+            TreeHashMap!("set", thm, "c", 3, *setCCh) |
+            for (_ <- setACh; _ <- setBCh; _ <- setCCh) {
+              TreeHashMap!("delete", thm, "b", *delCh) |
+              for (_ <- delCh) {
+                TreeHashMap!("toMap", thm, *toMapCh) |
+                rhoSpec!("assert", ({"a": 1, "c": 3}, "== <-", *toMapCh),
+                  "toMap reflects deletion: 'b' is absent",
+                  *ackCh)
+              }
+            }
+          }
+        }
+      } |
+
+      // depth=1 forces every key onto a 16-leaf root, maximizing the
+      // interior-node bitmap pressure that the BitmaskOr fix is designed
+      // to handle without conflict. Three sets followed by three gets
+      // verifies the heavily-shared-interior case.
+      contract test_treehashmap_depth_1(rhoSpec, _, ackCh) = {
+        new ret, s1, s2, s3, g1, g2, g3 in {
+          TreeHashMap!("init", 1, *ret) |
+          for (@thm <- ret) {
+            TreeHashMap!("set", thm, "key1", "val1", *s1) |
+            TreeHashMap!("set", thm, "key2", "val2", *s2) |
+            TreeHashMap!("set", thm, "key3", "val3", *s3) |
+            for (_ <- s1; _ <- s2; _ <- s3) {
+              TreeHashMap!("get", thm, "key1", *g1) |
+              TreeHashMap!("get", thm, "key2", *g2) |
+              TreeHashMap!("get", thm, "key3", *g3) |
+              rhoSpec!("assertMany",
+                [
+                  (("val1", "== <-", *g1), "depth=1: key1 retrievable"),
+                  (("val2", "== <-", *g2), "depth=1: key2 retrievable"),
+                  (("val3", "== <-", *g3), "depth=1: key3 retrievable"),
+                ],
+                *ackCh)
+            }
+          }
+        }
+      } |
+
+      // getOrElse on a deleted key must return the default — covers a gap
+      // relative to test_get_or_else_when_key_missing (which only covers
+      // never-set keys).
+      contract test_get_or_else_after_delete(rhoSpec, _, ackCh) = {
+        new ret, setCh, delCh, geCh in {
+          TreeHashMap!("init", 3, *ret) |
+          for (@thm <- ret) {
+            TreeHashMap!("set", thm, "k", "original", *setCh) |
+            for (_ <- setCh) {
+              TreeHashMap!("delete", thm, "k", *delCh) |
+              for (_ <- delCh) {
+                TreeHashMap!("getOrElse", thm, "k", "default_value", *geCh) |
+                rhoSpec!("assert", ("default_value", "== <-", *geCh),
+                  "getOrElse returns default value after key is deleted",
+                  *ackCh)
+              }
+            }
+          }
+        }
+      } |
+
+      // Practical consequence of the no-bit-clear invariant: after wholesale
+      // deletion of N keys, the interior chain still allows fresh inserts
+      // anywhere. Insert 5 keys, delete all 5, insert 5 different keys,
+      // assert all 5 new keys are retrievable. If delete cleared interior
+      // bits along the way, the second wave of inserts could land on
+      // freshly-MakeNode'd leaves with mismatched unforgeable identities,
+      // breaking either the insert or a subsequent get.
+      contract test_bulk_insert_then_bulk_delete_then_reinsert(rhoSpec, _, ackCh) = {
+        new ret,
+            sa, sb, sc, sd, se,
+            da, db, dc, dd, de,
+            sv, sw, sx, sy, sz,
+            gv, gw, gx, gy, gz
+        in {
+          TreeHashMap!("init", 3, *ret) |
+          for (@thm <- ret) {
+            TreeHashMap!("set", thm, "a", "A", *sa) |
+            TreeHashMap!("set", thm, "b", "B", *sb) |
+            TreeHashMap!("set", thm, "c", "C", *sc) |
+            TreeHashMap!("set", thm, "d", "D", *sd) |
+            TreeHashMap!("set", thm, "e", "E", *se) |
+            for (_ <- sa; _ <- sb; _ <- sc; _ <- sd; _ <- se) {
+              TreeHashMap!("delete", thm, "a", *da) |
+              TreeHashMap!("delete", thm, "b", *db) |
+              TreeHashMap!("delete", thm, "c", *dc) |
+              TreeHashMap!("delete", thm, "d", *dd) |
+              TreeHashMap!("delete", thm, "e", *de) |
+              for (_ <- da; _ <- db; _ <- dc; _ <- dd; _ <- de) {
+                TreeHashMap!("set", thm, "v", "V", *sv) |
+                TreeHashMap!("set", thm, "w", "W", *sw) |
+                TreeHashMap!("set", thm, "x", "X", *sx) |
+                TreeHashMap!("set", thm, "y", "Y", *sy) |
+                TreeHashMap!("set", thm, "z", "Z", *sz) |
+                for (_ <- sv; _ <- sw; _ <- sx; _ <- sy; _ <- sz) {
+                  TreeHashMap!("get", thm, "v", *gv) |
+                  TreeHashMap!("get", thm, "w", *gw) |
+                  TreeHashMap!("get", thm, "x", *gx) |
+                  TreeHashMap!("get", thm, "y", *gy) |
+                  TreeHashMap!("get", thm, "z", *gz) |
+                  rhoSpec!("assertMany",
+                    [
+                      (("V", "== <-", *gv), "v retrievable after bulk delete + reinsert"),
+                      (("W", "== <-", *gw), "w retrievable after bulk delete + reinsert"),
+                      (("X", "== <-", *gx), "x retrievable after bulk delete + reinsert"),
+                      (("Y", "== <-", *gy), "y retrievable after bulk delete + reinsert"),
+                      (("Z", "== <-", *gz), "z retrievable after bulk delete + reinsert"),
+                    ],
+                    *ackCh)
+                }
+              }
+            }
           }
         }
       } |

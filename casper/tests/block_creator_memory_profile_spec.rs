@@ -193,7 +193,7 @@ async fn run_block_creator_create_memory_profile() {
     let (mut runtime_manager, _) = RuntimeManager::create_with_history(
         rspace_store,
         mergeable_store,
-        Genesis::non_negative_mergeable_tag_name(),
+        std::sync::Arc::new(Genesis::default_mergeable_tags()),
         ExternalServices::noop(),
     );
 
@@ -431,7 +431,7 @@ async fn run_block_creator_phase_split_memory_profile() {
     let (mut runtime_manager, _) = RuntimeManager::create_with_history(
         rspace_store,
         mergeable_store,
-        Genesis::non_negative_mergeable_tag_name(),
+        std::sync::Arc::new(Genesis::default_mergeable_tags()),
         ExternalServices::noop(),
     );
 

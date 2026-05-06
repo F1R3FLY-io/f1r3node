@@ -75,7 +75,7 @@ async fn multi_validator_recovery_dedups_re_proposed_sig() {
     let (mut rm, _) = RuntimeManager::create_with_history(
         rspace_store,
         mergeable_store,
-        Genesis::non_negative_mergeable_tag_name(),
+        std::sync::Arc::new(Genesis::default_mergeable_tags()),
         ExternalServices::noop(),
     );
 

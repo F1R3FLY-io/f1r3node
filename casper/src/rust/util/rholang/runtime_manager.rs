@@ -65,7 +65,9 @@ pub struct RuntimeManager {
     pub replay_space: ReplayRSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>,
     pub history_repo: RhoHistoryRepository,
     pub mergeable_store: MergeableStore,
-    pub mergeable_tag_name: Par,
+    pub mergeable_tags: std::sync::Arc<
+        std::collections::HashMap<Par, rspace_plus_plus::rspace::merger::merging_logic::MergeType>,
+    >,
     // TODO: make proper storage for block indices - OLD
     pub block_index_cache: Arc<DashMap<BlockHash, BlockIndex>>,
     pub block_index_cache_order: Arc<Mutex<VecDeque<BlockHash>>>,
@@ -268,7 +270,7 @@ impl RuntimeManager {
         let new_space = self.space.spawn().expect("Failed to spawn RSpace");
         let runtime = rho_runtime::create_rho_runtime(
             new_space,
-            self.mergeable_tag_name.clone(),
+            self.mergeable_tags.clone(),
             true,
             &mut Vec::new(),
             self.external_services.clone(),
@@ -289,7 +291,7 @@ impl RuntimeManager {
 
         let runtime = rho_runtime::create_replay_rho_runtime(
             new_replay_space,
-            self.mergeable_tag_name.clone(),
+            self.mergeable_tags.clone(),
             true,
             &mut Vec::new(),
             self.external_services.clone(),
@@ -914,7 +916,7 @@ impl RuntimeManager {
                     .map(|x| {
                         x.channels
                             .into_iter()
-                            .map(|y| (y.hash, y.diff))
+                            .map(|y| (y.hash, (y.diff, y.merge_type)))
                             .collect::<BTreeMap<_, _>>()
                     })
                     .collect::<Vec<_>>();
@@ -979,7 +981,11 @@ impl RuntimeManager {
             .map(|data| {
                 let channels: Vec<NumberChannel> = data
                     .into_iter()
-                    .map(|(hash, diff)| NumberChannel { hash, diff })
+                    .map(|(hash, (diff, merge_type))| NumberChannel {
+                        hash,
+                        diff,
+                        merge_type,
+                    })
                     .collect::<Vec<_>>();
 
                 DeployMergeableData { channels }
@@ -1046,10 +1052,23 @@ impl RuntimeManager {
                     data.len()
                 )));
             }
-            let value = data
-                .first()
-                .map(|datum| RholangMergingLogic::get_number_with_rnd(&datum.a).0)
-                .unwrap_or(0);
+            // None = channel doesn't exist (legitimate; start from 0). Some-but-non-numeric
+            // is an invariant violation (channel-type stability is a contract-level
+            // guarantee — interior nodes always numeric, leaves always Map). Treat as
+            // hard failure so the merge is rejected rather than silently substituting 0.
+            let value = match data.first() {
+                None => 0,
+                Some(datum) => match RholangMergingLogic::try_get_number_with_rnd(&datum.a) {
+                    Some((n, _)) => n,
+                    None => {
+                        return Err(CasperError::RuntimeError(format!(
+                            "Pre-state value for number channel {:?} is non-numeric; \
+                             channel-type invariant violated",
+                            ch,
+                        )));
+                    }
+                },
+            };
             initial_values.insert(ch, value);
         }
 
@@ -1077,7 +1096,12 @@ impl RuntimeManager {
         replay_rspace: ReplayRSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>,
         history_repo: RhoHistoryRepository,
         mergeable_store: MergeableStore,
-        mergeable_tag_name: Par,
+        mergeable_tags: std::sync::Arc<
+            std::collections::HashMap<
+                Par,
+                rspace_plus_plus::rspace::merger::merging_logic::MergeType,
+            >,
+        >,
         external_services: ExternalServices,
     ) -> RuntimeManager {
         let replay_cache_size = Self::max_replay_cache_entries();
@@ -1088,7 +1112,7 @@ impl RuntimeManager {
             replay_space: replay_rspace,
             history_repo,
             mergeable_store,
-            mergeable_tag_name,
+            mergeable_tags,
             block_index_cache: Arc::new(DashMap::new()),
             block_index_cache_order: Arc::new(Mutex::new(VecDeque::new())),
             active_validators_cache: Arc::new(DashMap::new()),
@@ -1108,22 +1132,28 @@ impl RuntimeManager {
     pub fn create_with_store(
         store: RSpaceStore,
         mergeable_store: MergeableStore,
-        mergeable_tag_name: Par,
+        mergeable_tags: std::sync::Arc<
+            std::collections::HashMap<
+                Par,
+                rspace_plus_plus::rspace::merger::merging_logic::MergeType,
+            >,
+        >,
         external_services: ExternalServices,
     ) -> RuntimeManager {
-        let (rt_manager, _) = Self::create_with_history(
-            store,
-            mergeable_store,
-            mergeable_tag_name,
-            external_services,
-        );
+        let (rt_manager, _) =
+            Self::create_with_history(store, mergeable_store, mergeable_tags, external_services);
         rt_manager
     }
 
     pub fn create_with_history(
         store: RSpaceStore,
         mergeable_store: MergeableStore,
-        mergeable_tag_name: Par,
+        mergeable_tags: std::sync::Arc<
+            std::collections::HashMap<
+                Par,
+                rspace_plus_plus::rspace::merger::merging_logic::MergeType,
+            >,
+        >,
         external_services: ExternalServices,
     ) -> (RuntimeManager, RhoHistoryRepository) {
         let (rspace, replay_rspace) =
@@ -1137,7 +1167,7 @@ impl RuntimeManager {
             replay_rspace,
             history_repo.clone(),
             mergeable_store,
-            mergeable_tag_name,
+            mergeable_tags,
             external_services,
         );
 

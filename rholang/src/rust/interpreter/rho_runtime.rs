@@ -13,6 +13,7 @@ use models::rust::utils::new_freevar_par;
 use models::rust::validator::Validator;
 use rspace_plus_plus::rspace::checkpoint::{Checkpoint, SoftCheckpoint};
 use rspace_plus_plus::rspace::hashing::blake2b256_hash::Blake2b256Hash;
+use rspace_plus_plus::rspace::merger::merging_logic::MergeType;
 use rspace_plus_plus::rspace::history::history_repository::HistoryRepository;
 use rspace_plus_plus::rspace::internal::{Datum, Row, WaitingContinuation};
 use rspace_plus_plus::rspace::r#match::Match;
@@ -22,7 +23,7 @@ use rspace_plus_plus::rspace::rspace::RSpaceStore;
 use rspace_plus_plus::rspace::rspace_interface::ISpace;
 use rspace_plus_plus::rspace::trace::Log;
 use rspace_plus_plus::rspace::tuplespace_interface::Tuplespace;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -260,7 +261,7 @@ pub struct RhoRuntimeImpl {
     pub block_data_ref: Arc<tokio::sync::RwLock<BlockData>>,
     pub invalid_blocks_param: InvalidBlocks,
     pub deploy_data_ref: Arc<tokio::sync::RwLock<DeployData>>,
-    pub merge_chs: Arc<tokio::sync::RwLock<HashSet<Par>>>,
+    pub merge_chs: Arc<tokio::sync::RwLock<HashMap<Par, MergeType>>>,
 }
 
 impl RhoRuntimeImpl {
@@ -270,7 +271,7 @@ impl RhoRuntimeImpl {
         block_data_ref: Arc<tokio::sync::RwLock<BlockData>>,
         invalid_blocks_param: InvalidBlocks,
         deploy_data_ref: Arc<tokio::sync::RwLock<DeployData>>,
-        merge_chs: Arc<tokio::sync::RwLock<HashSet<Par>>>,
+        merge_chs: Arc<tokio::sync::RwLock<HashMap<Par, MergeType>>>,
     ) -> RhoRuntimeImpl {
         RhoRuntimeImpl {
             reducer,
@@ -983,8 +984,8 @@ async fn setup_reducer(
     deploy_data_ref: Arc<tokio::sync::RwLock<DeployData>>,
     extra_system_processes: &mut Vec<Definition>,
     urn_map: HashMap<String, Par>,
-    merge_chs: Arc<tokio::sync::RwLock<HashSet<Par>>>,
-    mergeable_tag_name: Par,
+    merge_chs: Arc<tokio::sync::RwLock<HashMap<Par, MergeType>>>,
+    mergeable_tags: Arc<HashMap<Par, MergeType>>,
     openai_service: SharedOpenAIService,
     ollama_service: SharedOllamaService,
     grpc_client_service: GrpcClientService,
@@ -1019,7 +1020,7 @@ async fn setup_reducer(
         dispatcher: dispatcher.clone(),
         urn_map: Arc::new(urn_map),
         merge_chs,
-        mergeable_tag_name,
+        mergeable_tags,
         cost: cost.clone(),
         substitute: Substitute { cost: cost.clone() },
     });
@@ -1078,8 +1079,8 @@ fn setup_maps_and_refs(
 
 pub async fn create_rho_env<T>(
     mut rspace: T,
-    merge_chs: Arc<tokio::sync::RwLock<HashSet<Par>>>,
-    mergeable_tag_name: Par,
+    merge_chs: Arc<tokio::sync::RwLock<HashMap<Par, MergeType>>>,
+    mergeable_tags: Arc<HashMap<Par, MergeType>>,
     extra_system_processes: &mut Vec<Definition>,
     cost: _cost,
     external_services: ExternalServices,
@@ -1097,7 +1098,29 @@ where
         + 'static,
 {
     let maps_and_refs = setup_maps_and_refs(&extra_system_processes);
-    let (block_data_ref, invalid_blocks, deploy_data_ref, urn_map, proc_defs) = maps_and_refs;
+    let (block_data_ref, invalid_blocks, deploy_data_ref, mut urn_map, proc_defs) = maps_and_refs;
+
+    // Expose the bitmask-OR mergeable tag to system contracts (Registry.rho)
+    // via a URI binding. Genesis-defined tags are unforgeable names; they must
+    // be created at runtime startup and threaded into both the merge engine's
+    // tag registry and the URN map so contracts can bind them via
+    // `bootstrapName(`rho:system:...`)`.
+    for (tag_par, merge_type) in mergeable_tags.iter() {
+        if let MergeType::BitmaskOr = merge_type {
+            tracing::info!(
+                target: "f1r3fly.merge.tag_check",
+                "URI binding inserted: rho:system:bitmaskMergeableTag -> Par(unforgeables={}, exprs={}, bundles={})",
+                tag_par.unforgeables.len(),
+                tag_par.exprs.len(),
+                tag_par.bundles.len(),
+            );
+            urn_map.insert(
+                "rho:system:bitmaskMergeableTag".to_string(),
+                tag_par.clone(),
+            );
+        }
+    }
+
     let res = introduce_system_process(vec![&mut rspace], proc_defs).await;
     assert!(res.iter().all(|s| s.is_none()));
 
@@ -1117,7 +1140,7 @@ where
         extra_system_processes,
         urn_map,
         merge_chs,
-        mergeable_tag_name,
+        mergeable_tags,
         openai_service,
         ollama_service,
         grpc_client_service,
@@ -1149,7 +1172,7 @@ async fn create_runtime<T>(
     rspace: T,
     extra_system_processes: &mut Vec<Definition>,
     init_registry: bool,
-    mergeable_tag_name: Par,
+    mergeable_tags: Arc<HashMap<Par, MergeType>>,
     external_services: ExternalServices,
 ) -> RhoRuntimeImpl
 where
@@ -1160,16 +1183,12 @@ where
         + 'static,
 {
     let cost = CostAccounting::empty_cost();
-    let merge_chs = Arc::new(tokio::sync::RwLock::new({
-        let mut set = HashSet::new();
-        set.insert(Par::default());
-        set
-    }));
+    let merge_chs = Arc::new(tokio::sync::RwLock::new(HashMap::<Par, MergeType>::new()));
 
     let rho_env = create_rho_env(
         rspace,
         merge_chs.clone(),
-        mergeable_tag_name,
+        mergeable_tags,
         extra_system_processes,
         cost.clone(),
         external_services,
@@ -1207,7 +1226,7 @@ where
 ///   contract on the rspace. For an existing rspace which bootstrapped registry before, you
 ///   can skip this. For some test cases, you don't need the registry, then you can skip this
 ///   init process which can be faster.
-/// - `mergeable_tag_name`: Tag name for mergeable channels
+/// - `mergeable_tags`: Map of tag `Par` to its merge strategy
 /// - `external_services`: External services configuration (OpenAI, gRPC)
 ///
 /// # Returns
@@ -1220,7 +1239,7 @@ where
 )]
 pub async fn create_rho_runtime<T>(
     rspace: T,
-    mergeable_tag_name: Par,
+    mergeable_tags: Arc<HashMap<Par, MergeType>>,
     init_registry: bool,
     extra_system_processes: &mut Vec<Definition>,
     external_services: ExternalServices,
@@ -1236,7 +1255,7 @@ where
         rspace,
         extra_system_processes,
         init_registry,
-        mergeable_tag_name,
+        mergeable_tags,
         external_services,
     )
     .await
@@ -1249,7 +1268,7 @@ where
 /// - `rspace`: The replay rspace which the runtime operates on
 /// - `extra_system_processes`: Same as `create_rho_runtime`
 /// - `init_registry`: Same as `create_rho_runtime`
-/// - `mergeable_tag_name`: Tag name for mergeable channels
+/// - `mergeable_tags`: Map of tag `Par` to its merge strategy
 /// - `external_services`: External services configuration
 ///
 /// # Returns
@@ -1262,7 +1281,7 @@ where
 )]
 pub async fn create_replay_rho_runtime<T>(
     rspace: T,
-    mergeable_tag_name: Par,
+    mergeable_tags: Arc<HashMap<Par, MergeType>>,
     init_registry: bool,
     extra_system_processes: &mut Vec<Definition>,
     external_services: ExternalServices,
@@ -1278,7 +1297,7 @@ where
         rspace,
         extra_system_processes,
         init_registry,
-        mergeable_tag_name,
+        mergeable_tags,
         external_services,
     )
     .await
@@ -1289,7 +1308,7 @@ pub(crate) async fn _create_runtimes<T, R>(
     replay_space: R,
     init_registry: bool,
     additional_system_processes: &mut Vec<Definition>,
-    mergeable_tag_name: Par,
+    mergeable_tags: Arc<HashMap<Par, MergeType>>,
     external_services: ExternalServices,
 ) -> (RhoRuntimeImpl, RhoRuntimeImpl)
 where
@@ -1306,7 +1325,7 @@ where
 {
     let rho_runtime = create_rho_runtime(
         space,
-        mergeable_tag_name.clone(),
+        mergeable_tags.clone(),
         init_registry,
         additional_system_processes,
         external_services.clone(),
@@ -1315,7 +1334,7 @@ where
 
     let replay_rho_runtime = create_replay_rho_runtime(
         replay_space,
-        mergeable_tag_name,
+        mergeable_tags,
         init_registry,
         additional_system_processes,
         external_services,
@@ -1332,7 +1351,7 @@ where
 )]
 pub async fn create_runtime_from_kv_store(
     stores: RSpaceStore,
-    mergeable_tag_name: Par,
+    mergeable_tags: Arc<HashMap<Par, MergeType>>,
     init_registry: bool,
     additional_system_processes: &mut Vec<Definition>,
     matcher: Arc<Box<dyn Match<BindPattern, ListParWithRandom>>>,
@@ -1343,7 +1362,7 @@ pub async fn create_runtime_from_kv_store(
 
     let runtime = create_rho_runtime(
         space,
-        mergeable_tag_name,
+        mergeable_tags,
         init_registry,
         additional_system_processes,
         external_services,

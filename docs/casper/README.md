@@ -181,6 +181,31 @@ The merge scope cannot rely on local finalization status because different valid
 
 **Deterministic ordering**: Merge paths in `conflict_set_merger.rs` and casper-buffer eviction enforce deterministic tie-breaks to ensure consistent behavior across nodes.
 
+### Mergeable Channels
+
+Not every overlapping channel touch is a conflict. Some channels carry data with commutative update semantics — two concurrent writes can be combined rather than one rejected. The merge engine tags such channels with a `MergeType` (defined in `rspace++/src/rspace/merger/merging_logic.rs`), and the rholang interpreter detects them at evaluation time via `is_mergeable_channel` (`rholang/src/rust/interpreter/reduce.rs`):
+
+| `MergeType` | Channel pattern | Combine rule |
+|-------------|-----------------|--------------|
+| `IntegerAdd` | Vault balances, gas accumulators, per-purse counters | Sum the deltas across chains |
+| `BitmaskOr` | Registry `TreeHashMap` interior-node bitmaps (`@(*bitmaskTag, node, *storeToken)`) | OR-merge the bitmaps |
+
+When the conflict-set merger inspects a shared channel, it looks up the channel's tag against this table. If a `MergeType` is found, the deploys are merged rather than treated as conflicting. If not, ordinary conflict resolution applies (one deploy is kept, the other rejected).
+
+`BitmaskOr` was added to handle a class of failure where two registry inserts from sibling blocks both touched the same `TreeHashMap` interior node. Without bitmask merging, one of the inserts would be rejected at multi-parent merge — even though the inserts were at different keys and logically commute. The regression is captured at unit level by `casper/tests/multi_node/bridge_contract_concurrent_merge.rs`.
+
+To diagnose a suspected merge rejection, run with `RUST_LOG=f1r3fly.merge.tag_check=trace` to see which channels match a `MergeType` and which do not.
+
+#### Pitfalls when authoring contracts that use mergeable-tagged channels
+
+Mergeable-tagged channels rely on a contract-maintained singleton-Datum invariant: at any observation point the channel holds zero or one Datum. Registry.rho upholds this with the lock pattern `for (@val <- @chan) { @chan!(newVal) }` — the consume removes the existing Datum, the contract publishes a fresh one. Two situations break the invariant and silently corrupt the contract's own state without breaking consensus:
+
+- **Replicated sends (`!!`) on a mergeable-tagged channel.** A persistent Datum is not removed by the lock-acquire consume, so the contract's release `@chan!(newVal)` adds a second Datum alongside the persistent one. Each subsequent lock cycle adds another. The numeric reader's multi-value path (`get_number_channel` in `casper/src/rust/rholang/runtime.rs`) then OR-folds (or, for `IntegerAdd`, picks max of) all the Datums on every read. Determinism holds — every validator sees the same growing multi-Datum state — but the contract's effective value diverges from any single write. Use `!` (linear send) on mergeable-tagged channels.
+
+- **Mixing the lock pattern with `<<-` peeks that don't acquire.** The `<<-` peek reads without consuming. If the contract uses `<<-` to read and then `!` to write without the linear-consume step in between, two concurrent reads can both observe the same pre-state and both publish, again leaving multiple Datums.
+
+These are contract-author footguns, not runtime errors — the runtime can't tell intended-singleton from intended-multiset. If you build a contract on top of a mergeable-tagged channel, model the lifetime explicitly and prefer the Registry.rho lock pattern (`for (@val <- @chan) { @chan!(newVal) }`) for any read-modify-write step.
+
 ### Performance
 
 Merge cost is O(visible_blocks^2 x deploys^2) for the conflict resolution phase, dominated by pairwise conflict detection across deploys in the visible block set. LCA scoping keeps the visible block count bounded, preventing merge cost from degrading under sustained load.

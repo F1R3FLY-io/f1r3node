@@ -309,3 +309,24 @@ for (@store <- state) {
 ```
 
 Always ensure the state channel gets a value back on every code path.
+
+### Orphan Sends to Unregistered Channels
+
+A send to a channel with no waiting receiver lingers in the tuplespace forever. The deploy succeeds without warning — no error, non-zero cost, `transfers: [{success: true}]`.
+
+```rho
+// BUG: noContract was never declared as a contract or for-receiver.
+// The send hangs in the tuplespace; the deploy reports success.
+new noContract, ret in {
+  noContract!("hello", *ret) |
+  for (@reply <- ret) {
+    stdout!(reply)   // Never fires.
+  }
+}
+```
+
+This is especially dangerous in multi-hop call chains (A -> B -> C -> D): a missing receiver anywhere along the chain breaks the response without surfacing an error. The caller's continuation just never runs.
+
+To diagnose, use the block report API (`getEventByHash` with `forceReplay=true`, see [Tracing in Tests](../testing-tracing.md#tracing-rholang-execution-via-block-report)) to inspect produces and consumes per deploy. An orphan produce has a `random_state` that no consume matches.
+
+Defensive practice: any contract that exposes an address it computed at runtime and expects to receive sends on it should ensure the receiver is installed *before* the address leaves the contract. See [Vaults and Tokens — Self-Registering Contracts](12-vaults-and-tokens.md#self-registering-contracts).

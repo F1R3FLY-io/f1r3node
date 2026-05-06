@@ -1,7 +1,7 @@
 // See rholang/src/test/scala/coop/rchain/rholang/interpreter/ReduceSpec.scala
 
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashMap},
     i64,
     sync::Arc,
 };
@@ -1666,8 +1666,8 @@ async fn eval_of_new_should_use_deterministic_names_and_provide_urn_based_resour
     let reducer = DebruijnInterpreter::new(
         rspace,
         Arc::new(urn_map),
-        Arc::new(tokio::sync::RwLock::new(HashSet::new())),
-        Par::default(),
+        Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+        Arc::new(std::collections::HashMap::new()),
         cost.clone(),
     );
     cost.set(Cost::unsafe_max());

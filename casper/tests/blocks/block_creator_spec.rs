@@ -160,7 +160,7 @@ async fn should_remove_block_expired_deploys_while_keeping_valid_ones() {
     let (mut runtime_manager, _) = RuntimeManager::create_with_history(
         rspace_store,
         mergeable_store,
-        casper::rust::genesis::genesis::Genesis::non_negative_mergeable_tag_name(),
+        std::sync::Arc::new(casper::rust::genesis::genesis::Genesis::default_mergeable_tags()),
         rholang::rust::interpreter::external_services::ExternalServices::noop(),
     );
 
@@ -259,7 +259,7 @@ async fn should_remove_both_block_expired_and_time_expired_deploys() {
     let (mut runtime_manager, _) = RuntimeManager::create_with_history(
         rspace_store,
         mergeable_store,
-        casper::rust::genesis::genesis::Genesis::non_negative_mergeable_tag_name(),
+        std::sync::Arc::new(casper::rust::genesis::genesis::Genesis::default_mergeable_tags()),
         rholang::rust::interpreter::external_services::ExternalServices::noop(),
     );
 
@@ -377,7 +377,7 @@ async fn should_remove_expired_deploys_from_rejected_deploy_buffer() {
     let (mut runtime_manager, _) = RuntimeManager::create_with_history(
         rspace_store,
         mergeable_store,
-        casper::rust::genesis::genesis::Genesis::non_negative_mergeable_tag_name(),
+        std::sync::Arc::new(casper::rust::genesis::genesis::Genesis::default_mergeable_tags()),
         rholang::rust::interpreter::external_services::ExternalServices::noop(),
     );
 

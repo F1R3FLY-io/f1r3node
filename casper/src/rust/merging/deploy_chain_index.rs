@@ -64,9 +64,9 @@ impl DeployChainIndex {
 
         let event_log_index = deploys
             .into_iter()
-            .fold(EventLogIndex::empty(), |acc, deploy| {
+            .try_fold(EventLogIndex::empty(), |acc, deploy| {
                 EventLogIndex::combine(&acc, &deploy.event_log_index)
-            });
+            })?;
 
         let pre_history_reader = history_repository.get_history_reader_struct(&pre_state_hash)?;
         let post_history_reader = history_repository.get_history_reader_struct(&post_state_hash)?;

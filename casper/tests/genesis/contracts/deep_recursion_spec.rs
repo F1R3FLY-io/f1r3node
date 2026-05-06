@@ -23,7 +23,7 @@ async fn eval_rholang_code(code: &str, timeout: Duration) -> Result<(), String> 
 
     let runtime = create_runtime_from_kv_store(
         r_store,
-        Genesis::non_negative_mergeable_tag_name(),
+        std::sync::Arc::new(Genesis::default_mergeable_tags()),
         true,
         &mut vec![],
         matcher,

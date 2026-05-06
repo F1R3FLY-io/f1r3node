@@ -1,7 +1,7 @@
 // See casper/src/main/scala/coop/rchain/casper/rholang/RuntimeReplaySyntax.scala
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     future::Future,
     time::Instant,
 };
@@ -24,7 +24,7 @@ use rholang::rust::interpreter::{
 };
 use rspace_plus_plus::rspace::{
     hashing::blake2b256_hash::Blake2b256Hash, history::Either,
-    merger::merging_logic::NumberChannelsEndVal,
+    merger::merging_logic::{MergeType, NumberChannelsEndVal},
 };
 
 use crate::rust::{
@@ -204,7 +204,7 @@ impl ReplayRuntimeOps {
         with_cost_accounting: bool,
         processed_deploy: &ProcessedDeploy,
     ) -> Result<NumberChannelsEndVal, CasperError> {
-        let mut mergeable_channels = HashSet::new();
+        let mut mergeable_channels: HashMap<Par, MergeType> = HashMap::new();
 
         let rig_start = Instant::now();
         self.rig(processed_deploy).await?;
@@ -239,7 +239,7 @@ impl ReplayRuntimeOps {
     async fn process_deploy_with_cost_accounting(
         &mut self,
         processed_deploy: &ProcessedDeploy,
-        mergeable_channels: &mut HashSet<Par>,
+        mergeable_channels: &mut HashMap<Par, MergeType>,
     ) -> Result<bool, CasperError> {
         let mut pre_charge_deploy = PreChargeDeploy {
             charge_amount: processed_deploy.deploy.data.total_phlo_charge(),
@@ -332,7 +332,7 @@ impl ReplayRuntimeOps {
     async fn process_deploy_without_cost_accounting(
         &mut self,
         processed_deploy: &ProcessedDeploy,
-        mergeable_channels: &mut HashSet<Par>,
+        mergeable_channels: &mut HashMap<Par, MergeType>,
     ) -> Result<bool, CasperError> {
         self.run_user_deploy(processed_deploy, mergeable_channels)
             .await
@@ -342,7 +342,7 @@ impl ReplayRuntimeOps {
     async fn run_user_deploy(
         &mut self,
         processed_deploy: &ProcessedDeploy,
-        mergeable_channels: &mut HashSet<Par>,
+        mergeable_channels: &mut HashMap<Par, MergeType>,
     ) -> Result<(EvaluateResult, bool), CasperError> {
         // Mirror RuntimeOps behavior: rollback failed user deploy via soft checkpoint
         // so pre-charge context remains available for refund replay.
