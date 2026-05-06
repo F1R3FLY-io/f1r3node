@@ -360,6 +360,12 @@ fn default_deploy_finalization_grace() -> Duration {
 ///
 /// These thresholds bound DAG width relative to replay cost in lieu of
 /// adaptive backpressure. Treat as unstable API; field names may change.
+///
+/// All three fields must be non-negative; HOCON values < 0 are rejected
+/// at deserialization time. The proposer treats these as caps on a
+/// non-negative lag count (`lfb_lag_blocks`), so a negative value would
+/// silently disable the corresponding code path (e.g. `lag <= cap` where
+/// `cap < 0` is never true, leaving pending deploys unproposed).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HeartbeatAdvancedConf {
     /// When this validator is already ahead of LFB, how many blocks of lag
@@ -368,6 +374,7 @@ pub struct HeartbeatAdvancedConf {
     /// (which raises this dynamically).
     #[serde(
         rename = "frontier-chase-max-lag",
+        deserialize_with = "de_non_negative_i64",
         default = "default_frontier_chase_max_lag"
     )]
     pub frontier_chase_max_lag: i64,
@@ -378,14 +385,22 @@ pub struct HeartbeatAdvancedConf {
     /// harder load-relief valve.
     #[serde(
         rename = "pending-deploy-max-lag",
+        deserialize_with = "de_non_negative_i64",
         default = "default_pending_deploy_max_lag"
     )]
     pub pending_deploy_max_lag: i64,
     /// During an active deploy-finalization grace window, the lag cap
     /// widens to this value. The "absolute safe lag during recovery"
     /// ceiling.
+    ///
+    /// Invariant: must be `>= pending_deploy_max_lag` to take effect.
+    /// The proposer computes the recovery cap as
+    /// `max(pending_deploy_max_lag, deploy_recovery_max_lag)`, so a
+    /// value below `pending_deploy_max_lag` collapses to that floor and
+    /// the knob has no effect.
     #[serde(
         rename = "deploy-recovery-max-lag",
+        deserialize_with = "de_non_negative_i64",
         default = "default_deploy_recovery_max_lag"
     )]
     pub deploy_recovery_max_lag: i64,
@@ -492,4 +507,21 @@ where
             Ok(Duration::from_secs_f64(f))
         }
     }
+}
+
+/// Reject negative `i64` values at deserialization time. The lag-cap
+/// fields on `HeartbeatAdvancedConf` are typed as `i64` to match the
+/// proposer's comparison sites, but a negative value silently disables
+/// the corresponding code path — fail fast instead.
+fn de_non_negative_i64<'de, D>(deserializer: D) -> Result<i64, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::Error as _;
+    use serde::Deserialize;
+    let v = i64::deserialize(deserializer)?;
+    if v < 0 {
+        return Err(D::Error::custom(format!("value must be >= 0, got {}", v)));
+    }
+    Ok(v)
 }

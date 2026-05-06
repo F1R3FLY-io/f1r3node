@@ -343,7 +343,7 @@ impl ConfigMapper<Options> for NodeConf {
             );
             Self::try_override_value(
                 &mut self.casper.heartbeat_conf.stale_recovery_min_interval,
-                run.heartbeat_stale_recovery_interval,
+                run.heartbeat_stale_recovery_min_interval,
             );
             Self::try_override_value(
                 &mut self.casper.heartbeat_conf.deploy_finalization_grace,
@@ -478,7 +478,7 @@ mod tests {
         "--heartbeat-disabled",
         "--heartbeat-check-interval=111111seconds",
         "--heartbeat-max-lfb-age=222222seconds",
-        "--heartbeat-stale-recovery-interval=333333seconds",
+        "--heartbeat-stale-recovery-min-interval=333333seconds",
         "--heartbeat-deploy-finalization-grace=444444seconds",
         "--heartbeat-advanced-frontier-chase-max-lag=111",
         "--heartbeat-advanced-pending-deploy-max-lag=222",
@@ -521,6 +521,31 @@ mod tests {
             assert!(run.heartbeat_enabled);
         } else {
             panic!("Expected run subcommand");
+        }
+    }
+
+    #[test]
+    fn test_parse_args_negative_advanced_lag_rejected() {
+        // The three advanced lag-cap flags use a value_parser that
+        // rejects negative integers; a negative cap would silently
+        // disable the corresponding code path in the proposer.
+        for flag in &[
+            "--heartbeat-advanced-frontier-chase-max-lag",
+            "--heartbeat-advanced-pending-deploy-max-lag",
+            "--heartbeat-advanced-deploy-recovery-max-lag",
+        ] {
+            let arg = format!("{flag}=-1");
+            let argv = vec!["rnode", "run", &arg];
+            match Options::try_parse_from(&argv) {
+                Ok(_) => panic!("{flag}=-1 should fail clap parse, got Ok"),
+                Err(e) => {
+                    let err = e.to_string();
+                    assert!(
+                        err.contains("value must be >= 0"),
+                        "clap error for {flag} should mention non-negative requirement, got: {err}"
+                    );
+                }
+            }
         }
     }
 
@@ -625,7 +650,7 @@ mod tests {
                 heartbeat_disabled: true,
                 heartbeat_check_interval: Some(Duration::from_secs(111111)),
                 heartbeat_max_lfb_age: Some(Duration::from_secs(222222)),
-                heartbeat_stale_recovery_interval: Some(Duration::from_secs(333333)),
+                heartbeat_stale_recovery_min_interval: Some(Duration::from_secs(333333)),
                 heartbeat_deploy_finalization_grace: Some(Duration::from_secs(444444)),
                 heartbeat_advanced_frontier_chase_max_lag: Some(111),
                 heartbeat_advanced_pending_deploy_max_lag: Some(222),

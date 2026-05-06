@@ -74,7 +74,7 @@ The following boolean flags override HOCON configuration at startup. CLI flags a
 | `--heartbeat-disabled` | `casper.heartbeat_conf.enabled = false` | Disable heartbeat proposing (takes precedence over `--heartbeat-enabled`) |
 | `--heartbeat-check-interval` | `casper.heartbeat_conf.check_interval` | How often the heartbeat loop wakes to evaluate its decision tree |
 | `--heartbeat-max-lfb-age` | `casper.heartbeat_conf.max_lfb_age` | LFB age threshold above which stale-LFB recovery may fire |
-| `--heartbeat-stale-recovery-interval` | `casper.heartbeat_conf.stale_recovery_min_interval` | Minimum LFB/frontier age before stale-recovery, leader-recovery, and pending-deploy backstop are allowed to fire |
+| `--heartbeat-stale-recovery-min-interval` | `casper.heartbeat_conf.stale_recovery_min_interval` | Minimum LFB/frontier age before stale-recovery, leader-recovery, and pending-deploy backstop are allowed to fire |
 | `--heartbeat-deploy-finalization-grace` | `casper.heartbeat_conf.deploy_finalization_grace` | Grace window opened when pending deploys land; relaxes lag caps and bypasses self-propose-cooldown |
 | `--heartbeat-advanced-frontier-chase-max-lag` | `casper.heartbeat_conf.advanced.frontier_chase_max_lag` | EXPERIMENTAL. Max lag tolerated for frontier-chase proposals while ahead of LFB |
 | `--heartbeat-advanced-pending-deploy-max-lag` | `casper.heartbeat_conf.advanced.pending_deploy_max_lag` | EXPERIMENTAL. Lag threshold above which pending-deploy proposals throttle |
@@ -364,7 +364,7 @@ These values are hardcoded (previously configurable via `F1R3_*` env vars, remov
 | `heartbeat.deploy-finalization-grace` | 25s | Grace window opened when pending deploys land; relaxes lag caps |
 | `heartbeat.advanced.frontier-chase-max-lag` | 0 | EXPERIMENTAL. Max lag for frontier-chase proposals while ahead of LFB |
 | `heartbeat.advanced.pending-deploy-max-lag` | 20 | EXPERIMENTAL. Lag threshold above which pending-deploy proposals throttle |
-| `heartbeat.advanced.deploy-recovery-max-lag` | 64 | EXPERIMENTAL. Wider lag cap during the deploy-finalization grace window |
+| `heartbeat.advanced.deploy-recovery-max-lag` | 64 | EXPERIMENTAL. Wider lag cap during the deploy-finalization grace window. Must be >= `pending-deploy-max-lag` to take effect (else collapses to that floor). |
 
 **Deploy grace window**: When a deploy is proposed or finalization-critical parents observed, a grace window opens (default 25s) that allows proposals which would normally be blocked by cooldown/interval constraints.
 

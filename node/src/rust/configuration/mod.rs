@@ -141,6 +141,31 @@ pub mod builder {
             .validate_native_token()
             .map_err(|e| eyre::eyre!("native token config invalid: {}", e))?;
 
+        // The proposer computes its recovery cap as
+        // `max(pending_deploy_max_lag, deploy_recovery_max_lag)`. When
+        // deploy_recovery is set below pending_deploy, the recovery knob
+        // collapses to the pending floor and has no effect — warn the
+        // operator instead of letting the misconfiguration sit silently.
+        let pending_deploy_max_lag = node_conf
+            .casper
+            .heartbeat_conf
+            .advanced
+            .pending_deploy_max_lag;
+        let deploy_recovery_max_lag = node_conf
+            .casper
+            .heartbeat_conf
+            .advanced
+            .deploy_recovery_max_lag;
+        if deploy_recovery_max_lag < pending_deploy_max_lag {
+            tracing::warn!(
+                "casper.heartbeat.advanced.deploy-recovery-max-lag ({}) is less than \
+                pending-deploy-max-lag ({}); the recovery knob has no effect under this \
+                configuration. Set deploy-recovery-max-lag >= pending-deploy-max-lag.",
+                deploy_recovery_max_lag,
+                pending_deploy_max_lag,
+            );
+        }
+
         Ok(())
     }
 
@@ -211,12 +236,14 @@ mod heartbeat_conf_hocon_tests {
     use std::time::Duration;
 
     fn parse_heartbeat(hocon_text: &str) -> HeartbeatConf {
+        try_parse_heartbeat(hocon_text).expect("HOCON should deserialize into HeartbeatConf")
+    }
+
+    fn try_parse_heartbeat(hocon_text: &str) -> Result<HeartbeatConf, String> {
         let loader = hocon::HoconLoader::new()
             .load_str(hocon_text)
-            .expect("HOCON should parse");
-        loader
-            .resolve()
-            .expect("HOCON should deserialize into HeartbeatConf")
+            .map_err(|e| format!("hocon load: {e}"))?;
+        loader.resolve().map_err(|e| format!("hocon resolve: {e}"))
     }
 
     #[test]
@@ -285,5 +312,40 @@ mod heartbeat_conf_hocon_tests {
         assert_eq!(cfg.advanced.frontier_chase_max_lag, 0);
         assert_eq!(cfg.advanced.pending_deploy_max_lag, 7);
         assert_eq!(cfg.advanced.deploy_recovery_max_lag, 64);
+    }
+
+    #[test]
+    fn negative_advanced_lag_values_are_rejected() {
+        // Negative caps would silently disable the corresponding code
+        // path in the proposer (e.g. `lag <= cap` where cap < 0 is
+        // never true). Each of the three advanced fields rejects at
+        // deserialization time.
+        for field in &[
+            "frontier-chase-max-lag",
+            "pending-deploy-max-lag",
+            "deploy-recovery-max-lag",
+        ] {
+            let hocon = format!(
+                r#"
+                enabled = false
+                check-interval = 5 seconds
+                max-lfb-age = 5 seconds
+                advanced {{
+                  {field} = -1
+                }}
+                "#
+            );
+            let result = try_parse_heartbeat(&hocon);
+            assert!(
+                result.is_err(),
+                "negative {field} should fail HOCON deserialization, got Ok({:?})",
+                result.ok()
+            );
+            let err = result.unwrap_err();
+            assert!(
+                err.contains("value must be >= 0"),
+                "error for {field} should mention non-negative requirement, got: {err}"
+            );
+        }
     }
 }
