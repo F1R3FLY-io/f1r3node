@@ -241,16 +241,16 @@ pub fn union(bitset1: Vec<u8>, bitset2: Vec<u8>) -> Vec<u8> {
 }
 
 // See rholang/src/main/scala/coop/rchain/rholang/interpreter/matcher/ParSpatialMatcherUtils.scala - noFrees[Par]
-pub fn no_frees(par: Par) -> Par {
-    par.with_exprs(no_frees_exprs(par.exprs.clone()))
+pub fn no_frees(par: &Par) -> Par {
+    par.with_exprs(no_frees_exprs(&par.exprs))
 }
 
 // See rholang/src/main/scala/coop/rchain/rholang/interpreter/matcher/ParSpatialMatcherUtils.scala - noFrees[Seq[Expr]]
-pub fn no_frees_exprs(exprs: Vec<Expr>) -> Vec<Expr> {
+pub fn no_frees_exprs(exprs: &[Expr]) -> Vec<Expr> {
     exprs
         .iter()
-        .filter(|expr| match expr.expr_instance.clone() {
-            Some(EVarBody(EVar { v })) => match v.unwrap().var_instance {
+        .filter(|expr| match &expr.expr_instance {
+            Some(EVarBody(EVar { v: Some(v) })) => match &v.var_instance {
                 Some(FreeVar(_)) => false,
                 Some(Wildcard(_)) => false,
                 _ => true,

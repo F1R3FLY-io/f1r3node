@@ -3,6 +3,11 @@ use models::rhoapi::{MatchCase, Par, Var};
 
 use super::has_locally_free::HasLocallyFree;
 use super::spatial_matcher::{SpatialMatcher, SpatialMatcherContext};
+use crate::rust::interpreter::metrics_constants::{
+    RHOLANG_MATCHER_FOLD_MATCH_CALLS_METRIC,
+    RHOLANG_MATCHER_FOLD_MATCH_RECURSION_DEPTH_TOTAL_METRIC,
+    RHOLANG_MATCHER_FOLD_MATCH_TAIL_CLONE_NS_METRIC, RHOLANG_METRICS_SOURCE,
+};
 
 // See rholang/src/main/scala/coop/rchain/rholang/interpreter/matcher/SpatialMatcher.scala - foldMatch
 pub trait FoldMatch<T, P> {
@@ -23,42 +28,43 @@ impl FoldMatch<Par, Par> for SpatialMatcherContext {
         plist: Vec<Par>,
         remainder: Option<Var>,
     ) -> Option<Vec<Par>> {
-        // println!("\nHit fold_match");
-        // println!("\ntlist: {:?}", tlist);
-        // println!("\nplist: {:?}", plist);
+        // Iterative pair-walk over (tlist, plist) — index into the originals
+        // and clone only the per-iteration head pair that `spatial_match`
+        // consumes. Total Par clones: O(min(tlist.len(), plist.len())).
+        metrics::counter!(RHOLANG_MATCHER_FOLD_MATCH_CALLS_METRIC, "source" => RHOLANG_METRICS_SOURCE)
+            .increment(1);
+        metrics::counter!(RHOLANG_MATCHER_FOLD_MATCH_RECURSION_DEPTH_TOTAL_METRIC, "source" => RHOLANG_METRICS_SOURCE)
+            .increment(tlist.len().max(plist.len()) as u64);
 
-        match (tlist.as_slice(), plist.as_slice()) {
-            (&[], &[]) => {
-                // println!("\nHit Nil, Nil case in fold_match");
-                Some(Vec::new())
-            }
+        let n = tlist.len().min(plist.len());
+        for i in 0..n {
+            let __clone_start = std::time::Instant::now();
+            let t_owned = tlist[i].clone();
+            let p_owned = plist[i].clone();
+            metrics::counter!(RHOLANG_MATCHER_FOLD_MATCH_TAIL_CLONE_NS_METRIC, "source" => RHOLANG_METRICS_SOURCE)
+                .increment(__clone_start.elapsed().as_nanos() as u64);
+            self.spatial_match(t_owned, p_owned)?;
+        }
 
-            (&[], _) => None,
-
-            (trem, &[]) => match remainder {
+        if tlist.len() == plist.len() {
+            // Exact-length walk consumed both lists.
+            Some(Vec::new())
+        } else if plist.len() < tlist.len() {
+            // Surplus targets — must be absorbed by the remainder var, if any.
+            let trem = &tlist[n..];
+            match remainder {
                 None => None,
-
                 Some(Var {
                     var_instance: Some(FreeVar(level)),
                 }) => self.free_check(trem, level, Vec::new()),
-
                 Some(Var {
                     var_instance: Some(Wildcard(_)),
                 }) => Some(Vec::new()),
-
                 _ => None,
-            },
-
-            ([t, trem @ ..], [p, prem @ ..]) => {
-                // println!("\ncalling spatial_match in fold_match");
-                // println!("trem: {:?}", trem);
-                // println!("\nt: {:?}", t);
-                // println!("prem: {:?}", prem);
-                // println!("\np: {:?}", p);
-
-                self.spatial_match(t.to_owned(), p.to_owned())
-                    .and_then(|_| self.fold_match(trem.to_vec(), prem.to_vec(), remainder))
             }
+        } else {
+            // Surplus patterns with no targets — no match possible.
+            None
         }
     }
 
@@ -85,30 +91,28 @@ impl FoldMatch<MatchCase, MatchCase> for SpatialMatcherContext {
         plist: Vec<MatchCase>,
         remainder: Option<Var>,
     ) -> Option<Vec<MatchCase>> {
-        // println!("\nHit fold_match");
+        // Iterative pair-walk; head-pair clone per iteration, no tail-vec clone.
+        let n = tlist.len().min(plist.len());
+        for i in 0..n {
+            self.spatial_match(tlist[i].clone(), plist[i].clone())?;
+        }
 
-        match (tlist.as_slice(), plist.as_slice()) {
-            (&[], &[]) => Some(Vec::new()),
-
-            (&[], _) => None,
-
-            (trem, &[]) => match remainder {
+        if tlist.len() == plist.len() {
+            Some(Vec::new())
+        } else if plist.len() < tlist.len() {
+            let trem = &tlist[n..];
+            match remainder {
                 None => None,
-
                 Some(Var {
                     var_instance: Some(FreeVar(level)),
                 }) => self.free_check(trem, level, Vec::new()),
-
                 Some(Var {
                     var_instance: Some(Wildcard(_)),
                 }) => Some(Vec::new()),
-
                 _ => None,
-            },
-
-            ([t, trem @ ..], [p, prem @ ..]) => self
-                .spatial_match(t.to_owned(), p.to_owned())
-                .and_then(|_| self.fold_match(trem.to_vec(), prem.to_vec(), remainder)),
+            }
+        } else {
+            None
         }
     }
 

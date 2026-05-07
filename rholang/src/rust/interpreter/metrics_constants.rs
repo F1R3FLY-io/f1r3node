@@ -33,6 +33,14 @@ pub const INJ_ATTEMPT_BUILD_NORMALIZED_TERM_TIME_METRIC: &str =
     "inj-attempt.build-normalized-term.time";
 pub const INJ_ATTEMPT_REDUCE_TERM_TIME_METRIC: &str = "inj-attempt.reduce-term.time";
 
+// fold_match recursion diagnostics — bottleneck #2 in fold_match.rs.
+// Counts every recursive frame and accumulates time spent in tail-vec clones.
+pub const RHOLANG_MATCHER_FOLD_MATCH_CALLS_METRIC: &str = "rholang.matcher.fold_match.calls";
+pub const RHOLANG_MATCHER_FOLD_MATCH_RECURSION_DEPTH_TOTAL_METRIC: &str =
+    "rholang.matcher.fold_match.recursion_depth_total";
+pub const RHOLANG_MATCHER_FOLD_MATCH_TAIL_CLONE_NS_METRIC: &str =
+    "rholang.matcher.fold_match.tail_clone_ns";
+
 // Reducer per-op-type counters — split reduce_term cost by the Rholang
 // AST node kind dispatched in DebruijnInterpreter::generated_message_eval.
 // Calls counter increments once per dispatch; time_ns accumulates wall-clock
