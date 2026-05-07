@@ -94,10 +94,18 @@ pub fn resolve_conflicts<R: Clone + Eq + std::hash::Hash + PartialOrd + Ord>(
     actual_seq: Vec<R>,
     late_seq: Vec<R>,
     depends: &impl Fn(&R, &R) -> bool,
-    conflicts: &impl Fn(&HashableSet<R>, &HashableSet<R>) -> Result<bool, HistoryError>,
     cost: &impl Fn(&R) -> u64,
     mergeable_channels: &impl Fn(&R) -> NumberChannelsDiff,
     get_data: &impl Fn(Blake2b256Hash) -> Result<Vec<Datum<ListParWithRandom>>, HistoryError>,
+    // Builds the conflict map between branches. Must include every branch
+    // as a key — branches with no conflicts get an empty value set — so
+    // `compute_rejection_options` downstream sees the full key space.
+    compute_conflict_map: &impl Fn(
+        &HashableSet<HashableSet<R>>,
+    ) -> Result<
+        HashMap<HashableSet<R>, HashableSet<HashableSet<R>>>,
+        HistoryError,
+    >,
 ) -> Result<ResolvedConflicts<R>, HistoryError> {
     // Convert to Sets for set operations, but use Vec for ordered iteration
     let actual_set: HashSet<R> = actual_seq.iter().cloned().collect();
@@ -129,33 +137,9 @@ pub fn resolve_conflicts<R: Clone + Eq + std::hash::Hash + PartialOrd + Ord>(
     )
     .record(branches_time.as_secs_f64());
 
-    // Compute relation map for conflicting branches with timing.
-    // `compute_relation_map` requires an infallible predicate, but our
-    // `conflicts` closure is fallible (see EventLogIndex::combine). We capture
-    // the first error via RefCell and short-circuit the predicate; after the
-    // call returns, propagate any captured error so the merge is rejected.
-    use rspace_plus_plus::rspace::merger::merging_logic::compute_relation_map;
     let branches_set = HashableSet(branches.0.iter().cloned().collect());
-    let conflict_err: std::cell::RefCell<Option<HistoryError>> = std::cell::RefCell::new(None);
-    let (conflict_map, conflicts_map_time) = measure_time(|| {
-        compute_relation_map(&branches_set, |a, b| {
-            if conflict_err.borrow().is_some() {
-                // Already failed; short-circuit. Returning false here doesn't affect
-                // correctness because we will propagate the captured Err below.
-                return false;
-            }
-            match conflicts(a, b) {
-                Ok(c) => c,
-                Err(e) => {
-                    *conflict_err.borrow_mut() = Some(e);
-                    false
-                }
-            }
-        })
-    });
-    if let Some(err) = conflict_err.into_inner() {
-        return Err(err);
-    }
+    let (conflict_map, conflicts_map_time) =
+        measure_result_time(|| compute_conflict_map(&branches_set))?;
     metrics::histogram!(
         crate::rust::metrics_constants::DAG_MERGE_CONFLICTS_MAP_TIME_METRIC,
         "source" => crate::rust::metrics_constants::MERGING_METRICS_SOURCE
@@ -425,7 +409,6 @@ pub fn merge<
     actual_seq: Vec<R>,
     late_seq: Vec<R>,
     depends: impl Fn(&R, &R) -> bool,
-    conflicts: impl Fn(&HashableSet<R>, &HashableSet<R>) -> Result<bool, HistoryError>,
     cost: impl Fn(&R) -> u64,
     state_changes: impl Fn(&R) -> Result<StateChange, HistoryError>,
     mergeable_channels: impl Fn(&R) -> NumberChannelsDiff,
@@ -437,15 +420,21 @@ pub fn merge<
         Vec<HotStoreTrieAction<C, P, A, K>>,
     ) -> Result<Blake2b256Hash, HistoryError>,
     get_data: impl Fn(Blake2b256Hash) -> Result<Vec<Datum<ListParWithRandom>>, HistoryError>,
+    compute_conflict_map: impl Fn(
+        &HashableSet<HashableSet<R>>,
+    ) -> Result<
+        HashMap<HashableSet<R>, HashableSet<HashableSet<R>>>,
+        HistoryError,
+    >,
 ) -> Result<(Blake2b256Hash, HashableSet<R>), HistoryError> {
     let resolved = resolve_conflicts(
         actual_seq,
         late_seq,
         &depends,
-        &conflicts,
         &cost,
         &mergeable_channels,
         &get_data,
+        &compute_conflict_map,
     )?;
     let new_state = compute_merged_state(
         &resolved,
@@ -719,9 +708,8 @@ mod tests {
         let result = merge(
             actual_seq,
             late_seq,
-            |_a, _b| false,     // depends
-            |_a, _b| Ok(false), // conflicts
-            |_r| 1,             // cost
+            |_a, _b| false, // depends
+            |_r| 1,         // cost
             |_r| Ok(StateChange::empty()),
             |r| {
                 let mut diff = BTreeMap::new();
@@ -735,6 +723,16 @@ mod tests {
                 Ok(Blake2b256Hash::from_bytes(vec![9u8; 32]))
             },
             |_hash| Ok(Vec::new()),
+            // Empty conflict map — every branch as a key with no conflicts.
+            // This test exercises only the rejection-via-mergeable-overflow
+            // path; the conflict-detection path is covered elsewhere.
+            |branches: &HashableSet<HashableSet<i32>>| {
+                Ok(branches
+                    .0
+                    .iter()
+                    .map(|b| (b.clone(), HashableSet(HashSet::new())))
+                    .collect())
+            },
         );
 
         assert!(result.is_ok());

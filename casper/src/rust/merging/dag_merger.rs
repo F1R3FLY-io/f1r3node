@@ -392,35 +392,6 @@ pub fn merge(
             .is_some()
     };
 
-    let conflicts_fn = |as_set: &HashableSet<DeployChainIndex>,
-                        bs_set: &HashableSet<DeployChainIndex>|
-     -> Result<bool, rspace_plus_plus::rspace::errors::HistoryError> {
-        // Cached branch conflicts: pre-computes deploy IDs and combined event
-        // log. EventLogIndex::combine is fallible (MergeType mismatch), so
-        // propagate any failure up through resolve_conflicts to reject the
-        // merge rather than silently absorbing the invariant violation.
-        let a_addr = get_branch_derived(as_set)?;
-        let b_addr = get_branch_derived(bs_set)?;
-        let cache = branch_cache.borrow();
-        let a_derived = cache.get(&a_addr).unwrap();
-        let b_derived = cache.get(&b_addr).unwrap();
-
-        let same_deploy = a_derived
-            .user_deploy_ids
-            .intersection(&b_derived.user_deploy_ids)
-            .next()
-            .is_some();
-
-        if same_deploy {
-            return Ok(true);
-        }
-
-        Ok(merging_logic::are_conflicting(
-            &a_derived.combined_event_log,
-            &b_derived.combined_event_log,
-        ))
-    };
-
     let state_changes_fn = |chain: &DeployChainIndex| Ok(chain.state_changes.clone());
 
     let mergeable_channels_fn =
@@ -462,15 +433,86 @@ pub fn merge(
 
     let get_data_fn = |hash| history_reader.get_data(&hash).map_err(|e| e.into());
 
+    // Build the conflict map for branches. Combines event-log conflicts
+    // (races, potential COMMs, produces touching base joins) with the
+    // same-user-deploy-id check: two branches that share any user deploy
+    // ID must be flagged as conflicting regardless of their event logs.
+    //
+    // `EventLogIndex::combine` inside `get_branch_derived` is fallible —
+    // a MergeType mismatch propagates as a hard error so the merge is
+    // rejected rather than silently absorbing the invariant violation.
+    let compute_conflict_map_fn = |branches_set: &HashableSet<HashableSet<DeployChainIndex>>| -> Result<
+        HashMap<HashableSet<DeployChainIndex>, HashableSet<HashableSet<DeployChainIndex>>>,
+        rspace_plus_plus::rspace::errors::HistoryError,
+    > {
+        // Populate `branch_cache` for every branch so the borrow below can
+        // read combined event logs without recomputing, and any combine
+        // failure surfaces here before we read.
+        for branch in branches_set.0.iter() {
+            get_branch_derived(branch)?;
+        }
+
+        // Snapshot branch references in a stable order so the parallel
+        // arrays passed into the indexed map and the deploy-id pass below
+        // line up.
+        let branches_refs: Vec<&HashableSet<DeployChainIndex>> = branches_set.0.iter().collect();
+        let branches_owned: Vec<HashableSet<DeployChainIndex>> =
+            branches_refs.iter().map(|b| (*b).clone()).collect();
+
+        let cache = branch_cache.borrow();
+        let event_logs: Vec<&rspace_plus_plus::rspace::merger::event_log_index::EventLogIndex> =
+            branches_refs
+                .iter()
+                .map(|b| {
+                    let addr = std::ptr::addr_of!(**b) as usize;
+                    &cache.get(&addr).unwrap().combined_event_log
+                })
+                .collect();
+
+        // Event-log conflicts: races, potential COMMs, base-join touches.
+        let mut conflict_map =
+            merging_logic::compute_conflict_map_event_indexed(&branches_owned, &event_logs);
+
+        // Same-user-deploy-id pass: for any user deploy ID appearing in
+        // multiple branches, mark all such branches as mutual conflicts.
+        let mut deploy_to_branches: HashMap<prost::bytes::Bytes, Vec<usize>> = HashMap::new();
+        for (idx, b) in branches_refs.iter().enumerate() {
+            let addr = std::ptr::addr_of!(**b) as usize;
+            let derived = cache.get(&addr).unwrap();
+            for d in &derived.user_deploy_ids {
+                deploy_to_branches.entry(d.clone()).or_default().push(idx);
+            }
+        }
+        for (_deploy_id, branch_ids) in &deploy_to_branches {
+            if branch_ids.len() < 2 {
+                continue;
+            }
+            for i in 0..branch_ids.len() {
+                for j in (i + 1)..branch_ids.len() {
+                    let a = branches_owned[branch_ids[i]].clone();
+                    let b = branches_owned[branch_ids[j]].clone();
+                    if let Some(set_a) = conflict_map.get_mut(&a) {
+                        set_a.0.insert(b.clone());
+                    }
+                    if let Some(set_b) = conflict_map.get_mut(&b) {
+                        set_b.0.insert(a.clone());
+                    }
+                }
+            }
+        }
+
+        Ok(conflict_map)
+    };
+
     // Resolve conflicts: detect conflicts and select the cost-optimal rejection set.
     let mut resolved = conflict_set_merger::resolve_conflicts(
         actual_seq,
         late_seq,
         &depends_fn,
-        &conflicts_fn,
         &rejection_cost_f,
         &mergeable_channels_fn,
         &get_data_fn,
+        &compute_conflict_map_fn,
     )
     .map_err(|e| CasperError::HistoryError(e))?;
 
