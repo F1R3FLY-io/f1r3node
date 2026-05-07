@@ -71,7 +71,13 @@ struct ResolverState {
     valid_after_block_number: i64,
     first_seen_block_hash: BlockHash,
     rejection_count: u32,
-    has_failed_finalized: bool,
+    /// Highest-block-number `is_failed=true` inclusion + its block hash.
+    /// Tracked symmetrically with `clean_finalized_event` so the
+    /// post-loop step can apply the same canonical-descendant gate to
+    /// both — a failed inclusion in a non-main-chain finalized sibling
+    /// must NOT terminate the state machine when a later canonical
+    /// clean inclusion exists.
+    failed_finalized_event: Option<(i64, BlockHash)>,
     /// Highest-block-number clean inclusion + its block hash. Tracked
     /// together so the post-loop invalidation step can do a canonical-
     /// descendant ancestry comparison against `latest_rejected_event`.
@@ -91,7 +97,7 @@ impl ResolverState {
             valid_after_block_number,
             first_seen_block_hash,
             rejection_count: 0,
-            has_failed_finalized: false,
+            failed_finalized_event: None,
             clean_finalized_event: None,
             latest_event: None,
             latest_rejected_event: None,
@@ -152,26 +158,32 @@ fn run_prelude(
             ));
         }
     };
-    let valid_after_block_number = first_seen_block
+    let valid_after_block_number = match first_seen_block
         .body
         .deploys
         .iter()
         .find(|pd| pd.deploy.sig == sig_bytes)
         .map(|pd| pd.deploy.data.valid_after_block_number)
-        .ok_or_else(|| {
-            // Indexed-but-missing-from-body is a real corruption case
-            // (deploy index points at a block that no longer claims the
-            // sig in body.deploys). Surface honestly so the operator
-            // sees the bug; do not silently degrade to `pending_unknown`,
-            // which would make a corrupted sig indistinguishable from a
-            // never-deployed one.
-            eyre::eyre!(
-                "deploy_finalization_status: sig {} is indexed at block {} \
-                 but missing from that block's body.deploys (inconsistent state)",
+    {
+        Some(n) => n,
+        None => {
+            // Indexed-but-missing-from-body: the deploy index points at
+            // a block whose body does not claim the sig. Surface via the
+            // dedicated warn target and downgrade to pending_unknown so
+            // polling callers can recover after the index resyncs.
+            // Genuine I/O failures (block_store.get returning Err) still
+            // propagate as Err.
+            tracing::warn!(
+                target: "f1r3fly.deploy_finalization_status.corruption",
+                "sig {} indexed at block {} but missing from that block's \
+                 body.deploys — returning pending_unknown; check deploy \
+                 index vs block store consistency",
                 hex::encode(&sig_bytes),
                 PrettyPrinter::build_string_bytes(&first_seen_block_hash),
-            )
-        })?;
+            );
+            return Ok(PreludeOutcome::Unknown);
+        }
+    };
 
     Ok(PreludeOutcome::Active(ResolverState::new(
         sig_bytes,
@@ -274,7 +286,14 @@ fn bfs_finalized_window(
                     .get_mut(&pd.deploy.sig)
                     .expect("active_sigs and per_sig must agree on key set");
                 if pd.is_failed {
-                    state.has_failed_finalized = true;
+                    if state
+                        .failed_finalized_event
+                        .as_ref()
+                        .map(|(h, _)| height > *h)
+                        .unwrap_or(true)
+                    {
+                        state.failed_finalized_event = Some((height, candidate_hash.clone()));
+                    }
                 } else if state
                     .clean_finalized_event
                     .as_ref()
@@ -366,21 +385,71 @@ fn finalize_sig_state(
     // Same-block (clean and rejection in the SAME block — e.g., a
     // recovery proposal whose merge step also dedup-rejected an older
     // copy in scope) is not a "descendant" and must not invalidate.
-    let mut clean_finalized_height: Option<i64> =
-        state.clean_finalized_event.as_ref().map(|(h, _)| *h);
+    // Same gate, applied symmetrically to clean and failed inclusions.
+    //
+    // Failed events: drop the event if either (a) the failed block is
+    // not on LFB's main-parent chain (visited via secondary parent in
+    // BFS — finalized but not canonical), or (b) a canonical-descendant
+    // rejection nullifies the failed inclusion the same way it nullifies
+    // a clean one. Without this, a stale `is_failed=true` event in a
+    // non-canonical sibling pins the resolver at `Failed` and preempts
+    // a later canonical clean inclusion — `repeat_deploy` then exempts
+    // the sig as a recovery candidate, allowing double-execution of a
+    // canonically clean deploy.
+    let lfb_hash = dag.last_finalized_block();
+
+    let canonical_block = |block: &BlockHash| -> ApiErr<bool> {
+        Ok(block == &lfb_hash || dag.is_in_main_chain(block, &lfb_hash)?)
+    };
+
+    // Resolve clean event with the existing canonical-descendant gate.
+    let mut clean_canonical: Option<(i64, BlockHash)> = state.clean_finalized_event.clone();
     if let (Some((_, clean_block)), Some((_, reject_block))) =
         (&state.clean_finalized_event, &state.latest_rejected_event)
     {
-        let lfb_hash = dag.last_finalized_block();
-        let reject_is_canonical =
-            reject_block == &lfb_hash || dag.is_in_main_chain(reject_block, &lfb_hash)?;
+        let reject_is_canonical = canonical_block(reject_block)?;
         let reject_is_canonical_descendant = clean_block != reject_block
             && reject_is_canonical
             && dag.is_in_main_chain(clean_block, reject_block)?;
         if reject_is_canonical_descendant {
-            clean_finalized_height = None;
+            clean_canonical = None;
         }
     }
+
+    // Resolve failed event with the symmetric gate: it must be on the
+    // main chain, AND not invalidated by a canonical-descendant rejection.
+    let mut failed_canonical: Option<(i64, BlockHash)> = None;
+    if let Some((failed_height, failed_block)) = &state.failed_finalized_event {
+        if canonical_block(failed_block)? {
+            let mut keep = true;
+            if let Some((_, reject_block)) = &state.latest_rejected_event {
+                let reject_is_canonical = canonical_block(reject_block)?;
+                let reject_is_canonical_descendant = failed_block != reject_block
+                    && reject_is_canonical
+                    && dag.is_in_main_chain(failed_block, reject_block)?;
+                if reject_is_canonical_descendant {
+                    keep = false;
+                }
+            }
+            if keep {
+                failed_canonical = Some((*failed_height, failed_block.clone()));
+            }
+        }
+    }
+
+    // Latest-canonical-wins: if both clean and failed canonical events
+    // survived their gates, the higher-height one represents the most
+    // recent canonical state of the sig.
+    let clean_finalized_height: Option<i64> = match (&clean_canonical, &failed_canonical) {
+        (Some((ch, _)), Some((fh, _))) if ch > fh => Some(*ch),
+        (Some((ch, _)), None) => Some(*ch),
+        _ => None,
+    };
+    let failed_finalized: bool = match (&clean_canonical, &failed_canonical) {
+        (Some((ch, _)), Some((fh, _))) => fh > ch,
+        (None, Some(_)) => true,
+        _ => false,
+    };
 
     // Account for latest_block_hash via the first-seen lookup —
     // covers the case where the sig lives only in a non-finalized
@@ -401,14 +470,24 @@ fn finalize_sig_state(
         }
     }
 
-    // Expiry rule: tip height strictly past valid_after + deployLifespan
-    // AND no clean finalized inclusion. Use the DAG's overall latest
-    // block number (may be higher than LFB height) as tip.
-    let tip_height = dag.latest_block_number();
-    let expired = tip_height > state.valid_after_block_number + deploy_lifespan
+    // Expiry rule: LFB height strictly past `valid_after + deployLifespan`
+    // AND no clean finalized inclusion. Anchored to LFB rather than tip:
+    // a sig present in an unfinalized block at tip is still in flight —
+    // its host block can finalize and the deploy's effects can land —
+    // so it must not be reported as `Expired`. The buffer's purge
+    // condition is tip-based and lives on a separate code path.
+    let lfb_height = dag
+        .block_number(&dag.last_finalized_block())
+        .ok_or_else(|| {
+            eyre::eyre!(
+                "deploy_finalization_status: LFB {} has no block_number entry",
+                PrettyPrinter::build_string_bytes(&dag.last_finalized_block()),
+            )
+        })?;
+    let expired = lfb_height > state.valid_after_block_number + deploy_lifespan
         && clean_finalized_height.is_none();
 
-    let final_state = if state.has_failed_finalized {
+    let final_state = if failed_finalized {
         DeployFinalizationState::Failed
     } else if clean_finalized_height.is_some() {
         DeployFinalizationState::Finalized
