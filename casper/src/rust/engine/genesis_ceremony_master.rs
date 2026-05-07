@@ -73,7 +73,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisCeremonyMaster<T>
         deploy_storage: KeyValueDeployStorage,
         rejected_deploy_buffer: Arc<Mutex<KeyValueRejectedDeployBuffer>>,
         casper_buffer_storage: CasperBufferKeyValueStorage,
-        runtime_manager: Arc<tokio::sync::Mutex<RuntimeManager>>,
+        runtime_manager: Arc<RuntimeManager>,
         estimator: Estimator,
         // Explicit parameters from Scala (in same order as Scala signature)
         block_processing_queue_tx: mpsc::Sender<(
@@ -181,7 +181,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> GenesisCeremonyMaster<T>
     #[allow(clippy::too_many_arguments)]
     fn create_casper_from_storage(
         event_publisher: &F1r3flyEvents,
-        runtime_manager: &Arc<tokio::sync::Mutex<RuntimeManager>>,
+        runtime_manager: &Arc<RuntimeManager>,
         estimator: &Estimator,
         block_store: &KeyValueBlockStore,
         block_dag_storage: &BlockDagKeyValueStorage,

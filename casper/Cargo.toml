@@ -42,7 +42,7 @@ tokio-stream = "0.1"
 humantime = "2.3.0"
 tonic = { workspace = true }
 eyre = { workspace = true }
-metrics = "0.23"
+metrics = { workspace = true }
 proptest = "1.6.0"
 tempfile = { version = "3.24.0", optional = true }
 

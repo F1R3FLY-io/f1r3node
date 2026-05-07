@@ -95,7 +95,7 @@ impl Drop for FinalizationGuard<'_> {
 pub struct MultiParentCasperImpl<T: TransportLayer + Send + Sync> {
     pub block_retriever: BlockRetriever<T>,
     pub event_publisher: F1r3flyEvents,
-    pub runtime_manager: Arc<tokio::sync::Mutex<RuntimeManager>>,
+    pub runtime_manager: Arc<RuntimeManager>,
     pub estimator: Estimator,
     pub block_store: KeyValueBlockStore,
     pub block_dag_storage: BlockDagKeyValueStorage,
@@ -625,7 +625,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
                     block,
                     &self.block_store,
                     snapshot,
-                    &mut *self.runtime_manager.lock().await,
+                    &self.runtime_manager,
                     Some(&self.rejected_deploy_buffer),
                 ),
             )
@@ -643,9 +643,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
             let (bonds_cache_result, t3) = timed_step(
                 "bonds-cache",
                 BLOCK_VALIDATION_STEP_BONDS_CACHE_TIME_METRIC,
-                async {
-                    Ok(Validate::bonds_cache(block, &*self.runtime_manager.lock().await).await)
-                },
+                async { Ok(Validate::bonds_cache(block, &self.runtime_manager).await) },
             )
             .await?;
             tracing::debug!(target: "f1r3fly.casper", "bonds-cache-validated");
@@ -747,7 +745,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
             );
 
             if self.casper_shard_conf.max_number_of_parents > 1 {
-                let maybe_mergeable = self.runtime_manager.lock().await.load_mergeable_channels(
+                let maybe_mergeable = self.runtime_manager.load_mergeable_channels(
                     &block.body.state.post_state_hash,
                     block.sender.clone(),
                     block.seq_num,
@@ -755,22 +753,15 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
 
                 match maybe_mergeable {
                     Ok(mergeable_chs) => {
-                        if let Err(err) = self
-                            .runtime_manager
-                            .lock()
-                            .await
-                            .get_or_compute_block_index(
-                                &block.block_hash,
-                                block.body.state.block_number,
-                                &block.body.deploys,
-                                &block.body.system_deploys,
-                                &Blake2b256Hash::from_bytes_prost(&block.body.state.pre_state_hash),
-                                &Blake2b256Hash::from_bytes_prost(
-                                    &block.body.state.post_state_hash,
-                                ),
-                                &mergeable_chs,
-                            )
-                        {
+                        if let Err(err) = self.runtime_manager.get_or_compute_block_index(
+                            &block.block_hash,
+                            block.body.state.block_number,
+                            &block.body.deploys,
+                            &block.body.system_deploys,
+                            &Blake2b256Hash::from_bytes_prost(&block.body.state.pre_state_hash),
+                            &Blake2b256Hash::from_bytes_prost(&block.body.state.post_state_hash),
+                            &mergeable_chs,
+                        ) {
                             tracing::warn!(
                                 "Skipping block index cache update for block {}: {}",
                                 PrettyPrinter::build_string_bytes(&block.block_hash),
@@ -975,7 +966,7 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
             );
 
             if self.casper_shard_conf.max_number_of_parents > 1 {
-                let maybe_mergeable = self.runtime_manager.lock().await.load_mergeable_channels(
+                let maybe_mergeable = self.runtime_manager.load_mergeable_channels(
                     &block.body.state.post_state_hash,
                     block.sender.clone(),
                     block.seq_num,
@@ -983,22 +974,15 @@ impl<T: TransportLayer + Send + Sync> Casper for MultiParentCasperImpl<T> {
 
                 match maybe_mergeable {
                     Ok(mergeable_chs) => {
-                        if let Err(err) = self
-                            .runtime_manager
-                            .lock()
-                            .await
-                            .get_or_compute_block_index(
-                                &block.block_hash,
-                                block.body.state.block_number,
-                                &block.body.deploys,
-                                &block.body.system_deploys,
-                                &Blake2b256Hash::from_bytes_prost(&block.body.state.pre_state_hash),
-                                &Blake2b256Hash::from_bytes_prost(
-                                    &block.body.state.post_state_hash,
-                                ),
-                                &mergeable_chs,
-                            )
-                        {
+                        if let Err(err) = self.runtime_manager.get_or_compute_block_index(
+                            &block.block_hash,
+                            block.body.state.block_number,
+                            &block.body.deploys,
+                            &block.body.system_deploys,
+                            &Blake2b256Hash::from_bytes_prost(&block.body.state.pre_state_hash),
+                            &Blake2b256Hash::from_bytes_prost(&block.body.state.post_state_hash),
+                            &mergeable_chs,
+                        ) {
                             tracing::warn!(
                                 "Skipping block index cache update for self-created block {}: {}",
                                 PrettyPrinter::build_string_bytes(&block.block_hash),
@@ -1279,7 +1263,7 @@ async fn run_queued_finalizer(
     block_store: KeyValueBlockStore,
     deploy_storage: Arc<Mutex<KeyValueDeployStorage>>,
     rejected_deploy_buffer: Arc<Mutex<KeyValueRejectedDeployBuffer>>,
-    runtime_manager: Arc<tokio::sync::Mutex<RuntimeManager>>,
+    runtime_manager: Arc<RuntimeManager>,
     event_publisher: F1r3flyEvents,
     finalization_in_progress: Arc<AtomicBool>,
     finalizer_task_in_progress: Arc<AtomicBool>,
@@ -1436,14 +1420,10 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasper for MultiParentCasperImp
     }
 
     async fn get_history_exporter(&self) -> Arc<dyn RSpaceExporter> {
-        self.runtime_manager
-            .lock()
-            .await
-            .get_history_repo()
-            .exporter()
+        self.runtime_manager.get_history_repo().exporter()
     }
 
-    fn runtime_manager(&self) -> Arc<tokio::sync::Mutex<RuntimeManager>> {
+    fn runtime_manager(&self) -> Arc<RuntimeManager> {
         self.runtime_manager.clone()
     }
 
@@ -1511,7 +1491,7 @@ async fn compute_last_finalized_block(
     block_store: KeyValueBlockStore,
     deploy_storage: Arc<Mutex<KeyValueDeployStorage>>,
     rejected_deploy_buffer: Arc<Mutex<KeyValueRejectedDeployBuffer>>,
-    runtime_manager: Arc<tokio::sync::Mutex<RuntimeManager>>,
+    runtime_manager: Arc<RuntimeManager>,
     event_publisher: F1r3flyEvents,
     finalization_in_progress: Arc<AtomicBool>,
     enable_mergeable_channel_gc: bool,
@@ -1615,10 +1595,7 @@ async fn compute_last_finalized_block(
                             tracing::info!("{}", removed_deploy_msg);
 
                             // Remove block index from cache
-                            runtime_manager
-                                .lock()
-                                .await
-                                .remove_block_index_cache(block_hash);
+                            runtime_manager.remove_block_index_cache(block_hash);
 
                             // Keep mergeable data on finalization to preserve deterministic
                             // parent-state reconstruction. Safe deletion is handled only by
@@ -1786,8 +1763,6 @@ impl<T: TransportLayer + Send + Sync> MultiParentCasperImpl<T> {
 
         let fetched = self
             .runtime_manager
-            .lock()
-            .await
             .get_active_validators(&block.body.state.post_state_hash)
             .await?;
 

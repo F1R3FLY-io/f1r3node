@@ -614,9 +614,13 @@ impl BlockDagKeyValueStorage {
         invalid: bool,
         approved: bool,
     ) -> Result<KeyValueDagRepresentation, KvStoreError> {
+        let __insert_start = std::time::Instant::now();
         // Acquire global lock to ensure atomic insert operation
         let _lock_guard = self.global_lock.lock().unwrap();
-        self.insert_internal(block, invalid, approved)
+        let result = self.insert_internal(block, invalid, approved);
+        metrics::histogram!("dag.insert.time", "source" => "f1r3fly.casper.block-dag")
+            .record(__insert_start.elapsed().as_secs_f64());
+        result
     }
 
     /// Internal method to insert without acquiring lock.

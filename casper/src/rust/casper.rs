@@ -163,7 +163,7 @@ pub trait MultiParentCasper: Casper + Send + Sync {
     /// finalization status.
     fn casper_shard_conf(&self) -> &CasperShardConf;
 
-    fn runtime_manager(&self) -> Arc<tokio::sync::Mutex<RuntimeManager>>;
+    fn runtime_manager(&self) -> Arc<RuntimeManager>;
 
     fn get_validator(&self) -> Option<ValidatorIdentity>;
 
@@ -185,7 +185,7 @@ pub trait MultiParentCasper: Casper + Send + Sync {
 pub fn hash_set_casper<T: TransportLayer + Send + Sync>(
     block_retriever: BlockRetriever<T>,
     event_publisher: F1r3flyEvents,
-    runtime_manager: Arc<tokio::sync::Mutex<RuntimeManager>>,
+    runtime_manager: Arc<RuntimeManager>,
     estimator: Estimator,
     block_store: KeyValueBlockStore,
     block_dag_storage: BlockDagKeyValueStorage,
@@ -558,7 +558,7 @@ pub mod test_helpers {
             &self.snapshot.on_chain_state.shard_conf
         }
 
-        fn runtime_manager(&self) -> Arc<tokio::sync::Mutex<RuntimeManager>> {
+        fn runtime_manager(&self) -> Arc<RuntimeManager> {
             unimplemented!("runtime_manager not needed for heartbeat tests")
         }
 

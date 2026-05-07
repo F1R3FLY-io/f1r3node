@@ -42,7 +42,10 @@ dashmap = "6.1"
 imbl = "7"
 regex = "1.12"
 async-trait = "0.1"
-metrics = "0.24"
+# All workspace crates must use the same `metrics` version. Different majors
+# get separate global recorders, so calls from a crate on a different version
+# than the prometheus exporter silently route to a noop recorder.
+metrics = "0.23"
 stacker = "0.1"
 num-bigint = "0.4"
 num-rational = "0.4"

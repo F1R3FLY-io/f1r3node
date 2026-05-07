@@ -1,0 +1,53 @@
+new createCollection(`rho:chroma:collection:new`),
+    getCollectionMeta(`rho:chroma:collection:meta`),
+    upsertEntries(`rho:chroma:collection:entries:new`),
+    queryEntries(`rho:chroma:collection:entries:query`),
+    deleteEntries(`rho:chroma:collection:entries:delete`),
+    stdout(`rho:io:stdout`),
+    createRet, getMetaRet, upsertRet, queryRet, queryRet2, deleteRet in 
+{
+    // Create a collection with some metadata
+    createCollection!("unified-example", true, {"meta1" : 1, "meta2": "bar"}, *createRet) |
+
+    // Once the collection is created, get its metadata and add some documents
+    for(@x <- createRet) {
+        getCollectionMeta!("unified-example", *getMetaRet) |
+        upsertEntries!(
+            "unified-example",
+            {
+                "doc1": ("Hello world!", Nil),
+                "doc2": (
+                    "Hello world again!",
+                    { "meta1": "42" }
+                )
+            },
+            *upsertRet
+        )
+    } |
+
+    // Display the collection metadata
+    for(@meta <- getMetaRet) {
+        stdout!(["Collection metadata: ", meta])
+    } |
+
+    // Once the documents have been added, query them
+    for(@y <- upsertRet) {
+        queryEntries!("unified-example", [ "Hello world" ], *queryRet)
+    } |
+
+    // Once the documents have been queried, display them and then delete one document
+    for(@query <- queryRet) {
+        stdout!(["Queried documents before deletion: ", query]) |
+        deleteEntries!("unified-example", [ "doc1" ], *deleteRet)
+    } |
+
+    // Once that document has been deleted, perform the same query again
+    for(@z <- deleteRet) {
+        queryEntries!("unified-example", [ "Hello world" ], *queryRet2)
+    } |
+
+    // Once that query is complete, display the results
+    for(@query2 <- queryRet2) {
+        stdout!(["Queried documents after deletion: ", query2])
+    }
+}

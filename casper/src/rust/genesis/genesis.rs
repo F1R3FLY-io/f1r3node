@@ -15,7 +15,10 @@ use rholang::rust::interpreter::merging::mergeable_tags;
 use rspace_plus_plus::rspace::merger::merging_logic::MergeType;
 use std::collections::HashMap;
 
-use crate::rust::{errors::CasperError, util::{proto_util, rholang::runtime_manager::RuntimeManager}};
+use crate::rust::{
+    errors::CasperError,
+    util::{proto_util, rholang::runtime_manager::RuntimeManager},
+};
 
 use super::contracts::{proof_of_stake::ProofOfStake, standard_deploys, vault::Vault};
 
@@ -147,7 +150,7 @@ impl Genesis {
     }
 
     pub async fn create_genesis_block(
-        runtime_manager: &mut RuntimeManager,
+        runtime_manager: &RuntimeManager,
         genesis: &Genesis,
     ) -> Result<BlockMessage, CasperError> {
         let blessed_terms = Self::default_blessed_terms(

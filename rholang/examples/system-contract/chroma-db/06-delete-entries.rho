@@ -1,0 +1,6 @@
+new deleteEntries(`rho:chroma:collection:entries:delete`), stdout(`rho:io:stdout`), retCh in {
+  deleteEntries!("foo", [ "doc1" ], *retCh) |
+  for(@res <- retCh) {
+      stdout!(res)
+  }
+}

@@ -61,7 +61,7 @@ pub struct CasperLaunchImpl<T: TransportLayer + Send + Sync + Clone + 'static> {
     rejected_deploy_buffer: Arc<Mutex<KeyValueRejectedDeployBuffer>>,
     casper_buffer_storage: CasperBufferKeyValueStorage,
     rspace_state_manager: RSpaceStateManager,
-    runtime_manager: Arc<tokio::sync::Mutex<RuntimeManager>>,
+    runtime_manager: Arc<RuntimeManager>,
     estimator: Estimator,
     casper_shard_conf: CasperShardConf,
 
@@ -126,7 +126,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
         rejected_deploy_buffer: Arc<Mutex<KeyValueRejectedDeployBuffer>>,
         casper_buffer_storage: CasperBufferKeyValueStorage,
         rspace_state_manager: RSpaceStateManager,
-        runtime_manager: Arc<tokio::sync::Mutex<RuntimeManager>>,
+        runtime_manager: Arc<RuntimeManager>,
         estimator: Estimator,
         // Explicit parameters (matching Scala signature order)
         block_processing_queue_tx: mpsc::Sender<(
@@ -423,9 +423,8 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
         // contract at genesis. If they disagree, the node's /api/status would
         // advertise values that contradict on-chain state, which misleads
         // block explorers and wallets.
-        let runtime_manager = self.runtime_manager.lock().await;
         crate::rust::util::token_metadata_check::verify_token_metadata_matches_config(
-            &runtime_manager,
+            &self.runtime_manager,
             &genesis_post_state_hash,
             &self.conf.genesis_block_data.native_token_name,
             &self.conf.genesis_block_data.native_token_symbol,
@@ -614,7 +613,7 @@ impl<T: TransportLayer + Send + Sync + Clone + 'static> CasperLaunchImpl<T> {
             self.conf.genesis_block_data.native_token_name.clone(),
             self.conf.genesis_block_data.native_token_symbol.clone(),
             self.conf.genesis_block_data.native_token_decimals,
-            &mut *self.runtime_manager.lock().await,
+            &self.runtime_manager,
             self.last_approved_block.clone(),
             Some(self.event_publisher.clone()),
             self.transport_layer.clone(),

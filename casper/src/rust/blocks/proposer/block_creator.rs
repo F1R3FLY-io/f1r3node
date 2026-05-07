@@ -511,10 +511,16 @@ pub async fn create(
     dummy_deploy_opt: Option<(PrivateKey, String)>,
     deploy_storage: Arc<Mutex<KeyValueDeployStorage>>,
     rejected_deploy_buffer: Arc<Mutex<block_storage::rust::deploy::key_value_rejected_deploy_buffer::KeyValueRejectedDeployBuffer>>,
-    runtime_manager: &mut RuntimeManager,
+    runtime_manager: &RuntimeManager,
     block_store: &mut KeyValueBlockStore,
     allow_empty_blocks: bool,
 ) -> Result<BlockCreatorResult, CasperError> {
+    use crate::rust::metrics_constants::{
+        BLOCK_CREATOR_COMPUTE_DEPLOYS_CHECKPOINT_TIME_METRIC,
+        BLOCK_CREATOR_COMPUTE_PARENTS_POST_STATE_TIME_METRIC,
+        BLOCK_CREATOR_PACKAGE_BLOCK_TIME_METRIC, BLOCK_CREATOR_PREPARE_USER_DEPLOYS_TIME_METRIC,
+        BLOCK_CREATOR_TOTAL_TIME_METRIC, CASPER_METRICS_SOURCE,
+    };
     let create_started = std::time::Instant::now();
     // Capture current time once to ensure consistency between deploy filtering and block timestamp.
     // This prevents race condition where a deploy could pass filtering but expire before block creation.
@@ -599,6 +605,8 @@ pub async fn create(
             prepared.effective_cap,
             prepared.cap_hit
         );
+        metrics::histogram!(BLOCK_CREATOR_PREPARE_USER_DEPLOYS_TIME_METRIC, "source" => CASPER_METRICS_SOURCE)
+            .record(t.elapsed().as_secs_f64());
         (v, prepared.effective_cap, prepared.cap_hit)
     };
     let dummy_deploys = {
@@ -642,6 +650,7 @@ pub async fn create(
     //      stranding any merge-rejected slashes from parent merging.
     // The merge result is cached so the downstream compute_deploys_checkpoint
     // call hits the cache.
+    let __merge_pre_t = std::time::Instant::now();
     let merge_pre_info = interpreter_util::compute_parents_post_state(
         block_store,
         parents.clone(),
@@ -650,6 +659,11 @@ pub async fn create(
         None,
         Some(&rejected_deploy_buffer),
     )?;
+    metrics::histogram!(
+        BLOCK_CREATOR_COMPUTE_PARENTS_POST_STATE_TIME_METRIC,
+        "source" => CASPER_METRICS_SOURCE
+    )
+    .record(__merge_pre_t.elapsed().as_secs_f64());
     let (_pre_state, _rejected_user_sigs, rejected_slashes) = merge_pre_info;
 
     // Union own slashes with merge-rejected slashes, dedup by
@@ -767,6 +781,11 @@ pub async fn create(
         "compute_deploys_checkpoint_ms={}",
         checkpoint_started.elapsed().as_millis()
     );
+    metrics::histogram!(
+        BLOCK_CREATOR_COMPUTE_DEPLOYS_CHECKPOINT_TIME_METRIC,
+        "source" => CASPER_METRICS_SOURCE
+    )
+    .record(checkpoint_started.elapsed().as_secs_f64());
 
     let (
         pre_state_hash,
@@ -803,6 +822,11 @@ pub async fn create(
         casper_version,
     );
     let package_ms = package_started.elapsed().as_millis();
+    metrics::histogram!(
+        BLOCK_CREATOR_PACKAGE_BLOCK_TIME_METRIC,
+        "source" => CASPER_METRICS_SOURCE
+    )
+    .record(package_started.elapsed().as_secs_f64());
 
     tracing::event!(tracing::Level::DEBUG, mark = "block-created");
     // Sign the block
@@ -824,6 +848,11 @@ pub async fn create(
         sign_ms,
         total_create_block_ms
     );
+    metrics::histogram!(
+        BLOCK_CREATOR_TOTAL_TIME_METRIC,
+        "source" => CASPER_METRICS_SOURCE
+    )
+    .record(create_started.elapsed().as_secs_f64());
 
     RuntimeManager::trim_allocator();
 

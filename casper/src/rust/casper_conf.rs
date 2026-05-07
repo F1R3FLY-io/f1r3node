@@ -525,3 +525,95 @@ where
     }
     Ok(v)
 }
+
+#[cfg(test)]
+mod native_token_validation_tests {
+    use super::*;
+
+    fn valid_genesis() -> GenesisBlockData {
+        GenesisBlockData {
+            genesis_data_dir: String::new(),
+            bonds_file: String::new(),
+            wallets_file: String::new(),
+            bond_minimum: 0,
+            bond_maximum: 0,
+            epoch_length: 0,
+            quarantine_length: 0,
+            number_of_active_validators: 0,
+            deploy_timestamp: None,
+            genesis_block_number: 0,
+            pos_multi_sig_public_keys: Vec::new(),
+            pos_multi_sig_quorum: 0,
+            native_token_name: "F1R3FLY".into(),
+            native_token_symbol: "F1R3".into(),
+            native_token_decimals: 8,
+        }
+    }
+
+    #[test]
+    fn accepts_valid_baseline() {
+        valid_genesis().validate_native_token().unwrap();
+    }
+
+    #[test]
+    fn rejects_empty_name() {
+        let mut g = valid_genesis();
+        g.native_token_name = String::new();
+        let err = g.validate_native_token().unwrap_err();
+        assert!(
+            err.contains("native-token-name must be non-empty"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn rejects_whitespace_only_name() {
+        let mut g = valid_genesis();
+        g.native_token_name = "   ".into();
+        let err = g.validate_native_token().unwrap_err();
+        assert!(
+            err.contains("native-token-name must be non-empty"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn rejects_empty_symbol() {
+        let mut g = valid_genesis();
+        g.native_token_symbol = String::new();
+        let err = g.validate_native_token().unwrap_err();
+        assert!(
+            err.contains("native-token-symbol must be non-empty"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn rejects_whitespace_only_symbol() {
+        let mut g = valid_genesis();
+        g.native_token_symbol = "   ".into();
+        let err = g.validate_native_token().unwrap_err();
+        assert!(
+            err.contains("native-token-symbol must be non-empty"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn rejects_decimals_above_max() {
+        let mut g = valid_genesis();
+        g.native_token_decimals = MAX_NATIVE_TOKEN_DECIMALS + 1;
+        let err = g.validate_native_token().unwrap_err();
+        assert!(
+            err.contains("native-token-decimals=19"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn accepts_decimals_at_max() {
+        let mut g = valid_genesis();
+        g.native_token_decimals = MAX_NATIVE_TOKEN_DECIMALS;
+        g.validate_native_token().unwrap();
+    }
+}

@@ -304,7 +304,7 @@ impl RuntimeManager {
     }
 
     pub async fn compute_state(
-        &mut self,
+        &self,
         start_hash: &StateHash,
         terms: Vec<Signed<DeployData>>,
         system_deploys: Vec<super::system_deploy_enum::SystemDeployEnum>,
@@ -394,7 +394,7 @@ impl RuntimeManager {
     }
 
     pub async fn compute_state_with_bonds(
-        &mut self,
+        &self,
         start_hash: &StateHash,
         terms: Vec<Signed<DeployData>>,
         system_deploys: Vec<super::system_deploy_enum::SystemDeployEnum>,
@@ -533,7 +533,7 @@ impl RuntimeManager {
     }
 
     pub async fn compute_genesis(
-        &mut self,
+        &self,
         terms: Vec<Signed<DeployData>>,
         block_time: i64,
         block_number: i64,
@@ -563,7 +563,7 @@ impl RuntimeManager {
     }
 
     pub async fn replay_compute_state(
-        &mut self,
+        &self,
         start_hash: &StateHash,
         terms: Vec<ProcessedDeploy>,
         system_deploys: Vec<ProcessedSystemDeploy>,
@@ -964,7 +964,7 @@ impl RuntimeManager {
      * read initial value to get the difference.
      */
     fn save_mergeable_channels(
-        &mut self,
+        &self,
         post_state_hash: Blake2b256Hash,
         creator: prost::bytes::Bytes,
         seq_num: i32,

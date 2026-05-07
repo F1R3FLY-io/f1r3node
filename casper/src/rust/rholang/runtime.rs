@@ -923,6 +923,11 @@ impl RuntimeOps {
         par: Par,
         hash: &StateHash,
     ) -> Result<Vec<Par>, CasperError> {
+        use crate::rust::metrics_constants::{
+            BONDS_CACHE_GET_DATA_TIME_METRIC, BONDS_CACHE_INJ_TIME_METRIC,
+            BONDS_CACHE_RESET_TIME_METRIC, CASPER_METRICS_SOURCE,
+        };
+        let __reset_start = std::time::Instant::now();
         let mem_profile_enabled = crate::rust::util::rholang::mem_profiler::mem_profile_enabled();
         let read_vm_rss_kb =
             || -> Option<usize> { crate::rust::util::rholang::mem_profiler::read_vm_rss_kb() };
@@ -960,6 +965,8 @@ impl RuntimeOps {
         log_mem_step("after_reset");
         self.runtime.cost().set(Cost::unsafe_max());
         log_mem_step("after_set_cost");
+        metrics::histogram!(BONDS_CACHE_RESET_TIME_METRIC, "source" => CASPER_METRICS_SOURCE)
+            .record(__reset_start.elapsed().as_secs_f64());
 
         let rand = Blake2b512Random::create_from_bytes(&[0u8; 128]);
         let mut return_rand = rand.clone();
@@ -970,14 +977,22 @@ impl RuntimeOps {
         }]);
         log_mem_step("after_build_return_name");
 
+        let __inj_start = std::time::Instant::now();
         let result = match self.runtime.inj(par, Env::new(), rand).await {
             Ok(()) => {
                 log_mem_step("after_inj_ok");
+                metrics::histogram!(BONDS_CACHE_INJ_TIME_METRIC, "source" => CASPER_METRICS_SOURCE)
+                    .record(__inj_start.elapsed().as_secs_f64());
+                let __get_data_start = std::time::Instant::now();
                 let data = self.get_data_par(&return_name).await;
+                metrics::histogram!(BONDS_CACHE_GET_DATA_TIME_METRIC, "source" => CASPER_METRICS_SOURCE)
+                    .record(__get_data_start.elapsed().as_secs_f64());
                 log_mem_step("after_get_data_par");
                 Ok(data)
             }
             Err(err) => {
+                metrics::histogram!(BONDS_CACHE_INJ_TIME_METRIC, "source" => CASPER_METRICS_SOURCE)
+                    .record(__inj_start.elapsed().as_secs_f64());
                 log_mem_step("after_inj_err");
                 tracing::error!("Error in play_exploratory_par: {:?}", err);
                 Ok(Vec::new())

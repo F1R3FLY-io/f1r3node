@@ -1,0 +1,6 @@
+new createCollection(`rho:chroma:collection:new`), stdout(`rho:io:stdout`), retCh in {
+  createCollection!("bar", true, Nil, *retCh) |
+  for(@ok <- retCh) {
+      stdout!(ok)
+  }
+}

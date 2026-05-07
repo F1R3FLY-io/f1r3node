@@ -129,6 +129,87 @@ pub const BLOCK_VALIDATION_STEP_PHLO_PRICE_TIME_METRIC: &str =
 pub const BLOCK_VALIDATION_STEP_SIMPLE_EQUIVOCATION_TIME_METRIC: &str =
     "block.validation.step.simple-equivocation.time";
 
+// Sub-step breakdown of `play_exploratory_par` — runtime reset, Rholang
+// injection, and result collection. Used by `compute_bonds` and
+// `get_active_validators`.
+pub const BONDS_CACHE_RESET_TIME_METRIC: &str = "bonds-cache.reset.time";
+pub const BONDS_CACHE_INJ_TIME_METRIC: &str = "bonds-cache.inj.time";
+pub const BONDS_CACHE_GET_DATA_TIME_METRIC: &str = "bonds-cache.get-data.time";
+
+// `dag_merger::merge` rejection-expansion: walks DAG descendants of rejected
+// source blocks and rebuilds `to_merge`. The counter increments when the
+// expansion path actually fires (any descendants in scope).
+pub const DAG_MERGE_REJECTION_EXPANSION_TIME_METRIC: &str = "dag.merge.rejection-expansion.time";
+pub const DAG_MERGE_REJECTION_EXPANSION_FIRED_METRIC: &str = "dag.merge.rejection-expansion.fired";
+
+// `compute_parents_post_state` internal breakdown.
+pub const COMPUTE_PARENTS_POST_STATE_FETCH_TIME_METRIC: &str =
+    "compute-parents-post-state.fetch.time";
+pub const COMPUTE_PARENTS_POST_STATE_LCA_TIME_METRIC: &str = "compute-parents-post-state.lca.time";
+pub const COMPUTE_PARENTS_POST_STATE_BUFFER_ADMITS_TIME_METRIC: &str =
+    "compute-parents-post-state.buffer-admits.time";
+
+// `Validate::block_summary` sub-step breakdown.
+pub const BLOCK_VALIDATION_BLOCK_HASH_TIME_METRIC: &str = "block.validation.block-hash.time";
+pub const BLOCK_VALIDATION_TIMESTAMP_TIME_METRIC: &str = "block.validation.timestamp.time";
+pub const BLOCK_VALIDATION_SHARD_IDENTIFIER_TIME_METRIC: &str =
+    "block.validation.shard-identifier.time";
+pub const BLOCK_VALIDATION_DEPLOYS_SHARD_IDENTIFIER_TIME_METRIC: &str =
+    "block.validation.deploys-shard-identifier.time";
+pub const BLOCK_VALIDATION_REPEAT_DEPLOY_TIME_METRIC: &str = "block.validation.repeat-deploy.time";
+pub const BLOCK_VALIDATION_BLOCK_NUMBER_TIME_METRIC: &str = "block.validation.block-number.time";
+pub const BLOCK_VALIDATION_FUTURE_TRANSACTION_TIME_METRIC: &str =
+    "block.validation.future-transaction.time";
+pub const BLOCK_VALIDATION_TRANSACTION_EXPIRATION_TIME_METRIC: &str =
+    "block.validation.transaction-expiration.time";
+pub const BLOCK_VALIDATION_TIME_BASED_EXPIRATION_TIME_METRIC: &str =
+    "block.validation.time-based-expiration.time";
+pub const BLOCK_VALIDATION_JUSTIFICATION_FOLLOWS_TIME_METRIC: &str =
+    "block.validation.justification-follows.time";
+pub const BLOCK_VALIDATION_PARENTS_TIME_METRIC: &str = "block.validation.parents.time";
+pub const BLOCK_VALIDATION_SEQUENCE_NUMBER_TIME_METRIC: &str =
+    "block.validation.sequence-number.time";
+pub const BLOCK_VALIDATION_JUSTIFICATION_REGRESSIONS_TIME_METRIC: &str =
+    "block.validation.justification-regressions.time";
+
+// `block_creator::create` (proposer) phase breakdown.
+pub const BLOCK_CREATOR_PREPARE_USER_DEPLOYS_TIME_METRIC: &str =
+    "block-creator.prepare-user-deploys.time";
+pub const BLOCK_CREATOR_COMPUTE_PARENTS_POST_STATE_TIME_METRIC: &str =
+    "block-creator.compute-parents-post-state.time";
+pub const BLOCK_CREATOR_COMPUTE_DEPLOYS_CHECKPOINT_TIME_METRIC: &str =
+    "block-creator.compute-deploys-checkpoint.time";
+pub const BLOCK_CREATOR_PACKAGE_BLOCK_TIME_METRIC: &str = "block-creator.package-block.time";
+pub const BLOCK_CREATOR_TOTAL_TIME_METRIC: &str = "block-creator.total.time";
+
+// Finalization pipeline.
+pub const FINALIZER_RUN_TIME_METRIC: &str = "finalizer.run.time";
+pub const CLIQUE_ORACLE_COMPUTE_TIME_METRIC: &str = "clique-oracle.compute.time";
+
+// `compute_rejected_buffer_admits` (called from `compute_parents_post_state`).
+pub const COMPUTE_REJECTED_BUFFER_ADMITS_TIME_METRIC: &str = "compute-rejected-buffer-admits.time";
+
+// Counter incremented every time `compute_parents_post_state` falls back to
+// the latest single parent because the visible-blocks set or LCA distance
+// exceeded the configured caps.
+pub const MERGE_SCOPE_TOO_LARGE_FALLBACK_FIRED_METRIC: &str =
+    "compute-parents-post-state.fallback.merge-scope-too-large.fired";
+
+// `BlockDagKeyValueStorage::insert`.
+pub const DAG_INSERT_TIME_METRIC: &str = "dag.insert.time";
+
+// Counter incremented on every `is_mergeable_channel` call (every channel
+// produce/consume during deploy execution).
+pub const IS_MERGEABLE_CHANNEL_CALLS_METRIC: &str = "is-mergeable-channel.calls";
+
+// Network gossip timings (currently unused; reserved for future wiring on
+// proposer broadcast and peer-side message-buffer pickup).
+pub const BLOCK_BROADCAST_TIME_METRIC: &str = "block.broadcast.time";
+pub const BLOCK_RECEIVE_BUFFER_TIME_METRIC: &str = "block.receive-buffer.time";
+
+// Mergeable-channels GC pass timing.
+pub const MERGEABLE_CHANNELS_GC_TIME_METRIC: &str = "mergeable-channels.gc.time";
+
 // Casper tracing span names
 pub const TIPS0_SPAN: &str = "tips0";
 pub const TIPS1_SPAN: &str = "tips1";

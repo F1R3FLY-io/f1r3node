@@ -492,6 +492,7 @@ pub fn merge(
 
     let pre_expansion_rejected = resolved.rejected.0.len();
 
+    let __exp_start = std::time::Instant::now();
     if !rejected_source_blocks.is_empty() {
         let descendant_blocks =
             descendants_within_scope(dag, &rejected_source_blocks, &actual_blocks);
@@ -523,8 +524,18 @@ pub fn merge(
                 pre_expansion_rejected,
                 resolved.rejected.0.len()
             );
+            metrics::counter!(
+                crate::rust::metrics_constants::DAG_MERGE_REJECTION_EXPANSION_FIRED_METRIC,
+                "source" => crate::rust::metrics_constants::MERGING_METRICS_SOURCE
+            )
+            .increment(1);
         }
     }
+    metrics::histogram!(
+        crate::rust::metrics_constants::DAG_MERGE_REJECTION_EXPANSION_TIME_METRIC,
+        "source" => crate::rust::metrics_constants::MERGING_METRICS_SOURCE
+    )
+    .record(__exp_start.elapsed().as_secs_f64());
 
     // Combine surviving diffs and apply to the LFB post-state.
     let new_state = conflict_set_merger::compute_merged_state(

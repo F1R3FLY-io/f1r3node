@@ -21,7 +21,7 @@ use crate::rust::util::rholang::runtime_manager::RuntimeManager;
 pub async fn collect_garbage(
     dag: &KeyValueDagRepresentation,
     block_store: &KeyValueBlockStore,
-    runtime_manager: &std::sync::Arc<tokio::sync::Mutex<RuntimeManager>>,
+    runtime_manager: &std::sync::Arc<RuntimeManager>,
     casper_shard_conf: &CasperShardConf,
 ) -> Result<usize, KvStoreError> {
     let mut deleted_count = 0;
@@ -35,8 +35,6 @@ pub async fn collect_garbage(
             // Get block to access its state hash
             if let Some(block) = block_store.get(&block_hash)? {
                 let deleted = runtime_manager
-                    .lock()
-                    .await
                     .delete_mergeable_channels(
                         &block.body.state.post_state_hash,
                         block.sender.clone(),

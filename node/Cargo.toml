@@ -1,6 +1,6 @@
 [package]
 name = "node"
-version = "0.4.10"
+version = "0.4.14"
 edition = "2021"
 
 [features]
@@ -64,7 +64,7 @@ tokio-stream = { version = "0.1", features = ["sync"] }
 utoipa = { version = "5", features = ["axum_extras"] }
 utoipa-swagger-ui = { version = "9", features = ["axum"] }
 # Metrics dependencies (analog of Scala's Kamon + NewPrometheusReporter)
-metrics = "0.23"
+metrics = { workspace = true }
 metrics-exporter-prometheus = "0.15"
 metrics-exporter-influx = "0.2.2"
 opentelemetry = { version = "0.20", features = ["rt-tokio"] }

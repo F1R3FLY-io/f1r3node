@@ -119,7 +119,7 @@ pub struct Initializing<T: TransportLayer + Send + Sync + Clone + 'static> {
 
     block_retriever: BlockRetriever<T>,
     engine_cell: Arc<EngineCell>,
-    runtime_manager: Arc<tokio::sync::Mutex<RuntimeManager>>,
+    runtime_manager: Arc<RuntimeManager>,
     estimator: Arc<Mutex<Option<Estimator>>>,
     /// Shared reference to heartbeat signal for triggering immediate wake on deploy
     heartbeat_signal_ref: crate::rust::heartbeat_signal::HeartbeatSignalRef,
@@ -160,7 +160,7 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
         event_publisher: F1r3flyEvents,
         block_retriever: BlockRetriever<T>,
         engine_cell: Arc<EngineCell>,
-        runtime_manager: Arc<tokio::sync::Mutex<RuntimeManager>>,
+        runtime_manager: Arc<RuntimeManager>,
         estimator: Estimator,
         heartbeat_signal_ref: crate::rust::heartbeat_signal::HeartbeatSignalRef,
     ) -> Self {
@@ -796,8 +796,8 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
         let pre_state_hash = RuntimeManager::empty_state_hash_fixed();
 
         // Replay genesis - this will save mergeable channels to the store
-        let mut runtime_manager = self.runtime_manager.lock().await;
-        let result = runtime_manager
+        let result = self
+            .runtime_manager
             .replay_compute_state(
                 &pre_state_hash,
                 deploys,
@@ -865,8 +865,8 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
         );
 
         // Replay the block - this will save mergeable channels to the store
-        let mut runtime_manager = self.runtime_manager.lock().await;
-        let result = runtime_manager
+        let result = self
+            .runtime_manager
             .replay_compute_state(
                 &pre_state_hash,
                 deploys,
@@ -981,17 +981,14 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
         // peers) against config drift: the node's local native-token-* values
         // must match what this network baked into the TokenMetadata contract at
         // genesis. See casper/src/rust/util/token_metadata_check.rs for details.
-        {
-            let runtime_manager = self.runtime_manager.lock().await;
-            crate::rust::util::token_metadata_check::verify_token_metadata_matches_config(
-                &runtime_manager,
-                &genesis_post_state_hash,
-                &self.casper_shard_conf.native_token_name,
-                &self.casper_shard_conf.native_token_symbol,
-                self.casper_shard_conf.native_token_decimals,
-            )
-            .await?;
-        }
+        crate::rust::util::token_metadata_check::verify_token_metadata_matches_config(
+            &self.runtime_manager,
+            &genesis_post_state_hash,
+            &self.casper_shard_conf.native_token_name,
+            &self.casper_shard_conf.native_token_symbol,
+            self.casper_shard_conf.native_token_decimals,
+        )
+        .await?;
 
         self.transport_layer
             .send_fork_choice_tip_request(&self.connections_cell, &self.rp_conf_ask)
