@@ -99,6 +99,19 @@ pub const BLOCK_REPLAY_SYSDEPLOY_EVAL_EVALUATE_SOURCE_TIME_METRIC: &str =
 pub const BLOCK_REPLAY_SYSDEPLOY_EVAL_CONSUME_RESULT_TIME_METRIC: &str =
     "block.replay.sysdeploy.eval.consume-result.time";
 
+// Wrapper counters surfacing the unaccounted overhead inside
+// `evaluate_system_source` (env build + rand clone + post-evaluate fixup) and
+// `eval_system_deploy` (everything outside the two phase histograms above).
+// Time is accumulated in nanoseconds; calls counter increments once per call.
+pub const EVALUATE_SOURCE_WRAPPER_CALLS_METRIC: &str =
+    "block.replay.sysdeploy.eval.evaluate-source.wrapper.calls";
+pub const EVALUATE_SOURCE_WRAPPER_TIME_NS_METRIC: &str =
+    "block.replay.sysdeploy.eval.evaluate-source.wrapper.time_ns";
+pub const EVAL_SYSTEM_DEPLOY_WRAPPER_CALLS_METRIC: &str =
+    "block.replay.sysdeploy.eval.wrapper.calls";
+pub const EVAL_SYSTEM_DEPLOY_WRAPPER_TIME_NS_METRIC: &str =
+    "block.replay.sysdeploy.eval.wrapper.time_ns";
+
 // Per-deploy replay breakdown metrics
 pub const BLOCK_REPLAY_DEPLOY_RIG_TIME_METRIC: &str = "block.replay.deploy.rig.time";
 pub const BLOCK_REPLAY_DEPLOY_PRECHARGE_TIME_METRIC: &str = "block.replay.deploy.precharge.time";

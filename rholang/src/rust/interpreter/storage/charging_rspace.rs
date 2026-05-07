@@ -80,27 +80,22 @@ impl ChargingRSpace {
                 MaybeConsumeResult<Par, BindPattern, ListParWithRandom, TaggedContinuation>,
                 RSpaceError,
             > {
-                self.cost.charge(storage_cost_consume(
-                    channels.clone(),
-                    patterns.clone(),
-                    continuation.clone(),
-                ))?;
-
-                let consume_res = self.space.consume(
-                    channels.clone(),
-                    patterns,
-                    continuation.clone(),
-                    persist,
-                    peeks,
-                ).await?;
+                self.cost
+                    .charge(storage_cost_consume(&channels, &patterns, &continuation))?;
 
                 let id = consume_id_bytes(&continuation)?;
+                let channels_count = channels.len() as i64;
+                let consume_res = self
+                    .space
+                    .consume(channels, patterns, continuation, persist, peeks)
+                    .await?;
+
                 handle_result(
                     consume_res.clone(),
                     TriggeredBy::Consume {
                         id,
                         persistent: persist,
-                        channels_count: channels.len() as i64,
+                        channels_count,
                     },
                     self.cost.clone(),
                 )?;
@@ -116,16 +111,17 @@ impl ChargingRSpace {
                 MaybeProduceResult<Par, BindPattern, ListParWithRandom, TaggedContinuation>,
                 RSpaceError,
             > {
-                self.cost
-                    .charge(storage_cost_produce(channel.clone(), data.clone()))?;
-                let produce_res = self.space.produce(channel, data.clone(), persist).await?;
+                self.cost.charge(storage_cost_produce(&channel, &data))?;
+
+                let id = data.random_state.clone();
+                let produce_res = self.space.produce(channel, data, persist).await?;
                 let common_result = produce_res
                     .clone()
                     .map(|(cont, data_list, _)| (cont, data_list));
                 handle_result(
                     common_result,
                     TriggeredBy::Produce {
-                        id: data.random_state.clone(),
+                        id,
                         persistent: persist,
                         channels_count: 1,
                     },
@@ -181,13 +177,16 @@ impl ChargingRSpace {
                 pattern: Vec<BindPattern>,
             ) -> Result<Option<(TaggedContinuation, Vec<ListParWithRandom>)>, RSpaceError>
             {
-                let consume_res = self.space.consume(
-                    channel,
-                    pattern,
-                    TaggedContinuation::default(),
-                    false,
-                    BTreeSet::new(),
-                ).await?;
+                let consume_res = self
+                    .space
+                    .consume(
+                        channel,
+                        pattern,
+                        TaggedContinuation::default(),
+                        false,
+                        BTreeSet::new(),
+                    )
+                    .await?;
                 Ok(unpack_option(&consume_res))
             }
 
@@ -271,11 +270,7 @@ fn handle_result(
             // That persistent continuation is going to be charged for (without refund) once it has no matches in TS.
             let refund_for_consume =
                 if !cont.persistent || consume_id_bytes == triggered_by_id_bytes {
-                    storage_cost_consume(
-                        cont.channels.clone(),
-                        cont.patterns.clone(),
-                        cont.continuation.clone(),
-                    )
+                    storage_cost_consume(&cont.channels, &cont.patterns, &cont.continuation)
                 } else {
                     Cost::create(0, "refund_for_consume")
                 };
@@ -327,7 +322,7 @@ fn refund_for_removing_produces(
 
     removed_data
         .into_iter()
-        .map(|(data, channel)| storage_cost_produce(channel, data.removed_datum))
+        .map(|(data, channel)| storage_cost_produce(&channel, &data.removed_datum))
         .fold(
             Cost::create(0, "refund_for_removing_produces init"),
             |acc, cost| {

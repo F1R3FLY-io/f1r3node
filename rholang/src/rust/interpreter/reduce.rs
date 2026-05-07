@@ -8,8 +8,8 @@ use models::rhoapi::var::VarInstance;
 use models::rhoapi::{
     BindPattern, Bundle, EAnd, EDiv, EEq, EGt, EGte, EList, ELt, ELte, EMatches, EMethod, EMinus,
     EMinusMinus, EMod, EMult, ENeq, EOr, EPathMap, EPercentPercent, EPlus, EPlusPlus, EVar,
-    EZipper, Expr, GPrivate, GUnforgeable, KeyValuePair, Match, MatchCase, New, ParWithRandom,
-    Receive, ReceiveBind, Send, Var,
+    EZipper, Expr, GPrivate, GUnforgeable, KeyValuePair, Match, New, ParWithRandom, Receive,
+    ReceiveBind, Send, Var,
 };
 use models::rhoapi::{ETuple, ListParWithRandom, Par, TaggedContinuation};
 use models::rust::par_map::ParMap;
@@ -59,6 +59,12 @@ use super::dispatch::{DispatchType, RhoDispatch, RholangAndScalaDispatcher};
 use super::env::Env;
 use super::errors::InterpreterError;
 use super::matcher::has_locally_free::HasLocallyFree;
+use super::metrics_constants::{
+    REDUCER_EVAL_MATCH_CALLS_METRIC, REDUCER_EVAL_MATCH_TIME_NS_METRIC,
+    REDUCER_EVAL_NEW_CALLS_METRIC, REDUCER_EVAL_NEW_TIME_NS_METRIC,
+    REDUCER_EVAL_RECEIVE_CALLS_METRIC, REDUCER_EVAL_RECEIVE_TIME_NS_METRIC,
+    REDUCER_EVAL_SEND_CALLS_METRIC, REDUCER_EVAL_SEND_TIME_NS_METRIC, RHOLANG_METRICS_SOURCE,
+};
 use super::rho_runtime::RhoISpace;
 use super::rho_type::{RhoExpression, RhoUnforgeable};
 use super::substitute::Substitute;
@@ -882,10 +888,42 @@ impl DebruijnInterpreter {
         rand: Blake2b512Random,
     ) -> Result<(), InterpreterError> {
         match term {
-            GeneratedMessage::Send(term) => self.eval_send(term, env, rand).await,
-            GeneratedMessage::Receive(term) => self.eval_receive(term, env, rand).await,
-            GeneratedMessage::New(term) => self.eval_new(term, env.clone(), rand).await,
-            GeneratedMessage::Match(term) => self.eval_match(term, env, rand).await,
+            GeneratedMessage::Send(term) => {
+                metrics::counter!(REDUCER_EVAL_SEND_CALLS_METRIC, "source" => RHOLANG_METRICS_SOURCE)
+                    .increment(1);
+                let start = std::time::Instant::now();
+                let result = self.eval_send(term, env, rand).await;
+                metrics::counter!(REDUCER_EVAL_SEND_TIME_NS_METRIC, "source" => RHOLANG_METRICS_SOURCE)
+                    .increment(start.elapsed().as_nanos() as u64);
+                result
+            }
+            GeneratedMessage::Receive(term) => {
+                metrics::counter!(REDUCER_EVAL_RECEIVE_CALLS_METRIC, "source" => RHOLANG_METRICS_SOURCE)
+                    .increment(1);
+                let start = std::time::Instant::now();
+                let result = self.eval_receive(term, env, rand).await;
+                metrics::counter!(REDUCER_EVAL_RECEIVE_TIME_NS_METRIC, "source" => RHOLANG_METRICS_SOURCE)
+                    .increment(start.elapsed().as_nanos() as u64);
+                result
+            }
+            GeneratedMessage::New(term) => {
+                metrics::counter!(REDUCER_EVAL_NEW_CALLS_METRIC, "source" => RHOLANG_METRICS_SOURCE)
+                    .increment(1);
+                let start = std::time::Instant::now();
+                let result = self.eval_new(term, env.clone(), rand).await;
+                metrics::counter!(REDUCER_EVAL_NEW_TIME_NS_METRIC, "source" => RHOLANG_METRICS_SOURCE)
+                    .increment(start.elapsed().as_nanos() as u64);
+                result
+            }
+            GeneratedMessage::Match(term) => {
+                metrics::counter!(REDUCER_EVAL_MATCH_CALLS_METRIC, "source" => RHOLANG_METRICS_SOURCE)
+                    .increment(1);
+                let start = std::time::Instant::now();
+                let result = self.eval_match(term, env, rand).await;
+                metrics::counter!(REDUCER_EVAL_MATCH_TIME_NS_METRIC, "source" => RHOLANG_METRICS_SOURCE)
+                    .increment(start.elapsed().as_nanos() as u64);
+                result
+            }
             GeneratedMessage::Bundle(term) => self.eval_bundle(term, env, rand).await,
             GeneratedMessage::Expr(term) => match &term.expr_instance {
                 Some(expr_instance) => match expr_instance {
@@ -1065,61 +1103,34 @@ impl DebruijnInterpreter {
             })
         }
 
-        let first_match = Box::new(
-            |target: Par, cases: Vec<MatchCase>, rand: Blake2b512Random| async {
-                let mut state = (target, cases);
-
-                loop {
-                    let (_target, _cases) = state;
-
-                    match _cases.as_slice() {
-                        [] => return Ok(()),
-
-                        [single_case, case_rem @ ..] => {
-                            let pattern = self.substitute.substitute_and_charge(
-                                &unwrap_option_safe(single_case.pattern.clone())?,
-                                1,
-                                env,
-                            )?;
-
-                            let mut spatial_matcher = SpatialMatcherContext::new();
-                            let match_result =
-                                spatial_matcher.spatial_match_result(_target.clone(), pattern);
-
-                            match match_result {
-                                None => {
-                                    state = (_target, case_rem.to_vec());
-                                }
-
-                                Some(free_map) => {
-                                    let eval_result = self
-                                        .eval(
-                                            single_case.source.clone().unwrap(),
-                                            &add_to_env(
-                                                env,
-                                                free_map.clone(),
-                                                single_case.free_count,
-                                            ),
-                                            rand,
-                                        )
-                                        .await?;
-
-                                    return Ok(eval_result);
-                                }
-                            }
-                        }
-                    }
-                }
-            },
-        );
-
         self.cost.charge(match_eval_cost())?;
         let evaled_target = self.eval_expr(&mat.target.as_ref().unwrap(), env)?;
         let subst_target = self
             .substitute
             .substitute_and_charge(&evaled_target, 0, env)?;
 
-        first_match(subst_target, mat.cases.clone(), rand).await
+        for single_case in mat.cases.iter() {
+            let pattern = self.substitute.substitute_and_charge(
+                &unwrap_option_safe(single_case.pattern.clone())?,
+                1,
+                env,
+            )?;
+
+            let mut spatial_matcher = SpatialMatcherContext::new();
+            if let Some(free_map) =
+                spatial_matcher.spatial_match_result(subst_target.clone(), pattern)
+            {
+                return self
+                    .eval(
+                        single_case.source.clone().unwrap(),
+                        &add_to_env(env, free_map.clone(), single_case.free_count),
+                        rand,
+                    )
+                    .await;
+            }
+        }
+
+        Ok(())
     }
 
     /**
