@@ -844,8 +844,8 @@ impl RuntimeOps {
                 }
             }
         };
-        log_mem_step("start");
         let wrapper_pre_start = Instant::now();
+        log_mem_step("start");
 
         // println!("\nEvaluating system deploy, {:?}", S::source());
         let wrapper_pre = wrapper_pre_start.elapsed();
