@@ -356,6 +356,17 @@ async fn test_case(
         compute_trie_actions,
         apply_trie_actions,
         |x| base_reader.get_data(&x),
+        // Group merge_set into branches via event-indexed depends map.
+        |merge_set: &HashableSet<DeployChainIndex>| {
+            let chains_vec: Vec<DeployChainIndex> = merge_set.0.iter().cloned().collect();
+            let event_logs: Vec<&rspace_plus_plus::rspace::merger::event_log_index::EventLogIndex> =
+                chains_vec.iter().map(|c| &c.event_log_index).collect();
+            let depends_map = merging_logic::compute_depends_map_event_indexed(
+                &chains_vec,
+                &event_logs,
+            );
+            merging_logic::gather_related_sets(&depends_map)
+        },
         // Combine each branch's chain event logs into a single
         // `EventLogIndex` per branch, then run the event-indexed conflict
         // map and union with the test helper's `branches_are_conflicting`

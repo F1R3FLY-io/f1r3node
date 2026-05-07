@@ -97,6 +97,10 @@ pub fn resolve_conflicts<R: Clone + Eq + std::hash::Hash + PartialOrd + Ord>(
     cost: &impl Fn(&R) -> u64,
     mergeable_channels: &impl Fn(&R) -> NumberChannelsDiff,
     get_data: &impl Fn(Blake2b256Hash) -> Result<Vec<Datum<ListParWithRandom>>, HistoryError>,
+    // Splits a set of items into branches whose elements are mutually
+    // dependent. Returned branches must partition the input — every item
+    // appears in exactly one branch.
+    compute_branches: &impl Fn(&HashableSet<R>) -> HashableSet<HashableSet<R>>,
     // Builds the conflict map between branches. Must include every branch
     // as a key — branches with no conflicts get an empty value set — so
     // `compute_rejection_options` downstream sees the full key space.
@@ -127,10 +131,9 @@ pub fn resolve_conflicts<R: Clone + Eq + std::hash::Hash + PartialOrd + Ord>(
         (rejected, to_merge)
     };
 
-    // Compute related sets to split merging set into branches without cross dependencies
-    use rspace_plus_plus::rspace::merger::merging_logic::compute_related_sets;
-    let (branches, branches_time) =
-        measure_time(|| compute_related_sets(&merge_set, |a, b| depends(a, b)));
+    // Group items in merge_set into branches whose elements are mutually
+    // dependent.
+    let (branches, branches_time) = measure_time(|| compute_branches(&merge_set));
     metrics::histogram!(
         crate::rust::metrics_constants::DAG_MERGE_BRANCHES_TIME_METRIC,
         "source" => crate::rust::metrics_constants::MERGING_METRICS_SOURCE
@@ -420,6 +423,7 @@ pub fn merge<
         Vec<HotStoreTrieAction<C, P, A, K>>,
     ) -> Result<Blake2b256Hash, HistoryError>,
     get_data: impl Fn(Blake2b256Hash) -> Result<Vec<Datum<ListParWithRandom>>, HistoryError>,
+    compute_branches: impl Fn(&HashableSet<R>) -> HashableSet<HashableSet<R>>,
     compute_conflict_map: impl Fn(
         &HashableSet<HashableSet<R>>,
     ) -> Result<
@@ -434,6 +438,7 @@ pub fn merge<
         &cost,
         &mergeable_channels,
         &get_data,
+        &compute_branches,
         &compute_conflict_map,
     )?;
     let new_state = compute_merged_state(
@@ -723,6 +728,20 @@ mod tests {
                 Ok(Blake2b256Hash::from_bytes(vec![9u8; 32]))
             },
             |_hash| Ok(Vec::new()),
+            // Each item is its own singleton branch.
+            |merge_set: &HashableSet<i32>| {
+                HashableSet(
+                    merge_set
+                        .0
+                        .iter()
+                        .map(|i| {
+                            let mut s = HashSet::new();
+                            s.insert(*i);
+                            HashableSet(s)
+                        })
+                        .collect(),
+                )
+            },
             // Empty conflict map — every branch as a key with no conflicts.
             // This test exercises only the rejection-via-mergeable-overflow
             // path; the conflict-detection path is covered elsewhere.

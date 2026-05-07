@@ -759,3 +759,189 @@ fn event_indexed_load_shape_overlapping() {
 
     assert_maps_equivalent(&map_baseline, &map_indexed);
 }
+
+/// Helper: run `compute_depends_map_event_indexed` over an ordered chain
+/// collection and return a HashMap keyed by `DeployChainIndex` for direct
+/// comparison against `compute_relation_map(&chain_set, |a, b| depends(...))`.
+fn event_indexed_depends_map_for_chains(
+    chain_set: &HashableSet<DeployChainIndex>,
+) -> HashMap<DeployChainIndex, HashableSet<DeployChainIndex>> {
+    let chains_vec: Vec<DeployChainIndex> = chain_set.0.iter().cloned().collect();
+    let event_logs: Vec<&EventLogIndex> = chains_vec.iter().map(|c| &c.event_log_index).collect();
+    merging_logic::compute_depends_map_event_indexed(&chains_vec, &event_logs)
+}
+
+#[test]
+fn event_indexed_depends_disjoint_match_baseline() {
+    // Disjoint chains: every pair has empty depends; both algorithms
+    // should produce the same all-empty map.
+    let n = 50;
+    let chains: Vec<DeployChainIndex> = (0..n).map(make_chain).collect();
+    let chain_set = HashableSet(chains.into_iter().collect());
+
+    let map_baseline = merging_logic::compute_relation_map(&chain_set, |a, b| {
+        merging_logic::depends(&a.event_log_index, &b.event_log_index)
+    });
+    let map_indexed = event_indexed_depends_map_for_chains(&chain_set);
+
+    assert_eq!(count_total(&map_baseline), 0, "expected zero depends pairs");
+    assert_maps_equivalent(&map_baseline, &map_indexed);
+}
+
+/// Build a producer chain and a consumer chain that share the SAME
+/// Produce struct (same hash) — `producer` has it in `produces_linear`,
+/// `consumer` has it in `produces_consumed`. This satisfies the depends
+/// predicate's `producesDepends` clause.
+fn make_depends_pair(
+    idx_producer: usize,
+    idx_consumer: usize,
+) -> (DeployChainIndex, DeployChainIndex) {
+    let mut ch = [0u8; 32];
+    ch[0] = 0xD0;
+    ch[1] = idx_producer as u8;
+
+    let mut ph = ch;
+    ph[4] = idx_producer as u8;
+    let shared_produce = Produce {
+        channel_hash: Blake2b256Hash::from_bytes(ch.to_vec()),
+        hash: Blake2b256Hash::from_bytes(ph.to_vec()),
+        persistent: false,
+        is_deterministic: true,
+        output_value: vec![],
+        failed: false,
+    };
+
+    let mut producer_dh = [0u8; 32];
+    producer_dh[20] = idx_producer as u8;
+    producer_dh[31] = 0xD1;
+
+    let mut producer_event_log = EventLogIndex::empty();
+    let mut producer_linear = HashSet::new();
+    producer_linear.insert(shared_produce.clone());
+    producer_event_log.produces_linear = HashableSet(producer_linear);
+
+    let mut producer_deploys = HashSet::new();
+    producer_deploys.insert(DeployIdWithCost {
+        deploy_id: Bytes::from(producer_dh.to_vec()),
+        cost: 100,
+    });
+    let producer = DeployChainIndex::from_parts(
+        HashableSet(producer_deploys),
+        Blake2b256Hash::from_bytes(vec![1u8; 32]),
+        producer_event_log,
+        rspace_plus_plus::rspace::merger::state_change::StateChange::empty(),
+        Bytes::from(producer_dh.to_vec()),
+        0,
+    );
+
+    let mut consumer_dh = [0u8; 32];
+    consumer_dh[20] = idx_consumer as u8;
+    consumer_dh[31] = 0xD2;
+
+    let mut consumer_event_log = EventLogIndex::empty();
+    let mut consumer_consumed = HashSet::new();
+    consumer_consumed.insert(shared_produce);
+    consumer_event_log.produces_consumed = HashableSet(consumer_consumed);
+
+    let mut consumer_deploys = HashSet::new();
+    consumer_deploys.insert(DeployIdWithCost {
+        deploy_id: Bytes::from(consumer_dh.to_vec()),
+        cost: 100,
+    });
+    let consumer = DeployChainIndex::from_parts(
+        HashableSet(consumer_deploys),
+        Blake2b256Hash::from_bytes(vec![1u8; 32]),
+        consumer_event_log,
+        rspace_plus_plus::rspace::merger::state_change::StateChange::empty(),
+        Bytes::from(consumer_dh.to_vec()),
+        0,
+    );
+
+    (producer, consumer)
+}
+
+#[test]
+fn event_indexed_depends_with_overlap_match_baseline() {
+    // A producer/consumer pair that shares a Produce struct triggers
+    // `producesDepends`. Other chains in the set are disjoint and must
+    // not be marked as depending on anything.
+    let (p0, c0) = make_depends_pair(0, 1);
+    let mut chains: Vec<DeployChainIndex> = Vec::new();
+    chains.push(p0);
+    chains.push(c0);
+    chains.push(make_chain(2));
+    chains.push(make_chain(3));
+
+    let chain_set = HashableSet(chains.into_iter().collect());
+
+    let map_baseline = merging_logic::compute_relation_map(&chain_set, |a, b| {
+        merging_logic::depends(&a.event_log_index, &b.event_log_index)
+    });
+    let map_indexed = event_indexed_depends_map_for_chains(&chain_set);
+
+    assert!(
+        count_total(&map_baseline) > 0,
+        "expected at least one depends pair"
+    );
+    assert_maps_equivalent(&map_baseline, &map_indexed);
+}
+
+/// Side-by-side timing for the depends path: O(D²) pairwise
+/// `compute_relation_map` vs single-pass `compute_depends_map_event_indexed`,
+/// both over the same chain shape used in `test_load` (~200 chains with
+/// ~32 events each, mostly disjoint).
+#[test]
+#[ignore = "perf benchmark — run explicitly with --ignored"]
+fn event_indexed_load_shape_depends() {
+    let n_chains: usize = 200;
+    let events_per_chain: usize = 32;
+    let consumed_ratio: f32 = 0.7;
+
+    let chains: Vec<DeployChainIndex> = (0..n_chains)
+        .map(|i| make_chain_sized(i, events_per_chain, consumed_ratio))
+        .collect();
+    let chain_set = HashableSet(chains.into_iter().collect());
+
+    let baseline_calls = std::cell::Cell::new(0usize);
+    let start = Instant::now();
+    let map_baseline = merging_logic::compute_relation_map(&chain_set, |a, b| {
+        baseline_calls.set(baseline_calls.get() + 1);
+        merging_logic::depends(&a.event_log_index, &b.event_log_index)
+    });
+    let baseline_elapsed = start.elapsed();
+
+    let start = Instant::now();
+    let map_indexed = event_indexed_depends_map_for_chains(&chain_set);
+    let indexed_elapsed = start.elapsed();
+
+    println!();
+    println!(
+        "Depends load shape  n_chains={}  events_per_chain={}  consumed_ratio={}",
+        n_chains, events_per_chain, consumed_ratio
+    );
+    println!(
+        "  reference: {:>5}ms ({} predicate calls, ~{:.1}µs/call)",
+        baseline_elapsed.as_millis(),
+        baseline_calls.get(),
+        if baseline_calls.get() > 0 {
+            baseline_elapsed.as_nanos() as f64 / baseline_calls.get() as f64 / 1000.0
+        } else {
+            0.0
+        }
+    );
+    println!(
+        "  indexed:   {:>5}ms (no pairwise predicate calls)",
+        indexed_elapsed.as_millis()
+    );
+    println!(
+        "  speedup:   {:.1}x",
+        baseline_elapsed.as_secs_f64() / indexed_elapsed.as_secs_f64().max(1e-9)
+    );
+    println!(
+        "  total depends pairs recorded: baseline={}  indexed={}",
+        count_total(&map_baseline),
+        count_total(&map_indexed)
+    );
+
+    assert_maps_equivalent(&map_baseline, &map_indexed);
+}

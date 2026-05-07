@@ -504,6 +504,20 @@ pub fn merge(
         Ok(conflict_map)
     };
 
+    // Group chains in merge_set into branches whose elements depend on each
+    // other. Builds inverted indexes over each chain's `EventLogIndex` and
+    // emits depends pairs in a single pass, then groups via
+    // `gather_related_sets`.
+    let compute_branches_fn =
+        |merge_set: &HashableSet<DeployChainIndex>| -> HashableSet<HashableSet<DeployChainIndex>> {
+            let chains_vec: Vec<DeployChainIndex> = merge_set.0.iter().cloned().collect();
+            let event_logs: Vec<&rspace_plus_plus::rspace::merger::event_log_index::EventLogIndex> =
+                chains_vec.iter().map(|c| &c.event_log_index).collect();
+            let depends_map =
+                merging_logic::compute_depends_map_event_indexed(&chains_vec, &event_logs);
+            merging_logic::gather_related_sets(&depends_map)
+        };
+
     // Resolve conflicts: detect conflicts and select the cost-optimal rejection set.
     let mut resolved = conflict_set_merger::resolve_conflicts(
         actual_seq,
@@ -512,6 +526,7 @@ pub fn merge(
         &rejection_cost_f,
         &mergeable_channels_fn,
         &get_data_fn,
+        &compute_branches_fn,
         &compute_conflict_map_fn,
     )
     .map_err(|e| CasperError::HistoryError(e))?;

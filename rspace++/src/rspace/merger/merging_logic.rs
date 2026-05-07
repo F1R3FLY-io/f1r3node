@@ -721,6 +721,142 @@ where
     result
 }
 
+/// Dependency map between branches, built by walking events once and emitting
+/// pairs from inverted indexes. The relation is symmetric: a pair `(a, b)` is
+/// marked when `depends(a, b) || depends(b, a)` would be true under
+/// `merging_logic::depends`.
+///
+/// `branches` and `event_logs` are parallel arrays: `event_logs[i]` is the
+/// `EventLogIndex` against which dependency checks are performed for
+/// `branches[i]`.
+///
+/// Returns a HashMap with every branch as a key holding the set of branches
+/// that depend on (or are depended on by) it. The result is suitable as input
+/// to `gather_related_sets` to compute branch groupings.
+pub fn compute_depends_map_event_indexed<R>(
+    branches: &[R],
+    event_logs: &[&EventLogIndex],
+) -> HashMap<R, HashableSet<R>>
+where
+    R: Clone + Eq + std::hash::Hash,
+{
+    assert_eq!(
+        branches.len(),
+        event_logs.len(),
+        "branches and event_logs must be parallel arrays of the same length"
+    );
+    let n = branches.len();
+
+    let mut result: HashMap<R, HashableSet<R>> = branches
+        .iter()
+        .map(|b| (b.clone(), HashableSet(HashSet::new())))
+        .collect();
+
+    if n < 2 {
+        return result;
+    }
+
+    // For each event, the inverted indexes record:
+    //   *_source_branches[e]: branches whose event log produced (or consumed)
+    //     `e` and did not internally destroy it — the candidate "source" side
+    //     of `depends(target, source)`. For produces, mergeable produces are
+    //     excluded here (the predicate subtracts them before intersecting).
+    //   *_target_branches[e]: branches whose event log destroyed `e` via COMM
+    //     — the candidate "target" side.
+    // A pair (s, t) where the same event `e` appears in `*_source_branches[e]`
+    // for one branch and `*_target_branches[e]` for the other satisfies the
+    // depends predicate in at least one direction; we mark the pair in both
+    // directions in the result map to mirror `compute_relation_map`'s
+    // `relation(a, b) || relation(b, a)` semantics.
+    let mut produce_source_branches: HashMap<&Produce, HashSet<usize>> = HashMap::new();
+    let mut produce_target_branches: HashMap<&Produce, HashSet<usize>> = HashMap::new();
+    let mut consume_source_branches: HashMap<&Consume, HashSet<usize>> = HashMap::new();
+    let mut consume_target_branches: HashMap<&Consume, HashSet<usize>> = HashMap::new();
+
+    for (idx, e) in event_logs.iter().enumerate() {
+        // produces source: produces_created_and_not_destroyed minus mergeable.
+        // produces_created_and_not_destroyed = (linear − consumed ∪ persistent) −
+        // copied_by_peek.
+        let copied = &e.produces_copied_by_peek.0;
+        let mergeable = &e.produces_mergeable.0;
+        for p in &e.produces_linear.0 {
+            if !e.produces_consumed.0.contains(p) && !copied.contains(p) && !mergeable.contains(p) {
+                produce_source_branches.entry(p).or_default().insert(idx);
+            }
+        }
+        for p in &e.produces_persistent.0 {
+            if !copied.contains(p) && !mergeable.contains(p) {
+                produce_source_branches.entry(p).or_default().insert(idx);
+            }
+        }
+
+        // produces target: produces_consumed (the diff against
+        // source.produces_mergeable in the predicate is already covered by
+        // excluding mergeable on the source side — a produce in
+        // source.produces_mergeable simply never enters the source index).
+        for p in &e.produces_consumed.0 {
+            produce_target_branches.entry(p).or_default().insert(idx);
+        }
+
+        // consumes source: consumes_created_and_not_destroyed
+        // = (linear_and_peeks − produced) ∪ persistent.
+        for c in &e.consumes_linear_and_peeks.0 {
+            if !e.consumes_produced.0.contains(c) {
+                consume_source_branches.entry(c).or_default().insert(idx);
+            }
+        }
+        for c in &e.consumes_persistent.0 {
+            consume_source_branches.entry(c).or_default().insert(idx);
+        }
+
+        // consumes target: consumes_produced.
+        for c in &e.consumes_produced.0 {
+            consume_target_branches.entry(c).or_default().insert(idx);
+        }
+    }
+
+    let mut pairs: Vec<(usize, usize)> = Vec::new();
+
+    for (produce, sources) in &produce_source_branches {
+        if let Some(targets) = produce_target_branches.get(produce) {
+            for &s in sources {
+                for &t in targets {
+                    if s != t {
+                        let (lo, hi) = if s < t { (s, t) } else { (t, s) };
+                        pairs.push((lo, hi));
+                    }
+                }
+            }
+        }
+    }
+
+    for (consume, sources) in &consume_source_branches {
+        if let Some(targets) = consume_target_branches.get(consume) {
+            for &s in sources {
+                for &t in targets {
+                    if s != t {
+                        let (lo, hi) = if s < t { (s, t) } else { (t, s) };
+                        pairs.push((lo, hi));
+                    }
+                }
+            }
+        }
+    }
+
+    for (a, b) in pairs {
+        let item_a = branches[a].clone();
+        let item_b = branches[b].clone();
+        if let Some(set_a) = result.get_mut(&item_a) {
+            set_a.0.insert(item_b.clone());
+        }
+        if let Some(set_b) = result.get_mut(&item_b) {
+            set_b.0.insert(item_a.clone());
+        }
+    }
+
+    result
+}
+
 /// Given relation map, return sets of related items.
 pub fn gather_related_sets<A: Eq + std::hash::Hash + Clone>(
     relation_map: &HashMap<A, HashableSet<A>>,
