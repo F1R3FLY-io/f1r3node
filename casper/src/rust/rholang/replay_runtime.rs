@@ -1,10 +1,6 @@
 // See casper/src/main/scala/coop/rchain/casper/rholang/RuntimeReplaySyntax.scala
 
-use std::{
-    collections::HashMap,
-    future::Future,
-    time::Instant,
-};
+use std::{collections::HashMap, future::Future, time::Instant};
 
 use models::{
     rhoapi::Par,
@@ -23,7 +19,8 @@ use rholang::rust::interpreter::{
     system_processes::{BlockData, DeployData as SystemProcessDeployData},
 };
 use rspace_plus_plus::rspace::{
-    hashing::blake2b256_hash::Blake2b256Hash, history::Either,
+    hashing::blake2b256_hash::Blake2b256Hash,
+    history::Either,
     merger::merging_logic::{MergeType, NumberChannelsEndVal},
 };
 
@@ -72,7 +69,7 @@ impl ReplayRuntimeOps {
         }
     }
 
-    async fn discard_event_log(&mut self, phase: &str, error_path: bool) {
+    pub async fn discard_event_log(&mut self, phase: &str, error_path: bool) {
         let drained = self.runtime_ops.runtime.take_event_log().await;
         if error_path {
             tracing::warn!(
@@ -339,7 +336,7 @@ impl ReplayRuntimeOps {
             .map(|(_, eval_successful)| eval_successful)
     }
 
-    async fn run_user_deploy(
+    pub async fn run_user_deploy(
         &mut self,
         processed_deploy: &ProcessedDeploy,
         mergeable_channels: &mut HashMap<Par, MergeType>,

@@ -219,7 +219,7 @@ impl SpatialMatcher<Par, Par> for SpatialMatcherContext {
 
             let filtered_pattern = no_frees(pattern.clone());
             // println!("filtered_pattern: {:?}", filtered_pattern);
-            let pc = ParCount::new(filtered_pattern.clone());
+            let pc = ParCount::new(&filtered_pattern);
             // println!("pc: {:?}", pc);
             let min_rem = pc.clone();
             let max_rem = if wildcard || !var_level.is_none() {

@@ -56,6 +56,8 @@ use crate::rust::{
     metrics_constants::{
         BLOCK_REPLAY_SYSDEPLOY_EVAL_CONSUME_RESULT_TIME_METRIC,
         BLOCK_REPLAY_SYSDEPLOY_EVAL_EVALUATE_SOURCE_TIME_METRIC, CASPER_METRICS_SOURCE,
+        EVALUATE_SOURCE_WRAPPER_CALLS_METRIC, EVALUATE_SOURCE_WRAPPER_TIME_NS_METRIC,
+        EVAL_SYSTEM_DEPLOY_WRAPPER_CALLS_METRIC, EVAL_SYSTEM_DEPLOY_WRAPPER_TIME_NS_METRIC,
     },
     rholang::types::eval_collector::EvalCollector,
     util::{
@@ -843,13 +845,16 @@ impl RuntimeOps {
             }
         };
         log_mem_step("start");
+        let wrapper_pre_start = Instant::now();
 
         // println!("\nEvaluating system deploy, {:?}", S::source());
+        let wrapper_pre = wrapper_pre_start.elapsed();
         let eval_result = self.evaluate_system_source(system_deploy).await?;
         log_mem_step("after_evaluate_system_source");
 
         // println!("\nEval result: {:?}", eval_result);
 
+        let wrapper_mid_start = Instant::now();
         if !eval_result.errors.is_empty() {
             return Err(CasperError::SystemRuntimeError(
                 SystemDeployPlatformFailure::UnexpectedSystemErrors(eval_result.errors),
@@ -858,7 +863,9 @@ impl RuntimeOps {
         log_mem_step("after_error_check");
 
         log_mem_step("before_consume_system_result");
+        let wrapper_mid = wrapper_mid_start.elapsed();
         let consumed = self.consume_system_result(system_deploy).await?;
+        let wrapper_post_start = Instant::now();
         log_mem_step("after_consume_system_result");
         let r = match consumed {
             Some((_, vec_list)) => match vec_list.as_slice() {
@@ -878,6 +885,12 @@ impl RuntimeOps {
             )),
         }?;
         log_mem_step("after_match_result");
+        metrics::counter!(EVAL_SYSTEM_DEPLOY_WRAPPER_CALLS_METRIC, "source" => CASPER_METRICS_SOURCE)
+            .increment(1);
+        metrics::counter!(EVAL_SYSTEM_DEPLOY_WRAPPER_TIME_NS_METRIC, "source" => CASPER_METRICS_SOURCE)
+            .increment(
+                (wrapper_pre + wrapper_mid + wrapper_post_start.elapsed()).as_nanos() as u64,
+            );
 
         Ok((r, eval_result))
     }
@@ -1156,12 +1169,14 @@ impl RuntimeOps {
         // Using tracing events for async - Span[F].traceI("evaluate-system-source") from Scala
         tracing::debug!(target: "f1r3fly.casper.evaluate-system-source", "evaluate-system-source-started");
         let eval_start = Instant::now();
+        let wrapper_pre_start = eval_start;
         log_mem_step("before_build_env");
         let env = system_deploy.env();
         log_mem_step("after_build_env");
         let rand = system_deploy.rand().clone();
         log_mem_step("after_clone_rand");
         log_mem_step("before_runtime_evaluate");
+        let wrapper_pre = wrapper_pre_start.elapsed();
         let result = self
             .runtime
             .evaluate(
@@ -1172,9 +1187,14 @@ impl RuntimeOps {
                 rand,
             )
             .await?;
+        let wrapper_post_start = Instant::now();
         log_mem_step("after_runtime_evaluate");
         metrics::histogram!(BLOCK_REPLAY_SYSDEPLOY_EVAL_EVALUATE_SOURCE_TIME_METRIC, "source" => CASPER_METRICS_SOURCE)
             .record(eval_start.elapsed().as_secs_f64());
+        metrics::counter!(EVALUATE_SOURCE_WRAPPER_CALLS_METRIC, "source" => CASPER_METRICS_SOURCE)
+            .increment(1);
+        metrics::counter!(EVALUATE_SOURCE_WRAPPER_TIME_NS_METRIC, "source" => CASPER_METRICS_SOURCE)
+            .increment((wrapper_pre + wrapper_post_start.elapsed()).as_nanos() as u64);
         Ok(result)
     }
 

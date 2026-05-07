@@ -5,22 +5,32 @@
 ///
 /// Run with: cargo test -p casper --test mod cost_accounting_perf -- --nocapture
 /// Release:  cargo test -p casper --test mod --release cost_accounting_perf -- --nocapture
+use std::collections::HashMap;
 use std::sync::OnceLock;
 use std::time::Instant;
 
 use casper::rust::{
     errors::CasperError,
-    rholang::runtime::RuntimeOps,
-    util::rholang::{
-        costacc::pre_charge_deploy::PreChargeDeploy, costacc::refund_deploy::RefundDeploy,
-        runtime_manager::RuntimeManager, system_deploy::SystemDeployTrait,
-        system_deploy_result::SystemDeployResult,
+    rholang::{replay_runtime::ReplayRuntimeOps, runtime::RuntimeOps},
+    util::{
+        construct_deploy,
+        rholang::{
+            costacc::pre_charge_deploy::PreChargeDeploy, costacc::refund_deploy::RefundDeploy,
+            runtime_manager::RuntimeManager, system_deploy::SystemDeployTrait,
+            system_deploy_result::SystemDeployResult, system_deploy_util,
+        },
     },
 };
 use crypto::rust::hash::blake2b512_random::Blake2b512Random;
 use metrics_util::debugging::{DebuggingRecorder, Snapshotter};
-use models::rust::block::state_hash::StateHash;
+use models::{
+    rhoapi::Par,
+    rust::{block::state_hash::StateHash, casper::protocol::casper_message::ProcessedDeploy},
+};
 use rholang::rust::interpreter::{rho_runtime::RhoRuntime, system_processes::BlockData};
+use rspace_plus_plus::rspace::{
+    hashing::blake2b256_hash::Blake2b256Hash, merger::merging_logic::MergeType,
+};
 
 use crate::util::{genesis_builder::GenesisContext, rholang::resources::with_runtime_manager};
 
@@ -443,6 +453,476 @@ async fn measure_precharge_and_refund_cost() {
             println!("  eval(Par) calls: {}, terms: {}, spawn: {:.1}ms, join: {:.1}ms",
                 eval_par_calls, eval_par_terms,
                 spawn_ns as f64 / 1_000_000.0, join_ns as f64 / 1_000_000.0);
+        },
+    )
+    .await
+    .unwrap()
+}
+
+struct ReplayPhaseTimings {
+    rig: std::time::Duration,
+    precharge: std::time::Duration,
+    evaluate: std::time::Duration,
+    refund: std::time::Duration,
+    check_replay: std::time::Duration,
+    total: std::time::Duration,
+}
+
+async fn time_replay_per_deploy(
+    runtime_manager: &mut RuntimeManager,
+    genesis_context: &GenesisContext,
+    start_state: &StateHash,
+    processed_deploy: &ProcessedDeploy,
+) -> Result<ReplayPhaseTimings, CasperError> {
+    let replay_runtime = runtime_manager.spawn_replay_runtime().await;
+    replay_runtime
+        .set_block_data(BlockData {
+            time_stamp: processed_deploy.deploy.data.time_stamp,
+            block_number: 0,
+            sender: genesis_context.validator_pks()[0].clone(),
+            seq_num: 0,
+        })
+        .await;
+
+    let mut replay_ops = ReplayRuntimeOps::new_from_runtime(replay_runtime);
+    replay_ops
+        .runtime_ops
+        .runtime
+        .reset(&Blake2b256Hash::from_bytes_prost(start_state))
+        .await?;
+
+    time_replay_one_deploy(&mut replay_ops, processed_deploy).await
+}
+
+async fn time_replay_one_deploy(
+    replay_ops: &mut ReplayRuntimeOps,
+    processed_deploy: &ProcessedDeploy,
+) -> Result<ReplayPhaseTimings, CasperError> {
+    let total_start = Instant::now();
+
+    let rig_start = Instant::now();
+    replay_ops.rig(processed_deploy).await?;
+    let rig = rig_start.elapsed();
+
+    let mut mergeable_channels: HashMap<Par, MergeType> = HashMap::new();
+
+    // Precharge — matches process_deploy_with_cost_accounting precharge window
+    // (BLOCK_REPLAY_DEPLOY_PRECHARGE_TIME_METRIC).
+    let precharge_start = Instant::now();
+    let mut precharge = PreChargeDeploy {
+        charge_amount: processed_deploy.deploy.data.total_phlo_charge(),
+        pk: processed_deploy.deploy.pk.clone(),
+        rand: system_deploy_util::generate_pre_charge_deploy_random_seed(&processed_deploy.deploy),
+    };
+    let (_, mut precharge_eval) = replay_ops
+        .replay_system_deploy_internal(&mut precharge, &processed_deploy.system_deploy_error)
+        .await?;
+    replay_ops.discard_event_log("precharge", false).await;
+    if precharge_eval.errors.is_empty() {
+        mergeable_channels.extend(precharge_eval.mergeable.drain());
+    }
+    let precharge = precharge_start.elapsed();
+
+    // User-deploy evaluate — matches BLOCK_REPLAY_DEPLOY_EVALUATE_TIME_METRIC.
+    let evaluate_start = Instant::now();
+    let (_, eval_successful) = replay_ops
+        .run_user_deploy(processed_deploy, &mut mergeable_channels)
+        .await?;
+    let evaluate = evaluate_start.elapsed();
+
+    // Refund — matches BLOCK_REPLAY_DEPLOY_REFUND_TIME_METRIC.
+    let refund_start = Instant::now();
+    let mut refund = RefundDeploy {
+        refund_amount: processed_deploy.refund_amount(),
+        rand: system_deploy_util::generate_refund_deploy_random_seed(&processed_deploy.deploy),
+    };
+    let (_, mut refund_eval) = replay_ops
+        .replay_system_deploy_internal(&mut refund, &None)
+        .await?;
+    replay_ops.discard_event_log("refund", false).await;
+    if refund_eval.errors.is_empty() {
+        mergeable_channels.extend(refund_eval.mergeable.drain());
+    }
+    let refund = refund_start.elapsed();
+
+    let check_start = Instant::now();
+    replay_ops
+        .check_replay_data_with_fix(eval_successful)
+        .await?;
+    let check_replay = check_start.elapsed();
+
+    let total = total_start.elapsed();
+
+    Ok(ReplayPhaseTimings {
+        rig,
+        precharge,
+        evaluate,
+        refund,
+        check_replay,
+        total,
+    })
+}
+
+// Run manually: cargo test -p casper --release --test mod cost_accounting_perf -- --nocapture --include-ignored
+//
+// Mirrors the per-deploy validator wallclock measured in production via the
+// `block.replay.deploy.{rig,precharge,evaluate,refund,check_replay_data}.time`
+// histograms scraped by integration test_load. Records the same windows by
+// driving the public ReplayRuntimeOps surface directly.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn measure_replay_per_deploy_cost() {
+    const ITERATIONS: usize = 5;
+
+    let snapshotter = get_snapshotter();
+
+    with_runtime_manager(
+        |mut runtime_manager, genesis_context, genesis_block| async move {
+            let user_sec = construct_deploy::DEFAULT_SEC.clone();
+            let genesis_state = genesis_block.body.state.post_state_hash.clone();
+
+            // Mirrors the simplest user deploy shape that still triggers the
+            // full precharge → user-eval → refund pipeline (same shape as
+            // comput_state_should_charge_for_deploys).
+            let source = "Nil".to_string();
+
+            let mut current_state = genesis_state;
+            let mut timings: Vec<ReplayPhaseTimings> = Vec::new();
+
+            for i in 0..ITERATIONS {
+                let deploy = construct_deploy::source_deploy_now_full(
+                    source.clone(),
+                    Some(100_000),
+                    None,
+                    Some(user_sec.clone()),
+                    Some(i as i64),
+                    None,
+                )
+                .unwrap();
+
+                let block_data = BlockData {
+                    time_stamp: deploy.data.time_stamp,
+                    block_number: 0,
+                    sender: genesis_context.validator_pks()[0].clone(),
+                    seq_num: 0,
+                };
+                let (post_state, mut processed_deploys, _) = runtime_manager
+                    .compute_state(
+                        &current_state,
+                        vec![deploy],
+                        Vec::<casper::rust::util::rholang::system_deploy_enum::SystemDeployEnum>::new(),
+                        block_data,
+                        None,
+                    )
+                    .await
+                    .expect("compute_state failed");
+
+                let processed_deploy = processed_deploys.pop().expect("no processed deploy");
+                assert!(
+                    !processed_deploy.is_failed,
+                    "deploy must not fail (iter {})",
+                    i
+                );
+
+                let phase = time_replay_per_deploy(
+                    &mut runtime_manager,
+                    &genesis_context,
+                    &current_state,
+                    &processed_deploy,
+                )
+                .await
+                .expect("replay timing failed");
+
+                timings.push(phase);
+                current_state = post_state;
+            }
+
+            let avg_ms = |get: fn(&ReplayPhaseTimings) -> std::time::Duration| -> f64 {
+                timings.iter().map(|t| get(t).as_secs_f64() * 1000.0).sum::<f64>()
+                    / ITERATIONS as f64
+            };
+
+            let rig_ms = avg_ms(|t| t.rig);
+            let precharge_ms = avg_ms(|t| t.precharge);
+            let evaluate_ms = avg_ms(|t| t.evaluate);
+            let refund_ms = avg_ms(|t| t.refund);
+            let check_ms = avg_ms(|t| t.check_replay);
+            let total_ms = avg_ms(|t| t.total);
+
+            println!("\n================================================================");
+            println!(
+                "Replay Per-Deploy Phase Breakdown ({} iterations, replay path)",
+                ITERATIONS
+            );
+            println!("================================================================");
+            println!("rig:           avg={:.1}ms", rig_ms);
+            println!(
+                "precharge:     avg={:.1}ms  (production high-phase target ~229ms)",
+                precharge_ms
+            );
+            println!(
+                "evaluate:      avg={:.1}ms  (production high-phase target  ~32ms)",
+                evaluate_ms
+            );
+            println!(
+                "refund:        avg={:.1}ms  (production high-phase target ~189ms)",
+                refund_ms
+            );
+            println!("check_replay:  avg={:.1}ms", check_ms);
+            println!(
+                "total:         avg={:.1}ms  (production high-phase target ~450ms)",
+                total_ms
+            );
+
+            // Per-iteration detail
+            println!("\n--- Per-Iteration ---");
+            for (i, t) in timings.iter().enumerate() {
+                println!(
+                    "  iter {}: rig={:.1}ms precharge={:.1}ms eval={:.1}ms refund={:.1}ms check={:.1}ms total={:.1}ms",
+                    i,
+                    t.rig.as_secs_f64() * 1000.0,
+                    t.precharge.as_secs_f64() * 1000.0,
+                    t.evaluate.as_secs_f64() * 1000.0,
+                    t.refund.as_secs_f64() * 1000.0,
+                    t.check_replay.as_secs_f64() * 1000.0,
+                    t.total.as_secs_f64() * 1000.0,
+                );
+            }
+            println!("================================================================\n");
+
+            // Reducer per-op-type breakdown — splits reduce_term by AST node kind.
+            let send_calls = get_counter_value(snapshotter, "reducer.eval_send.calls");
+            let send_ns = get_counter_value(snapshotter, "reducer.eval_send.time_ns");
+            let recv_calls = get_counter_value(snapshotter, "reducer.eval_receive.calls");
+            let recv_ns = get_counter_value(snapshotter, "reducer.eval_receive.time_ns");
+            let new_calls = get_counter_value(snapshotter, "reducer.eval_new.calls");
+            let new_ns = get_counter_value(snapshotter, "reducer.eval_new.time_ns");
+            let match_calls = get_counter_value(snapshotter, "reducer.eval_match.calls");
+            let match_ns = get_counter_value(snapshotter, "reducer.eval_match.time_ns");
+            let reducer_ns = send_ns + recv_ns + new_ns + match_ns;
+            let reducer_calls = send_calls + recv_calls + new_calls + match_calls;
+
+            println!("--- Reducer Per-Op-Type Breakdown (cumulative across {} iterations × full pipeline) ---", ITERATIONS);
+            println!("  total dispatched calls: {} ({} send + {} receive + {} new + {} match)",
+                reducer_calls, send_calls, recv_calls, new_calls, match_calls);
+            let pct = |ns: u64| -> f64 {
+                if reducer_ns == 0 { 0.0 } else { ns as f64 / reducer_ns as f64 * 100.0 }
+            };
+            let avg_ms = |ns: u64, calls: u64| -> f64 {
+                if calls == 0 { 0.0 } else { ns as f64 / 1_000_000.0 / calls as f64 }
+            };
+            println!("  eval_send:    {:>9.1}ms total ({:>5.0}%) over {:>6} calls (avg {:.3}ms/call)",
+                send_ns as f64 / 1_000_000.0, pct(send_ns), send_calls, avg_ms(send_ns, send_calls));
+            println!("  eval_receive: {:>9.1}ms total ({:>5.0}%) over {:>6} calls (avg {:.3}ms/call)",
+                recv_ns as f64 / 1_000_000.0, pct(recv_ns), recv_calls, avg_ms(recv_ns, recv_calls));
+            println!("  eval_new:     {:>9.1}ms total ({:>5.0}%) over {:>6} calls (avg {:.3}ms/call)",
+                new_ns as f64 / 1_000_000.0, pct(new_ns), new_calls, avg_ms(new_ns, new_calls));
+            println!("  eval_match:   {:>9.1}ms total ({:>5.0}%) over {:>6} calls (avg {:.3}ms/call)",
+                match_ns as f64 / 1_000_000.0, pct(match_ns), match_calls, avg_ms(match_ns, match_calls));
+            println!("  TOTAL:        {:>9.1}ms across {} calls", reducer_ns as f64 / 1_000_000.0, reducer_calls);
+
+            // Wrapper-overhead breakdown — closes the unaccounted gap inside
+            // `evaluate_system_source` and `eval_system_deploy`.
+            let evs_wrap_calls = get_counter_value(snapshotter, "block.replay.sysdeploy.eval.evaluate-source.wrapper.calls");
+            let evs_wrap_ns = get_counter_value(snapshotter, "block.replay.sysdeploy.eval.evaluate-source.wrapper.time_ns");
+            let esd_wrap_calls = get_counter_value(snapshotter, "block.replay.sysdeploy.eval.wrapper.calls");
+            let esd_wrap_ns = get_counter_value(snapshotter, "block.replay.sysdeploy.eval.wrapper.time_ns");
+
+            println!("\n--- Sysdeploy Wrapper Overhead (env build + bookkeeping outside phase histograms) ---");
+            println!("  evaluate_source wrapper:    {:>7.1}ms over {:>4} calls (avg {:.3}ms/call)",
+                evs_wrap_ns as f64 / 1_000_000.0, evs_wrap_calls, avg_ms(evs_wrap_ns, evs_wrap_calls));
+            println!("  eval_system_deploy wrapper: {:>7.1}ms over {:>4} calls (avg {:.3}ms/call)",
+                esd_wrap_ns as f64 / 1_000_000.0, esd_wrap_calls, avg_ms(esd_wrap_ns, esd_wrap_calls));
+            println!("================================================================\n");
+        },
+    )
+    .await
+    .unwrap()
+}
+
+// Run manually: cargo test -p casper --release --test mod cost_accounting_perf -- --nocapture --include-ignored
+//
+// Multi-deploy block-replay benchmark — reproduces production high-phase load
+// shape: NUM_BLOCKS sequential blocks each containing DEPLOYS_PER_BLOCK user
+// deploys (`@N!(N)` like test_load.py), all replayed through a single
+// ReplayRuntimeOps so per-channel rspace state accumulates between deploys
+// the same way it does on a real validator. Per-deploy phase timings are
+// averaged across all NUM_BLOCKS × DEPLOYS_PER_BLOCK runs.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn measure_block_replay_cost() {
+    const NUM_BLOCKS: usize = 14;
+    const DEPLOYS_PER_BLOCK: usize = 7;
+
+    let snapshotter = get_snapshotter();
+
+    with_runtime_manager(
+        |runtime_manager, genesis_context, genesis_block| async move {
+            let user_sec = construct_deploy::DEFAULT_SEC.clone();
+            let validator = genesis_context.validator_pks()[0].clone();
+            let mut current_state = genesis_block.body.state.post_state_hash.clone();
+
+            let mut all_timings: Vec<ReplayPhaseTimings> = Vec::new();
+            let mut per_block_avg_ms: Vec<f64> = Vec::new();
+
+            for block_idx in 0..NUM_BLOCKS {
+                // Build DEPLOYS_PER_BLOCK deploys with unique indices/vabn so
+                // signatures differ and the deploy log doesn't collapse.
+                let mut deploys = Vec::with_capacity(DEPLOYS_PER_BLOCK);
+                for d_idx in 0..DEPLOYS_PER_BLOCK {
+                    let global_idx = block_idx * DEPLOYS_PER_BLOCK + d_idx;
+                    let source = format!("@{}!({})", global_idx, global_idx);
+                    let deploy = construct_deploy::source_deploy_now_full(
+                        source,
+                        Some(100_000),
+                        None,
+                        Some(user_sec.clone()),
+                        Some(global_idx as i64),
+                        None,
+                    )
+                    .unwrap();
+                    deploys.push(deploy);
+                }
+
+                let block_data = BlockData {
+                    time_stamp: deploys[0].data.time_stamp,
+                    block_number: block_idx as i64,
+                    sender: validator.clone(),
+                    seq_num: block_idx as i32,
+                };
+
+                let (post_state, processed_deploys, _) = runtime_manager
+                    .compute_state(
+                        &current_state,
+                        deploys,
+                        Vec::<casper::rust::util::rholang::system_deploy_enum::SystemDeployEnum>::new(),
+                        block_data.clone(),
+                        None,
+                    )
+                    .await
+                    .expect("compute_state failed");
+
+                for (i, pd) in processed_deploys.iter().enumerate() {
+                    assert!(
+                        !pd.is_failed,
+                        "deploy {} failed in block {}",
+                        i, block_idx
+                    );
+                }
+
+                // One replay runtime per block, mirroring production.
+                let replay_runtime = runtime_manager.spawn_replay_runtime().await;
+                replay_runtime.set_block_data(block_data).await;
+                let mut replay_ops = ReplayRuntimeOps::new_from_runtime(replay_runtime);
+                replay_ops
+                    .runtime_ops
+                    .runtime
+                    .reset(&Blake2b256Hash::from_bytes_prost(&current_state))
+                    .await
+                    .expect("reset failed");
+
+                let mut block_total_ms = 0.0f64;
+                for pd in processed_deploys.iter() {
+                    let phase = time_replay_one_deploy(&mut replay_ops, pd)
+                        .await
+                        .expect("replay timing failed");
+                    block_total_ms += phase.total.as_secs_f64() * 1000.0;
+                    all_timings.push(phase);
+                }
+                per_block_avg_ms.push(block_total_ms / DEPLOYS_PER_BLOCK as f64);
+                current_state = post_state;
+            }
+
+            let total_count = all_timings.len() as f64;
+            let avg_ms = |get: fn(&ReplayPhaseTimings) -> std::time::Duration| -> f64 {
+                all_timings
+                    .iter()
+                    .map(|t| get(t).as_secs_f64() * 1000.0)
+                    .sum::<f64>()
+                    / total_count
+            };
+
+            let rig_ms = avg_ms(|t| t.rig);
+            let precharge_ms = avg_ms(|t| t.precharge);
+            let evaluate_ms = avg_ms(|t| t.evaluate);
+            let refund_ms = avg_ms(|t| t.refund);
+            let check_ms = avg_ms(|t| t.check_replay);
+            let total_ms = avg_ms(|t| t.total);
+
+            println!("\n================================================================");
+            println!(
+                "Block Replay Per-Deploy Phase Breakdown ({} blocks × {} deploys = {} replays)",
+                NUM_BLOCKS,
+                DEPLOYS_PER_BLOCK,
+                all_timings.len()
+            );
+            println!("================================================================");
+            println!("rig:           avg={:.1}ms", rig_ms);
+            println!(
+                "precharge:     avg={:.1}ms  (production high-phase target ~229ms)",
+                precharge_ms
+            );
+            println!(
+                "evaluate:      avg={:.1}ms  (production high-phase target  ~32ms)",
+                evaluate_ms
+            );
+            println!(
+                "refund:        avg={:.1}ms  (production high-phase target ~189ms)",
+                refund_ms
+            );
+            println!("check_replay:  avg={:.1}ms", check_ms);
+            println!(
+                "total:         avg={:.1}ms  (production high-phase target ~450ms)",
+                total_ms
+            );
+
+            // State accumulation effect — does per-deploy time grow as
+            // registry / vault / mergeable history accumulates?
+            println!("\n--- Per-Block Avg Total ms (state accumulation effect) ---");
+            for (i, ms) in per_block_avg_ms.iter().enumerate() {
+                println!("  block {:>2}: avg total {:.1}ms", i, ms);
+            }
+            println!("================================================================\n");
+
+            // Reducer per-op-type breakdown across the full run.
+            let send_calls = get_counter_value(snapshotter, "reducer.eval_send.calls");
+            let send_ns = get_counter_value(snapshotter, "reducer.eval_send.time_ns");
+            let recv_calls = get_counter_value(snapshotter, "reducer.eval_receive.calls");
+            let recv_ns = get_counter_value(snapshotter, "reducer.eval_receive.time_ns");
+            let new_calls = get_counter_value(snapshotter, "reducer.eval_new.calls");
+            let new_ns = get_counter_value(snapshotter, "reducer.eval_new.time_ns");
+            let match_calls = get_counter_value(snapshotter, "reducer.eval_match.calls");
+            let match_ns = get_counter_value(snapshotter, "reducer.eval_match.time_ns");
+            let reducer_ns = send_ns + recv_ns + new_ns + match_ns;
+
+            println!(
+                "--- Reducer Per-Op-Type Calls ({} total dispatches) ---",
+                send_calls + recv_calls + new_calls + match_calls
+            );
+            let pct = |ns: u64| -> f64 {
+                if reducer_ns == 0 {
+                    0.0
+                } else {
+                    ns as f64 / reducer_ns as f64 * 100.0
+                }
+            };
+            println!(
+                "  eval_send:    {:>6} calls ({:>5.0}% of reducer wall-time, includes await)",
+                send_calls,
+                pct(send_ns)
+            );
+            println!(
+                "  eval_receive: {:>6} calls ({:>5.0}%)",
+                recv_calls,
+                pct(recv_ns)
+            );
+            println!("  eval_new:     {:>6} calls ({:>5.0}%)", new_calls, pct(new_ns));
+            println!(
+                "  eval_match:   {:>6} calls ({:>5.0}%)",
+                match_calls,
+                pct(match_ns)
+            );
+            println!("================================================================\n");
         },
     )
     .await
