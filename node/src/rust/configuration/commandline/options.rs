@@ -343,9 +343,28 @@ pub struct RunOptions {
     #[arg(long = "synchrony-constraint-threshold")]
     pub synchrony_constraint_threshold: Option<f32>,
 
+    /// Enable the finalized-baseline rescue path that lets a proposer bypass
+    /// the synchrony-constraint threshold check when the LFB is recent. Set
+    /// to `false` to exercise the pure rejection path in tests.
+    #[arg(long = "synchrony-finalized-baseline-enabled")]
+    pub synchrony_finalized_baseline_enabled: Option<bool>,
+
+    /// Maximum block-height distance from the LFB at which the
+    /// finalized-baseline rescue path may bypass the synchrony-constraint
+    /// threshold. Beyond this distance the rescue does not apply.
+    #[arg(long = "synchrony-finalized-baseline-max-distance")]
+    pub synchrony_finalized_baseline_max_distance: Option<u64>,
+
     /// Long value representing how far ahead of the last finalized block the node is allowed to propose
     #[arg(long = "height-constraint-threshold")]
     pub height_constraint_threshold: Option<i64>,
+
+    /// Hard cap on user deploys per block. The adaptive deploy cap
+    /// adjusts within this ceiling. Higher values let one block absorb
+    /// more submission and reduce the proposed-block-per-deploy ratio
+    /// under sustained load.
+    #[arg(long = "max-user-deploys-per-block")]
+    pub max_user_deploys_per_block: Option<u32>,
 
     /// Fair round robin dispatcher individual peer packet queue size
     #[arg(long = "frrd-max-peer-queue-size")]
@@ -491,6 +510,12 @@ pub struct RunOptions {
     /// Maximum age of last finalized block before triggering heartbeat
     #[arg(long = "heartbeat-max-lfb-age", value_parser = ValueParser::new(parse_duration))]
     pub heartbeat_max_lfb_age: Option<Duration>,
+
+    /// Minimum time between heartbeat self-proposals on the same validator.
+    /// Tightens proposer cadence when lowered; raises empty-block churn risk
+    /// under low load. Tune for stress tests that need higher block rates.
+    #[arg(long = "heartbeat-self-propose-cooldown", value_parser = ValueParser::new(parse_duration))]
+    pub heartbeat_self_propose_cooldown: Option<Duration>,
 
     /// Minimum age of LFB/frontier before stale-recovery, leader-recovery,
     /// and pending-deploy backstop are allowed to fire. Debounces empty-block
