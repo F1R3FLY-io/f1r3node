@@ -4,74 +4,80 @@ All notable changes to the Rust implementation of F1r3node will be documented in
 This changelog is automatically generated from conventional commits.
 
 
-## [v0.4.13] - 2026-04-23
+## [v0.4.15] - 2026-05-08
 
 ### Bug Fixes
 
+- correct edge cases in deploy_finalization_status resolver (#504) ([#504](https://github.com/F1R3FLY-io/f1r3node/pull/504))
+
+### Performance
+
+- rholang hot-path fixes + throughput-tuning CLI surface (#505) ([#505](https://github.com/F1R3FLY-io/f1r3node/pull/505))
+- per-deploy cost optimizations + observability (#503) ([#503](https://github.com/F1R3FLY-io/f1r3node/pull/503))
+
+
+## [v0.4.11] - 2026-04-09
+
+### Bug Fixes
+
+- canonical-descendant gate on rejected-buffer recovery exemption (#497) ([#497](https://github.com/F1R3FLY-io/f1r3node/pull/497))
+- close merge-stale-diff bug class (#488) ([#488](https://github.com/F1R3FLY-io/f1r3node/pull/488))
+- handle ApprovedBlock in GenesisValidator for late-joiner recovery (#489) ([#489](https://github.com/F1R3FLY-io/f1r3node/pull/489))
 - hex decode block hashes in getEventByHash and proactive cache warming
 - LFB endpoint returns consistent FT with get_block
 - complete RhoExpr type coverage, eliminate all silent drops
 - add cost to deploy minimal view, fix transfers on readonly
+- cache fault tolerance at finalization time (#484) ([#484](https://github.com/F1R3FLY-io/f1r3node/pull/484))
+- propagate exploratory deploy errors instead of swallowing them (#485) ([#485](https://github.com/F1R3FLY-io/f1r3node/pull/485))
+- correct hash_from_vec single-channel shortcut causing merge state loss (#483) ([#483](https://github.com/F1R3FLY-io/f1r3node/pull/483))
+- replay cost determinism for parallel Rholang evaluation
+- node API improvements, deploy cost estimation (#472) ([#472](https://github.com/F1R3FLY-io/f1r3node/pull/472))
 
 ### CI
 
+- publish :staging Docker image on rust/staging pushes
 - bump system-integration to 2ace29f (API redesign test fixes)
+- remove rust/staging from push triggers to prevent duplicate CI runs
+- update system-integration ref to include websocket test fix
+- add rust/staging to CI triggers
 
 ### Documentation
 
 - document HTTP error response format and readonly-only endpoints
+- add TODO.md with RSpace lock granularity note
+- update rholang and rspace docs for async ISpace and cost fixes
+- add comprehensive Rholang developer reference
+- fix seal_startup() comments to match frozen-buffer behavior
+- refactor docs structure, add consensus protocol walkthrough (#471) ([#471](https://github.com/F1R3FLY-io/f1r3node/pull/471))
 
 ### Features
 
+- expose tuning constants as configurable parameters (#499) ([#499](https://github.com/F1R3FLY-io/f1r3node/pull/499))
+- bitmask-OR mergeable channels for registry concurrency (#491) ([#491](https://github.com/F1R3FLY-io/f1r3node/pull/491))
+- self-contained binary — embed Rholang resources, defaults.conf, eliminate kamon (#492) ([#492](https://github.com/F1R3FLY-io/f1r3node/pull/492))
 - remove dead endpoints, add query APIs, complete API reference
 - high-level query endpoints for balance, registry, validators, epoch
 - consistent view params across all block and deploy endpoints
 - isFinalized on blocks, unified status, enriched WebSocket events
+- configurable native token metadata (on-chain, API, CLI)
+- WebSocket startup event replay and dead code cleanup
 
 ### Miscellaneous
 
 - untrack TODO.md
 
+### Performance
+
+- lock-free RuntimeManager + detailed instrumentation (#502) ([#502](https://github.com/F1R3FLY-io/f1r3node/pull/502))
+- async ISpace trait, true parallel Rholang evaluation
+- tokio::spawn for Par eval, ReplayRSpace locks, cleanup
+- RSpace interior mutability, per-channel locks, matcher rewrite
+- remove adaptive deploy cap, bonds cache, deploy wake (#473) ([#473](https://github.com/F1R3FLY-io/f1r3node/pull/473))
+
 ### Refactoring
 
 - unified DeployResponse with full/summary views
 - simplify transfer extraction pipeline
-
-
-## [v0.4.12] - 2026-04-20
-
-### Bug Fixes
-
-- cache fault tolerance at finalization time (#484) ([#484](https://github.com/F1R3FLY-io/f1r3node/pull/484))
-- propagate exploratory deploy errors instead of swallowing them (#485) ([#485](https://github.com/F1R3FLY-io/f1r3node/pull/485))
-- correct hash_from_vec single-channel shortcut causing merge state loss (#483) ([#483](https://github.com/F1R3FLY-io/f1r3node/pull/483))
-- replay cost determinism for parallel Rholang evaluation
-
-### CI
-
-- remove rust/staging from push triggers to prevent duplicate CI runs
-- update system-integration ref to include websocket test fix
-
-### Documentation
-
-- add TODO.md with RSpace lock granularity note
-- update rholang and rspace docs for async ISpace and cost fixes
-- add comprehensive Rholang developer reference
-- fix seal_startup() comments to match frozen-buffer behavior
-
-### Features
-
-- configurable native token metadata (on-chain, API, CLI)
-- WebSocket startup event replay and dead code cleanup
-
-### Performance
-
-- async ISpace trait, true parallel Rholang evaluation
-- tokio::spawn for Par eval, ReplayRSpace locks, cleanup
-- RSpace interior mutability, per-channel locks, matcher rewrite
-
-### Refactoring
-
 - remove unnecessary space_locked reborrow variables
 - remove unused semaphore_count parameter from CostManager
 
@@ -85,25 +91,6 @@ This changelog is automatically generated from conventional commits.
 - update ignored test comment with specific failure reason
 - restore hardcoded cost values, add deterministic cost test, enable previously-broken contracts
 - add 300ms regression threshold to cost accounting benchmark
-
-
-## [v0.4.11] - 2026-04-09
-
-### Bug Fixes
-
-- node API improvements, deploy cost estimation (#472) ([#472](https://github.com/F1R3FLY-io/f1r3node/pull/472))
-
-### CI
-
-- add rust/staging to CI triggers
-
-### Documentation
-
-- refactor docs structure, add consensus protocol walkthrough (#471) ([#471](https://github.com/F1R3FLY-io/f1r3node/pull/471))
-
-### Performance
-
-- remove adaptive deploy cap, bonds cache, deploy wake (#473) ([#473](https://github.com/F1R3FLY-io/f1r3node/pull/473))
 
 
 ## [v0.4.10] - 2026-04-06
