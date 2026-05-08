@@ -246,6 +246,8 @@ impl Validate {
         shard_id: &str,
         expiration_threshold: i32,
         max_number_of_parents: i32,
+        max_parent_depth: i32,
+        depth_buffer: i32,
         block_store: &KeyValueBlockStore,
         disable_validator_progress_check: bool,
     ) -> ValidBlockProcessing {
@@ -348,6 +350,8 @@ impl Validate {
                 genesis,
                 s,
                 max_number_of_parents,
+                max_parent_depth,
+                depth_buffer,
                 disable_validator_progress_check,
             )
         ) {
@@ -812,6 +816,8 @@ impl Validate {
         genesis: &BlockMessage,
         s: &mut CasperSnapshot,
         max_number_of_parents: i32,
+        max_parent_depth: i32,
+        depth_buffer: i32,
         disable_validator_progress_check: bool,
     ) -> ValidBlockProcessing {
         // Check if block contains user deploys (non-system deploys)
@@ -852,6 +858,50 @@ impl Validate {
             );
             tracing::warn!("{}", Self::ignore(b, &message));
             return Either::Left(BlockError::Invalid(InvalidBlock::InvalidParents));
+        }
+
+        // Parent-depth enforcement: symmetric to proposer-side `Estimator::filterDeepParents`.
+        // Reject any block whose parents fall outside the consensus-permitted horizon
+        // (depth from highest tip > max_parent_depth + depth_buffer). An honest proposer
+        // already drops these parents before signing; this check rejects blocks from
+        // buggy or malicious proposers that would otherwise hit `UnknownRootError` on
+        // joiners that don't carry pre-horizon rspace history.
+        //
+        // Sentinel: `max_parent_depth == i32::MAX` disables the check (matches the
+        // proposer-side convention in `multi_parent_casper_impl.rs::create_block`).
+        //
+        // Genesis is exempt: validators justify back to genesis as the ultimate ancestor,
+        // and on a long-running chain genesis would always exceed the depth horizon.
+        // We compare by hash to the passed `genesis` BlockMessage rather than to
+        // `block_number == 0` so this works correctly regardless of how the chain's
+        // genesis ended up indexed (test fixtures may assign genesis a non-zero
+        // block_number; production assigns 0).
+        if max_parent_depth != i32::MAX {
+            let max_allowed_depth = (max_parent_depth as i64) + (depth_buffer as i64);
+            let highest_tip_height = s.dag.latest_block_number();
+            for parent_hash in &parent_hashes {
+                if parent_hash == &genesis.block_hash {
+                    continue; // genesis exempt
+                }
+                let parent_meta = match s.dag.lookup_unsafe(parent_hash) {
+                    Ok(meta) => meta,
+                    Err(_) => continue, // missing-parent handled by dependency gate, not here
+                };
+                let depth = highest_tip_height - parent_meta.block_number;
+                if depth > max_allowed_depth {
+                    let message = format!(
+                        "parent {} at block_number {} is at depth {} from highest tip {} \
+                         (exceeds max_parent_depth + depth_buffer = {})",
+                        PrettyPrinter::build_string_bytes(parent_hash),
+                        parent_meta.block_number,
+                        depth,
+                        highest_tip_height,
+                        max_allowed_depth
+                    );
+                    tracing::warn!("{}", Self::ignore(b, &message));
+                    return Either::Left(BlockError::Invalid(InvalidBlock::InvalidParents));
+                }
+            }
         }
 
         let validator = &b.sender;
