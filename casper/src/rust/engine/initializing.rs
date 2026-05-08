@@ -554,6 +554,32 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
             0,
             start_block_number - self.casper_shard_conf.deploy_lifespan,
         );
+        // Forward-horizon lower bound: also fetch every block reachable as a
+        // parent of any block within `max_parent_depth + depth_buffer` of LFB.
+        // Without this, lfs_block_requester rejects side-branch blocks below
+        // `deploy_lifespan` (default 50) even though they're still legitimate
+        // parents of upcoming proposals. After Running, gossip blocks
+        // referencing those rejected ancestors trigger
+        // `DAG storage is missing hash` (KvStoreError) and
+        // `validateAndSetCurrentRoot FAILED ... not in roots store`
+        // (RootRepositoryDivergence) on the joiner.
+        let max_parent_depth = self.casper_shard_conf.max_parent_depth as i64;
+        let depth_buffer = self
+            .casper_shard_conf
+            .mergeable_channels_gc_depth_buffer as i64;
+        let min_block_number_for_horizon = if max_parent_depth >= i32::MAX as i64 {
+            // Disabled depth check → no horizon clamping needed. Caller can
+            // opt into full replay (`disable-lfs = true`) for that scenario.
+            min_block_number_for_deploy_lifespan
+        } else {
+            std::cmp::max(0, start_block_number - max_parent_depth - depth_buffer)
+        };
+        // Take the LOWER of the two so LFS covers both the deploy-lifespan
+        // window AND the parent-merge horizon.
+        let min_block_number_for_deploy_lifespan = std::cmp::min(
+            min_block_number_for_deploy_lifespan,
+            min_block_number_for_horizon,
+        );
 
         tracing::info!(
             "request_approved_state: start (block {}, min_height {})",
