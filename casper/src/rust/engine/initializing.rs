@@ -674,6 +674,104 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
             );
         }
 
+        // Forward-horizon rspace history sync — ship rspace post-state for
+        // every block within `max_parent_depth + depth_buffer` of LFB so
+        // subsequent block validation never hits `UnknownRootError`. See
+        // `casper/src/rust/util/rspace_history_horizon.rs` for the
+        // reachability calc and `casper/src/rust/engine/lfs_horizon_requester.rs`
+        // for the orchestrator. Companion to the proposer-side
+        // `Estimator::filterDeepParents` and the validator-side parent-depth
+        // check in `validate::parents`.
+        {
+            let dag = self.block_dag_storage.get_representation();
+            let horizon_roots = crate::rust::util::rspace_history_horizon::compute_forward_horizon_roots(
+                &dag,
+                &self.block_store,
+                &approved_block.candidate.block,
+                &self.casper_shard_conf,
+            )
+            .map_err(|e| CasperError::KvStoreError(e))?;
+
+            if !horizon_roots.is_empty() {
+                // Phase 1's tuple_space_message_receiver was consumed by
+                // lfs_tuple_space_requester::stream. Install a fresh
+                // (tx, rx) pair on `tuple_space_tx` so handle_message_recv
+                // routes incoming `StoreItemsMessage`s to the orchestrator.
+                let (horizon_tx, horizon_rx) = mpsc::channel::<StoreItemsMessage>(50);
+                {
+                    let mut sender_slot = self.tuple_space_tx.lock().unwrap();
+                    *sender_slot = Some(horizon_tx);
+                }
+
+                let request_timeout = Duration::from_secs(30);
+                tracing::info!(
+                    "LFS forward-horizon: requesting {} ancestor rspace roots below LFB",
+                    horizon_roots.len()
+                );
+
+                // Consume the streaming-parallel orchestrator the same way
+                // `lfs_tuple_space_requester::stream` is consumed above:
+                // drive to completion, then check the final ST.is_finished()
+                // to detect incomplete sync.
+                use futures::StreamExt;
+                let horizon_requester = HorizonRequester::new(
+                    &self.transport_layer,
+                    &self.rp_conf_ask,
+                );
+                let horizon_stream =
+                    crate::rust::engine::lfs_horizon_requester::stream(
+                        horizon_roots,
+                        self.runtime_manager.clone(),
+                        self.rspace_state_manager.importer.clone(),
+                        horizon_requester,
+                        horizon_rx,
+                        request_timeout,
+                    )
+                    .await;
+
+                // Drop the temporary sender so subsequent StoreItemsMessages
+                // (none expected once Running) don't queue indefinitely.
+                let final_horizon_state = match horizon_stream {
+                    Ok(stream) => {
+                        let mut stream = Box::pin(stream);
+                        let mut final_state = None;
+                        while let Some(st) = stream.next().await {
+                            final_state = Some(st);
+                        }
+                        Ok(final_state)
+                    }
+                    Err(e) => Err(e),
+                };
+                {
+                    let mut sender_slot = self.tuple_space_tx.lock().unwrap();
+                    *sender_slot = None;
+                }
+
+                // Loud failure: cannot transition to Running without a
+                // complete forward horizon. Subsequent block validation
+                // would hit `UnknownRootError` and cascade-invalidate.
+                match final_horizon_state? {
+                    Some(st) if st.is_finished() => {}
+                    Some(st) => {
+                        return Err(CasperError::RuntimeError(format!(
+                            "LFS forward-horizon: incomplete sync; {} chunk paths still pending (state machine has {} entries)",
+                            st.len() - st.done_count(),
+                            st.len(),
+                        )));
+                    }
+                    None => {
+                        return Err(CasperError::RuntimeError(
+                            "LFS forward-horizon: stream produced no final state".to_string(),
+                        ));
+                    }
+                }
+            } else {
+                tracing::info!(
+                    "LFS forward-horizon: skipped (max_parent_depth unlimited or LFB at genesis)"
+                );
+            }
+        }
+
         // Transition to Running state
         tracing::info!("request_approved_state: transitioning to Running");
         self.create_casper_and_transition_to_running(&approved_block)
@@ -1036,5 +1134,47 @@ impl<T: TransportLayer + Send + Sync> TupleSpaceRequesterOps for TupleSpaceReque
             skip,
             get_from_history,
         ))
+    }
+}
+
+/// Wrapper struct for forward-horizon request operations. Mirrors
+/// `TupleSpaceRequester` — same trait shape, same single-peer
+/// `send_to_bootstrap` body. Lives here (not in the requester module)
+/// for the same reason: the requester module is transport-agnostic and
+/// this wrapper is the seam where `TransportLayer` is plugged in.
+pub struct HorizonRequester<'a, T: TransportLayer> {
+    transport_layer: &'a T,
+    rp_conf_ask: &'a RPConf,
+}
+
+impl<'a, T: TransportLayer> HorizonRequester<'a, T> {
+    pub fn new(transport_layer: &'a T, rp_conf_ask: &'a RPConf) -> Self {
+        Self {
+            transport_layer,
+            rp_conf_ask,
+        }
+    }
+}
+
+#[async_trait]
+impl<T: TransportLayer + Send + Sync>
+    crate::rust::engine::lfs_horizon_requester::HorizonRequesterOps
+    for HorizonRequester<'_, T>
+{
+    async fn request_for_horizon_chunk(
+        &self,
+        path: &StatePartPath,
+        page_size: i32,
+    ) -> Result<(), CasperError> {
+        let message = StoreItemsMessageRequest {
+            start_path: path.clone(),
+            skip: 0,
+            take: page_size,
+        };
+        let message_proto = message.to_proto();
+        self.transport_layer
+            .send_to_bootstrap(&self.rp_conf_ask, Arc::new(message_proto))
+            .await?;
+        Ok(())
     }
 }
