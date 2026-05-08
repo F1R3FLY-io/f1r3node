@@ -16,6 +16,13 @@ pub trait RootsStore: Send + Sync {
     ) -> Result<Option<Blake2b256Hash>, RootError>;
 
     fn record_root(&self, key: &Blake2b256Hash) -> Result<(), RootError>;
+
+    /// Pure lookup: returns true if the root has been recorded in the store.
+    /// Companion to `validate_and_set_current_root` without the side-effect of
+    /// updating the current-root pointer. Used by joiner-side LFS sync to
+    /// check whether a root has already been imported before requesting it
+    /// from peers.
+    fn contains_root(&self, key: &Blake2b256Hash) -> Result<bool, RootError>;
 }
 
 pub struct RootsStoreInstances;
@@ -65,6 +72,10 @@ impl RootsStoreInstances {
                 self.store.put_one(current_root_name, key_bytes.to_vec())?;
 
                 Ok(())
+            }
+
+            fn contains_root(&self, key: &Blake2b256Hash) -> Result<bool, RootError> {
+                Ok(self.store.get_one(&key.bytes())?.is_some())
             }
         }
 

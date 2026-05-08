@@ -804,6 +804,15 @@ impl RuntimeManager {
         self.history_repo.clone()
     }
 
+    /// Check whether a post-state root is recorded in the local rspace
+    /// roots store. Used by joiner-side LFS forward-horizon sync to skip
+    /// roots that have already been imported. Pure lookup — no side effects.
+    pub fn has_root(&self, root: &Blake2b256Hash) -> Result<bool, CasperError> {
+        self.history_repo
+            .contains_root(root)
+            .map_err(|e| CasperError::RuntimeError(format!("has_root lookup failed: {:?}", e)))
+    }
+
     /// Get or compute BlockIndex with caching
     pub fn get_or_compute_block_index(
         &self,

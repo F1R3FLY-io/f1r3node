@@ -50,4 +50,11 @@ impl RootRepository {
             }
         }
     }
+
+    /// Pure lookup: returns true if the root is recorded in the store.
+    /// Companion to `validate_and_set_current_root` without the side-effect
+    /// of updating the current-root pointer.
+    pub fn contains_root(&self, root: &Blake2b256Hash) -> Result<bool, RootError> {
+        self.roots_store.contains_root(root)
+    }
 }
