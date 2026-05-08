@@ -156,7 +156,7 @@ extern "C" fn evaluate(
             .into_iter()
             .map(|err| err.to_string())
             .collect(),
-        mergeable: eval_result.mergeable.into_iter().collect(),
+        mergeable: eval_result.mergeable.into_keys().collect(),
     };
 
     let mut bytes = eval_result_proto.encode_to_vec();
@@ -1336,6 +1336,9 @@ extern "C" fn create_runtime(
     let params = CreateRuntimeParams::decode(params_slice).unwrap();
 
     let mergeable_tag_name = params.mergeable_tag_name.unwrap();
+    let mut mergeable_tags = std::collections::HashMap::new();
+    mergeable_tags.insert(mergeable_tag_name, rspace_plus_plus::rspace::merger::merging_logic::MergeType::IntegerAdd);
+    let mergeable_tags = std::sync::Arc::new(mergeable_tags);
     let init_registry = params.init_registry;
     if params.rho_spec_system_processes {
         panic!("ERROR: There are additional system processes being passed to the rust rho_runtime that are not being handled.")
@@ -1347,7 +1350,7 @@ extern "C" fn create_runtime(
         let ollama_config = OllamaConfig::from_env();
         create_rho_runtime(
             rspace,
-            mergeable_tag_name,
+            mergeable_tags.clone(),
             init_registry,
             &mut Vec::new(),
             ExternalServices::for_validator(&openai_config, &ollama_config),
@@ -1372,6 +1375,9 @@ extern "C" fn create_runtime_with_test_framework(
     let params = CreateRuntimeParams::decode(params_slice).unwrap();
 
     let mergeable_tag_name = params.mergeable_tag_name.unwrap();
+    let mut mergeable_tags = std::collections::HashMap::new();
+    mergeable_tags.insert(mergeable_tag_name, rspace_plus_plus::rspace::merger::merging_logic::MergeType::IntegerAdd);
+    let mergeable_tags = std::sync::Arc::new(mergeable_tags);
     let init_registry = params.init_registry;
     let mut extra_system_processes = if params.rho_spec_system_processes {
         test_framework_contracts()
@@ -1385,7 +1391,7 @@ extern "C" fn create_runtime_with_test_framework(
         let ollama_config = OllamaConfig::from_env();
         create_rho_runtime(
             rspace,
-            mergeable_tag_name,
+            mergeable_tags.clone(),
             init_registry,
             &mut extra_system_processes,
             ExternalServices::for_validator(&openai_config, &ollama_config),
@@ -1410,6 +1416,9 @@ extern "C" fn create_replay_runtime(
     let params = CreateRuntimeParams::decode(params_slice).unwrap();
 
     let mergeable_tag_name = params.mergeable_tag_name.unwrap();
+    let mut mergeable_tags = std::collections::HashMap::new();
+    mergeable_tags.insert(mergeable_tag_name, rspace_plus_plus::rspace::merger::merging_logic::MergeType::IntegerAdd);
+    let mergeable_tags = std::sync::Arc::new(mergeable_tags);
     let init_registry = params.init_registry;
     if params.rho_spec_system_processes {
         panic!("ERROR: There are additional system processes being passed to the rust rho_runtime that are not being handled.")
@@ -1421,7 +1430,7 @@ extern "C" fn create_replay_runtime(
         let ollama_config = OllamaConfig::from_env();
         create_rho_runtime(
             rspace,
-            mergeable_tag_name,
+            mergeable_tags.clone(),
             init_registry,
             &mut Vec::new(),
             ExternalServices::for_validator(&openai_config, &ollama_config),

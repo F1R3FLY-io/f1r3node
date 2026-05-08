@@ -38,14 +38,8 @@ impl ConfigMapper<Options> for NodeConf {
             // to keep them in sync at load time, but by this point the
             // substitution has already resolved, so overriding only
             // protocol_server leaves the client stuck on the HOCON default.
-            Self::try_override_value(
-                &mut self.protocol_server.network_id,
-                run.network_id.clone(),
-            );
-            Self::try_override_value(
-                &mut self.protocol_client.network_id,
-                run.network_id,
-            );
+            Self::try_override_value(&mut self.protocol_server.network_id, run.network_id.clone());
+            Self::try_override_value(&mut self.protocol_client.network_id, run.network_id);
             Self::try_override_option(&mut self.protocol_server.host, run.host);
             Self::try_override_bool(
                 &mut self.protocol_server.use_random_ports,
@@ -194,8 +188,20 @@ impl ConfigMapper<Options> for NodeConf {
                 run.synchrony_constraint_threshold,
             );
             Self::try_override_value(
+                &mut self.casper.synchrony_finalized_baseline_enabled,
+                run.synchrony_finalized_baseline_enabled,
+            );
+            Self::try_override_value(
+                &mut self.casper.synchrony_finalized_baseline_max_distance,
+                run.synchrony_finalized_baseline_max_distance,
+            );
+            Self::try_override_value(
                 &mut self.casper.height_constraint_threshold,
                 run.height_constraint_threshold,
+            );
+            Self::try_override_value(
+                &mut self.casper.max_user_deploys_per_block,
+                run.max_user_deploys_per_block,
             );
             Self::try_override_option(
                 &mut self.casper.validator_public_key,
@@ -347,6 +353,30 @@ impl ConfigMapper<Options> for NodeConf {
                 &mut self.casper.heartbeat_conf.max_lfb_age,
                 run.heartbeat_max_lfb_age,
             );
+            Self::try_override_value(
+                &mut self.casper.heartbeat_conf.self_propose_cooldown,
+                run.heartbeat_self_propose_cooldown,
+            );
+            Self::try_override_value(
+                &mut self.casper.heartbeat_conf.stale_recovery_min_interval,
+                run.heartbeat_stale_recovery_min_interval,
+            );
+            Self::try_override_value(
+                &mut self.casper.heartbeat_conf.deploy_finalization_grace,
+                run.heartbeat_deploy_finalization_grace,
+            );
+            Self::try_override_value(
+                &mut self.casper.heartbeat_conf.advanced.frontier_chase_max_lag,
+                run.heartbeat_advanced_frontier_chase_max_lag,
+            );
+            Self::try_override_value(
+                &mut self.casper.heartbeat_conf.advanced.pending_deploy_max_lag,
+                run.heartbeat_advanced_pending_deploy_max_lag,
+            );
+            Self::try_override_value(
+                &mut self.casper.heartbeat_conf.advanced.deploy_recovery_max_lag,
+                run.heartbeat_advanced_deploy_recovery_max_lag,
+            );
         }
     }
 
@@ -438,6 +468,7 @@ mod tests {
         "--fork-choice-check-if-stale-interval=111111seconds",
         "--synchrony-constraint-threshold=111111",
         "--height-constraint-threshold=111111",
+        "--max-user-deploys-per-block=777777",
         "--frrd-max-peer-queue-size=111111",
         "--frrd-give-up-after-skipped=111111",
         "--frrd-drop-peer-after-retries=111111",
@@ -463,7 +494,15 @@ mod tests {
         "--heartbeat-enabled",
         "--heartbeat-disabled",
         "--heartbeat-check-interval=111111seconds",
-        "--heartbeat-max-lfb-age=222222seconds"
+        "--heartbeat-max-lfb-age=222222seconds",
+        "--heartbeat-self-propose-cooldown=555555seconds",
+        "--heartbeat-stale-recovery-min-interval=333333seconds",
+        "--heartbeat-deploy-finalization-grace=444444seconds",
+        "--heartbeat-advanced-frontier-chase-max-lag=111",
+        "--heartbeat-advanced-pending-deploy-max-lag=222",
+        "--heartbeat-advanced-deploy-recovery-max-lag=333",
+        "--synchrony-finalized-baseline-enabled=false",
+        "--synchrony-finalized-baseline-max-distance=666666"
         ];
 
         let res = Options::try_parse_from(argv);
@@ -502,6 +541,31 @@ mod tests {
             assert!(run.heartbeat_enabled);
         } else {
             panic!("Expected run subcommand");
+        }
+    }
+
+    #[test]
+    fn test_parse_args_negative_advanced_lag_rejected() {
+        // The three advanced lag-cap flags use a value_parser that
+        // rejects negative integers; a negative cap would silently
+        // disable the corresponding code path in the proposer.
+        for flag in &[
+            "--heartbeat-advanced-frontier-chase-max-lag",
+            "--heartbeat-advanced-pending-deploy-max-lag",
+            "--heartbeat-advanced-deploy-recovery-max-lag",
+        ] {
+            let arg = format!("{flag}=-1");
+            let argv = vec!["rnode", "run", &arg];
+            match Options::try_parse_from(&argv) {
+                Ok(_) => panic!("{flag}=-1 should fail clap parse, got Ok"),
+                Err(e) => {
+                    let err = e.to_string();
+                    assert!(
+                        err.contains("value must be >= 0"),
+                        "clap error for {flag} should mention non-negative requirement, got: {err}"
+                    );
+                }
+            }
         }
     }
 
@@ -572,6 +636,7 @@ mod tests {
                 fork_choice_check_if_stale_interval: Some(Duration::from_secs(111111)),
                 synchrony_constraint_threshold: Some(111111.0),
                 height_constraint_threshold: Some(111111),
+                max_user_deploys_per_block: Some(777777),
                 frrd_max_peer_queue_size: Some(111111),
                 frrd_give_up_after_skipped: Some(111111),
                 frrd_drop_peer_after_retries: Some(111111),
@@ -606,6 +671,14 @@ mod tests {
                 heartbeat_disabled: true,
                 heartbeat_check_interval: Some(Duration::from_secs(111111)),
                 heartbeat_max_lfb_age: Some(Duration::from_secs(222222)),
+                heartbeat_self_propose_cooldown: Some(Duration::from_secs(555555)),
+                heartbeat_stale_recovery_min_interval: Some(Duration::from_secs(333333)),
+                heartbeat_deploy_finalization_grace: Some(Duration::from_secs(444444)),
+                heartbeat_advanced_frontier_chase_max_lag: Some(111),
+                heartbeat_advanced_pending_deploy_max_lag: Some(222),
+                heartbeat_advanced_deploy_recovery_max_lag: Some(333),
+                synchrony_finalized_baseline_enabled: Some(false),
+                synchrony_finalized_baseline_max_distance: Some(666666),
             })),
         };
 
@@ -721,6 +794,7 @@ mod tests {
                     check_interval: Duration::from_secs(30),
                     max_lfb_age: Duration::from_secs(60),
                     self_propose_cooldown: Duration::from_secs(15),
+                    ..casper::rust::casper_conf::HeartbeatConf::default()
                 },
                 disable_late_block_filtering: true,
                 enable_mergeable_channel_gc: false,
@@ -740,6 +814,8 @@ mod tests {
                 influxdb_udp: false,
                 zipkin: false,
                 sigar: false,
+                tick_interval: std::time::Duration::from_secs(10),
+                influxdb_endpoint: crate::rust::configuration::model::InfluxDbEndpoint::default(),
             },
             dev_mode: false,
             dev: crate::rust::configuration::model::DevConf {
@@ -918,7 +994,15 @@ mod tests {
             default_config.casper.synchrony_constraint_threshold,
             111111.0
         );
+        assert!(!default_config.casper.synchrony_finalized_baseline_enabled);
+        assert_eq!(
+            default_config
+                .casper
+                .synchrony_finalized_baseline_max_distance,
+            666666
+        );
         assert_eq!(default_config.casper.height_constraint_threshold, 111111);
+        assert_eq!(default_config.casper.max_user_deploys_per_block, 777777);
         assert_eq!(default_config.casper.min_phlo_price, 1);
 
         // Heartbeat configuration
@@ -931,6 +1015,48 @@ mod tests {
         assert_eq!(
             default_config.casper.heartbeat_conf.max_lfb_age,
             Duration::from_secs(222222)
+        );
+        assert_eq!(
+            default_config.casper.heartbeat_conf.self_propose_cooldown,
+            Duration::from_secs(555555)
+        );
+        assert_eq!(
+            default_config
+                .casper
+                .heartbeat_conf
+                .stale_recovery_min_interval,
+            Duration::from_secs(333333)
+        );
+        assert_eq!(
+            default_config
+                .casper
+                .heartbeat_conf
+                .deploy_finalization_grace,
+            Duration::from_secs(444444)
+        );
+        assert_eq!(
+            default_config
+                .casper
+                .heartbeat_conf
+                .advanced
+                .frontier_chase_max_lag,
+            111
+        );
+        assert_eq!(
+            default_config
+                .casper
+                .heartbeat_conf
+                .advanced
+                .pending_deploy_max_lag,
+            222
+        );
+        assert_eq!(
+            default_config
+                .casper
+                .heartbeat_conf
+                .advanced
+                .deploy_recovery_max_lag,
+            333
         );
 
         // Round robin dispatcher fields

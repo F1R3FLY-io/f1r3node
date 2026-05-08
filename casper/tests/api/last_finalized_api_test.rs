@@ -55,6 +55,7 @@ async fn create_engine_cell(node: &TestNode) -> EngineCell {
         block_store: node.casper.block_store.clone(),
         block_dag_storage: node.casper.block_dag_storage.clone(),
         deploy_storage: node.casper.deploy_storage.clone(),
+        rejected_deploy_buffer: node.casper.rejected_deploy_buffer.clone(),
         casper_buffer_storage: node.casper.casper_buffer_storage.clone(),
         validator_id: node.casper.validator_id.clone(),
         casper_shard_conf: node.casper.casper_shard_conf.clone(),

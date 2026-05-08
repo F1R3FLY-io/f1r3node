@@ -12,8 +12,8 @@ use crate::rust::util::comm::{
 use crypto::rust::{private_key::PrivateKey, public_key::PublicKey, signatures::signed::Signed};
 use futures::FutureExt;
 use models::casper::{
-    BlockQuery, BlocksQuery, BondStatusQuery, ContinuationAtNameQuery,
-    FindDeployQuery, IsFinalizedQuery, MachineVerifyQuery, VisualizeDagQuery,
+    BlockQuery, BlocksQuery, BondStatusQuery, ContinuationAtNameQuery, FindDeployQuery,
+    IsFinalizedQuery, MachineVerifyQuery, VisualizeDagQuery,
 };
 use models::rust::casper::protocol::casper_message::DeployData;
 use prost::bytes::Bytes;

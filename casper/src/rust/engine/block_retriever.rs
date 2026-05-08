@@ -1027,8 +1027,7 @@ impl<T: TransportLayer + Send + Sync> BlockRetriever<T> {
             return Ok(());
         }
 
-        let dependency_recovery_rerequest_cooldown_ms =
-            Self::DEPENDENCY_RECOVERY_COOLDOWN_MS;
+        let dependency_recovery_rerequest_cooldown_ms = Self::DEPENDENCY_RECOVERY_COOLDOWN_MS;
 
         {
             let mut last_requests = self.dependency_recovery_last_request.lock().map_err(|_| {

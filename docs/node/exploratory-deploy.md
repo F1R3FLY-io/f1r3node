@@ -78,3 +78,7 @@ result = node.exploratory_deploy(rholang_code, lfb.blockHash)
 - `casper/src/rust/rholang/runtime.rs:858` -- `play_exploratory_deploy`
 - `casper/src/rust/api/block_api.rs:1405` -- `exploratory_deploy` API handler
 - `casper/src/rust/rholang/runtime.rs:1035` -- `capture_results_with_errors` (reset, evaluate, read)
+
+## See Also
+
+- [Tracing in Tests](../testing-tracing.md#tracing-rholang-execution-via-block-report) -- when exploratory state inspection isn't enough, use the block report API to see the full per-deploy event log (produces, consumes, COMM events). Useful for diagnosing why a deploy reported success but didn't have the expected effect.

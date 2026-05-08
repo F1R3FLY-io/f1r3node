@@ -457,7 +457,11 @@ fn dag_storage_should_be_able_to_restore_invalid_blocks_on_startup() {
 }
 
 #[test]
-fn dag_storage_should_not_replace_latest_message_with_invalid_block_from_same_sender() {
+fn dag_storage_should_advance_latest_message_to_invalid_block_from_same_sender() {
+    // Inserting an invalid block with an advancing sequence number updates the
+    // sender's latest message. Required for equivocation detection via
+    // `invalid_latest_messages` to fire on validators that have a prior valid
+    // block.
     let genesis = genesis_block();
     let dag_storage = RUNTIME.block_on(create_dag_storage(&genesis));
 
@@ -500,11 +504,14 @@ fn dag_storage_should_not_replace_latest_message_with_invalid_block_from_same_se
     let dag = dag_storage.get_representation();
     assert_eq!(
         dag.latest_message_hash(&valid_block.sender),
-        Some(valid_block.block_hash.clone())
+        Some(invalid_block.block_hash.clone())
     );
 
     let invalid_latest_messages = dag.invalid_latest_messages().unwrap();
-    assert!(!invalid_latest_messages.contains_key(&valid_block.sender));
+    assert_eq!(
+        invalid_latest_messages.get(&valid_block.sender),
+        Some(&invalid_block.block_hash)
+    );
 }
 
 #[test]
@@ -649,15 +656,19 @@ async fn recording_of_new_directly_finalized_block_should_record_finalized_all_n
     let effects = std::sync::Arc::new(std::sync::Mutex::new(HashSet::new()));
     let effects_clone = effects.clone();
     dag_storage
-        .record_directly_finalized(b3.block_hash.clone(), 1.0, move |blocks: &HashSet<BlockHash>| {
-            let blocks = blocks.clone();
-            let effects_clone = effects_clone.clone();
-            Box::pin(async move {
-                let mut effects_guard = effects_clone.lock().unwrap();
-                effects_guard.extend(blocks.iter().cloned());
-                Ok(())
-            })
-        })
+        .record_directly_finalized(
+            b3.block_hash.clone(),
+            1.0,
+            move |blocks: &HashSet<BlockHash>| {
+                let blocks = blocks.clone();
+                let effects_clone = effects_clone.clone();
+                Box::pin(async move {
+                    let mut effects_guard = effects_clone.lock().unwrap();
+                    effects_guard.extend(blocks.iter().cloned());
+                    Ok(())
+                })
+            },
+        )
         .await
         .unwrap();
 

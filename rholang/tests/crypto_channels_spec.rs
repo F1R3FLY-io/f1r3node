@@ -76,7 +76,7 @@ mod tests {
             RSpace::create(store, Arc::new(Box::new(Matcher))).unwrap();
         let runtime = create_rho_runtime(
             space,
-            Par::default(),
+            Arc::new(std::collections::HashMap::new()),
             true,
             &mut Vec::new(),
             ExternalServices::noop(),

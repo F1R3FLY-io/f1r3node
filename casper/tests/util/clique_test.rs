@@ -94,8 +94,5 @@ fn complete_graph_returns_total_weight() {
     // K4: every pair connected — one clique of all 4 nodes
     let edges = vec![(1, 2), (1, 3), (1, 4), (2, 3), (2, 4), (3, 4)];
     let weights = HashMap::from([(1, 10), (2, 20), (3, 30), (4, 40)]);
-    assert_eq!(
-        Clique::find_maximum_clique_by_weight(&edges, &weights),
-        100
-    );
+    assert_eq!(Clique::find_maximum_clique_by_weight(&edges, &weights), 100);
 }

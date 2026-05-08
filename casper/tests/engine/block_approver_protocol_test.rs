@@ -9,6 +9,7 @@ use models::rust::{
     block_implicits::get_random_block,
     casper::protocol::casper_message::{ApprovedBlockCandidate, BlockMessage, UnapprovedBlock},
 };
+use serial_test::serial;
 use std::collections::HashMap;
 use std::error::Error;
 use std::sync::Arc;
@@ -87,6 +88,7 @@ impl TestContext {
 }
 
 #[tokio::test]
+#[serial]
 async fn block_approver_protocol_should_respond_to_valid_approved_block_candidates() {
     // In Rust, we use TestContext struct to hold both protocol and node.
     let mut ctx = TestContext::create_protocol().await.unwrap();
@@ -125,6 +127,7 @@ async fn block_approver_protocol_should_respond_to_valid_approved_block_candidat
 }
 
 #[tokio::test]
+#[serial]
 async fn block_approver_protocol_should_log_a_warning_for_invalid_approved_block_candidates() {
     let mut ctx = TestContext::create_protocol().await.unwrap();
 
@@ -174,6 +177,7 @@ async fn block_approver_protocol_should_log_a_warning_for_invalid_approved_block
 }
 
 #[tokio::test]
+#[serial]
 async fn block_approver_protocol_should_successfully_validate_correct_candidate() {
     let mut ctx = TestContext::create_protocol().await.unwrap();
 
@@ -205,6 +209,7 @@ async fn block_approver_protocol_should_successfully_validate_correct_candidate(
 }
 
 #[tokio::test]
+#[serial]
 async fn block_approver_protocol_should_reject_candidate_with_incorrect_bonds() {
     let mut ctx = TestContext::create_protocol().await.unwrap();
 
@@ -238,6 +243,7 @@ async fn block_approver_protocol_should_reject_candidate_with_incorrect_bonds() 
 }
 
 #[tokio::test]
+#[serial]
 async fn block_approver_protocol_should_reject_candidate_with_incorrect_vaults() {
     let mut ctx = TestContext::create_protocol().await.unwrap();
 
@@ -277,6 +283,7 @@ async fn block_approver_protocol_should_reject_candidate_with_incorrect_vaults()
 }
 
 #[tokio::test]
+#[serial]
 async fn block_approver_protocol_should_reject_candidate_with_incorrect_blessed_contracts() {
     let mut ctx = TestContext::create_protocol().await.unwrap();
 

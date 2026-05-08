@@ -7,7 +7,7 @@ use std::collections::HashMap;
 
 #[tokio::test]
 async fn registry_spec() {
-    let test_object = CompiledRholangSource::load_source("RegistryTest.rho")
+    let test_object = crate::util::rholang::test_rho_loader::load_test_rho("RegistryTest.rho")
         .expect("Failed to load RegistryTest.rho");
 
     let compiled =

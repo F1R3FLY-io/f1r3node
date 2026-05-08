@@ -140,7 +140,7 @@ impl<T: TransportLayer + Send + Sync + 'static> BlockApproverProtocol<T> {
     /// Corresponds to Scala `BlockApproverProtocol.validateCandidate` –
     /// performs full validation of the candidate genesis block.
     pub async fn validate_candidate(
-        runtime_manager: &mut RuntimeManager,
+        runtime_manager: &RuntimeManager,
         candidate: &ApprovedBlockCandidate,
         required_sigs: i32,
         _deploy_timestamp: i64,
@@ -296,7 +296,7 @@ impl<T: TransportLayer + Send + Sync + 'static> BlockApproverProtocol<T> {
     /// already has all parameters in self.
     async fn validate_candidate_internal(
         &self,
-        runtime_manager: &mut RuntimeManager,
+        runtime_manager: &RuntimeManager,
         candidate: &ApprovedBlockCandidate,
         shard_id: &str,
     ) -> Result<(), String> {
@@ -326,7 +326,7 @@ impl<T: TransportLayer + Send + Sync + 'static> BlockApproverProtocol<T> {
     /// verifies candidate message from peer and streams approval if valid.
     pub async fn unapproved_block_packet_handler(
         &self,
-        runtime_manager: &mut RuntimeManager,
+        runtime_manager: &RuntimeManager,
         peer: &PeerNode,
         unapproved_block: UnapprovedBlock,
         shard_id: &str,

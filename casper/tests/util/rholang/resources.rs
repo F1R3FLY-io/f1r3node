@@ -418,6 +418,33 @@ pub async fn key_value_deploy_storage_from_dyn(
     })
 }
 
+pub async fn key_value_rejected_deploy_buffer_from_dyn(
+    kvm: &mut dyn KeyValueStoreManager,
+) -> Result<
+    block_storage::rust::deploy::key_value_rejected_deploy_buffer::KeyValueRejectedDeployBuffer,
+    shared::rust::store::key_value_store::KvStoreError,
+> {
+    use block_storage::rust::deploy::key_value_rejected_deploy_buffer::KeyValueRejectedDeployBuffer;
+    use crypto::rust::signatures::signed::Signed;
+    use models::rust::casper::protocol::casper_message::DeployData;
+    use shared::rust::store::key_value_typed_store_impl::KeyValueTypedStoreImpl;
+    use shared::rust::ByteString;
+
+    let buffer_kv_store = kvm
+        .store("rejected_deploy_buffer".to_string())
+        .await
+        .map_err(|e| {
+            shared::rust::store::key_value_store::KvStoreError::IoError(format!(
+                "Failed to get rejected_deploy_buffer store: {:?}",
+                e
+            ))
+        })?;
+    let buffer_db: KeyValueTypedStoreImpl<ByteString, Signed<DeployData>> =
+        KeyValueTypedStoreImpl::new(buffer_kv_store);
+
+    Ok(KeyValueRejectedDeployBuffer { store: buffer_db })
+}
+
 pub async fn casper_buffer_storage_from_dyn(
     kvm: &mut dyn KeyValueStoreManager,
 ) -> Result<
@@ -448,26 +475,43 @@ pub async fn casper_buffer_storage_from_dyn(
         })
 }
 
-pub async fn mk_runtime_manager(_prefix: &str, mergeable_tag_name: Option<Par>) -> RuntimeManager {
+pub async fn mk_runtime_manager(
+    _prefix: &str,
+    mergeable_tags: Option<
+        std::sync::Arc<
+            std::collections::HashMap<
+                Par,
+                rspace_plus_plus::rspace::merger::merging_logic::MergeType,
+            >,
+        >,
+    >,
+) -> RuntimeManager {
     let scope_id = generate_scope_id();
     let mut kvm = mk_test_rnode_store_manager_shared(scope_id);
 
-    mk_runtime_manager_at(&mut *kvm, mergeable_tag_name).await
+    mk_runtime_manager_at(&mut *kvm, mergeable_tags).await
 }
 
 pub async fn mk_runtime_manager_at(
     kvm: &mut dyn KeyValueStoreManager,
-    mergeable_tag_name: Option<Par>,
+    mergeable_tags: Option<
+        std::sync::Arc<
+            std::collections::HashMap<
+                Par,
+                rspace_plus_plus::rspace::merger::merging_logic::MergeType,
+            >,
+        >,
+    >,
 ) -> RuntimeManager {
-    let mergeable_tag_name =
-        mergeable_tag_name.unwrap_or(Genesis::non_negative_mergeable_tag_name());
+    let mergeable_tags =
+        mergeable_tags.unwrap_or_else(|| std::sync::Arc::new(Genesis::default_mergeable_tags()));
 
     let r_store = kvm.r_space_stores().await.unwrap();
     let m_store = mergeable_store_from_dyn(kvm).await.unwrap();
     RuntimeManager::create_with_store(
         r_store,
         m_store,
-        mergeable_tag_name,
+        mergeable_tags,
         rholang::rust::interpreter::external_services::ExternalServices::noop(),
     )
 }
@@ -480,7 +524,7 @@ pub async fn mk_runtime_manager_with_history_at(
     let (rt_manager, history_repo) = RuntimeManager::create_with_history(
         r_store,
         m_store,
-        Genesis::non_negative_mergeable_tag_name(),
+        std::sync::Arc::new(Genesis::default_mergeable_tags()),
         rholang::rust::interpreter::external_services::ExternalServices::noop(),
     );
     (rt_manager, history_repo)
@@ -519,6 +563,7 @@ pub fn mk_dummy_casper_snapshot() -> CasperSnapshot {
         justifications: DashSet::new(),
         invalid_blocks: HashMap::new(),
         deploys_in_scope: Arc::new(DashSet::new()),
+        rejected_in_scope: Arc::new(DashSet::new()),
         max_block_num: 0,
         max_seq_nums: DashMap::new(),
         on_chain_state: OnChainCasperState {

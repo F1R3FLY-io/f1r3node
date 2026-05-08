@@ -123,7 +123,15 @@ async fn test_case(
     expected_rejected: HashableSet<prost::bytes::Bytes>,
     expected_final_result: i64,
 ) {
-    let rm = mk_runtime_manager("merging-test", Some(unforgeable_name_seed())).await;
+    let mergeable_tags = {
+        let mut m = std::collections::HashMap::new();
+        m.insert(
+            unforgeable_name_seed(),
+            rspace_plus_plus::rspace::merger::merging_logic::MergeType::IntegerAdd,
+        );
+        std::sync::Arc::new(m)
+    };
+    let rm = mk_runtime_manager("merging-test", Some(mergeable_tags)).await;
     let mut runtime = rm.spawn_runtime().await;
 
     async fn run_rholang(
@@ -244,6 +252,8 @@ async fn test_case(
                 &base_cp.root,
                 &left_post_state,
                 history_repo.clone(),
+                prost::bytes::Bytes::from(vec![0xAAu8; 32]),
+                1,
             )
             .unwrap()
         })
@@ -258,6 +268,8 @@ async fn test_case(
                 &base_cp.root,
                 &right_post_state,
                 history_repo.clone(),
+                prost::bytes::Bytes::from(vec![0xBBu8; 32]),
+                2,
             )
             .unwrap()
         })
@@ -266,20 +278,21 @@ async fn test_case(
     println!("LEFT DEPLOY CHAINS: {:?}", left_deploy_chains.len());
     println!("RIGHT DEPLOY CHAINS: {:?}", right_deploy_chains.len());
 
-
     let branches_are_conflicting =
         |a: &HashableSet<DeployChainIndex>, b: &HashableSet<DeployChainIndex>| {
             merging_logic::are_conflicting(
                 &a.0.iter()
                     .map(|x| &x.event_log_index)
-                    .fold(EventLogIndex::empty(), |acc, x| {
+                    .try_fold(EventLogIndex::empty(), |acc, x| {
                         EventLogIndex::combine(&acc, x)
-                    }),
+                    })
+                    .expect("EventLogIndex::combine MergeType mismatch in test"),
                 &b.0.iter()
                     .map(|x| &x.event_log_index)
-                    .fold(EventLogIndex::empty(), |acc, x| {
+                    .try_fold(EventLogIndex::empty(), |acc, x| {
                         EventLogIndex::combine(&acc, x)
-                    }),
+                    })
+                    .expect("EventLogIndex::combine MergeType mismatch in test"),
             )
         };
 
@@ -291,12 +304,14 @@ async fn test_case(
          number_channels: &NumberChannelsDiff| {
             match number_channels.get(&hash) {
                 Some(number_channel_diff) => {
+                    let (diff, merge_type) = *number_channel_diff;
                     Ok(Some(RholangMergingLogic::calculate_number_channel_merge(
                         hash,
-                        *number_channel_diff,
+                        diff,
+                        merge_type,
                         changes,
                         |_hash| base_reader.get_data(_hash),
-                    )))
+                    )?))
                 }
                 None => Ok(None),
             }
@@ -335,15 +350,69 @@ async fn test_case(
         actual_seq,
         Vec::new(),
         |target, source| merging_logic::depends(&target.event_log_index, &source.event_log_index),
-        |arg0: &HashableSet<DeployChainIndex>, arg1: &HashableSet<DeployChainIndex>| {
-            branches_are_conflicting(arg0, arg1)
-        },
         dag_merger::cost_optimal_rejection_alg(),
         |r| Ok(r.state_changes.clone()),
         |r| r.event_log_index.number_channels_data.clone(),
         compute_trie_actions,
         apply_trie_actions,
         |x| base_reader.get_data(&x),
+        // Group merge_set into branches via event-indexed depends map.
+        |merge_set: &HashableSet<DeployChainIndex>| {
+            let chains_vec: Vec<DeployChainIndex> = merge_set.0.iter().cloned().collect();
+            let event_logs: Vec<&rspace_plus_plus::rspace::merger::event_log_index::EventLogIndex> =
+                chains_vec.iter().map(|c| &c.event_log_index).collect();
+            let depends_map = merging_logic::compute_depends_map_event_indexed(
+                &chains_vec,
+                &event_logs,
+            );
+            merging_logic::gather_related_sets(&depends_map)
+        },
+        // Combine each branch's chain event logs into a single
+        // `EventLogIndex` per branch, then run the event-indexed conflict
+        // map and union with the test helper's `branches_are_conflicting`
+        // structural check.
+        |branches_set: &HashableSet<HashableSet<DeployChainIndex>>| {
+            let branches_refs: Vec<&HashableSet<DeployChainIndex>> =
+                branches_set.0.iter().collect();
+            let branches_owned: Vec<HashableSet<DeployChainIndex>> =
+                branches_refs.iter().map(|b| (*b).clone()).collect();
+
+            let combined_logs: Vec<rspace_plus_plus::rspace::merger::event_log_index::EventLogIndex> =
+                branches_refs
+                    .iter()
+                    .map(|b| {
+                        let logs: Vec<&rspace_plus_plus::rspace::merger::event_log_index::EventLogIndex> =
+                            b.0.iter().map(|chain| &chain.event_log_index).collect();
+                        let mut acc = rspace_plus_plus::rspace::merger::event_log_index::EventLogIndex::empty();
+                        for l in logs {
+                            acc = rspace_plus_plus::rspace::merger::event_log_index::EventLogIndex::combine(&acc, l)?;
+                        }
+                        Ok::<_, rspace_plus_plus::rspace::errors::HistoryError>(acc)
+                    })
+                    .collect::<Result<_, _>>()?;
+            let event_log_refs: Vec<&rspace_plus_plus::rspace::merger::event_log_index::EventLogIndex> =
+                combined_logs.iter().collect();
+
+            let mut result = merging_logic::compute_conflict_map_event_indexed(
+                &branches_owned,
+                &event_log_refs,
+            );
+            for i in 0..branches_owned.len() {
+                for j in (i + 1)..branches_owned.len() {
+                    if branches_are_conflicting(&branches_owned[i], &branches_owned[j]) {
+                        let a = branches_owned[i].clone();
+                        let b = branches_owned[j].clone();
+                        if let Some(set_a) = result.get_mut(&a) {
+                            set_a.0.insert(b.clone());
+                        }
+                        if let Some(set_b) = result.get_mut(&b) {
+                            set_b.0.insert(a.clone());
+                        }
+                    }
+                }
+            }
+            Ok(result)
+        },
     )
     .unwrap();
 

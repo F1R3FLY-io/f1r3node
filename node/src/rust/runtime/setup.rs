@@ -172,6 +172,15 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
         (deploy_storage, deploy_storage_arc)
     };
 
+    // Buffer of deploys rejected during multi-parent merge; re-proposed in
+    // subsequent blocks to avoid silent loss of otherwise-valid user deploys.
+    let rejected_deploy_buffer_arc = {
+        use block_storage::rust::deploy::key_value_rejected_deploy_buffer::KeyValueRejectedDeployBuffer;
+
+        let buffer = KeyValueRejectedDeployBuffer::new(&mut rnode_store_manager).await?;
+        Arc::new(Mutex::new(buffer))
+    };
+
     // Safety oracle (clique oracle implementation)
     let oracle = {
         use casper::rust::safety_oracle::CliqueOracleImpl;
@@ -217,7 +226,6 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
 
     // Runtime for `rnode eval`
     let eval_runtime = {
-        use models::rhoapi::Par;
         use rholang::rust::interpreter::{matcher::r#match::Matcher, rho_runtime};
         use rspace_plus_plus::rspace::shared::key_value_store_manager::KeyValueStoreManager;
 
@@ -228,7 +236,7 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
 
         rho_runtime::create_runtime_from_kv_store(
             eval_stores,
-            Par::default(),
+            Arc::new(casper::rust::genesis::genesis::Genesis::default_mergeable_tags()),
             false,
             &mut Vec::new(),
             Arc::new(Box::new(Matcher)),
@@ -253,7 +261,7 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
         let result = RuntimeManager::create_with_history(
             rspace_stores,
             mergeable_store,
-            Genesis::non_negative_mergeable_tag_name(),
+            Arc::new(Genesis::default_mergeable_tags()),
             external_services.clone(),
         );
         tracing::debug!("[Setup] RuntimeManager created successfully");
@@ -359,6 +367,7 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
             runtime_manager.clone(),
             block_store.clone(),
             deploy_storage_arc.clone(),
+            rejected_deploy_buffer_arc.clone(),
             block_retriever.clone(),
             transport_layer.clone(),
             rp_connections.clone(),
@@ -492,9 +501,10 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
             block_store.clone(),
             block_dag_storage.clone(),
             deploy_storage,
+            rejected_deploy_buffer_arc.clone(),
             casper_buffer_storage.clone(),
             rspace_state_manager,
-            Arc::new(tokio::sync::Mutex::new(runtime_manager.clone())),
+            Arc::new(runtime_manager.clone()),
             estimator.clone(),
             // Explicit parameters
             block_processor_queue_tx.clone(),
@@ -580,7 +590,11 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
                         let block_number = finalized.block_number;
                         tokio::spawn(async move {
                             handle_block_finalized(
-                                api, unforgeable, publisher, block_hash, block_number,
+                                api,
+                                unforgeable,
+                                publisher,
+                                block_hash,
+                                block_number,
                             )
                             .await;
                         });
@@ -809,7 +823,7 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
 
         let gc_block_dag_storage = block_dag_storage.clone();
         let gc_block_store = block_store.clone();
-        let gc_runtime_manager = Arc::new(tokio::sync::Mutex::new(runtime_manager.clone()));
+        let gc_runtime_manager = Arc::new(runtime_manager.clone());
         let gc_interval = conf.casper.mergeable_channels_gc_interval;
         let gc_casper_shard_conf = CasperShardConf {
             fault_tolerance_threshold: conf.casper.fault_tolerance_threshold,
@@ -837,7 +851,9 @@ pub async fn setup_node_program<T: TransportLayer + Send + Sync + Clone + 'stati
             synchrony_recovery_cooldown: conf.casper.synchrony_recovery_cooldown,
             synchrony_recovery_max_bypasses: conf.casper.synchrony_recovery_max_bypasses,
             synchrony_finalized_baseline_enabled: conf.casper.synchrony_finalized_baseline_enabled,
-            synchrony_finalized_baseline_max_distance: conf.casper.synchrony_finalized_baseline_max_distance,
+            synchrony_finalized_baseline_max_distance: conf
+                .casper
+                .synchrony_finalized_baseline_max_distance,
             max_user_deploys_per_block: conf.casper.max_user_deploys_per_block,
             native_token_name: conf.casper.genesis_block_data.native_token_name.clone(),
             native_token_symbol: conf.casper.genesis_block_data.native_token_symbol.clone(),
@@ -926,9 +942,7 @@ async fn handle_block_finalized(
     block_number: i64,
 ) {
     use crate::rust::web::block_info_enricher::extract_transfers_from_report;
-    use shared::rust::shared::f1r3fly_event::{
-        DeployTransfers, F1r3flyEvent, TransferEvent,
-    };
+    use shared::rust::shared::f1r3fly_event::{DeployTransfers, F1r3flyEvent, TransferEvent};
 
     let block_hash_bytes: prost::bytes::Bytes = match hex::decode(&block_hash) {
         Ok(bytes) => bytes.into(),
@@ -943,8 +957,7 @@ async fn handle_block_finalized(
     };
     match report_api.block_report(block_hash_bytes, false).await {
         Ok(report) => {
-            let transfers_by_deploy =
-                extract_transfers_from_report(&report, &transfer_unforgeable);
+            let transfers_by_deploy = extract_transfers_from_report(&report, &transfer_unforgeable);
 
             let deploy_transfers: Vec<DeployTransfers> = transfers_by_deploy
                 .into_iter()

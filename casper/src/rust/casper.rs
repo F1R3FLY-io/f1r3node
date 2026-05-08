@@ -16,7 +16,10 @@ use block_storage::rust::{
     dag::block_dag_key_value_storage::{
         BlockDagKeyValueStorage, DeployId, KeyValueDagRepresentation,
     },
-    deploy::key_value_deploy_storage::KeyValueDeployStorage,
+    deploy::{
+        key_value_deploy_storage::KeyValueDeployStorage,
+        key_value_rejected_deploy_buffer::KeyValueRejectedDeployBuffer,
+    },
     key_value_block_store::KeyValueBlockStore,
 };
 use crypto::rust::signatures::signed::Signed;
@@ -155,7 +158,12 @@ pub trait MultiParentCasper: Casper + Send + Sync {
 
     fn block_store(&self) -> &KeyValueBlockStore;
 
-    fn runtime_manager(&self) -> Arc<tokio::sync::Mutex<RuntimeManager>>;
+    /// Read-only access to the shard configuration. Used by APIs that need
+    /// shard-scoped parameters such as `deploy_lifespan` to compute deploy
+    /// finalization status.
+    fn casper_shard_conf(&self) -> &CasperShardConf;
+
+    fn runtime_manager(&self) -> Arc<RuntimeManager>;
 
     fn get_validator(&self) -> Option<ValidatorIdentity>;
 
@@ -177,11 +185,12 @@ pub trait MultiParentCasper: Casper + Send + Sync {
 pub fn hash_set_casper<T: TransportLayer + Send + Sync>(
     block_retriever: BlockRetriever<T>,
     event_publisher: F1r3flyEvents,
-    runtime_manager: Arc<tokio::sync::Mutex<RuntimeManager>>,
+    runtime_manager: Arc<RuntimeManager>,
     estimator: Estimator,
     block_store: KeyValueBlockStore,
     block_dag_storage: BlockDagKeyValueStorage,
     deploy_storage: KeyValueDeployStorage,
+    rejected_deploy_buffer: Arc<Mutex<KeyValueRejectedDeployBuffer>>,
     casper_buffer_storage: CasperBufferKeyValueStorage,
     validator_id: Option<ValidatorIdentity>,
     casper_shard_conf: CasperShardConf,
@@ -196,6 +205,7 @@ pub fn hash_set_casper<T: TransportLayer + Send + Sync>(
         block_store,
         block_dag_storage,
         deploy_storage: Arc::new(Mutex::new(deploy_storage)),
+        rejected_deploy_buffer,
         casper_buffer_storage,
         validator_id,
         casper_shard_conf,
@@ -226,6 +236,11 @@ pub struct CasperSnapshot {
     /// Signatures of deploys seen in ancestry window.
     /// Keeping signatures avoids retaining full deploy payloads in long-lived snapshots.
     pub deploys_in_scope: Arc<DashSet<Bytes>>,
+    /// Signatures of deploys that appeared in a merge block's rejected_deploys list
+    /// within the ancestry window. Intersects with `deploys_in_scope` when a deploy
+    /// was executed in one block and rejected during a descendant merge; the block
+    /// creator uses this set to know which in-scope deploys are eligible for re-inclusion.
+    pub rejected_in_scope: Arc<DashSet<Bytes>>,
     pub max_block_num: i64,
     pub max_seq_nums: DashMap<Validator, u64>,
     pub on_chain_state: OnChainCasperState,
@@ -242,6 +257,7 @@ impl CasperSnapshot {
             justifications: DashSet::new(),
             invalid_blocks: HashMap::new(),
             deploys_in_scope: Arc::new(DashSet::new()),
+            rejected_in_scope: Arc::new(DashSet::new()),
             max_block_num: 0,
             max_seq_nums: DashMap::new(),
             on_chain_state: OnChainCasperState::new(CasperShardConf::new()),
@@ -538,7 +554,11 @@ pub mod test_helpers {
             &self.block_store
         }
 
-        fn runtime_manager(&self) -> Arc<tokio::sync::Mutex<RuntimeManager>> {
+        fn casper_shard_conf(&self) -> &CasperShardConf {
+            &self.snapshot.on_chain_state.shard_conf
+        }
+
+        fn runtime_manager(&self) -> Arc<RuntimeManager> {
             unimplemented!("runtime_manager not needed for heartbeat tests")
         }
 

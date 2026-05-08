@@ -12,7 +12,7 @@ fn tree_hash_map_spec() {
         .stack_size(16 * 1024 * 1024)
         .spawn(|| {
             tokio::runtime::Runtime::new().unwrap().block_on(async {
-                let test_object = CompiledRholangSource::load_source("TreeHashMapTest.rho")
+                let test_object = crate::util::rholang::test_rho_loader::load_test_rho("TreeHashMapTest.rho")
                     .expect("Failed to load TreeHashMapTest.rho");
 
                 let compiled = CompiledRholangSource::new(

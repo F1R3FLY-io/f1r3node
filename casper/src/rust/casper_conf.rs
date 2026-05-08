@@ -62,18 +62,38 @@ pub struct CasperConf {
     #[serde(rename = "finalizer", default)]
     pub finalizer: FinalizerConf,
 
-    #[serde(rename = "synchrony-recovery-stall-window", deserialize_with = "de_duration", default = "default_synchrony_recovery_stall_window")]
+    #[serde(
+        rename = "synchrony-recovery-stall-window",
+        deserialize_with = "de_duration",
+        default = "default_synchrony_recovery_stall_window"
+    )]
     pub synchrony_recovery_stall_window: Duration,
-    #[serde(rename = "synchrony-recovery-cooldown", deserialize_with = "de_duration", default = "default_synchrony_recovery_cooldown")]
+    #[serde(
+        rename = "synchrony-recovery-cooldown",
+        deserialize_with = "de_duration",
+        default = "default_synchrony_recovery_cooldown"
+    )]
     pub synchrony_recovery_cooldown: Duration,
-    #[serde(rename = "synchrony-recovery-max-bypasses", default = "default_synchrony_recovery_max_bypasses")]
+    #[serde(
+        rename = "synchrony-recovery-max-bypasses",
+        default = "default_synchrony_recovery_max_bypasses"
+    )]
     pub synchrony_recovery_max_bypasses: u32,
-    #[serde(rename = "synchrony-finalized-baseline-enabled", default = "default_synchrony_finalized_baseline_enabled")]
+    #[serde(
+        rename = "synchrony-finalized-baseline-enabled",
+        default = "default_synchrony_finalized_baseline_enabled"
+    )]
     pub synchrony_finalized_baseline_enabled: bool,
-    #[serde(rename = "synchrony-finalized-baseline-max-distance", default = "default_synchrony_finalized_baseline_max_distance")]
+    #[serde(
+        rename = "synchrony-finalized-baseline-max-distance",
+        default = "default_synchrony_finalized_baseline_max_distance"
+    )]
     pub synchrony_finalized_baseline_max_distance: u64,
 
-    #[serde(rename = "max-user-deploys-per-block", default = "default_max_user_deploys_per_block")]
+    #[serde(
+        rename = "max-user-deploys-per-block",
+        default = "default_max_user_deploys_per_block"
+    )]
     pub max_user_deploys_per_block: u32,
 
     /// Disable late block filtering in DagMerger.
@@ -245,9 +265,7 @@ impl GenesisBlockData {
                 "native-token-decimals={} exceeds maximum of {} (industry standard; \
                  ETH=18, BTC=8, SOL=9, ATOM=6); values above {} exceed IEEE-754 \
                  double safe-integer range and break JavaScript clients",
-                self.native_token_decimals,
-                MAX_NATIVE_TOKEN_DECIMALS,
-                MAX_NATIVE_TOKEN_DECIMALS
+                self.native_token_decimals, MAX_NATIVE_TOKEN_DECIMALS, MAX_NATIVE_TOKEN_DECIMALS
             ));
         }
         Ok(())
@@ -276,30 +294,165 @@ pub struct GenesisCeremony {
     pub ceremony_master_mode: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HeartbeatConf {
     pub enabled: bool,
     #[serde(rename = "check-interval", deserialize_with = "de_duration")]
     pub check_interval: Duration,
     #[serde(rename = "max-lfb-age", deserialize_with = "de_duration")]
     pub max_lfb_age: Duration,
-    #[serde(rename = "self-propose-cooldown", deserialize_with = "de_duration", default = "default_self_propose_cooldown")]
+    #[serde(
+        rename = "self-propose-cooldown",
+        deserialize_with = "de_duration",
+        default = "default_self_propose_cooldown"
+    )]
     pub self_propose_cooldown: Duration,
+    /// Minimum age of LFB/frontier before stale-recovery, leader-recovery,
+    /// and pending-deploy backstop are allowed to fire. Debounces empty-block
+    /// churn when the cluster is healthy.
+    #[serde(
+        rename = "stale-recovery-min-interval",
+        deserialize_with = "de_duration",
+        default = "default_stale_recovery_min_interval"
+    )]
+    pub stale_recovery_min_interval: Duration,
+    /// When pending deploys land, opens a grace window during which lag caps
+    /// relax to `advanced.deploy_recovery_max_lag` and self-propose-cooldown
+    /// is bypassable. Burst-tolerance budget.
+    #[serde(
+        rename = "deploy-finalization-grace",
+        deserialize_with = "de_duration",
+        default = "default_deploy_finalization_grace"
+    )]
+    pub deploy_finalization_grace: Duration,
+    /// EXPERIMENTAL tuning knobs. See [`HeartbeatAdvancedConf`].
+    #[serde(default)]
+    pub advanced: HeartbeatAdvancedConf,
+}
+
+impl Default for HeartbeatConf {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            check_interval: Duration::from_secs(5),
+            max_lfb_age: Duration::from_secs(5),
+            self_propose_cooldown: default_self_propose_cooldown(),
+            stale_recovery_min_interval: default_stale_recovery_min_interval(),
+            deploy_finalization_grace: default_deploy_finalization_grace(),
+            advanced: HeartbeatAdvancedConf::default(),
+        }
+    }
 }
 
 fn default_self_propose_cooldown() -> Duration {
     Duration::from_secs(15)
 }
 
+fn default_stale_recovery_min_interval() -> Duration {
+    Duration::from_secs(12)
+}
+
+fn default_deploy_finalization_grace() -> Duration {
+    Duration::from_secs(25)
+}
+
+/// EXPERIMENTAL: tuning knobs for the heartbeat proposer's lag caps.
+///
+/// These thresholds bound DAG width relative to replay cost in lieu of
+/// adaptive backpressure. Treat as unstable API; field names may change.
+///
+/// All three fields must be non-negative; HOCON values < 0 are rejected
+/// at deserialization time. The proposer treats these as caps on a
+/// non-negative lag count (`lfb_lag_blocks`), so a negative value would
+/// silently disable the corresponding code path (e.g. `lag <= cap` where
+/// `cap < 0` is never true, leaving pending deploys unproposed).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HeartbeatAdvancedConf {
+    /// When this validator is already ahead of LFB, how many blocks of lag
+    /// tolerate before "frontier-follow" proposing is throttled. `0` =
+    /// never frontier-chase while ahead unless deploy recovery is active
+    /// (which raises this dynamically).
+    #[serde(
+        rename = "frontier-chase-max-lag",
+        deserialize_with = "de_non_negative_i64",
+        default = "default_frontier_chase_max_lag"
+    )]
+    pub frontier_chase_max_lag: i64,
+    /// If the validator has pending deploys but is already > N blocks
+    /// ahead of LFB, suppress pending-deploy proposing. Prevents lag
+    /// amplification: more deploys → more blocks → wider DAG → slower
+    /// finalization → still "ahead" → keeps proposing forever. Lower →
+    /// harder load-relief valve.
+    #[serde(
+        rename = "pending-deploy-max-lag",
+        deserialize_with = "de_non_negative_i64",
+        default = "default_pending_deploy_max_lag"
+    )]
+    pub pending_deploy_max_lag: i64,
+    /// During an active deploy-finalization grace window, the lag cap
+    /// widens to this value. The "absolute safe lag during recovery"
+    /// ceiling.
+    ///
+    /// Invariant: must be `>= pending_deploy_max_lag` to take effect.
+    /// The proposer computes the recovery cap as
+    /// `max(pending_deploy_max_lag, deploy_recovery_max_lag)`, so a
+    /// value below `pending_deploy_max_lag` collapses to that floor and
+    /// the knob has no effect.
+    #[serde(
+        rename = "deploy-recovery-max-lag",
+        deserialize_with = "de_non_negative_i64",
+        default = "default_deploy_recovery_max_lag"
+    )]
+    pub deploy_recovery_max_lag: i64,
+}
+
+impl Default for HeartbeatAdvancedConf {
+    fn default() -> Self {
+        Self {
+            frontier_chase_max_lag: default_frontier_chase_max_lag(),
+            pending_deploy_max_lag: default_pending_deploy_max_lag(),
+            deploy_recovery_max_lag: default_deploy_recovery_max_lag(),
+        }
+    }
+}
+
+fn default_frontier_chase_max_lag() -> i64 {
+    0
+}
+
+fn default_pending_deploy_max_lag() -> i64 {
+    20
+}
+
+fn default_deploy_recovery_max_lag() -> i64 {
+    64
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FinalizerConf {
-    #[serde(rename = "work-budget", deserialize_with = "de_duration", default = "default_finalizer_work_budget")]
+    #[serde(
+        rename = "work-budget",
+        deserialize_with = "de_duration",
+        default = "default_finalizer_work_budget"
+    )]
     pub work_budget: Duration,
-    #[serde(rename = "step-timeout", deserialize_with = "de_duration", default = "default_finalizer_step_timeout")]
+    #[serde(
+        rename = "step-timeout",
+        deserialize_with = "de_duration",
+        default = "default_finalizer_step_timeout"
+    )]
     pub step_timeout: Duration,
-    #[serde(rename = "catchup-work-budget", deserialize_with = "de_duration", default = "default_finalizer_catchup_work_budget")]
+    #[serde(
+        rename = "catchup-work-budget",
+        deserialize_with = "de_duration",
+        default = "default_finalizer_catchup_work_budget"
+    )]
     pub catchup_work_budget: Duration,
-    #[serde(rename = "catchup-step-timeout", deserialize_with = "de_duration", default = "default_finalizer_catchup_step_timeout")]
+    #[serde(
+        rename = "catchup-step-timeout",
+        deserialize_with = "de_duration",
+        default = "default_finalizer_catchup_step_timeout"
+    )]
     pub catchup_step_timeout: Duration,
 }
 
@@ -353,5 +506,114 @@ where
             }
             Ok(Duration::from_secs_f64(f))
         }
+    }
+}
+
+/// Reject negative `i64` values at deserialization time. The lag-cap
+/// fields on `HeartbeatAdvancedConf` are typed as `i64` to match the
+/// proposer's comparison sites, but a negative value silently disables
+/// the corresponding code path — fail fast instead.
+fn de_non_negative_i64<'de, D>(deserializer: D) -> Result<i64, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::Error as _;
+    use serde::Deserialize;
+    let v = i64::deserialize(deserializer)?;
+    if v < 0 {
+        return Err(D::Error::custom(format!("value must be >= 0, got {}", v)));
+    }
+    Ok(v)
+}
+
+#[cfg(test)]
+mod native_token_validation_tests {
+    use super::*;
+
+    fn valid_genesis() -> GenesisBlockData {
+        GenesisBlockData {
+            genesis_data_dir: String::new(),
+            bonds_file: String::new(),
+            wallets_file: String::new(),
+            bond_minimum: 0,
+            bond_maximum: 0,
+            epoch_length: 0,
+            quarantine_length: 0,
+            number_of_active_validators: 0,
+            deploy_timestamp: None,
+            genesis_block_number: 0,
+            pos_multi_sig_public_keys: Vec::new(),
+            pos_multi_sig_quorum: 0,
+            native_token_name: "F1R3FLY".into(),
+            native_token_symbol: "F1R3".into(),
+            native_token_decimals: 8,
+        }
+    }
+
+    #[test]
+    fn accepts_valid_baseline() {
+        valid_genesis().validate_native_token().unwrap();
+    }
+
+    #[test]
+    fn rejects_empty_name() {
+        let mut g = valid_genesis();
+        g.native_token_name = String::new();
+        let err = g.validate_native_token().unwrap_err();
+        assert!(
+            err.contains("native-token-name must be non-empty"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn rejects_whitespace_only_name() {
+        let mut g = valid_genesis();
+        g.native_token_name = "   ".into();
+        let err = g.validate_native_token().unwrap_err();
+        assert!(
+            err.contains("native-token-name must be non-empty"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn rejects_empty_symbol() {
+        let mut g = valid_genesis();
+        g.native_token_symbol = String::new();
+        let err = g.validate_native_token().unwrap_err();
+        assert!(
+            err.contains("native-token-symbol must be non-empty"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn rejects_whitespace_only_symbol() {
+        let mut g = valid_genesis();
+        g.native_token_symbol = "   ".into();
+        let err = g.validate_native_token().unwrap_err();
+        assert!(
+            err.contains("native-token-symbol must be non-empty"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn rejects_decimals_above_max() {
+        let mut g = valid_genesis();
+        g.native_token_decimals = MAX_NATIVE_TOKEN_DECIMALS + 1;
+        let err = g.validate_native_token().unwrap_err();
+        assert!(
+            err.contains("native-token-decimals=19"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn accepts_decimals_at_max() {
+        let mut g = valid_genesis();
+        g.native_token_decimals = MAX_NATIVE_TOKEN_DECIMALS;
+        g.validate_native_token().unwrap();
     }
 }

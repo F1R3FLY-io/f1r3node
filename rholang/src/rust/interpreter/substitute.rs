@@ -348,32 +348,32 @@ impl SubstituteTrait<Par> for Substitute {
 
         let sends = term
             .sends
-            .iter()
-            .map(|s| self.substitute_no_sort(s.clone(), depth, env))
+            .into_iter()
+            .map(|s| self.substitute_no_sort(s, depth, env))
             .collect::<Result<Vec<Send>, InterpreterError>>()?;
 
         let bundles = term
             .bundles
-            .iter()
-            .map(|b| self.substitute_no_sort(b.clone(), depth, env))
+            .into_iter()
+            .map(|b| self.substitute_no_sort(b, depth, env))
             .collect::<Result<Vec<Bundle>, InterpreterError>>()?;
 
         let receives = term
             .receives
-            .iter()
-            .map(|r| self.substitute_no_sort(r.clone(), depth, env))
+            .into_iter()
+            .map(|r| self.substitute_no_sort(r, depth, env))
             .collect::<Result<Vec<Receive>, InterpreterError>>()?;
 
         let news = term
             .news
-            .iter()
-            .map(|n| self.substitute_no_sort(n.clone(), depth, env))
+            .into_iter()
+            .map(|n| self.substitute_no_sort(n, depth, env))
             .collect::<Result<Vec<New>, InterpreterError>>()?;
 
         let matches = term
             .matches
-            .iter()
-            .map(|m| self.substitute_no_sort(m.clone(), depth, env))
+            .into_iter()
+            .map(|m| self.substitute_no_sort(m, depth, env))
             .collect::<Result<Vec<Match>, InterpreterError>>()?;
 
         Ok(concatenate_pars(

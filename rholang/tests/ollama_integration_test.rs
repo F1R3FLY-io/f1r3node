@@ -1,4 +1,3 @@
-use models::rhoapi::Par;
 use rholang::rust::interpreter::chromadb_service::create_noop_chromadb_service;
 use rholang::rust::interpreter::errors::InterpreterError;
 use rholang::rust::interpreter::external_services::ExternalServices;
@@ -45,7 +44,7 @@ where
 
     let runtime = rho_runtime::create_runtime_from_kv_store(
         rspace_store,
-        Par::default(),
+        Arc::new(std::collections::HashMap::new()),
         false,
         &mut Vec::new(),
         Arc::new(Box::new(Matcher)),

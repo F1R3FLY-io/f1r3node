@@ -9,6 +9,7 @@ new _registryStore,
     ops(`rho:registry:ops`),
     secpVerify(`rho:crypto:secp256k1Verify`),
     blake2b256(`rho:crypto:blake2b256Hash`),
+    bitmaskTag(`rho:system:bitmaskMergeableTag`),
     TreeHashMap
 in {
 
@@ -16,16 +17,28 @@ in {
   // We can't define it in another file like MakeMint or NonNegativeNumber because
   // that method assumes the registry already exists.
 
-  // Rholang map desiderata: speedy insert & lookup,  no conflicts on lookup, no conflicts on inserts to different keys
+  // Rholang map desiderata: speedy insert & lookup, no conflicts on lookup, no conflicts on inserts to different keys
   // This implementation: O(log n) insert & lookup; also provides O(1) lookup when it is known that the value at a key exists.
   // Conflict analysis
   //   Lookup
   //     When looking up a value, only peeks are used, so lookups will not conflict.
   //   Insert
-  //     When inserting, only peeks are used on existing nodes (except the last
-  //     shared one in the path), while newly created nodes have a different name.
-  //     So there's conflict only if the keys share a common prefix that hadn't
-  //     already been populated.
+  //     Inserts use peeks on existing interior nodes and only acquire a write
+  //     lock at the last shared interior node in the path. The interior-node
+  //     channel `@(*bitmaskTag, node, *storeToken)` carries an i64 bitmap
+  //     (one bit per child slot); concurrent writes from sibling blocks merge
+  //     by bitwise OR, so two inserts at different keys that share an
+  //     interior prefix commute even when both need to flip a bit at the
+  //     same shared node. Newly created leaf nodes have unforgeable names
+  //     and never collide.
+  //   Channel typing
+  //     The same `@(*bitmaskTag, node, *storeToken)` template is used for
+  //     interior nodes (i64 bitmap) and leaf nodes (Rholang Map). The
+  //     bitmask tag tells the merger to use BitmaskOr semantics for the
+  //     numeric case; for the Map case the merger's numeric path skips
+  //     non-numeric values and falls through to the standard
+  //     conflict-rejection path, so a same-key write race on a leaf is
+  //     still rejected as a real semantic conflict.
   // Usage
   // new o(`rho:io:stdout`), mapCh in {
   //   o!("Initializing map") |
@@ -60,11 +73,11 @@ in {
     match [1,2,4,8,16,32,64,128,256,512,1024,2048,4096,8192,16384,32768,65536] {
       powers => {
         contract MakeNode(@initVal, @node) = {
-          @[node, *storeToken]!(initVal)
+          @(*bitmaskTag, node, *storeToken)!(initVal)
         } |
 
         contract nodeGet(@node, ret) = {
-          for (@val <<- @[node, *storeToken]) {
+          for (@val <<- @(*bitmaskTag, node, *storeToken)) {
             ret!(val)
           }
         } |
@@ -160,19 +173,19 @@ in {
           new valCh, restCh in {
             match (map, nybList.slice(0, n)) {
               node => {
-                for (@val <<- @[node, *storeToken]) {
+                for (@val <<- @(*bitmaskTag, node, *storeToken)) {
                   if (n == len) {
                     // Acquire the lock on this node
-                    for (@val <- @[node, *storeToken]) {
+                    for (@val <- @(*bitmaskTag, node, *storeToken)) {
                       // If we're at the end of the path, set the node to newVal.
                       if (val == 0) {
                         // Release the lock
-                        @[node, *storeToken]!({suffix: newVal}) |
+                        @(*bitmaskTag, node, *storeToken)!({suffix: newVal}) |
                         // Return
                         ret!(Nil)
                       } else {
                         // Release the lock
-                        @[node, *storeToken]!(val.set(suffix, newVal)) |
+                        @(*bitmaskTag, node, *storeToken)!(val.set(suffix, newVal)) |
                         // Return
                         ret!(Nil)
                       }
@@ -183,7 +196,7 @@ in {
                     if ((val/powers.nth(nybList.nth(n))) % 2 == 0) {
                       // Child node missing
                       // Acquire the lock
-                      for (@val <- @[node, *storeToken]) {
+                      for (@val <- @(*bitmaskTag, node, *storeToken)) {
                         // Re-test value
                         if ((val/powers.nth(nybList.nth(n))) % 2 == 0) {
                           // Child node still missing
@@ -195,7 +208,7 @@ in {
                               // val | (1 << bit)
                               // Bitwise operators would be really nice to have!
                               // Release the lock
-                              @[node, *storeToken]!((val % powers.nth(bit)) +
+                              @(*bitmaskTag, node, *storeToken)!((val % powers.nth(bit)) +
                                 (val / powers.nth(bit + 1)) * powers.nth(bit + 1) +
                                 powers.nth(bit))
                             }
@@ -205,7 +218,7 @@ in {
                         } else {
                           // Child node created between reads
                           // Release lock
-                          @[node, *storeToken]!(val) |
+                          @(*bitmaskTag, node, *storeToken)!(val) |
                           // Loop
                           TreeHashMapSetter!(map, nybList, n + 1, len, newVal, suffix, *ret)
                         }
@@ -277,7 +290,7 @@ in {
           new valCh in {
             match (map, nybList.slice(0, n)) {
               node => {
-                for (@val <<- @[node, *storeToken]) {
+                for (@val <<- @(*bitmaskTag, node, *storeToken)) {
                   if (n == len) {
                     // We're at the end of the path.
                     if (val == 0) {
@@ -287,12 +300,12 @@ in {
                     } else {
                       new resultCh in {
                         // Acquire the lock on this node
-                        for (@val <- @[node, *storeToken]) {
+                        for (@val <- @(*bitmaskTag, node, *storeToken)) {
                           // Update the current value
                           update!(val.get(suffix), *resultCh) |
                           for (@newVal <- resultCh) {
                             // Release the lock
-                            @[node, *storeToken]!(val.set(suffix, newVal)) |
+                            @(*bitmaskTag, node, *storeToken)!(val.set(suffix, newVal)) |
                             // Return
                             ret!(Nil)
                           }
@@ -366,7 +379,7 @@ in {
           new valCh in {
             match (map, nybList.slice(0, n)) {
               node => {
-                for (@val <<- @[node, *storeToken]) {
+                for (@val <<- @(*bitmaskTag, node, *storeToken)) {
                   if (n == len) {
                     // We're at the end of the path.
                     if (val == 0) {
@@ -375,9 +388,9 @@ in {
                       ret!(Nil)
                     } else {
                       // Acquire the lock on this node
-                      for (@val <- @[node, *storeToken]) {
+                      for (@val <- @(*bitmaskTag, node, *storeToken)) {
                         // Release the lock
-                        @[node, *storeToken]!(val.delete(suffix)) |
+                        @(*bitmaskTag, node, *storeToken)!(val.delete(suffix)) |
                         // Return
                         ret!(val.get(suffix))
                       }
@@ -409,7 +422,7 @@ in {
         contract TreeHashMapToMapVisiter(@map, @nybList, @len, ret) = {
           match (map, nybList) {
             node => {
-              for (@val <<- @[node, *storeToken]) {
+              for (@val <<- @(*bitmaskTag, node, *storeToken)) {
                 if (nybList.length() == len) {
                   // We're at the end of the path.
                   if (val == 0) {

@@ -13,6 +13,12 @@ use crate::rspace::history::history_reader::{HistoryReader, HistoryReaderBase};
 use crate::rspace::history::history_repository::{PREFIX_DATUM, PREFIX_JOINS, PREFIX_KONT};
 use crate::rspace::history::history_repository_impl::prepend_bytes;
 use crate::rspace::internal::{Datum, WaitingContinuation};
+use crate::rspace::metrics_constants::{
+    HISTORY_FETCH_DATA_CALLS_METRIC, HISTORY_FETCH_DATA_DESERIALIZE_NS_METRIC,
+    HISTORY_FETCH_DATA_LEAF_GET_NS_METRIC, HISTORY_FETCH_DATA_LEGACY_FALLBACK_METRIC,
+    HISTORY_FETCH_DATA_TIME_NS_METRIC, HISTORY_FETCH_DATA_TRIE_READ_NS_METRIC,
+    RSPACE_METRICS_SOURCE,
+};
 use crate::rspace::serializers::serializers::{decode_continuations, decode_datums, decode_joins};
 
 #[derive(Clone)]
@@ -37,30 +43,43 @@ impl<C, P, A, K> RSpaceHistoryReaderImpl<C, P, A, K> {
         prefix: u8,
         key: &Blake2b256Hash,
     ) -> Result<Option<PersistedData>, HistoryError> {
-        // println!("\nhit fetch_data");
+        let __fetch_start = std::time::Instant::now();
+        metrics::counter!(HISTORY_FETCH_DATA_CALLS_METRIC, "source" => RSPACE_METRICS_SOURCE)
+            .increment(1);
+
+        let __trie_start = std::time::Instant::now();
         let read_bytes = self
             .target_history
             .read(prepend_bytes(prefix, &key.bytes()))?;
+        metrics::counter!(HISTORY_FETCH_DATA_TRIE_READ_NS_METRIC, "source" => RSPACE_METRICS_SOURCE)
+            .increment(__trie_start.elapsed().as_nanos() as u64);
 
-        match read_bytes {
+        let result = match read_bytes {
             Some(ref bytes) => {
-                // Newer/import paths store raw hash bytes directly.
-                // Keep legacy serialized-key compatibility as fallback.
+                // Two leaf-store key shapes are supported: raw hash bytes
+                // (modern path) and the bincode-serialized hash bytes (the
+                // legacy_fallback below). Some staging-resident persisted
+                // leaves still live under the bincode key; the fallback is
+                // required to read them without `ConsumeFailed`.
+                let __leaf_start = std::time::Instant::now();
                 let mut get_opt = self.leaf_store.get_one(bytes)?;
-
                 if get_opt.is_none() {
+                    metrics::counter!(HISTORY_FETCH_DATA_LEGACY_FALLBACK_METRIC, "source" => RSPACE_METRICS_SOURCE)
+                        .increment(1);
                     let serialized_read_hash = bincode::serialize(bytes).map_err(|e| {
                         HistoryError::ActionError(format!(
                             "RSpace History Reader Impl: Unable to serialize read hash bytes: {}",
                             e
                         ))
                     })?;
-                    // Try fetch call for imported/legacy data. Ideally this should be removed.
                     get_opt = self.leaf_store.get_one(&serialized_read_hash)?;
                 }
+                metrics::counter!(HISTORY_FETCH_DATA_LEAF_GET_NS_METRIC, "source" => RSPACE_METRICS_SOURCE)
+                    .increment(__leaf_start.elapsed().as_nanos() as u64);
 
                 match get_opt {
                     Some(store_value_bytes) => {
+                        let __deser_start = std::time::Instant::now();
                         let decoded = bincode::deserialize(&store_value_bytes).map_err(|e| {
                             HistoryError::ActionError(format!(
                                 "RSpace History Reader Impl: Failed to deserialize persisted \
@@ -68,13 +87,18 @@ impl<C, P, A, K> RSpaceHistoryReaderImpl<C, P, A, K> {
                                 e
                             ))
                         })?;
+                        metrics::counter!(HISTORY_FETCH_DATA_DESERIALIZE_NS_METRIC, "source" => RSPACE_METRICS_SOURCE)
+                            .increment(__deser_start.elapsed().as_nanos() as u64);
                         Ok(Some(decoded))
                     }
                     None => Ok(None),
                 }
             }
             None => Ok(None),
-        }
+        };
+        metrics::counter!(HISTORY_FETCH_DATA_TIME_NS_METRIC, "source" => RSPACE_METRICS_SOURCE)
+            .increment(__fetch_start.elapsed().as_nanos() as u64);
+        result
     }
 }
 

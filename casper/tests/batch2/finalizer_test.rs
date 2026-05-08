@@ -193,13 +193,19 @@ async fn test_not_advance_finalization_if_no_new_lfb_found_advance_otherwise_inv
             .collect();
         let lfb = {
             let lfb_store = lfb_store.clone();
-            Finalizer::run(&dag, -1.0, 0, move |(m, _ft)| {
-                let lfb_store = lfb_store.clone();
-                async move {
-                    *lfb_store.borrow_mut() = m;
-                    Ok(())
-                }
-            }, &FinalizerConf::default())
+            Finalizer::run(
+                &dag,
+                -1.0,
+                0,
+                move |(m, _ft)| {
+                    let lfb_store = lfb_store.clone();
+                    async move {
+                        *lfb_store.borrow_mut() = m;
+                        Ok(())
+                    }
+                },
+                &FinalizerConf::default(),
+            )
             .await
             .unwrap()
         };
@@ -254,13 +260,19 @@ async fn test_not_advance_finalization_if_no_new_lfb_found_advance_otherwise_inv
         let dag = dag_store.get_representation();
         let lfb = {
             let lfb_effect_invoked = lfb_effect_invoked.clone();
-            Finalizer::run(&dag, -1.0, finalized_height, move |(_m, _ft)| {
-                let lfb_effect_invoked = lfb_effect_invoked.clone();
-                async move {
-                    *lfb_effect_invoked.borrow_mut() = true;
-                    Ok(())
-                }
-            }, &FinalizerConf::default())
+            Finalizer::run(
+                &dag,
+                -1.0,
+                finalized_height,
+                move |(_m, _ft)| {
+                    let lfb_effect_invoked = lfb_effect_invoked.clone();
+                    async move {
+                        *lfb_effect_invoked.borrow_mut() = true;
+                        Ok(())
+                    }
+                },
+                &FinalizerConf::default(),
+            )
             .await
             .unwrap()
         };
@@ -312,15 +324,21 @@ async fn test_not_advance_finalization_if_no_new_lfb_found_advance_otherwise_inv
         let lfb = {
             let lfb_store = lfb_store.clone();
             let finalised_store = finalised_store.clone();
-            Finalizer::run(&dag, -1.0, 0, move |(m, _ft)| {
-                let lfb_store = lfb_store.clone();
-                let finalised_store = finalised_store.clone();
-                async move {
-                    *lfb_store.borrow_mut() = m.clone();
-                    finalised_store.borrow_mut().insert(m);
-                    Ok(())
-                }
-            }, &FinalizerConf::default())
+            Finalizer::run(
+                &dag,
+                -1.0,
+                0,
+                move |(m, _ft)| {
+                    let lfb_store = lfb_store.clone();
+                    let finalised_store = finalised_store.clone();
+                    async move {
+                        *lfb_store.borrow_mut() = m.clone();
+                        finalised_store.borrow_mut().insert(m);
+                        Ok(())
+                    }
+                },
+                &FinalizerConf::default(),
+            )
             .await
             .unwrap()
         };
@@ -399,9 +417,15 @@ async fn finalizer_growth_feedback_loop_stale_justification_chain() {
             if checkpoints.contains(&height) {
                 let dag = dag_store.get_representation();
                 let started = Instant::now();
-                let _ = Finalizer::run(&dag, -1.0, 0, |(_m, _ft)| async { Ok::<(), KvStoreError>(()) }, &FinalizerConf::default())
-                    .await
-                    .expect("Finalizer run should succeed");
+                let _ = Finalizer::run(
+                    &dag,
+                    -1.0,
+                    0,
+                    |(_m, _ft)| async { Ok::<(), KvStoreError>(()) },
+                    &FinalizerConf::default(),
+                )
+                .await
+                .expect("Finalizer run should succeed");
                 timing_samples.push((height, started.elapsed().as_millis()));
             }
         }

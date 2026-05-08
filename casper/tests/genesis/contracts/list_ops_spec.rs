@@ -7,7 +7,7 @@ use std::collections::HashMap;
 
 #[tokio::test]
 async fn list_ops_spec() {
-    let test_object = CompiledRholangSource::load_source("ListOpsTest.rho")
+    let test_object = crate::util::rholang::test_rho_loader::load_test_rho("ListOpsTest.rho")
         .expect("Failed to load ListOpsTest.rho");
 
     let compiled =

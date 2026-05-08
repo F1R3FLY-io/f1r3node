@@ -24,7 +24,7 @@ async fn empty_state_hash_should_be_the_same_as_hard_coded_cached_value() {
     let store = kvm.r_space_stores().await.unwrap();
     let runtime = create_runtime_from_kv_store(
         store,
-        Genesis::non_negative_mergeable_tag_name(),
+        std::sync::Arc::new(Genesis::default_mergeable_tags()),
         false,
         &mut Vec::new(),
         Arc::new(Box::new(Matcher)),
@@ -48,7 +48,7 @@ async fn state_hash_after_fixed_rholang_term_execution_should_be_hash_fixed_with
     let store = kvm.r_space_stores().await.unwrap();
     let mut runtime = create_runtime_from_kv_store(
         store,
-        Genesis::non_negative_mergeable_tag_name(),
+        std::sync::Arc::new(Genesis::default_mergeable_tags()),
         false,
         &mut Vec::new(),
         Arc::new(Box::new(Matcher)),

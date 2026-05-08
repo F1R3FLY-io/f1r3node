@@ -2,7 +2,7 @@
 
 use crypto::rust::signatures::signed::Signed;
 use models::{
-    rhoapi::{g_unforgeable::UnfInstance, GPrivate, GUnforgeable, Par},
+    rhoapi::Par,
     rust::{
         block::state_hash::StateHash,
         casper::protocol::casper_message::{
@@ -11,13 +11,13 @@ use models::{
     },
 };
 use prost::bytes::Bytes;
+use rholang::rust::interpreter::merging::mergeable_tags;
+use rspace_plus_plus::rspace::merger::merging_logic::MergeType;
+use std::collections::HashMap;
 
 use crate::rust::{
     errors::CasperError,
-    util::{
-        proto_util,
-        rholang::{runtime_manager::RuntimeManager, tools::Tools},
-    },
+    util::{proto_util, rholang::runtime_manager::RuntimeManager},
 };
 
 use super::contracts::{proof_of_stake::ProofOfStake, standard_deploys, vault::Vault};
@@ -42,19 +42,15 @@ pub struct Genesis {
 
 impl Genesis {
     pub fn non_negative_mergeable_tag_name() -> Par {
-        let mut rng = Tools::unforgeable_name_rng(
-            &standard_deploys::NON_NEGATIVE_NUMBER_PUB_KEY,
-            standard_deploys::NON_NEGATIVE_NUMBER_TIMESTAMP,
-        );
+        mergeable_tags::non_negative_mergeable_tag_name()
+    }
 
-        rng.next();
-        let unforgeable_byte = rng.next();
+    pub fn bitmask_or_mergeable_tag_name() -> Par {
+        mergeable_tags::bitmask_or_mergeable_tag_name()
+    }
 
-        Par::default().with_unforgeables(vec![GUnforgeable {
-            unf_instance: Some(UnfInstance::GPrivateBody(GPrivate {
-                id: unforgeable_byte.into_iter().map(|b| b as u8).collect(),
-            })),
-        }])
+    pub fn default_mergeable_tags() -> HashMap<Par, MergeType> {
+        mergeable_tags::default_mergeable_tags()
     }
 
     pub fn default_blessed_terms_with_timestamp(
@@ -154,7 +150,7 @@ impl Genesis {
     }
 
     pub async fn create_genesis_block(
-        runtime_manager: &mut RuntimeManager,
+        runtime_manager: &RuntimeManager,
         genesis: &Genesis,
     ) -> Result<BlockMessage, CasperError> {
         let blessed_terms = Self::default_blessed_terms(

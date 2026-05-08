@@ -76,10 +76,6 @@ spec:
             subPath: bonds.txt
             readOnly: true
           - name:  {{ include "f1r3fly.fullname" $ }}-common
-            mountPath: /var/lib/rnode/logback.xml
-            subPath: logback.xml
-            readOnly: true
-          - name:  {{ include "f1r3fly.fullname" $ }}-common
             mountPath: /var/lib/rnode/genesis/wallets.txt
             subPath: wallets.txt
             readOnly: true

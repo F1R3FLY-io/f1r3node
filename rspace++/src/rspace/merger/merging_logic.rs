@@ -9,9 +9,40 @@ use super::event_log_index::EventLogIndex;
 use crate::rspace::hashing::blake2b256_hash::Blake2b256Hash;
 use crate::rspace::trace::event::{Consume, Produce};
 
-pub type NumberChannelsEndVal = BTreeMap<Blake2b256Hash, i64>;
+/// Merge strategy for a mergeable channel. Mirrors
+/// `rholang::interpreter::merging::merge_type::MergeType` but is redefined
+/// here to avoid `rspace++` taking a dependency on `rholang`.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Hash,
+    Ord,
+    PartialOrd,
+    serde::Serialize,
+    serde::Deserialize
+)]
+pub enum MergeType {
+    IntegerAdd,
+    BitmaskOr,
+}
 
-pub type NumberChannelsDiff = BTreeMap<Blake2b256Hash, i64>;
+pub type NumberChannelsEndVal = BTreeMap<Blake2b256Hash, (i64, MergeType)>;
+
+pub type NumberChannelsDiff = BTreeMap<Blake2b256Hash, (i64, MergeType)>;
+
+/// Combine two values according to the strategy. Used by
+/// `EventLogIndex::combine` to aggregate diffs within a chain and by the merge
+/// engine to combine across chains. For `IntegerAdd` semantics, this performs
+/// wrapping addition; for `BitmaskOr` it performs a bitwise OR through `u64`.
+pub fn combine_mergeable_value(a: i64, b: i64, merge_type: MergeType) -> i64 {
+    match merge_type {
+        MergeType::IntegerAdd => a.wrapping_add(b),
+        MergeType::BitmaskOr => ((a as u64) | (b as u64)) as i64,
+    }
+}
 
 /// If target depends on source.
 pub fn depends(target: &EventLogIndex, source: &EventLogIndex) -> bool {
@@ -460,6 +491,370 @@ pub fn compute_relation_map<A: Eq + std::hash::Hash + Clone + PartialOrd>(
     }
 
     init
+}
+
+/// Conflict map between branches, built by walking events once and emitting
+/// pairs from inverted indexes.
+///
+/// `branches` and `event_logs` are parallel arrays: `event_logs[i]` is the
+/// `EventLogIndex` against which conflict checks are performed for
+/// `branches[i]`.
+///
+/// Returns a HashMap with every branch as a key holding the set of branches
+/// that conflict with it under the three checks defined by
+/// `merging_logic::conflicts`:
+///
+/// 1. **races_for_same_io_event** — same Produce/Consume struct (matched by
+///    hash) destroyed in BOTH branches'
+///    `produces_consumed`/`consumes_produced`, not persistent, not in BOTH
+///    `produces_mergeable`/`consumes_mergeable`.
+/// 2. **potential_comms** — a Produce in branch A's
+///    `produces_created_and_not_destroyed` whose `channel_hash` matches a
+///    Consume in branch B's `consumes_created_and_not_destroyed`'s
+///    `channel_hashes` (and vice versa).
+/// 3. **produce_touch_base_join** — either branch has any
+///    `produces_touching_base_joins` → pairs with every other branch.
+///
+/// Caller-specific conflict checks (e.g. an overlap-in-user-deploy-ids
+/// short-circuit) are not included here; callers that need such semantics
+/// add those pairs to the result map themselves.
+pub fn compute_conflict_map_event_indexed<R>(
+    branches: &[R],
+    event_logs: &[&EventLogIndex],
+) -> HashMap<R, HashableSet<R>>
+where
+    R: Clone + Eq + std::hash::Hash,
+{
+    assert_eq!(
+        branches.len(),
+        event_logs.len(),
+        "branches and event_logs must be parallel arrays of the same length"
+    );
+    let n = branches.len();
+
+    // Initialize result with every branch as a key holding an empty conflict
+    // set — preserves the invariant set by `compute_relation_map`.
+    let mut result: HashMap<R, HashableSet<R>> = branches
+        .iter()
+        .map(|b| (b.clone(), HashableSet(HashSet::new())))
+        .collect();
+
+    if n < 2 {
+        return result;
+    }
+
+    // Inverted indexes built in a single pass over all event logs. Keys
+    // borrow from the input event_logs; lifetimes are scoped to this fn.
+    let mut produces_consumed_by_branches: HashMap<&Produce, HashSet<usize>> = HashMap::new();
+    let mut produces_mergeable_by_branches: HashMap<&Produce, HashSet<usize>> = HashMap::new();
+    let mut consumes_produced_by_branches: HashMap<&Consume, HashSet<usize>> = HashMap::new();
+    let mut consumes_mergeable_by_branches: HashMap<&Consume, HashSet<usize>> = HashMap::new();
+    let mut unconsumed_produces_by_channel: HashMap<&Blake2b256Hash, HashSet<usize>> =
+        HashMap::new();
+    let mut unconsumed_consumes_by_channel: HashMap<&Blake2b256Hash, HashSet<usize>> =
+        HashMap::new();
+    let mut global_branches: HashSet<usize> = HashSet::new();
+
+    for (idx, e) in event_logs.iter().enumerate() {
+        // #1 race candidates: events destroyed in COMM (consumed produces /
+        // produced consumes) and their mergeable counterparts.
+        for p in &e.produces_consumed.0 {
+            produces_consumed_by_branches
+                .entry(p)
+                .or_default()
+                .insert(idx);
+        }
+        for p in &e.produces_mergeable.0 {
+            produces_mergeable_by_branches
+                .entry(p)
+                .or_default()
+                .insert(idx);
+        }
+        for c in &e.consumes_produced.0 {
+            consumes_produced_by_branches
+                .entry(c)
+                .or_default()
+                .insert(idx);
+        }
+        for c in &e.consumes_mergeable.0 {
+            consumes_mergeable_by_branches
+                .entry(c)
+                .or_default()
+                .insert(idx);
+        }
+
+        // #2 potential-comms: produces that survived (linear minus consumed,
+        // plus persistent, minus copied-by-peek) and consumes that survived
+        // (linear-and-peeks minus produced, plus persistent), keyed by
+        // channel.
+        let copied = &e.produces_copied_by_peek.0;
+        for p in &e.produces_linear.0 {
+            if !e.produces_consumed.0.contains(p) && !copied.contains(p) {
+                unconsumed_produces_by_channel
+                    .entry(&p.channel_hash)
+                    .or_default()
+                    .insert(idx);
+            }
+        }
+        for p in &e.produces_persistent.0 {
+            if !copied.contains(p) {
+                unconsumed_produces_by_channel
+                    .entry(&p.channel_hash)
+                    .or_default()
+                    .insert(idx);
+            }
+        }
+        for c in &e.consumes_linear_and_peeks.0 {
+            if !e.consumes_produced.0.contains(c) {
+                for ch in &c.channel_hashes {
+                    unconsumed_consumes_by_channel
+                        .entry(ch)
+                        .or_default()
+                        .insert(idx);
+                }
+            }
+        }
+        for c in &e.consumes_persistent.0 {
+            for ch in &c.channel_hashes {
+                unconsumed_consumes_by_channel
+                    .entry(ch)
+                    .or_default()
+                    .insert(idx);
+            }
+        }
+
+        // #3 produce_touch_base_join: any branch with non-empty set conflicts
+        // with every other branch unconditionally.
+        if !e.produces_touching_base_joins.0.is_empty() {
+            global_branches.insert(idx);
+        }
+    }
+
+    // Collect conflict pairs (i, j) with i < j; duplicate insertions into
+    // the result HashSets are idempotent so we don't dedupe pairs upfront.
+    let mut pairs: Vec<(usize, usize)> = Vec::new();
+
+    // #1 race on produces_consumed.
+    for (produce, branches_set) in &produces_consumed_by_branches {
+        if produce.persistent || branches_set.len() < 2 {
+            continue;
+        }
+        let mergeable = produces_mergeable_by_branches.get(produce);
+        let pos: Vec<usize> = branches_set.iter().copied().collect();
+        for i in 0..pos.len() {
+            for j in (i + 1)..pos.len() {
+                let (a, b) = (pos[i], pos[j]);
+                let both_mergeable = mergeable
+                    .map(|m| m.contains(&a) && m.contains(&b))
+                    .unwrap_or(false);
+                if !both_mergeable {
+                    let (lo, hi) = if a < b { (a, b) } else { (b, a) };
+                    pairs.push((lo, hi));
+                }
+            }
+        }
+    }
+
+    // #1 race on consumes_produced.
+    for (consume, branches_set) in &consumes_produced_by_branches {
+        if consume.persistent || branches_set.len() < 2 {
+            continue;
+        }
+        let mergeable = consumes_mergeable_by_branches.get(consume);
+        let pos: Vec<usize> = branches_set.iter().copied().collect();
+        for i in 0..pos.len() {
+            for j in (i + 1)..pos.len() {
+                let (a, b) = (pos[i], pos[j]);
+                let both_mergeable = mergeable
+                    .map(|m| m.contains(&a) && m.contains(&b))
+                    .unwrap_or(false);
+                if !both_mergeable {
+                    let (lo, hi) = if a < b { (a, b) } else { (b, a) };
+                    pairs.push((lo, hi));
+                }
+            }
+        }
+    }
+
+    // #2 potential COMMs across (produces, consumes) on the same channel.
+    for (channel, prod_branches) in &unconsumed_produces_by_channel {
+        if let Some(cons_branches) = unconsumed_consumes_by_channel.get(channel) {
+            for &p_idx in prod_branches {
+                for &c_idx in cons_branches {
+                    if p_idx != c_idx {
+                        let (lo, hi) = if p_idx < c_idx {
+                            (p_idx, c_idx)
+                        } else {
+                            (c_idx, p_idx)
+                        };
+                        pairs.push((lo, hi));
+                    }
+                }
+            }
+        }
+    }
+
+    // #3 produce_touch_base_join: every global branch pairs with every
+    // other branch.
+    for &g in &global_branches {
+        for o in 0..n {
+            if o != g {
+                let (lo, hi) = if g < o { (g, o) } else { (o, g) };
+                pairs.push((lo, hi));
+            }
+        }
+    }
+
+    // Populate result map. HashSet inserts dedupe so duplicate pairs are
+    // safe; we don't need to sort or dedupe `pairs` first.
+    for (a, b) in pairs {
+        let item_a = branches[a].clone();
+        let item_b = branches[b].clone();
+        if let Some(set_a) = result.get_mut(&item_a) {
+            set_a.0.insert(item_b.clone());
+        }
+        if let Some(set_b) = result.get_mut(&item_b) {
+            set_b.0.insert(item_a.clone());
+        }
+    }
+
+    result
+}
+
+/// Dependency map between branches, built by walking events once and emitting
+/// pairs from inverted indexes. The relation is symmetric: a pair `(a, b)` is
+/// marked when `depends(a, b) || depends(b, a)` would be true under
+/// `merging_logic::depends`.
+///
+/// `branches` and `event_logs` are parallel arrays: `event_logs[i]` is the
+/// `EventLogIndex` against which dependency checks are performed for
+/// `branches[i]`.
+///
+/// Returns a HashMap with every branch as a key holding the set of branches
+/// that depend on (or are depended on by) it. The result is suitable as input
+/// to `gather_related_sets` to compute branch groupings.
+pub fn compute_depends_map_event_indexed<R>(
+    branches: &[R],
+    event_logs: &[&EventLogIndex],
+) -> HashMap<R, HashableSet<R>>
+where
+    R: Clone + Eq + std::hash::Hash,
+{
+    assert_eq!(
+        branches.len(),
+        event_logs.len(),
+        "branches and event_logs must be parallel arrays of the same length"
+    );
+    let n = branches.len();
+
+    let mut result: HashMap<R, HashableSet<R>> = branches
+        .iter()
+        .map(|b| (b.clone(), HashableSet(HashSet::new())))
+        .collect();
+
+    if n < 2 {
+        return result;
+    }
+
+    // For each event, the inverted indexes record:
+    //   *_source_branches[e]: branches whose event log produced (or consumed)
+    //     `e` and did not internally destroy it — the candidate "source" side
+    //     of `depends(target, source)`. For produces, mergeable produces are
+    //     excluded here (the predicate subtracts them before intersecting).
+    //   *_target_branches[e]: branches whose event log destroyed `e` via COMM
+    //     — the candidate "target" side.
+    // A pair (s, t) where the same event `e` appears in `*_source_branches[e]`
+    // for one branch and `*_target_branches[e]` for the other satisfies the
+    // depends predicate in at least one direction; we mark the pair in both
+    // directions in the result map to mirror `compute_relation_map`'s
+    // `relation(a, b) || relation(b, a)` semantics.
+    let mut produce_source_branches: HashMap<&Produce, HashSet<usize>> = HashMap::new();
+    let mut produce_target_branches: HashMap<&Produce, HashSet<usize>> = HashMap::new();
+    let mut consume_source_branches: HashMap<&Consume, HashSet<usize>> = HashMap::new();
+    let mut consume_target_branches: HashMap<&Consume, HashSet<usize>> = HashMap::new();
+
+    for (idx, e) in event_logs.iter().enumerate() {
+        // produces source: produces_created_and_not_destroyed minus mergeable.
+        // produces_created_and_not_destroyed = (linear − consumed ∪ persistent) −
+        // copied_by_peek.
+        let copied = &e.produces_copied_by_peek.0;
+        let mergeable = &e.produces_mergeable.0;
+        for p in &e.produces_linear.0 {
+            if !e.produces_consumed.0.contains(p) && !copied.contains(p) && !mergeable.contains(p) {
+                produce_source_branches.entry(p).or_default().insert(idx);
+            }
+        }
+        for p in &e.produces_persistent.0 {
+            if !copied.contains(p) && !mergeable.contains(p) {
+                produce_source_branches.entry(p).or_default().insert(idx);
+            }
+        }
+
+        // produces target: produces_consumed (the diff against
+        // source.produces_mergeable in the predicate is already covered by
+        // excluding mergeable on the source side — a produce in
+        // source.produces_mergeable simply never enters the source index).
+        for p in &e.produces_consumed.0 {
+            produce_target_branches.entry(p).or_default().insert(idx);
+        }
+
+        // consumes source: consumes_created_and_not_destroyed
+        // = (linear_and_peeks − produced) ∪ persistent.
+        for c in &e.consumes_linear_and_peeks.0 {
+            if !e.consumes_produced.0.contains(c) {
+                consume_source_branches.entry(c).or_default().insert(idx);
+            }
+        }
+        for c in &e.consumes_persistent.0 {
+            consume_source_branches.entry(c).or_default().insert(idx);
+        }
+
+        // consumes target: consumes_produced.
+        for c in &e.consumes_produced.0 {
+            consume_target_branches.entry(c).or_default().insert(idx);
+        }
+    }
+
+    let mut pairs: Vec<(usize, usize)> = Vec::new();
+
+    for (produce, sources) in &produce_source_branches {
+        if let Some(targets) = produce_target_branches.get(produce) {
+            for &s in sources {
+                for &t in targets {
+                    if s != t {
+                        let (lo, hi) = if s < t { (s, t) } else { (t, s) };
+                        pairs.push((lo, hi));
+                    }
+                }
+            }
+        }
+    }
+
+    for (consume, sources) in &consume_source_branches {
+        if let Some(targets) = consume_target_branches.get(consume) {
+            for &s in sources {
+                for &t in targets {
+                    if s != t {
+                        let (lo, hi) = if s < t { (s, t) } else { (t, s) };
+                        pairs.push((lo, hi));
+                    }
+                }
+            }
+        }
+    }
+
+    for (a, b) in pairs {
+        let item_a = branches[a].clone();
+        let item_b = branches[b].clone();
+        if let Some(set_a) = result.get_mut(&item_a) {
+            set_a.0.insert(item_b.clone());
+        }
+        if let Some(set_b) = result.get_mut(&item_b) {
+            set_b.0.insert(item_a.clone());
+        }
+    }
+
+    result
 }
 
 /// Given relation map, return sets of related items.
@@ -1272,6 +1667,58 @@ mod tests {
 
         for r in &results[1..] {
             assert_eq!(results[0], *r, "compute_rejection_options must be deterministic");
+        }
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn bitmask_or_is_commutative(a: i64, b: i64) {
+            proptest::prop_assert_eq!(
+                combine_mergeable_value(a, b, MergeType::BitmaskOr),
+                combine_mergeable_value(b, a, MergeType::BitmaskOr),
+            );
+        }
+
+        #[test]
+        fn bitmask_or_is_associative(a: i64, b: i64, c: i64) {
+            let ab = combine_mergeable_value(a, b, MergeType::BitmaskOr);
+            let ab_c = combine_mergeable_value(ab, c, MergeType::BitmaskOr);
+            let bc = combine_mergeable_value(b, c, MergeType::BitmaskOr);
+            let a_bc = combine_mergeable_value(a, bc, MergeType::BitmaskOr);
+            proptest::prop_assert_eq!(ab_c, a_bc);
+        }
+
+        #[test]
+        fn bitmask_or_is_idempotent(a: i64) {
+            proptest::prop_assert_eq!(
+                combine_mergeable_value(a, a, MergeType::BitmaskOr),
+                a,
+            );
+        }
+
+        #[test]
+        fn bitmask_or_dominates_each_input(a: i64, b: i64) {
+            // a | b must have every bit that's set in a OR in b.
+            let combined = combine_mergeable_value(a, b, MergeType::BitmaskOr) as u64;
+            proptest::prop_assert_eq!(combined & (a as u64), a as u64);
+            proptest::prop_assert_eq!(combined & (b as u64), b as u64);
+        }
+
+        #[test]
+        fn integer_add_is_commutative(a: i64, b: i64) {
+            proptest::prop_assert_eq!(
+                combine_mergeable_value(a, b, MergeType::IntegerAdd),
+                combine_mergeable_value(b, a, MergeType::IntegerAdd),
+            );
+        }
+
+        #[test]
+        fn integer_add_is_associative(a: i64, b: i64, c: i64) {
+            let ab = combine_mergeable_value(a, b, MergeType::IntegerAdd);
+            let ab_c = combine_mergeable_value(ab, c, MergeType::IntegerAdd);
+            let bc = combine_mergeable_value(b, c, MergeType::IntegerAdd);
+            let a_bc = combine_mergeable_value(a, bc, MergeType::IntegerAdd);
+            proptest::prop_assert_eq!(ab_c, a_bc);
         }
     }
 }

@@ -132,6 +132,7 @@ async fn step_block(
             runtime_manager,
             BlockData::from_block(block),
             HashMap::new(),
+            None,
         )
         .await?;
 
@@ -199,7 +200,7 @@ async fn run_compute_parents_post_state_finalized_skew_regression() {
     let (mut runtime_manager, _) = RuntimeManager::create_with_history(
         rspace_store,
         mergeable_store,
-        Genesis::non_negative_mergeable_tag_name(),
+        std::sync::Arc::new(Genesis::default_mergeable_tags()),
         ExternalServices::noop(),
     );
 
@@ -315,14 +316,16 @@ async fn run_compute_parents_post_state_finalized_skew_regression() {
     );
     snapshot_without_skew.dag.last_finalized_block_hash = genesis_block.block_hash.clone();
 
-    let (state_without_skew, rejected_without_skew) = compute_parents_post_state(
-        &block_store,
-        parents.clone(),
-        &snapshot_without_skew,
-        &runtime_manager,
-        None,
-    )
-    .expect("Failed to compute parents post-state without finalized skew");
+    let (state_without_skew, rejected_without_skew, _rejected_slashes) =
+        compute_parents_post_state(
+            &block_store,
+            parents.clone(),
+            &snapshot_without_skew,
+            &runtime_manager,
+            None,
+            None,
+        )
+        .expect("Failed to compute parents post-state without finalized skew");
 
     runtime_manager.parents_post_state_cache.clear();
     runtime_manager.block_index_cache.clear();
@@ -339,11 +342,12 @@ async fn run_compute_parents_post_state_finalized_skew_regression() {
         .finalized_blocks_set
         .insert(b1.block_hash.clone());
 
-    let (state_with_skew, rejected_with_skew) = compute_parents_post_state(
+    let (state_with_skew, rejected_with_skew, _rejected_slashes) = compute_parents_post_state(
         &block_store,
         parents,
         &snapshot_with_skew,
         &runtime_manager,
+        None,
         None,
     )
     .expect("Failed to compute parents post-state with finalized skew");
@@ -406,7 +410,7 @@ async fn run_compute_parents_post_state_missing_mergeable_regression() {
     let (mut runtime_manager, _) = RuntimeManager::create_with_history(
         rspace_store,
         mergeable_store,
-        Genesis::non_negative_mergeable_tag_name(),
+        std::sync::Arc::new(Genesis::default_mergeable_tags()),
         ExternalServices::noop(),
     );
 
@@ -538,6 +542,7 @@ async fn run_compute_parents_post_state_missing_mergeable_regression() {
         &snapshot,
         &runtime_manager,
         None,
+        None,
     );
 
     assert!(
@@ -601,14 +606,17 @@ async fn run_visible_blocks_scope_test() {
         .await
         .expect("Failed to create DAG storage");
 
-    let rspace_store = kvm.r_space_stores().await.expect("Failed to get rspace stores");
+    let rspace_store = kvm
+        .r_space_stores()
+        .await
+        .expect("Failed to get rspace stores");
     let mergeable_store = RuntimeManager::mergeable_store(&mut kvm)
         .await
         .expect("Failed to create mergeable store");
     let (mut runtime_manager, _) = RuntimeManager::create_with_history(
         rspace_store,
         mergeable_store,
-        Genesis::non_negative_mergeable_tag_name(),
+        std::sync::Arc::new(Genesis::default_mergeable_tags()),
         ExternalServices::noop(),
     );
 
@@ -645,8 +653,12 @@ async fn run_visible_blocks_scope_test() {
     let genesis_block = Genesis::create_genesis_block(&mut runtime_manager, &genesis)
         .await
         .expect("Failed to create genesis block");
-    block_store.put_block_message(&genesis_block).expect("Failed to store genesis");
-    dag_storage.insert(&genesis_block, false, true).expect("Failed to insert genesis");
+    block_store
+        .put_block_message(&genesis_block)
+        .expect("Failed to store genesis");
+    dag_storage
+        .insert(&genesis_block, false, true)
+        .expect("Failed to insert genesis");
 
     let genesis_hash = genesis_block.block_hash.clone();
     let genesis_post_state = proto_util::post_state_hash(&genesis_block);
@@ -679,7 +691,10 @@ async fn run_visible_blocks_scope_test() {
 
             let parent_hashes: Vec<BlockHash> = {
                 let mut seen = std::collections::HashSet::new();
-                parent_hashes.into_iter().filter(|h| seen.insert(h.clone())).collect()
+                parent_hashes
+                    .into_iter()
+                    .filter(|h| seen.insert(h.clone()))
+                    .collect()
             };
 
             let block = build_empty_block(
@@ -692,8 +707,12 @@ async fn run_visible_blocks_scope_test() {
                 shard_name.clone(),
             );
 
-            block_store.put_block_message(&block).expect("Failed to store block");
-            dag_storage.insert(&block, false, false).expect("Failed to insert block");
+            block_store
+                .put_block_message(&block)
+                .expect("Failed to store block");
+            dag_storage
+                .insert(&block, false, false)
+                .expect("Failed to insert block");
 
             latest.insert(creator, block.block_hash.clone());
 
@@ -733,9 +752,10 @@ async fn run_visible_blocks_scope_test() {
                         std::collections::HashSet::new()
                     } else {
                         let first = ancestor_sets[0].clone();
-                        ancestor_sets.iter().skip(1).fold(first, |acc, set| {
-                            acc.intersection(set).cloned().collect()
-                        })
+                        ancestor_sets
+                            .iter()
+                            .skip(1)
+                            .fold(first, |acc, set| acc.intersection(set).cloned().collect())
                     };
                 let lca_block_number = common_ancestors
                     .iter()
@@ -745,11 +765,9 @@ async fn run_visible_blocks_scope_test() {
                     .unwrap_or(0);
 
                 // LCA-scoped filter (same as production code in interpreter_util.rs)
-                visible_blocks.retain(|bh| {
-                    match dag_repr.lookup_unsafe(bh) {
-                        Ok(meta) => meta.block_number >= lca_block_number,
-                        Err(_) => true,
-                    }
+                visible_blocks.retain(|bh| match dag_repr.lookup_unsafe(bh) {
+                    Ok(meta) => meta.block_number >= lca_block_number,
+                    Err(_) => true,
                 });
 
                 let visible_count = visible_blocks.len();

@@ -375,15 +375,17 @@ data:
       min-phlo-price = 1
     }
 
-    # Enable/disable Kamon reporters. Kamon is used for metrics collection / aggregation.
+    # Metrics reporter configuration. The Rust node uses hand-rolled
+    # Prometheus / InfluxDB / Sigar reporters; the historical kamon.conf
+    # file has been eliminated and reporter endpoints (tick-interval,
+    # influxdb-endpoint) live under this `metrics` section in defaults.conf.
     metrics {
       prometheus = false
-      # Enable default influxdb reporter
+      # Enable default InfluxDB HTTP reporter
       influxdb = false
-      # Our requirement is to send metrics every 500ms to InfluxDB. The default `kamon-influxdb` uses HTTP with a
-      # precision of epoch seconds for timestamps. In consequence, metrics are getting overwritten.
-      # For that reason we use a custom InfluxDB reporter which sends metrics over UDP with a
-      # precision of epoch milliseconds.
+      # We send metrics every 500ms to InfluxDB. The default HTTP InfluxDB
+      # reporter uses epoch-seconds timestamps which causes overwrites at
+      # this rate, so a custom UDP reporter with epoch-ms timestamps is used.
       influxdb-udp = false
       zipkin = false
       sigar = false

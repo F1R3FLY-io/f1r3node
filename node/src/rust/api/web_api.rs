@@ -91,6 +91,12 @@ pub trait WebApi {
     /// Check if a block is finalized
     async fn is_finalized(&self, hash: String) -> Result<bool>;
 
+    /// Query the finalization status of a deploy by its signature (hex-encoded).
+    async fn deploy_finalization_status(
+        &self,
+        deploy_sig_hex: String,
+    ) -> Result<DeployFinalizationStatusJson>;
+
     /// Get balance for an address via exploratory deploy against SystemVault.
     /// Queries against `block_hash` if provided, otherwise LFB.
     async fn get_balance(&self, address: String, block_hash: Option<String>) -> Result<BalanceResponse>;
@@ -118,6 +124,29 @@ pub trait WebApi {
 
     /// Check if a public key is bonded
     async fn get_bond_status(&self, pubkey: String) -> Result<BondStatusResponse>;
+}
+
+/// JSON-serializable view of a deploy-finalization-status response.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct DeployFinalizationStatusJson {
+    /// One of "Finalized", "Failed", "Pending", "Expired".
+    pub state: String,
+    pub rejection_count: u32,
+    /// Hex-encoded block hash. Absent (`null`) when the deploy has never
+    /// been included in any block.
+    pub latest_block_hash: Option<String>,
+}
+
+fn deploy_state_json_label(
+    state: casper::rust::api::deploy_finalization_status::DeployFinalizationState,
+) -> &'static str {
+    use casper::rust::api::deploy_finalization_status::DeployFinalizationState as S;
+    match state {
+        S::Finalized => "Finalized",
+        S::Failed => "Failed",
+        S::Pending => "Pending",
+        S::Expired => "Expired",
+    }
 }
 
 /// Web API implementation
@@ -557,6 +586,20 @@ impl WebApi for WebApiImpl {
 
     async fn is_finalized(&self, hash: String) -> Result<bool> {
         BlockAPI::is_finalized(&self.engine_cell, &hash).await
+    }
+
+    async fn deploy_finalization_status(
+        &self,
+        deploy_sig_hex: String,
+    ) -> Result<DeployFinalizationStatusJson> {
+        let sig = hex::decode(deploy_sig_hex.trim_start_matches("0x"))
+            .map_err(|e| eyre!("invalid hex for deploy_sig: {}", e))?;
+        let status = BlockAPI::deploy_finalization_status(&self.engine_cell, &sig).await?;
+        Ok(DeployFinalizationStatusJson {
+            state: deploy_state_json_label(status.state).to_string(),
+            rejection_count: status.rejection_count,
+            latest_block_hash: status.latest_block_hash.map(|h| hex::encode(&h)),
+        })
     }
 
     async fn get_balance(&self, address: String, block_hash: Option<String>) -> Result<BalanceResponse> {
@@ -1554,7 +1597,11 @@ fn extract_key_from_expr(expr: &RhoExpr) -> String {
 
 /// Convert (Vec<Par>, LightBlockInfo) to RhoDataResponse
 /// Equivalent to Scala's toRhoDataResponse function
-fn to_rho_data_response(pars: Vec<Par>, light_block_info: LightBlockInfo, cost: u64) -> RhoDataResponse {
+fn to_rho_data_response(
+    pars: Vec<Par>,
+    light_block_info: LightBlockInfo,
+    cost: u64,
+) -> RhoDataResponse {
     let rho_exprs: Vec<RhoExpr> = pars.into_iter().filter_map(expr_from_par_proto).collect();
     let block = LightBlockInfoSerde::from(light_block_info);
 

@@ -33,7 +33,6 @@ pub struct Finalizer;
 const FINALIZER_CATCHUP_LAG_THRESHOLD_BLOCKS: i64 = 1_024;
 const MAX_CLIQUE_CANDIDATES: usize = 128;
 
-
 type WeightMap = HashMap<Validator, i64>;
 type SharedWeightMap = Arc<WeightMap>;
 
@@ -43,7 +42,6 @@ impl Finalizer {
             .values()
             .try_fold(0_i64, |acc, stake| acc.checked_add(*stake))
     }
-
 
     /// weight map as per message, look inside [`CliqueOracle::get_corresponding_weight_map`] description for more info
     async fn message_weight_map_f(
@@ -455,6 +453,11 @@ impl Finalizer {
             parent_lookup_phase_ns,
             next_layer_push_phase_ns
         );
+        metrics::histogram!(
+            crate::rust::metrics_constants::FINALIZER_RUN_TIME_METRIC,
+            "source" => crate::rust::metrics_constants::CASPER_METRICS_SOURCE
+        )
+        .record(total_started.elapsed().as_secs_f64());
 
         Ok(lfb_result)
     }

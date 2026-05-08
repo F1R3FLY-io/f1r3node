@@ -12,7 +12,7 @@ use node::rust::configuration::config_check::{
     check_host, check_ports, load_private_key_from_file,
 };
 use node::rust::configuration::{
-    commandline::options::OptionsSubCommand, KamonConf, NodeConf, Options, Profile,
+    commandline::options::OptionsSubCommand, NodeConf, Options, Profile,
 };
 use node::rust::effects::console_io::{console_io, decrypt_key_from_file};
 use node::rust::effects::repl_client::GrpcReplClient;
@@ -66,13 +66,10 @@ fn main() -> Result<()> {
 
 /// Starts the F1r3fly node instance
 async fn start_node(options: Options) -> Result<()> {
-    // Create merged configuration from CLI options and config file
-    let default_dir = std::env::var("DEFAULT_DIR")
-        .and_then(|path| Ok(PathBuf::from(path)))
-        .or_else(|_| std::env::current_dir().map(|path| path.join("node/src/main/resources")))?;
-
-    let (node_conf, profile, config_file, kamon_conf) =
-        node::rust::configuration::builder::build(&default_dir, options)?;
+    // Defaults are baked into the binary via include_str!; the optional
+    // <data-dir>/rnode.conf override and CLI flags layer on top.
+    let (node_conf, profile, config_file) =
+        node::rust::configuration::builder::build(options)?;
 
     // Set system property for data directory (equivalent to Scala's System.setProperty)
     // SAFETY: This is called early in node startup before spawning threads that read env vars
@@ -91,7 +88,7 @@ async fn start_node(options: Options) -> Result<()> {
     log_configuration(&conf_with_decrypt, &profile, config_file.as_ref()).await?;
 
     // Create and start node runtime
-    start_node_runtime(conf_with_decrypt, kamon_conf).await?;
+    start_node_runtime(conf_with_decrypt).await?;
 
     Ok(())
 }
@@ -326,10 +323,10 @@ fn get_private_key(
 }
 
 /// Start node runtime (equivalent to Scala's NodeRuntime.start)
-async fn start_node_runtime(conf: NodeConf, kamon_conf: KamonConf) -> Result<()> {
+async fn start_node_runtime(conf: NodeConf) -> Result<()> {
     // --- Observability Setup ---
     #[allow(unused_variables)]
-    let prometheus_reporter = node::rust::diagnostics::initialize_diagnostics(&conf, &kamon_conf)?;
+    let prometheus_reporter = node::rust::diagnostics::initialize_diagnostics(&conf)?;
 
     node::rust::runtime::node_runtime::start(conf).await
 }

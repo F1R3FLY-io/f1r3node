@@ -337,7 +337,7 @@ When AI is disabled, contracts using `rho:ai:*` processes will fail at deploy ti
 - **Custom location**: `--config-file <path>`
 - **Format**: [HOCON](https://github.com/lightbend/config/blob/master/HOCON.md)
 
-The node ships with a built-in [defaults.conf](node/src/main/resources/defaults.conf) containing every available option and its default value. Operator config files are **minimal overrides** -- you only specify the values you want to change (typically ~40 lines for network, ports, and consensus tuning). HOCON's fallback semantics merge your overrides on top of the built-in defaults automatically.
+The node ships with a built-in [defaults.conf](node/src/main/resources/defaults.conf) **embedded into the binary at compile time** (via `include_str!`) — the file is the source of the embed, not a runtime dependency. Operator config files are **minimal overrides** -- you only specify the values you want to change (typically ~40 lines for network, ports, and consensus tuning). HOCON's fallback semantics merge your overrides on top of the embedded defaults automatically.
 
 Reference configs:
 - [defaults.conf](node/src/main/resources/defaults.conf) - Built-in defaults with all available options

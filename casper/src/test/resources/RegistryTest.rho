@@ -31,6 +31,9 @@ match (
     test_insertSignedInvalidNonce,
     test_insertSignedInvalidSig,
     test_unknownLookup,
+    test_insertArbitrary_two_different_uris_independent,
+    test_lookup_after_overwrite_insertSigned,
+    test_lookup_unknown_uri_after_inserts,
     insertSignedHelper
   in {
     lookup!(`rho:id:zphjgsfy13h1k85isc8rtwtgt3t9zzt5pjd5ihykfmyapfc4wt3x5h`, *RhoSpecCh) |
@@ -43,7 +46,10 @@ match (
           ("InsertArbitrary should work with increased nonce", *test_insertSignedValidNonce),
           ("InsertArbitrary should return Nil for invalid nonce", *test_insertSignedInvalidNonce),
           ("InsertArbitrary should return Nil for invalid signature", *test_insertSignedInvalidSig),
-          ("Lookup should return Nil for unknown uri", *test_unknownLookup)
+          ("Lookup should return Nil for unknown uri", *test_unknownLookup),
+          ("Two insertArbitrary calls produce independent URIs", *test_insertArbitrary_two_different_uris_independent),
+          ("Lookup after overwrite returns the newer value", *test_lookup_after_overwrite_insertSigned),
+          ("Lookup of unknown URI returns Nil after inserts populate the registry", *test_lookup_unknown_uri_after_inserts)
         ])
     } |
 
@@ -118,6 +124,73 @@ match (
       new retCh in {
         lookup!(`rho:id:unknown`, *retCh) |
         rhoSpec!("assert", (Nil, "== <-", *retCh), "Expecting Nil", *ackCh)
+      }
+    } |
+
+    // Two insertArbitrary calls in the same deploy must each produce a
+    // distinct URI and each looked-up value must reflect its own insert.
+    // Two independent inserts must not shadow each other — the user-level
+    // expression of the concurrent-insertArbitrary correctness invariant.
+    contract test_insertArbitrary_two_different_uris_independent(rhoSpec, _, ackCh) = {
+      new uri1Ch, uri2Ch, val1Ch, val2Ch in {
+        insertArbitrary!("first_value", *uri1Ch) |
+        insertArbitrary!("second_value", *uri2Ch) |
+        for (@uri1 <- uri1Ch; @uri2 <- uri2Ch) {
+          lookup!(uri1, *val1Ch) |
+          lookup!(uri2, *val2Ch) |
+          rhoSpec!("assertMany",
+            [
+              (("first_value", "== <-", *val1Ch), "first URI returns first value"),
+              (("second_value", "== <-", *val2Ch), "second URI returns second value"),
+            ],
+            *ackCh)
+        }
+      }
+    } |
+
+    // The existing test_insertSignedValidNonce checks that two inserts
+    // with the same key + increased nonce produce the same URI, but never
+    // looks up the result to verify the OVERWRITE actually happened. This
+    // test runs the same overwrite then looks up the URI and asserts the
+    // value reflects the SECOND insert.
+    //
+    // Uses pk3 / sk3 with nonces 1000 and 1001 to avoid collision with
+    // test_insertSignedInvalidNonce (which uses pk3 with nonce 42).
+    contract test_lookup_after_overwrite_insertSigned(rhoSpec, _, ackCh) = {
+      new uri1Ch, uri2Ch, lookupCh in {
+        insertSignedHelper!(1000, "first_data", pk3, sk3, *uri1Ch) |
+        for (@uri1 <- uri1Ch) {
+          insertSignedHelper!(1001, "second_data", pk3, sk3, *uri2Ch) |
+          for (@uri2 <- uri2Ch) {
+            lookup!(uri1, *lookupCh) |
+            rhoSpec!("assertMany",
+              [
+                ((uri1, "==", uri2), "Overwrite returns the same URI"),
+                (((1001, "second_data"), "== <-", *lookupCh),
+                  "Lookup returns the overwritten (newer) value"),
+              ],
+              *ackCh)
+          }
+        }
+      }
+    } |
+
+    // After several inserts populate the registry's TreeHashMap, lookup
+    // of an unknown URI must still return Nil. Locks: the bitmap walk
+    // correctly bails at empty positions even in a populated tree (in a
+    // tree where some interior bits are set from prior inserts, lookup
+    // for a key whose path bottoms out at an unset bit must return Nil
+    // rather than descend further or return stale data).
+    contract test_lookup_unknown_uri_after_inserts(rhoSpec, _, ackCh) = {
+      new uri1Ch, uri2Ch, retCh in {
+        insertArbitrary!("populating_value_1", *uri1Ch) |
+        insertArbitrary!("populating_value_2", *uri2Ch) |
+        for (_ <- uri1Ch; _ <- uri2Ch) {
+          lookup!(`rho:id:unknownafterinserts`, *retCh) |
+          rhoSpec!("assert", (Nil, "== <-", *retCh),
+            "Lookup of unknown URI returns Nil even after populating inserts",
+            *ackCh)
+        }
       }
     } |
 
