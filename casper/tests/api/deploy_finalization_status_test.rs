@@ -1161,16 +1161,20 @@ async fn resolve_returns_finalized_when_canonical_clean_supersedes_canonical_fai
 
 /// "Indexed but missing from body" is the case where the deploy index
 /// claims a sig lives in some block, but that block's `body.deploys` does
-/// not list the sig. The resolver returns `pending_unknown` for this
-/// inconsistency and emits a structured warn-level log on the dedicated
-/// `f1r3fly.deploy_finalization_status.corruption` target so operators
-/// see it. `Err` is reserved for genuine I/O failures.
+/// not list the sig. The resolver returns a typed `DeployFinalizationCorruption`
+/// error so the consensus path (`repeat_deploy`) conservative-fails (keep
+/// the sig in the check set rather than exempting it as a recovery
+/// candidate). `BlockAPI::deploy_finalization_status` downcasts and
+/// converts to `pending_unknown` at the HTTP/gRPC boundary so callers
+/// see a tractable response. The `f1r3fly.deploy_finalization_status.corruption`
+/// warn target gives operators visibility for the inconsistency.
 #[tokio::test]
-async fn resolve_returns_pending_unknown_for_indexed_but_missing_from_body() {
+async fn resolve_returns_typed_err_for_indexed_but_missing_from_body() {
     use crate::util::rholang::resources::{
         block_dag_storage_from_dyn, mk_test_rnode_store_manager_from_genesis,
     };
     use block_storage::rust::key_value_block_store::KeyValueBlockStore;
+    use casper::rust::api::deploy_finalization_status::DeployFinalizationCorruption;
     use models::rust::block_hash::BlockHashSerde;
     use models::rust::block_implicits;
     use prost::bytes::Bytes;
@@ -1237,19 +1241,207 @@ async fn resolve_returns_pending_unknown_for_indexed_but_missing_from_body() {
     let result =
         deploy_finalization_status::resolve(&dag, &block_store, deploy_lifespan, &corrupt_sig);
 
-    let status = result.expect(
-        "indexed-but-missing-from-body must resolve to pending_unknown, \
-         not Err",
+    let err = result.expect_err(
+        "indexed-but-missing-from-body must propagate Err so repeat_deploy fails-conservative",
     );
+    let corruption = err.downcast_ref::<DeployFinalizationCorruption>().expect(
+        "Err must carry a DeployFinalizationCorruption sentinel so block_api can detect \
+             and convert it; got {err}",
+    );
+    assert_eq!(
+        corruption.sig.as_ref(),
+        corrupt_sig.as_slice(),
+        "sentinel must carry the corrupt sig",
+    );
+    assert_eq!(
+        corruption.block_hash, block_a.block_hash,
+        "sentinel must carry the inconsistent block hash",
+    );
+}
+
+/// Symmetric clean-side canonical-descendant gate.
+///
+/// A clean inclusion in a non-main-chain finalized sibling whose effects
+/// are rejected at the canonical merge step must not resolve to
+/// `Finalized`. The non-canonical clean event has to be invalidated by
+/// the canonical rejection the same way `is_in_main_chain` invalidates a
+/// canonical clean event when a canonical-descendant rejection exists.
+///
+/// DAG shape:
+///
+/// ```text
+///   genesis (h=0)
+///       |
+///       A (h=1)               canonical
+///      / \
+///     B   Y (both h=2)        B canonical, Y non-canonical sibling
+///      \ /                    (main_parent=A but not on LFB main chain)
+///       C (h=3, LFB)          merge of [B, Y]; main parent = B.
+///                             Body.rejected_deploys = [sig_X].
+/// ```
+///
+/// Sig X appears in Y.body.deploys (clean) and C.body.rejected_deploys
+/// (canonical merge rejection). Without the symmetric gate the resolver
+/// returns `Finalized` because `is_in_main_chain(Y, C) = false` keeps
+/// the existing canonical-descendant rule from firing — but Y is itself
+/// non-canonical, and C's rejection records that the merge dropped the
+/// effects when integrating Y. Sig X is not in canonical state.
+///
+/// `repeat_deploy` would treat the (incorrect) `Finalized` as kept-in-check
+/// but the ancestor scan over canonical main-parent chain would not find
+/// the sig (it lives only in non-canonical Y), letting a re-proposal
+/// validate and re-execute → double-execution.
+#[tokio::test]
+async fn resolve_returns_pending_for_non_canonical_clean_with_canonical_reject() {
+    use crate::util::rholang::resources::{
+        block_dag_storage_from_dyn, mk_test_rnode_store_manager_from_genesis,
+    };
+    use block_storage::rust::key_value_block_store::KeyValueBlockStore;
+    use casper::rust::util::construct_deploy;
+    use models::rust::block_implicits;
+    use models::rust::casper::protocol::casper_message::{ProcessedDeploy, RejectedDeploy};
+
+    let ctx = TestContext::new().await;
+    let genesis_block = ctx.genesis.genesis_block.clone();
+    let genesis_hash = genesis_block.block_hash.clone();
+
+    let mut kvm = mk_test_rnode_store_manager_from_genesis(&ctx.genesis);
+    let block_store = KeyValueBlockStore::create_from_kvm(&mut *kvm)
+        .await
+        .expect("block store");
+    let dag_storage = block_dag_storage_from_dyn(&mut *kvm)
+        .await
+        .expect("dag storage");
+
+    block_store
+        .put_block_message(&genesis_block)
+        .expect("store genesis");
+    dag_storage
+        .insert(&genesis_block, false, true)
+        .expect("dag genesis");
+
+    let deploy = construct_deploy::source_deploy_now_full(
+        "@8!(8)".to_string(),
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .expect("construct deploy");
+    let sig_under_test = deploy.sig.clone();
+
+    // A: h=1, canonical, empty body.
+    let block_a = block_implicits::get_random_block(
+        Some(1),
+        Some(1),
+        None,
+        None,
+        None,
+        None,
+        Some(0),
+        Some(vec![genesis_hash.clone()]),
+        Some(Vec::new()),
+        Some(Vec::new()),
+        Some(Vec::new()),
+        Some(genesis_block.body.state.bonds.clone()),
+        Some(genesis_block.shard_id.clone()),
+        None,
+    );
+
+    // B: h=2, canonical (main parent of LFB), empty body.
+    let block_b = block_implicits::get_random_block(
+        Some(2),
+        Some(1),
+        None,
+        None,
+        None,
+        None,
+        Some(0),
+        Some(vec![block_a.block_hash.clone()]),
+        Some(Vec::new()),
+        Some(Vec::new()),
+        Some(Vec::new()),
+        Some(genesis_block.body.state.bonds.clone()),
+        Some(genesis_block.shard_id.clone()),
+        None,
+    );
+
+    // Y: h=2, non-canonical sibling of B. Carries sig_X clean.
+    let block_y = block_implicits::get_random_block(
+        Some(2),
+        Some(2),
+        None,
+        None,
+        None,
+        None,
+        Some(0),
+        Some(vec![block_a.block_hash.clone()]),
+        Some(Vec::new()),
+        Some(vec![ProcessedDeploy::empty(deploy.clone())]),
+        Some(Vec::new()),
+        Some(genesis_block.body.state.bonds.clone()),
+        Some(genesis_block.shard_id.clone()),
+        None,
+    );
+
+    // C: h=3, LFB. Multi-parent merge of [B, Y]. body.rejected_deploys
+    // contains sig_X (the merge engine rejected the deploy when
+    // integrating Y's chain).
+    let mut block_c = block_implicits::get_random_block(
+        Some(3),
+        Some(1),
+        None,
+        None,
+        None,
+        None,
+        Some(0),
+        Some(vec![block_b.block_hash.clone(), block_y.block_hash.clone()]),
+        Some(Vec::new()),
+        Some(Vec::new()),
+        Some(Vec::new()),
+        Some(genesis_block.body.state.bonds.clone()),
+        Some(genesis_block.shard_id.clone()),
+        None,
+    );
+    block_c.body.rejected_deploys = vec![RejectedDeploy {
+        sig: sig_under_test.clone(),
+    }];
+
+    block_store.put_block_message(&block_a).expect("store A");
+    block_store.put_block_message(&block_b).expect("store B");
+    block_store.put_block_message(&block_y).expect("store Y");
+    block_store.put_block_message(&block_c).expect("store C");
+    dag_storage
+        .insert(&block_a, false, false)
+        .expect("dag insert A");
+    dag_storage
+        .insert(&block_b, false, false)
+        .expect("dag insert B");
+    dag_storage
+        .insert(&block_y, false, false)
+        .expect("dag insert Y");
+    dag_storage
+        .insert(&block_c, false, false)
+        .expect("dag insert C");
+
+    let mut dag = dag_storage.get_representation();
+    dag.last_finalized_block_hash = block_c.block_hash.clone();
+
+    let deploy_lifespan = 50i64;
+    let status =
+        deploy_finalization_status::resolve(&dag, &block_store, deploy_lifespan, &sig_under_test)
+            .expect("resolve should not fail");
+
     assert_eq!(
         status.state,
         DeployFinalizationState::Pending,
-        "corrupt sig should be reported as Pending (unknown), got {:?}",
+        "non-canonical clean inclusion + canonical rejection must NOT resolve \
+         to Finalized; got {:?}",
         status.state,
     );
-    assert_eq!(status.rejection_count, 0);
-    assert!(
-        status.latest_block_hash.is_none(),
-        "no canonical inclusion was found; latest_block_hash must be None",
+    assert_eq!(
+        status.rejection_count, 1,
+        "exactly one canonical rejection event in C",
     );
 }

@@ -11,6 +11,33 @@ use prost::bytes::Bytes;
 /// Convenience alias matching `BlockAPI`'s error type.
 type ApiErr<T> = eyre::Result<T>;
 
+/// Sentinel error for the deploy-index inconsistency case (a sig is
+/// indexed at a block whose body does not list it). Propagated as an
+/// `Err` so `repeat_deploy` falls back to its conservative-fail branch
+/// (keep the sig in the check set rather than exempting it as recovery).
+/// `BlockAPI::deploy_finalization_status` downcasts to this type at the
+/// HTTP/gRPC boundary and converts to `pending_unknown` so callers see
+/// a tractable response instead of a 500.
+#[derive(Debug)]
+pub struct DeployFinalizationCorruption {
+    pub sig: Bytes,
+    pub block_hash: BlockHash,
+}
+
+impl std::fmt::Display for DeployFinalizationCorruption {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "deploy_finalization_status: sig {} indexed at block {} \
+             but missing from that block's body.deploys",
+            hex::encode(&self.sig),
+            PrettyPrinter::build_string_bytes(&self.block_hash),
+        )
+    }
+}
+
+impl std::error::Error for DeployFinalizationCorruption {}
+
 /// Terminal or transitional state of a deploy as observed from the local DAG.
 ///
 /// Clients poll `deploy_finalization_status` by deploy signature to learn
@@ -118,13 +145,19 @@ enum PreludeOutcome {
 
 /// Per-sig prelude: deploy-index lookup, first-seen block fetch, and
 /// extraction of `valid_after_block_number`. Shared by `resolve` and
-/// `resolve_batch` so both entry points have identical error
-/// semantics — IO failures and deploy-index inconsistencies propagate
-/// as `Err`; truly missing data (unknown sig, first-seen body absent
-/// from store) returns `PreludeOutcome::Unknown`. The batch caller
-/// translates `Err` into "skip this merge" rather than degrading
-/// individual sigs to `Pending`, so corrupted sigs are surfaced
-/// honestly rather than silently masquerading as never-deployed.
+/// `resolve_batch` so both entry points have identical error semantics:
+///
+/// - `Ok(Active(state))` — sig is in the index and the first-seen block
+///   was readable.
+/// - `Ok(Unknown)` — sig is not in the index, or first-seen block body
+///   is absent from the store (typed at `pending_unknown` by callers).
+/// - `Err(DeployFinalizationCorruption)` — sig is indexed at a block
+///   whose body does not list it. Returned as a typed sentinel so the
+///   consensus path conservative-fails (keep in repeat-check) while
+///   `BlockAPI::deploy_finalization_status` downcasts and converts to
+///   `pending_unknown` for HTTP/gRPC callers.
+/// - `Err(other)` — genuine I/O failures from `block_store.get` etc.,
+///   propagated unchanged.
 fn run_prelude(
     dag: &KeyValueDagRepresentation,
     block_store: &KeyValueBlockStore,
@@ -144,7 +177,8 @@ fn run_prelude(
         Ok(Some(b)) => b,
         Ok(None) => {
             tracing::warn!(
-                "deploy_finalization_status: sig {} indexed at block {} but block body absent from store",
+                target: "f1r3fly.deploy_finalization_status.corruption",
+                "sig {} indexed at block {} but block body absent from store",
                 hex::encode(&sig_bytes),
                 PrettyPrinter::build_string_bytes(&first_seen_block_hash)
             );
@@ -167,21 +201,25 @@ fn run_prelude(
     {
         Some(n) => n,
         None => {
-            // Indexed-but-missing-from-body: the deploy index points at
-            // a block whose body does not claim the sig. Surface via the
-            // dedicated warn target and downgrade to pending_unknown so
-            // polling callers can recover after the index resyncs.
-            // Genuine I/O failures (block_store.get returning Err) still
-            // propagate as Err.
+            // Indexed-but-missing-from-body: the deploy index points at a
+            // block whose body does not claim the sig. Logged on the
+            // dedicated warn target for operator visibility, returned as
+            // a typed `DeployFinalizationCorruption` error so the
+            // consensus path (`repeat_deploy`) conservative-fails (keep
+            // sig in the check set) and the HTTP/gRPC layer
+            // (`BlockAPI::deploy_finalization_status`) downcasts and
+            // converts to `pending_unknown` for callers.
             tracing::warn!(
                 target: "f1r3fly.deploy_finalization_status.corruption",
                 "sig {} indexed at block {} but missing from that block's \
-                 body.deploys — returning pending_unknown; check deploy \
-                 index vs block store consistency",
+                 body.deploys — check deploy index vs block store consistency",
                 hex::encode(&sig_bytes),
                 PrettyPrinter::build_string_bytes(&first_seen_block_hash),
             );
-            return Ok(PreludeOutcome::Unknown);
+            return Err(eyre::Report::new(DeployFinalizationCorruption {
+                sig: sig_bytes,
+                block_hash: first_seen_block_hash,
+            }));
         }
     };
 
@@ -402,16 +440,32 @@ fn finalize_sig_state(
         Ok(block == &lfb_hash || dag.is_in_main_chain(block, &lfb_hash)?)
     };
 
-    // Resolve clean event with the existing canonical-descendant gate.
+    // Resolve clean event with two invalidation rules:
+    //
+    //   (i) Non-canonical clean + canonical reject: the merge that
+    //       integrated the non-canonical chain rejected this deploy, so
+    //       its effects are not in canonical state.
+    //   (ii) Canonical clean + canonical-descendant reject: the existing
+    //        `is_in_main_chain` rule — a rejection downstream of a
+    //        canonical clean inclusion invalidates that inclusion.
+    //
+    // Without (i), a non-canonical clean event survives whenever the
+    // rejection isn't a main-parent ancestor — which is true by
+    // construction of any non-canonical clean — letting the resolver
+    // report `Finalized` for a sig whose effects are not in canonical
+    // state.
     let mut clean_canonical: Option<(i64, BlockHash)> = state.clean_finalized_event.clone();
     if let (Some((_, clean_block)), Some((_, reject_block))) =
         (&state.clean_finalized_event, &state.latest_rejected_event)
     {
         let reject_is_canonical = canonical_block(reject_block)?;
-        let reject_is_canonical_descendant = clean_block != reject_block
-            && reject_is_canonical
-            && dag.is_in_main_chain(clean_block, reject_block)?;
-        if reject_is_canonical_descendant {
+        let clean_is_canonical = canonical_block(clean_block)?;
+        if !clean_is_canonical && reject_is_canonical {
+            clean_canonical = None;
+        } else if reject_is_canonical
+            && clean_block != reject_block
+            && dag.is_in_main_chain(clean_block, reject_block)?
+        {
             clean_canonical = None;
         }
     }
@@ -514,9 +568,11 @@ fn finalize_sig_state(
 ///
 /// Error semantics shared with `resolve_batch`: deploy-index
 /// inconsistencies (sig indexed at a block whose body does not contain
-/// the sig) propagate as `Err` so corruption is surfaced rather than
-/// hidden behind `pending_unknown`. Truly absent data (unknown sig,
-/// first-seen body missing from the store) returns `pending_unknown`.
+/// the sig) propagate as `Err(DeployFinalizationCorruption)`, so the
+/// consensus path can conservative-fail and the HTTP/gRPC layer can
+/// downcast and convert to `pending_unknown`. Truly absent data
+/// (unknown sig, first-seen body missing from the store) returns
+/// `pending_unknown` directly.
 ///
 /// The state machine is a canonical-chain scan:
 ///
@@ -587,7 +643,10 @@ pub fn resolve_batch(
         return Ok(results);
     }
 
-    // Per-sig prelude (lenient: inconsistencies → Unknown).
+    // Per-sig prelude. `Unknown` (sig absent / first-seen body missing)
+    // becomes `pending_unknown`. A `DeployFinalizationCorruption` error
+    // propagates and aborts the batch — the caller's "skip on Err"
+    // fallback then declines to admit anything for the merge step.
     let mut per_sig: HashMap<Bytes, ResolverState> = HashMap::new();
     for sig in sigs {
         match run_prelude(dag, block_store, sig.as_ref())? {
