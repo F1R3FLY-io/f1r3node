@@ -1518,12 +1518,29 @@ impl BlockAPI {
         };
 
         let dag = casper.block_dag().await?;
-        crate::rust::api::deploy_finalization_status::resolve(
+        match crate::rust::api::deploy_finalization_status::resolve(
             &dag,
             casper.block_store(),
             casper.casper_shard_conf().deploy_lifespan,
             sig,
-        )
+        ) {
+            Ok(status) => Ok(status),
+            Err(err) => {
+                // Convert deploy-index inconsistency to `pending_unknown`
+                // so HTTP/gRPC callers see a tractable response. The
+                // resolver returns `Err` so the consensus path
+                // (`repeat_deploy`) conservative-fails on the same
+                // inconsistency. Genuine I/O failures keep propagating.
+                if err
+                    .downcast_ref::<crate::rust::api::deploy_finalization_status::DeployFinalizationCorruption>()
+                    .is_some()
+                {
+                    Ok(crate::rust::api::deploy_finalization_status::DeployFinalizationStatus::pending_unknown())
+                } else {
+                    Err(err)
+                }
+            }
+        }
     }
 
     pub async fn bond_status(engine_cell: &EngineCell, public_key: &ByteString) -> ApiErr<bool> {
