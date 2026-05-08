@@ -1335,9 +1335,9 @@ async fn create_stream_with_processor<'a, T: BlockRequesterOps>(
                         final_stats.0, final_stats.1, final_stats.2, final_stats.3, final_stats.4);
 
                     if final_stats.4 {
-                        tracing::info!("✅ LFS Block Requester completed successfully - all required blocks downloaded");
+                        tracing::info!("LFS Block Requester completed successfully - all required blocks downloaded");
                     } else {
-                        tracing::warn!("⚠️ LFS Block Requester terminated with incomplete state - some blocks may be missing");
+                        tracing::warn!("LFS Block Requester terminated with incomplete state - some blocks may be missing");
                     }
 
                     Some(state.clone())
