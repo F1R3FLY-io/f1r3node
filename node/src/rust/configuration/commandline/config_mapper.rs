@@ -188,8 +188,20 @@ impl ConfigMapper<Options> for NodeConf {
                 run.synchrony_constraint_threshold,
             );
             Self::try_override_value(
+                &mut self.casper.synchrony_finalized_baseline_enabled,
+                run.synchrony_finalized_baseline_enabled,
+            );
+            Self::try_override_value(
+                &mut self.casper.synchrony_finalized_baseline_max_distance,
+                run.synchrony_finalized_baseline_max_distance,
+            );
+            Self::try_override_value(
                 &mut self.casper.height_constraint_threshold,
                 run.height_constraint_threshold,
+            );
+            Self::try_override_value(
+                &mut self.casper.max_user_deploys_per_block,
+                run.max_user_deploys_per_block,
             );
             Self::try_override_option(
                 &mut self.casper.validator_public_key,
@@ -342,6 +354,10 @@ impl ConfigMapper<Options> for NodeConf {
                 run.heartbeat_max_lfb_age,
             );
             Self::try_override_value(
+                &mut self.casper.heartbeat_conf.self_propose_cooldown,
+                run.heartbeat_self_propose_cooldown,
+            );
+            Self::try_override_value(
                 &mut self.casper.heartbeat_conf.stale_recovery_min_interval,
                 run.heartbeat_stale_recovery_min_interval,
             );
@@ -452,6 +468,7 @@ mod tests {
         "--fork-choice-check-if-stale-interval=111111seconds",
         "--synchrony-constraint-threshold=111111",
         "--height-constraint-threshold=111111",
+        "--max-user-deploys-per-block=777777",
         "--frrd-max-peer-queue-size=111111",
         "--frrd-give-up-after-skipped=111111",
         "--frrd-drop-peer-after-retries=111111",
@@ -478,11 +495,14 @@ mod tests {
         "--heartbeat-disabled",
         "--heartbeat-check-interval=111111seconds",
         "--heartbeat-max-lfb-age=222222seconds",
+        "--heartbeat-self-propose-cooldown=555555seconds",
         "--heartbeat-stale-recovery-min-interval=333333seconds",
         "--heartbeat-deploy-finalization-grace=444444seconds",
         "--heartbeat-advanced-frontier-chase-max-lag=111",
         "--heartbeat-advanced-pending-deploy-max-lag=222",
-        "--heartbeat-advanced-deploy-recovery-max-lag=333"
+        "--heartbeat-advanced-deploy-recovery-max-lag=333",
+        "--synchrony-finalized-baseline-enabled=false",
+        "--synchrony-finalized-baseline-max-distance=666666"
         ];
 
         let res = Options::try_parse_from(argv);
@@ -616,6 +636,7 @@ mod tests {
                 fork_choice_check_if_stale_interval: Some(Duration::from_secs(111111)),
                 synchrony_constraint_threshold: Some(111111.0),
                 height_constraint_threshold: Some(111111),
+                max_user_deploys_per_block: Some(777777),
                 frrd_max_peer_queue_size: Some(111111),
                 frrd_give_up_after_skipped: Some(111111),
                 frrd_drop_peer_after_retries: Some(111111),
@@ -650,11 +671,14 @@ mod tests {
                 heartbeat_disabled: true,
                 heartbeat_check_interval: Some(Duration::from_secs(111111)),
                 heartbeat_max_lfb_age: Some(Duration::from_secs(222222)),
+                heartbeat_self_propose_cooldown: Some(Duration::from_secs(555555)),
                 heartbeat_stale_recovery_min_interval: Some(Duration::from_secs(333333)),
                 heartbeat_deploy_finalization_grace: Some(Duration::from_secs(444444)),
                 heartbeat_advanced_frontier_chase_max_lag: Some(111),
                 heartbeat_advanced_pending_deploy_max_lag: Some(222),
                 heartbeat_advanced_deploy_recovery_max_lag: Some(333),
+                synchrony_finalized_baseline_enabled: Some(false),
+                synchrony_finalized_baseline_max_distance: Some(666666),
             })),
         };
 
@@ -970,7 +994,15 @@ mod tests {
             default_config.casper.synchrony_constraint_threshold,
             111111.0
         );
+        assert!(!default_config.casper.synchrony_finalized_baseline_enabled);
+        assert_eq!(
+            default_config
+                .casper
+                .synchrony_finalized_baseline_max_distance,
+            666666
+        );
         assert_eq!(default_config.casper.height_constraint_threshold, 111111);
+        assert_eq!(default_config.casper.max_user_deploys_per_block, 777777);
         assert_eq!(default_config.casper.min_phlo_price, 1);
 
         // Heartbeat configuration
@@ -983,6 +1015,10 @@ mod tests {
         assert_eq!(
             default_config.casper.heartbeat_conf.max_lfb_age,
             Duration::from_secs(222222)
+        );
+        assert_eq!(
+            default_config.casper.heartbeat_conf.self_propose_cooldown,
+            Duration::from_secs(555555)
         );
         assert_eq!(
             default_config

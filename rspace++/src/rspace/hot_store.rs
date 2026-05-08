@@ -1,10 +1,10 @@
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use std::collections::hash_map::Entry;
 #[cfg(test)]
 use proptest::prelude::*;
 #[cfg(test)]
@@ -12,7 +12,6 @@ use rand::{Rng, thread_rng};
 use tracing::warn;
 
 use super::errors::RSpaceError;
-
 use crate::rspace::history::history_reader::HistoryReaderBase;
 use crate::rspace::hot_store_action::{
     DeleteAction, DeleteContinuations, DeleteData, DeleteJoins, HotStoreAction, InsertAction,
@@ -20,9 +19,21 @@ use crate::rspace::hot_store_action::{
 };
 use crate::rspace::internal::{Datum, Row, WaitingContinuation};
 use crate::rspace::metrics_constants::{
-    HOT_STORE_HISTORY_CONT_CACHE_ITEMS_METRIC, HOT_STORE_HISTORY_CONT_CACHE_SIZE_METRIC,
-    HOT_STORE_HISTORY_DATA_CACHE_ITEMS_METRIC, HOT_STORE_HISTORY_DATA_CACHE_SIZE_METRIC,
-    HOT_STORE_HISTORY_JOINS_CACHE_ITEMS_METRIC, HOT_STORE_HISTORY_JOINS_CACHE_SIZE_METRIC,
+    HOT_STORE_GET_CONT_CALLS_METRIC, HOT_STORE_GET_CONT_HISTORY_FILL_METRIC,
+    HOT_STORE_GET_DATA_CALLS_METRIC, HOT_STORE_GET_DATA_HISTORY_FILL_METRIC,
+    HOT_STORE_GET_JOINS_CALLS_METRIC, HOT_STORE_GET_JOINS_HISTORY_FILL_METRIC,
+    HOT_STORE_HISTORY_CACHE_BULK_CLEAR_CONT_METRIC,
+    HOT_STORE_HISTORY_CACHE_BULK_CLEAR_DATUMS_METRIC,
+    HOT_STORE_HISTORY_CACHE_BULK_CLEAR_JOINS_METRIC, HOT_STORE_HISTORY_CONT_CACHE_ITEMS_METRIC,
+    HOT_STORE_HISTORY_CONT_CACHE_SIZE_METRIC, HOT_STORE_HISTORY_DATA_CACHE_ITEMS_METRIC,
+    HOT_STORE_HISTORY_DATA_CACHE_SIZE_METRIC, HOT_STORE_HISTORY_JOINS_CACHE_ITEMS_METRIC,
+    HOT_STORE_HISTORY_JOINS_CACHE_SIZE_METRIC, HOT_STORE_PUT_CONT_CALLS_METRIC,
+    HOT_STORE_PUT_CONT_DUPLICATES_METRIC, HOT_STORE_PUT_CONT_EXISTING_COUNT_METRIC,
+    HOT_STORE_PUT_CONT_HISTORY_FILL_METRIC, HOT_STORE_PUT_CONT_IDENTITY_BUILD_NS_METRIC,
+    HOT_STORE_PUT_CONT_IDENTITY_COMPARE_NS_METRIC, HOT_STORE_PUT_CONT_TIME_NS_METRIC,
+    HOT_STORE_PUT_DATUM_CALLS_METRIC, HOT_STORE_PUT_DATUM_HISTORY_FILL_METRIC,
+    HOT_STORE_PUT_DATUM_TIME_NS_METRIC, HOT_STORE_PUT_JOIN_CALLS_METRIC,
+    HOT_STORE_PUT_JOIN_HISTORY_FILL_METRIC, HOT_STORE_PUT_JOIN_TIME_NS_METRIC,
     HOT_STORE_STATE_CONT_ITEMS_METRIC, HOT_STORE_STATE_CONT_SIZE_METRIC,
     HOT_STORE_STATE_DATA_ITEMS_METRIC, HOT_STORE_STATE_DATA_SIZE_METRIC,
     HOT_STORE_STATE_INSTALLED_CONT_ITEMS_METRIC, HOT_STORE_STATE_INSTALLED_CONT_SIZE_METRIC,
@@ -174,6 +185,8 @@ where
     // Continuations
 
     fn get_continuations(&self, channels: &[C]) -> Vec<WaitingContinuation<P, K>> {
+        metrics::counter!(HOT_STORE_GET_CONT_CALLS_METRIC, "source" => RSPACE_METRICS_SOURCE)
+            .increment(1);
         let state = self.state.read().expect("hot store state read lock");
         let continuations = state.continuations.get(channels).cloned();
         let installed = state.installed_continuations.get(channels).cloned();
@@ -188,8 +201,12 @@ where
             }
             (Some(conts), None) => conts,
             (None, Some(inst)) => {
+                metrics::counter!(HOT_STORE_GET_CONT_HISTORY_FILL_METRIC, "source" => RSPACE_METRICS_SOURCE)
+                    .increment(1);
                 let from_history_store = self.get_cont_from_history_store(channels);
-                self.state.write().expect("hot store state write lock")
+                self.state
+                    .write()
+                    .expect("hot store state write lock")
                     .continuations
                     .insert(channels.to_vec(), from_history_store.clone());
                 let mut result = Vec::with_capacity(from_history_store.len() + 1);
@@ -198,8 +215,12 @@ where
                 result
             }
             (None, None) => {
+                metrics::counter!(HOT_STORE_GET_CONT_HISTORY_FILL_METRIC, "source" => RSPACE_METRICS_SOURCE)
+                    .increment(1);
                 let from_history_store = self.get_cont_from_history_store(channels);
-                self.state.write().expect("hot store state write lock")
+                self.state
+                    .write()
+                    .expect("hot store state write lock")
                     .continuations
                     .insert(channels.to_vec(), from_history_store.clone());
                 from_history_store
@@ -208,44 +229,83 @@ where
     }
 
     fn put_continuation(&self, channels: &[C], wc: WaitingContinuation<P, K>) -> Option<bool> {
+        let __put_start = std::time::Instant::now();
+        metrics::counter!(HOT_STORE_PUT_CONT_CALLS_METRIC, "source" => RSPACE_METRICS_SOURCE)
+            .increment(1);
+
         let mut inserted = false;
-        let has_existing = self.state.read().expect("hot store state read lock").continuations.get(channels).is_some();
+        let has_existing = self
+            .state
+            .read()
+            .expect("hot store state read lock")
+            .continuations
+            .get(channels)
+            .is_some();
         let from_history_store = if has_existing {
             None
         } else {
+            metrics::counter!(HOT_STORE_PUT_CONT_HISTORY_FILL_METRIC, "source" => RSPACE_METRICS_SOURCE)
+                .increment(1);
             Some(self.get_cont_from_history_store(channels))
         };
 
         let mut state = self.state.write().expect("hot store state write lock");
+        let __ident_build_start = std::time::Instant::now();
         let wc_identity = Self::continuation_identity(&wc);
+        metrics::counter!(HOT_STORE_PUT_CONT_IDENTITY_BUILD_NS_METRIC, "source" => RSPACE_METRICS_SOURCE)
+            .increment(__ident_build_start.elapsed().as_nanos() as u64);
         match state.continuations.entry(channels.to_vec()) {
             Entry::Occupied(mut occupied) => {
-                if !occupied
+                let existing_count = occupied.get().len() as u64;
+                metrics::counter!(HOT_STORE_PUT_CONT_EXISTING_COUNT_METRIC, "source" => RSPACE_METRICS_SOURCE)
+                    .increment(existing_count);
+                let __cmp_start = std::time::Instant::now();
+                let dup = occupied
                     .get()
                     .iter()
-                    .any(|existing| Self::continuation_identity(existing) == wc_identity)
-                {
+                    .any(|existing| Self::continuation_identity(existing) == wc_identity);
+                metrics::counter!(HOT_STORE_PUT_CONT_IDENTITY_COMPARE_NS_METRIC, "source" => RSPACE_METRICS_SOURCE)
+                    .increment(__cmp_start.elapsed().as_nanos() as u64);
+                if !dup {
                     occupied.get_mut().insert(0, wc);
                     inserted = true;
+                } else {
+                    metrics::counter!(HOT_STORE_PUT_CONT_DUPLICATES_METRIC, "source" => RSPACE_METRICS_SOURCE)
+                        .increment(1);
                 }
             }
             Entry::Vacant(vacant) => {
                 let mut new_continuations = from_history_store.unwrap_or_default();
-                if !new_continuations
+                let existing_count = new_continuations.len() as u64;
+                metrics::counter!(HOT_STORE_PUT_CONT_EXISTING_COUNT_METRIC, "source" => RSPACE_METRICS_SOURCE)
+                    .increment(existing_count);
+                let __cmp_start = std::time::Instant::now();
+                let dup = new_continuations
                     .iter()
-                    .any(|existing| Self::continuation_identity(existing) == wc_identity)
-                {
+                    .any(|existing| Self::continuation_identity(existing) == wc_identity);
+                metrics::counter!(HOT_STORE_PUT_CONT_IDENTITY_COMPARE_NS_METRIC, "source" => RSPACE_METRICS_SOURCE)
+                    .increment(__cmp_start.elapsed().as_nanos() as u64);
+                if !dup {
                     new_continuations.insert(0, wc);
                     inserted = true;
+                } else {
+                    metrics::counter!(HOT_STORE_PUT_CONT_DUPLICATES_METRIC, "source" => RSPACE_METRICS_SOURCE)
+                        .increment(1);
                 }
                 vacant.insert(new_continuations);
             }
         }
+        metrics::counter!(HOT_STORE_PUT_CONT_TIME_NS_METRIC, "source" => RSPACE_METRICS_SOURCE)
+            .increment(__put_start.elapsed().as_nanos() as u64);
         Some(inserted)
     }
 
     fn install_continuation(&self, channels: &[C], wc: WaitingContinuation<P, K>) -> Option<()> {
-        self.state.write().expect("hot store state write lock").installed_continuations.insert(channels.to_vec(), wc);
+        self.state
+            .write()
+            .expect("hot store state write lock")
+            .installed_continuations
+            .insert(channels.to_vec(), wc);
         Some(())
     }
 
@@ -292,13 +352,25 @@ where
     // Data
 
     fn get_data(&self, channel: &C) -> Vec<Datum<A>> {
-        let maybe_data = self.state.read().expect("hot store state read lock").data.get(channel).cloned();
+        metrics::counter!(HOT_STORE_GET_DATA_CALLS_METRIC, "source" => RSPACE_METRICS_SOURCE)
+            .increment(1);
+        let maybe_data = self
+            .state
+            .read()
+            .expect("hot store state read lock")
+            .data
+            .get(channel)
+            .cloned();
 
         if let Some(data) = maybe_data {
             data
         } else {
+            metrics::counter!(HOT_STORE_GET_DATA_HISTORY_FILL_METRIC, "source" => RSPACE_METRICS_SOURCE)
+                .increment(1);
             let data = self.get_data_from_history_store(channel);
-            self.state.write().expect("hot store state write lock")
+            self.state
+                .write()
+                .expect("hot store state write lock")
                 .data
                 .insert(channel.clone(), data.clone());
             data
@@ -306,10 +378,21 @@ where
     }
 
     fn put_datum(&self, channel: &C, d: Datum<A>) -> () {
-        let has_existing = self.state.read().expect("hot store state read lock").data.get(channel).is_some();
+        let __start = std::time::Instant::now();
+        metrics::counter!(HOT_STORE_PUT_DATUM_CALLS_METRIC, "source" => RSPACE_METRICS_SOURCE)
+            .increment(1);
+        let has_existing = self
+            .state
+            .read()
+            .expect("hot store state read lock")
+            .data
+            .get(channel)
+            .is_some();
         let from_history_store = if has_existing {
             None
         } else {
+            metrics::counter!(HOT_STORE_PUT_DATUM_HISTORY_FILL_METRIC, "source" => RSPACE_METRICS_SOURCE)
+                .increment(1);
             Some(self.get_data_from_history_store(channel))
         };
 
@@ -324,6 +407,8 @@ where
                 vacant.insert(new_data);
             }
         }
+        metrics::counter!(HOT_STORE_PUT_DATUM_TIME_NS_METRIC, "source" => RSPACE_METRICS_SOURCE)
+            .increment(__start.elapsed().as_nanos() as u64);
     }
 
     fn remove_datum(&self, channel: &C, index: i32) -> Result<(), RSpaceError> {
@@ -364,6 +449,8 @@ where
     // Joins
 
     fn get_joins(&self, channel: &C) -> Vec<Vec<C>> {
+        metrics::counter!(HOT_STORE_GET_JOINS_CALLS_METRIC, "source" => RSPACE_METRICS_SOURCE)
+            .increment(1);
         let state = self.state.read().expect("hot store state read lock");
         let joins = state.joins.get(channel).cloned();
         let installed_joins = state.installed_joins.get(channel).cloned();
@@ -379,8 +466,12 @@ where
                 result
             }
             None => {
+                metrics::counter!(HOT_STORE_GET_JOINS_HISTORY_FILL_METRIC, "source" => RSPACE_METRICS_SOURCE)
+                    .increment(1);
                 let from_history_store = self.get_joins_from_history_store(channel);
-                self.state.write().expect("hot store state write lock")
+                self.state
+                    .write()
+                    .expect("hot store state write lock")
                     .joins
                     .insert(channel.clone(), from_history_store.clone());
                 let mut result = Vec::new();
@@ -394,10 +485,21 @@ where
     }
 
     fn put_join(&self, channel: &C, join: &[C]) -> Option<()> {
-        let has_existing = self.state.read().expect("hot store state read lock").joins.get(channel).is_some();
+        let __start = std::time::Instant::now();
+        metrics::counter!(HOT_STORE_PUT_JOIN_CALLS_METRIC, "source" => RSPACE_METRICS_SOURCE)
+            .increment(1);
+        let has_existing = self
+            .state
+            .read()
+            .expect("hot store state read lock")
+            .joins
+            .get(channel)
+            .is_some();
         let from_history_store = if has_existing {
             None
         } else {
+            metrics::counter!(HOT_STORE_PUT_JOIN_HISTORY_FILL_METRIC, "source" => RSPACE_METRICS_SOURCE)
+                .increment(1);
             Some(self.get_joins_from_history_store(channel))
         };
 
@@ -416,6 +518,8 @@ where
                 vacant.insert(joins);
             }
         }
+        metrics::counter!(HOT_STORE_PUT_JOIN_TIME_NS_METRIC, "source" => RSPACE_METRICS_SOURCE)
+            .increment(__start.elapsed().as_nanos() as u64);
         Some(())
     }
 
@@ -644,7 +748,6 @@ where
             let (key, value) = (entry.0, entry.1);
             println!("Key: {:?}, Value: {:?}", key, value);
         }
-
     }
 
     fn clear(&self) {
@@ -656,7 +759,10 @@ where
         state.installed_joins.clear();
         drop(state);
 
-        let mut history_cache = self.history_cache.write().expect("history cache write lock");
+        let mut history_cache = self
+            .history_cache
+            .write()
+            .expect("history cache write lock");
         history_cache.continuations.clear();
         history_cache.datums.clear();
         history_cache.joins.clear();
@@ -681,7 +787,9 @@ where
         metrics::gauge!(HOT_STORE_STATE_INSTALLED_JOINS_ITEMS_METRIC, "source" => RSPACE_METRICS_SOURCE)
             .set(0.0);
 
-        Self::update_hot_store_state_metrics(&self.state.read().expect("hot store state read lock"));
+        Self::update_hot_store_state_metrics(
+            &self.state.read().expect("hot store state read lock"),
+        );
     }
 
     // See rspace/src/test/scala/coop/rchain/rspace/test/package.scala
@@ -695,7 +803,10 @@ where
     }
 
     fn set_state(&self, new_state: HotStoreState<C, P, A, K>) {
-        *self.state.write().expect("hot store state write lock for set_state") = new_state;
+        *self
+            .state
+            .write()
+            .expect("hot store state write lock for set_state") = new_state;
     }
 }
 
@@ -707,10 +818,7 @@ where
     K: Clone + Debug + Sync + Send,
 {
     fn continuation_identity(wc: &WaitingContinuation<P, K>) -> String {
-        format!(
-            "{:?}|{:?}|{}|{:?}",
-            wc.patterns, wc.continuation, wc.persist, wc.peeks
-        )
+        format!("{:?}|{:?}|{}|{:?}", wc.patterns, wc.continuation, wc.persist, wc.peeks)
     }
 
     fn now_millis() -> u64 {
@@ -720,9 +828,7 @@ where
             .as_millis() as u64
     }
 
-    fn state_metrics_update_interval_ms() -> u64 {
-        HOT_STORE_STATE_METRICS_UPDATE_INTERVAL_MS
-    }
+    fn state_metrics_update_interval_ms() -> u64 { HOT_STORE_STATE_METRICS_UPDATE_INTERVAL_MS }
 
     fn history_cache_metrics_update_interval_ms() -> u64 {
         HOT_STORE_HISTORY_CACHE_METRICS_UPDATE_INTERVAL_MS
@@ -754,19 +860,11 @@ where
             return;
         }
 
-        let cont_items: usize = state
-            .continuations
-            .values()
-            .map(|v| v.len())
-            .sum();
+        let cont_items: usize = state.continuations.values().map(|v| v.len()).sum();
         let data_items: usize = state.data.values().map(|v| v.len()).sum();
         let joins_items: usize = state.joins.values().map(|v| v.len()).sum();
         let installed_cont_items = state.installed_continuations.len();
-        let installed_joins_items: usize = state
-            .installed_joins
-            .values()
-            .map(|v| v.len())
-            .sum();
+        let installed_joins_items: usize = state.installed_joins.values().map(|v| v.len()).sum();
 
         metrics::gauge!(HOT_STORE_STATE_CONT_SIZE_METRIC, "source" => RSPACE_METRICS_SOURCE)
             .set(state.continuations.len() as f64);
@@ -799,11 +897,7 @@ where
             return;
         }
 
-        let cont_items: usize = cache
-            .continuations
-            .values()
-            .map(|v| v.len())
-            .sum();
+        let cont_items: usize = cache.continuations.values().map(|v| v.len()).sum();
         let data_items: usize = cache.datums.values().map(|v| v.len()).sum();
         let joins_items: usize = cache.joins.values().map(|v| v.len()).sum();
 
@@ -822,33 +916,38 @@ where
     }
 
     fn enforce_history_cache_bounds(cache: &mut HistoryStoreCache<C, P, A, K>) {
-        let cont_items: usize = cache
-            .continuations
-            .values()
-            .map(|v| v.len())
-            .sum();
+        let cont_items: usize = cache.continuations.values().map(|v| v.len()).sum();
         let data_items: usize = cache.datums.values().map(|v| v.len()).sum();
         let joins_items: usize = cache.joins.values().map(|v| v.len()).sum();
 
         if cache.continuations.len() >= MAX_HISTORY_STORE_CACHE_ENTRIES ||
             cont_items >= MAX_HISTORY_STORE_CACHE_CONT_ITEMS
         {
+            metrics::counter!(HOT_STORE_HISTORY_CACHE_BULK_CLEAR_CONT_METRIC, "source" => RSPACE_METRICS_SOURCE)
+                .increment(1);
             cache.continuations.clear();
         }
         if cache.datums.len() >= MAX_HISTORY_STORE_CACHE_ENTRIES ||
             data_items >= MAX_HISTORY_STORE_CACHE_DATA_ITEMS
         {
+            metrics::counter!(HOT_STORE_HISTORY_CACHE_BULK_CLEAR_DATUMS_METRIC, "source" => RSPACE_METRICS_SOURCE)
+                .increment(1);
             cache.datums.clear();
         }
         if cache.joins.len() >= MAX_HISTORY_STORE_CACHE_ENTRIES ||
             joins_items >= MAX_HISTORY_STORE_CACHE_JOIN_ITEMS
         {
+            metrics::counter!(HOT_STORE_HISTORY_CACHE_BULK_CLEAR_JOINS_METRIC, "source" => RSPACE_METRICS_SOURCE)
+                .increment(1);
             cache.joins.clear();
         }
     }
 
     fn get_cont_from_history_store(&self, channels: &[C]) -> Vec<WaitingContinuation<P, K>> {
-        let mut cache = self.history_cache.write().expect("history cache write lock");
+        let mut cache = self
+            .history_cache
+            .write()
+            .expect("history cache write lock");
         Self::enforce_history_cache_bounds(&mut cache);
         let channels_vec = channels.to_vec();
         let entry = cache.continuations.entry(channels_vec.clone());
@@ -865,7 +964,10 @@ where
     }
 
     fn get_data_from_history_store(&self, channel: &C) -> Vec<Datum<A>> {
-        let mut cache = self.history_cache.write().expect("history cache write lock");
+        let mut cache = self
+            .history_cache
+            .write()
+            .expect("history cache write lock");
         Self::enforce_history_cache_bounds(&mut cache);
         let entry = cache.datums.entry(channel.clone());
         let result = match entry {
@@ -881,7 +983,10 @@ where
     }
 
     fn get_joins_from_history_store(&self, channel: &C) -> Vec<Vec<C>> {
-        let mut cache = self.history_cache.write().expect("history cache write lock");
+        let mut cache = self
+            .history_cache
+            .write()
+            .expect("history cache write lock");
         Self::enforce_history_cache_bounds(&mut cache);
         let entry = cache.joins.entry(channel.clone());
         let result = match entry {

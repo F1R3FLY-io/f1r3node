@@ -5,6 +5,12 @@ use std::collections::HashMap;
 use super::r#match::Match;
 use super::rspace_interface::ISpace;
 use crate::rspace::internal::{ConsumeCandidate, Datum, ProduceCandidate, WaitingContinuation};
+use crate::rspace::metrics_constants::{
+    RSPACE_MATCHER_EXTRACT_FIRST_MATCH_CALLS_METRIC,
+    RSPACE_MATCHER_EXTRACT_FIRST_MATCH_CANDIDATES_ITERATED_METRIC,
+    RSPACE_MATCHER_EXTRACT_FIRST_MATCH_PAIR_CONSTRUCTION_NS_METRIC,
+    RSPACE_MATCHER_EXTRACT_FIRST_MATCH_SUCCESS_METRIC, RSPACE_METRICS_SOURCE,
+};
 
 type MatchingDataCandidate<C, A> = (ConsumeCandidate<C, A>, Vec<(Datum<A>, i32)>);
 
@@ -125,12 +131,19 @@ where
         match_candidates: Vec<(WaitingContinuation<P, K>, i32)>,
         mut channel_to_index_data: HashMap<C, Vec<(Datum<A>, i32)>>,
     ) -> Option<ProduceCandidate<C, P, A, K>> {
+        metrics::counter!(RSPACE_MATCHER_EXTRACT_FIRST_MATCH_CALLS_METRIC, "source" => RSPACE_METRICS_SOURCE)
+            .increment(1);
         for (cont, index) in &match_candidates {
+            metrics::counter!(RSPACE_MATCHER_EXTRACT_FIRST_MATCH_CANDIDATES_ITERATED_METRIC, "source" => RSPACE_METRICS_SOURCE)
+                .increment(1);
+            let __pair_start = std::time::Instant::now();
             let channel_pattern_pairs: Vec<(C, P)> = channels
                 .iter()
                 .cloned()
                 .zip(cont.patterns.iter().cloned())
                 .collect();
+            metrics::counter!(RSPACE_MATCHER_EXTRACT_FIRST_MATCH_PAIR_CONSTRUCTION_NS_METRIC, "source" => RSPACE_METRICS_SOURCE)
+                .increment(__pair_start.elapsed().as_nanos() as u64);
 
             let mut rollback = Vec::new();
             let data_candidates = self.extract_data_candidates_rollback(
@@ -141,6 +154,8 @@ where
             );
 
             if data_candidates.iter().all(|x| x.is_some()) {
+                metrics::counter!(RSPACE_MATCHER_EXTRACT_FIRST_MATCH_SUCCESS_METRIC, "source" => RSPACE_METRICS_SOURCE)
+                    .increment(1);
                 return Some(ProduceCandidate {
                     channels,
                     continuation: cont.clone(),

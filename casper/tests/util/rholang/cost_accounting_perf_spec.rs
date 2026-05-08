@@ -923,6 +923,122 @@ async fn measure_block_replay_cost() {
                 pct(match_ns)
             );
             println!("================================================================\n");
+
+            // Bottleneck #3 epicenter — hot-store put_continuation breakdown
+            let pc_calls = get_counter_value(snapshotter, "hot-store.put_continuation.calls");
+            let pc_total_ns = get_counter_value(snapshotter, "hot-store.put_continuation.time_ns");
+            let pc_ident_build_ns = get_counter_value(snapshotter, "hot-store.put_continuation.identity_build_ns");
+            let pc_ident_cmp_ns = get_counter_value(snapshotter, "hot-store.put_continuation.identity_compare_ns");
+            let pc_existing_sum = get_counter_value(snapshotter, "hot-store.put_continuation.existing_count_sum");
+            let pc_dups = get_counter_value(snapshotter, "hot-store.put_continuation.duplicates");
+            let pc_history_fill = get_counter_value(snapshotter, "hot-store.put_continuation.history_fill");
+
+            let pj_calls = get_counter_value(snapshotter, "hot-store.put_join.calls");
+            let pj_total_ns = get_counter_value(snapshotter, "hot-store.put_join.time_ns");
+            let pj_history_fill = get_counter_value(snapshotter, "hot-store.put_join.history_fill");
+
+            let pd_calls = get_counter_value(snapshotter, "hot-store.put_datum.calls");
+            let pd_total_ns = get_counter_value(snapshotter, "hot-store.put_datum.time_ns");
+            let pd_history_fill = get_counter_value(snapshotter, "hot-store.put_datum.history_fill");
+
+            let to_ms = |ns: u64| ns as f64 / 1_000_000.0;
+            let pct_of = |part: u64, whole: u64| -> f64 {
+                if whole == 0 { 0.0 } else { part as f64 / whole as f64 * 100.0 }
+            };
+
+            println!("--- Hot Store Put Operations (bottleneck #3 epicenter) ---");
+            println!("  put_continuation: {} calls, total {:.1}ms",
+                pc_calls, to_ms(pc_total_ns));
+            println!("    identity_build:    {:.1}ms ({:.1}% of put_cont)",
+                to_ms(pc_ident_build_ns), pct_of(pc_ident_build_ns, pc_total_ns));
+            println!("    identity_compare:  {:.1}ms ({:.1}% of put_cont)",
+                to_ms(pc_ident_cmp_ns), pct_of(pc_ident_cmp_ns, pc_total_ns));
+            println!("    avg existing/call: {:.2}", if pc_calls == 0 { 0.0 } else { pc_existing_sum as f64 / pc_calls as f64 });
+            println!("    duplicates: {} ({:.1}%) | history_fill: {} ({:.1}%)",
+                pc_dups, pct_of(pc_dups, pc_calls),
+                pc_history_fill, pct_of(pc_history_fill, pc_calls));
+            println!("  put_join:         {} calls, total {:.1}ms ({:.0} ns/call), history_fill: {} ({:.1}%)",
+                pj_calls, to_ms(pj_total_ns),
+                if pj_calls == 0 { 0.0 } else { pj_total_ns as f64 / pj_calls as f64 },
+                pj_history_fill, pct_of(pj_history_fill, pj_calls));
+            println!("  put_datum:        {} calls, total {:.1}ms ({:.0} ns/call), history_fill: {} ({:.1}%)",
+                pd_calls, to_ms(pd_total_ns),
+                if pd_calls == 0 { 0.0 } else { pd_total_ns as f64 / pd_calls as f64 },
+                pd_history_fill, pct_of(pd_history_fill, pd_calls));
+            println!("================================================================\n");
+
+            // Hot store get + cache eviction
+            let gc_calls = get_counter_value(snapshotter, "hot-store.get_continuations.calls");
+            let gc_fill = get_counter_value(snapshotter, "hot-store.get_continuations.history_fill");
+            let gd_calls = get_counter_value(snapshotter, "hot-store.get_data.calls");
+            let gd_fill = get_counter_value(snapshotter, "hot-store.get_data.history_fill");
+            let gj_calls = get_counter_value(snapshotter, "hot-store.get_joins.calls");
+            let gj_fill = get_counter_value(snapshotter, "hot-store.get_joins.history_fill");
+            let bc_cont = get_counter_value(snapshotter, "hot-store.history_cache.bulk_clear.continuations");
+            let bc_data = get_counter_value(snapshotter, "hot-store.history_cache.bulk_clear.datums");
+            let bc_joins = get_counter_value(snapshotter, "hot-store.history_cache.bulk_clear.joins");
+
+            println!("--- Hot Store Reads + Cache Eviction ---");
+            println!("  get_continuations: {} calls, history_fill: {} ({:.1}%)",
+                gc_calls, gc_fill, pct_of(gc_fill, gc_calls));
+            println!("  get_data:          {} calls, history_fill: {} ({:.1}%)",
+                gd_calls, gd_fill, pct_of(gd_fill, gd_calls));
+            println!("  get_joins:         {} calls, history_fill: {} ({:.1}%)",
+                gj_calls, gj_fill, pct_of(gj_fill, gj_calls));
+            println!("  history_cache.bulk_clear: cont={} datums={} joins={}",
+                bc_cont, bc_data, bc_joins);
+            println!("================================================================\n");
+
+            // Bottleneck #2 epicenter — matcher + fold_match
+            let efm_calls = get_counter_value(snapshotter, "rspace.matcher.extract_first_match.calls");
+            let efm_success = get_counter_value(snapshotter, "rspace.matcher.extract_first_match.success");
+            let efm_iter = get_counter_value(snapshotter, "rspace.matcher.extract_first_match.candidates_iterated");
+            let efm_pair_ns = get_counter_value(snapshotter, "rspace.matcher.extract_first_match.pair_construction_ns");
+            let fold_calls = get_counter_value(snapshotter, "rholang.matcher.fold_match.calls");
+            let fold_depth_total = get_counter_value(snapshotter, "rholang.matcher.fold_match.recursion_depth_total");
+            let fold_clone_ns = get_counter_value(snapshotter, "rholang.matcher.fold_match.tail_clone_ns");
+            let matcher_get_calls = get_counter_value(snapshotter, "rspace.matcher.get_calls");
+            let matcher_clone_ns = get_counter_value(snapshotter, "rspace.matcher.clone_ns");
+            let matcher_fold_ns = get_counter_value(snapshotter, "rspace.matcher.fold_match_ns");
+
+            println!("--- Matcher Path (bottleneck #2 epicenter) ---");
+            println!("  extract_first_match: {} calls ({} success, {:.1}% hit rate)",
+                efm_calls, efm_success, pct_of(efm_success, efm_calls));
+            println!("    avg candidates iterated: {:.2}",
+                if efm_calls == 0 { 0.0 } else { efm_iter as f64 / efm_calls as f64 });
+            println!("    pair_construction time: {:.1}ms total ({:.0} ns/call)",
+                to_ms(efm_pair_ns),
+                if efm_calls == 0 { 0.0 } else { efm_pair_ns as f64 / efm_calls as f64 });
+            println!("  matcher.get (rspace): {} calls, clone {:.1}ms, fold_match {:.1}ms",
+                matcher_get_calls, to_ms(matcher_clone_ns), to_ms(matcher_fold_ns));
+            println!("  fold_match (rholang): {} calls, depth_total {} (avg depth {:.2})",
+                fold_calls, fold_depth_total,
+                if fold_calls == 0 { 0.0 } else { fold_depth_total as f64 / fold_calls as f64 });
+            println!("    tail_clone (to_vec/to_owned per recursion): {:.1}ms ({:.0} ns/call)",
+                to_ms(fold_clone_ns),
+                if fold_calls == 0 { 0.0 } else { fold_clone_ns as f64 / fold_calls as f64 });
+            println!("================================================================\n");
+
+            // Cold path
+            let fd_calls = get_counter_value(snapshotter, "history.fetch_data.calls");
+            let fd_total_ns = get_counter_value(snapshotter, "history.fetch_data.time_ns");
+            let fd_trie_ns = get_counter_value(snapshotter, "history.fetch_data.target_history_read_ns");
+            let fd_leaf_ns = get_counter_value(snapshotter, "history.fetch_data.leaf_store_get_ns");
+            let fd_deser_ns = get_counter_value(snapshotter, "history.fetch_data.bincode_deserialize_ns");
+            let fd_legacy = get_counter_value(snapshotter, "history.fetch_data.legacy_fallback_fired");
+
+            println!("--- Cold Path: history.fetch_data (LMDB / radix trie) ---");
+            println!("  fetch_data: {} calls, total {:.1}ms ({:.0} ns/call)",
+                fd_calls, to_ms(fd_total_ns),
+                if fd_calls == 0 { 0.0 } else { fd_total_ns as f64 / fd_calls as f64 });
+            println!("    target_history.read (radix trie): {:.1}ms ({:.1}% of fetch)",
+                to_ms(fd_trie_ns), pct_of(fd_trie_ns, fd_total_ns));
+            println!("    leaf_store.get_one (LMDB):       {:.1}ms ({:.1}% of fetch)",
+                to_ms(fd_leaf_ns), pct_of(fd_leaf_ns, fd_total_ns));
+            println!("    bincode_deserialize:              {:.1}ms ({:.1}% of fetch)",
+                to_ms(fd_deser_ns), pct_of(fd_deser_ns, fd_total_ns));
+            println!("    legacy_fallback fired: {}", fd_legacy);
+            println!("================================================================\n");
         },
     )
     .await

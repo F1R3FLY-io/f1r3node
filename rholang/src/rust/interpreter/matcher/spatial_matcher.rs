@@ -217,7 +217,7 @@ impl SpatialMatcher<Par, Par> for SpatialMatcherContext {
 
             // println!("wildcard: {:?}", wildcard);
 
-            let filtered_pattern = no_frees(pattern.clone());
+            let filtered_pattern = no_frees(&pattern);
             // println!("filtered_pattern: {:?}", filtered_pattern);
             let pc = ParCount::new(&filtered_pattern);
             // println!("pc: {:?}", pc);
@@ -330,7 +330,7 @@ impl SpatialMatcher<Par, Par> for SpatialMatcherContext {
             .and_then(|_| {
                 self.list_match_single_(
                     remainder.exprs,
-                    no_frees_exprs(pattern.exprs),
+                    no_frees_exprs(&pattern.exprs),
                     &|p, s| p.with_exprs(s),
                     var_level,
                     wildcard,
