@@ -554,7 +554,7 @@ impl<T: TransportLayer + Send + Sync> Running<T> {
         };
 
         let runtime = self.casper.runtime_manager();
-        let (_key_bytes, value_bytes_opt) = runtime.get_mergeable_entry_raw(&block)?;
+        let (_key_bytes, value_bytes_opt) = runtime.get_mergeable_entry_bytes(&block)?;
 
         let serialized_entry: prost::bytes::Bytes = value_bytes_opt
             .map(prost::bytes::Bytes::from)

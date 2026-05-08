@@ -957,21 +957,31 @@ impl RuntimeManager {
             .map_err(|e| CasperError::KvStoreError(KvStoreError::SerializationError(e.to_string())))
     }
 
-    /// Look up the raw bincode bytes of a block's mergeable-channels entry.
-    /// Returns `(key_bytes, Some(value_bytes))` if present, `(key_bytes, None)`
-    /// if the key is absent.
-    pub fn get_mergeable_entry_raw(
+    /// Look up a block's mergeable-channels entry and return its over-the-wire
+    /// byte form. Returns `(key_bytes, Some(value_bytes))` if present,
+    /// `(key_bytes, None)` if absent. Re-serializes via bincode at the typed
+    /// store boundary so the wire format is independent of LMDB's internal
+    /// encoding.
+    pub fn get_mergeable_entry_bytes(
         &self,
         block: &models::rust::casper::protocol::casper_message::BlockMessage,
     ) -> Result<(Vec<u8>, Option<Vec<u8>>), CasperError> {
         let key_bytes = Self::mergeable_key_bytes_for_block(block)?;
-        let value_bytes = self.mergeable_store.raw_get(&key_bytes)?;
+        let value: Option<Vec<DeployMergeableData>> =
+            self.mergeable_store.get_one(&key_bytes)?;
+        let value_bytes = value
+            .map(|v| bincode::serialize(&v))
+            .transpose()
+            .map_err(|e| {
+                CasperError::KvStoreError(KvStoreError::SerializationError(e.to_string()))
+            })?;
         Ok((key_bytes, value_bytes))
     }
 
-    /// Write a mergeable-channels entry from raw bincode bytes (without
-    /// re-serializing). Skips empty `value_bytes`.
-    pub fn put_mergeable_entry_raw(
+    /// Store a mergeable-channels entry received over the wire. Decodes the
+    /// transported bytes and writes via the typed store. Empty `value_bytes`
+    /// signals "peer had no entry" and is a no-op.
+    pub fn put_mergeable_entry_bytes(
         &self,
         key_bytes: Vec<u8>,
         value_bytes: Vec<u8>,
@@ -979,8 +989,12 @@ impl RuntimeManager {
         if value_bytes.is_empty() {
             return Ok(());
         }
+        let value: Vec<DeployMergeableData> =
+            bincode::deserialize(&value_bytes).map_err(|e| {
+                CasperError::KvStoreError(KvStoreError::SerializationError(e.to_string()))
+            })?;
         self.mergeable_store
-            .raw_put(key_bytes, value_bytes)
+            .put_one(key_bytes, value)
             .map_err(CasperError::KvStoreError)
     }
 

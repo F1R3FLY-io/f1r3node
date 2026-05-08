@@ -24,13 +24,18 @@ impl RSpaceExporterItems {
     ) -> StoreItems<Blake2b256Hash, ByteVector> {
         let exporter = exporter.lock().unwrap();
 
-        // Traverse and collect tuple space nodes
-        let nodes = exporter.get_nodes(start_path, skip, take);
+        let nodes = exporter.get_nodes(start_path.clone(), skip, take);
 
-        // Get last entry / raise exception if empty (partial function)
-        let last_entry = nodes.last().expect("EmptyHistoryException");
+        // Empty traversal: subtree exhausted (start_path is a leaf or unknown).
+        // Return last_path == start_path so the requester treats it as a
+        // terminal cursor (no follow-up request, chunk -> Done).
+        let Some(last_entry) = nodes.last() else {
+            return StoreItems {
+                items: vec![],
+                last_path: start_path,
+            };
+        };
 
-        // Load all history items / without leafs
         let history_keys: Vec<_> = nodes.iter().filter(|node| !node.is_leaf).collect();
         let keys: Vec<Blake2b256Hash> = history_keys
             .iter()
@@ -56,13 +61,18 @@ impl RSpaceExporterItems {
     ) -> StoreItems<Blake2b256Hash, ByteVector> {
         let exporter = exporter.lock().unwrap();
 
-        // Traverse and collect tuple space nodes
-        let nodes = exporter.get_nodes(start_path, skip, take);
+        let nodes = exporter.get_nodes(start_path.clone(), skip, take);
 
-        // Get last entry / raise exception if empty (partial function)
-        let last_entry = nodes.last().expect("EmptyHistoryException");
+        // Empty traversal: subtree exhausted (start_path is a leaf or unknown).
+        // Return last_path == start_path so the requester treats it as a
+        // terminal cursor (no follow-up request, chunk -> Done).
+        let Some(last_entry) = nodes.last() else {
+            return StoreItems {
+                items: vec![],
+                last_path: start_path,
+            };
+        };
 
-        // Load all data items / without history
         let data_keys: Vec<_> = nodes.iter().filter(|node| !node.is_leaf).collect();
         let keys: Vec<Blake2b256Hash> = data_keys
             .iter()

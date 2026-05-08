@@ -1060,7 +1060,7 @@ impl<T: TransportLayer + Send + Sync> BlockRequesterOps for BlockRequesterWrappe
                     .to_string(),
             )
         })?;
-        runtime_manager.put_mergeable_entry_raw(key_bytes, serialized_entry.to_vec())
+        runtime_manager.put_mergeable_entry_bytes(key_bytes, serialized_entry.to_vec())
     }
 }
 

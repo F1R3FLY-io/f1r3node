@@ -120,18 +120,6 @@ where
         })?;
         Ok(matched)
     }
-
-    /// Read a value by its already-encoded key bytes, returning the raw value
-    /// bytes without decoding. Bypasses the typed K/V serialization layer.
-    pub fn raw_get(&self, key_bytes: &[u8]) -> Result<Option<Vec<u8>>, KvStoreError> {
-        self.store.get_one(&key_bytes.to_vec())
-    }
-
-    /// Write a value under its already-encoded key bytes without re-serializing.
-    /// Companion to [`raw_get`].
-    pub fn raw_put(&self, key_bytes: Vec<u8>, value_bytes: Vec<u8>) -> Result<(), KvStoreError> {
-        self.store.put(vec![(key_bytes, value_bytes)])
-    }
 }
 
 impl<K, V> KeyValueTypedStore<K, V> for KeyValueTypedStoreImpl<K, V>
