@@ -2,7 +2,7 @@
 
 use std::{collections::HashMap, marker::PhantomData, sync::Arc};
 
-use crate::rust::{BitVector, store::key_value_store::KeyValueStore};
+use crate::rust::{store::key_value_store::KeyValueStore, BitVector};
 
 use super::{key_value_store::KvStoreError, key_value_typed_store::KeyValueTypedStore};
 

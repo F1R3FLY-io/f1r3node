@@ -2291,8 +2291,13 @@ async fn parent_validation_should_pass_when_parent_within_horizon() {
         }];
 
         // Chain of 5 blocks. Tip at chain[4] (block_number=4).
-        let chain =
-            build_linear_chain(&mut block_store, &mut block_dag_storage, 5, bonds.clone(), v0.clone());
+        let chain = build_linear_chain(
+            &mut block_store,
+            &mut block_dag_storage,
+            5,
+            bonds.clone(),
+            v0.clone(),
+        );
         let genesis = chain[0].clone();
         let tip = chain[4].clone();
 
@@ -2342,8 +2347,13 @@ async fn parent_validation_should_pass_at_horizon_boundary() {
         }];
 
         // Chain of 6 blocks. Max block_number = 5, latest_block_number() returns 6.
-        let chain =
-            build_linear_chain(&mut block_store, &mut block_dag_storage, 6, bonds.clone(), v0.clone());
+        let chain = build_linear_chain(
+            &mut block_store,
+            &mut block_dag_storage,
+            6,
+            bonds.clone(),
+            v0.clone(),
+        );
         let genesis = chain[0].clone();
         let parent_at_depth_4 = chain[2].clone(); // block_number=2, depth=6-2=4
 
@@ -2393,8 +2403,13 @@ async fn parent_validation_should_pass_at_horizon_plus_buffer_boundary() {
         }];
 
         // Chain of 7 blocks. Max block_number = 6, latest_block_number() returns 7.
-        let chain =
-            build_linear_chain(&mut block_store, &mut block_dag_storage, 7, bonds.clone(), v0.clone());
+        let chain = build_linear_chain(
+            &mut block_store,
+            &mut block_dag_storage,
+            7,
+            bonds.clone(),
+            v0.clone(),
+        );
         let genesis = chain[0].clone();
         let parent_at_depth_5 = chain[2].clone(); // block_number=2, depth=7-2=5
 
@@ -2444,8 +2459,13 @@ async fn parent_validation_should_reject_when_parent_beyond_horizon() {
         }];
 
         // Chain of 7 blocks. Max block_number = 6, latest_block_number() returns 7.
-        let chain =
-            build_linear_chain(&mut block_store, &mut block_dag_storage, 7, bonds.clone(), v0.clone());
+        let chain = build_linear_chain(
+            &mut block_store,
+            &mut block_dag_storage,
+            7,
+            bonds.clone(),
+            v0.clone(),
+        );
         let genesis = chain[0].clone();
         let parent_at_depth_6 = chain[1].clone(); // block_number=1, depth=7-1=6
 
@@ -2554,8 +2574,13 @@ async fn parent_validation_should_skip_depth_check_when_max_parent_depth_is_unli
         }];
 
         // Chain of 7 blocks. Max block_number = 6, latest_block_number() returns 7.
-        let chain =
-            build_linear_chain(&mut block_store, &mut block_dag_storage, 7, bonds.clone(), v0.clone());
+        let chain = build_linear_chain(
+            &mut block_store,
+            &mut block_dag_storage,
+            7,
+            bonds.clone(),
+            v0.clone(),
+        );
         let genesis = chain[0].clone();
         let parent_at_depth_6 = chain[1].clone(); // depth=7-1=6
 

@@ -11,7 +11,7 @@ use block_storage::rust::key_value_block_store::KeyValueBlockStore;
 use block_storage::rust::test::indexed_block_dag_storage::IndexedBlockDagStorage;
 use casper::rust::casper::CasperShardConf;
 use casper::rust::util::rspace_history_horizon::compute_forward_horizon_roots;
-use models::rust::casper::protocol::casper_message::{Bond, BlockMessage};
+use models::rust::casper::protocol::casper_message::{BlockMessage, Bond};
 use prost::bytes::Bytes;
 use rspace_plus_plus::rspace::hashing::blake2b256_hash::Blake2b256Hash;
 
@@ -173,8 +173,7 @@ async fn excludes_blocks_outside_horizon() {
         // chain[6]'s post-state SHOULD appear, but only as chain[7]'s pre-state
         // (chain[6] itself is outside the horizon). This proves the pre-state
         // collection bridges one level of horizon-edge state.
-        let chain6_post =
-            Blake2b256Hash::from_bytes_prost(&chain[6].body.state.post_state_hash);
+        let chain6_post = Blake2b256Hash::from_bytes_prost(&chain[6].body.state.post_state_hash);
         assert!(
             roots.contains(&chain6_post),
             "chain[6]'s post-state must appear via chain[7]'s pre-state (horizon-edge bridge)"
@@ -264,8 +263,13 @@ async fn pre_state_included_for_multi_parent_block() {
         // multi-parent block joining their tips. The multi-parent block's
         // pre_state_hash is set to a SEED unique to neither parent's post
         // (mirrors a real merge intermediate computed via dag_merger).
-        let chain =
-            build_chain(&mut block_store, &mut block_dag_storage, 3, bonds.clone(), v0.clone());
+        let chain = build_chain(
+            &mut block_store,
+            &mut block_dag_storage,
+            3,
+            bonds.clone(),
+            v0.clone(),
+        );
         let genesis = chain[0].clone();
         let parent_a = chain[2].clone(); // sender v0, post=unique_state_hash(2)
         let parent_b = create_block(
@@ -335,8 +339,13 @@ async fn single_parent_pre_state_dedupes_against_parent_post_state() {
         // appear as a separate root entry — it dedupes against the parent's
         // already-collected post-state. Without the HashSet dedup, the
         // result would double-count every parent-child boundary.
-        let chain =
-            build_chain(&mut block_store, &mut block_dag_storage, 4, bonds.clone(), v0.clone());
+        let chain = build_chain(
+            &mut block_store,
+            &mut block_dag_storage,
+            4,
+            bonds.clone(),
+            v0.clone(),
+        );
 
         let dag = block_dag_storage.get_representation();
         let conf = mk_conf(10, 0); // wide window — all 4 blocks in scope
@@ -345,8 +354,7 @@ async fn single_parent_pre_state_dedupes_against_parent_post_state() {
 
         // chain[1].post is referenced both as chain[1]'s own post AND as
         // chain[2]'s pre-state. It must appear in `roots` exactly once.
-        let chain_1_post =
-            Blake2b256Hash::from_bytes_prost(&chain[1].body.state.post_state_hash);
+        let chain_1_post = Blake2b256Hash::from_bytes_prost(&chain[1].body.state.post_state_hash);
         let count = roots.iter().filter(|r| **r == chain_1_post).count();
         assert_eq!(
             count, 1,
@@ -354,8 +362,7 @@ async fn single_parent_pre_state_dedupes_against_parent_post_state() {
         );
 
         // Symmetric check on chain[2].post / chain[3].pre.
-        let chain_2_post =
-            Blake2b256Hash::from_bytes_prost(&chain[2].body.state.post_state_hash);
+        let chain_2_post = Blake2b256Hash::from_bytes_prost(&chain[2].body.state.post_state_hash);
         let count = roots.iter().filter(|r| **r == chain_2_post).count();
         assert_eq!(
             count, 1,

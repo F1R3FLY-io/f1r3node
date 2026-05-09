@@ -47,8 +47,8 @@ use rspace_plus_plus::rspace::{
     hashing::blake2b256_hash::Blake2b256Hash, state::rspace_importer::RSpaceImporter,
 };
 use shared::rust::{
-    ByteString,
     shared::{f1r3fly_event::F1r3flyEvent, f1r3fly_events::F1r3flyEvents},
+    ByteString,
 };
 
 use crate::rust::block_status::ValidBlock;
@@ -66,8 +66,8 @@ use crate::rust::{
     engine::{
         block_retriever::BlockRetriever,
         engine::{
-            Engine, log_no_approved_block_available, send_no_approved_block_available,
-            transition_to_running,
+            log_no_approved_block_available, send_no_approved_block_available,
+            transition_to_running, Engine,
         },
         engine_cell::EngineCell,
         lfs_block_requester::{self, BlockRequesterOps},
@@ -692,13 +692,14 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
         // check in `validate::parents`.
         {
             let dag = self.block_dag_storage.get_representation();
-            let horizon_roots = crate::rust::util::rspace_history_horizon::compute_forward_horizon_roots(
-                &dag,
-                &self.block_store,
-                &approved_block.candidate.block,
-                &self.casper_shard_conf,
-            )
-            .map_err(|e| CasperError::KvStoreError(e))?;
+            let horizon_roots =
+                crate::rust::util::rspace_history_horizon::compute_forward_horizon_roots(
+                    &dag,
+                    &self.block_store,
+                    &approved_block.candidate.block,
+                    &self.casper_shard_conf,
+                )
+                .map_err(|e| CasperError::KvStoreError(e))?;
 
             if !horizon_roots.is_empty() {
                 // Phase 1's tuple_space_message_receiver was consumed by
@@ -722,23 +723,20 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
                 // drive to completion, then check the final ST.is_finished()
                 // to detect incomplete sync.
                 use futures::StreamExt;
-                let horizon_requester = HorizonRequester::new(
-                    &self.transport_layer,
-                    &self.rp_conf_ask,
-                );
+                let horizon_requester =
+                    HorizonRequester::new(&self.transport_layer, &self.rp_conf_ask);
                 let rm_for_has_root = self.runtime_manager.clone();
                 let has_root: crate::rust::engine::lfs_horizon_requester::HasRootFn =
                     Arc::new(move |root| rm_for_has_root.has_root(root));
-                let horizon_stream =
-                    crate::rust::engine::lfs_horizon_requester::stream(
-                        horizon_roots,
-                        has_root,
-                        self.rspace_state_manager.importer.clone(),
-                        horizon_requester,
-                        horizon_rx,
-                        request_timeout,
-                    )
-                    .await;
+                let horizon_stream = crate::rust::engine::lfs_horizon_requester::stream(
+                    horizon_roots,
+                    has_root,
+                    self.rspace_state_manager.importer.clone(),
+                    horizon_requester,
+                    horizon_rx,
+                    request_timeout,
+                )
+                .await;
 
                 // Drop the temporary sender so subsequent StoreItemsMessages
                 // (none expected once Running) don't queue indefinitely.
@@ -1082,10 +1080,7 @@ impl<'a, T: TransportLayer> BlockRequesterWrapper<'a, T> {
 
     /// Attach a `RuntimeManager` so the wrapper can import mergeable-channel
     /// entries.
-    pub fn with_runtime_manager(
-        mut self,
-        runtime_manager: Arc<RuntimeManager>,
-    ) -> Self {
+    pub fn with_runtime_manager(mut self, runtime_manager: Arc<RuntimeManager>) -> Self {
         self.runtime_manager = Some(runtime_manager);
         self
     }
@@ -1169,8 +1164,7 @@ impl<'a, T: TransportLayer> HorizonRequester<'a, T> {
 
 #[async_trait]
 impl<T: TransportLayer + Send + Sync>
-    crate::rust::engine::lfs_horizon_requester::HorizonRequesterOps
-    for HorizonRequester<'_, T>
+    crate::rust::engine::lfs_horizon_requester::HorizonRequesterOps for HorizonRequester<'_, T>
 {
     async fn request_for_horizon_chunk(
         &self,

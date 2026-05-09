@@ -7,8 +7,8 @@ use std::hash::Hash;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tokio::sync::Semaphore;
 use tokio::sync::mpsc;
+use tokio::sync::Semaphore;
 
 use models::rust::block_hash::BlockHash;
 use models::rust::casper::pretty_printer::PrettyPrinter;

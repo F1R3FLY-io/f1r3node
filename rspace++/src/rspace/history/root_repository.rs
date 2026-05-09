@@ -61,9 +61,10 @@ impl RootRepository {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::collections::HashSet;
     use std::sync::Mutex;
+
+    use super::*;
 
     /// Minimal in-memory RootsStore for testing the lookup-vs-set distinction.
     /// Tracks recorded roots and the current-root pointer separately so tests

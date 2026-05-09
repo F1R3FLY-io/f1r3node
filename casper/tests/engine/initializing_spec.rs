@@ -5,8 +5,8 @@ use std::collections::HashSet;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{
-    Arc,
     atomic::{AtomicBool, Ordering},
+    Arc,
 };
 use tokio::sync::mpsc;
 
@@ -25,8 +25,8 @@ use models::rust::casper::protocol::casper_message::{
     ApprovedBlock, ApprovedBlockRequest, BlockMessage, BlockRequest, CasperMessage,
     StoreItemsMessage, StoreItemsMessageRequest,
 };
-use prost::Message;
 use prost::bytes::Bytes;
+use prost::Message;
 
 use casper::rust::errors::CasperError;
 use comm::rust::rp::protocol_helper::packet_with_content;

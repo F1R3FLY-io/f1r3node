@@ -166,8 +166,7 @@ struct RootProgress {
 /// Closure type for "is this root already in the joiner's roots store?".
 /// Decoupled from `RuntimeManager` so the orchestrator can be unit-tested
 /// against a fake roots store without spinning up the runtime stack.
-pub type HasRootFn =
-    Arc<dyn Fn(&Blake2b256Hash) -> Result<bool, CasperError> + Send + Sync>;
+pub type HasRootFn = Arc<dyn Fn(&Blake2b256Hash) -> Result<bool, CasperError> + Send + Sync>;
 
 struct HorizonStreamProcessor<T: HorizonRequesterOps> {
     request_ops: T,
@@ -214,9 +213,7 @@ impl<T: HorizonRequesterOps> HorizonStreamProcessor<T> {
             is_valid
         };
         if !was_known {
-            tracing::debug!(
-                "LFS forward-horizon: ignoring chunk for unknown/stale path"
-            );
+            tracing::debug!("LFS forward-horizon: ignoring chunk for unknown/stale path");
             return Ok(());
         }
 
@@ -254,13 +251,10 @@ impl<T: HorizonRequesterOps> HorizonStreamProcessor<T> {
             // Byzantine signal: terminal cursor on first chunk + no data
             // means the peer doesn't have this root. Fail loud.
             let progress = {
-                let progress_map =
-                    self.root_progress.lock().expect("root_progress lock");
+                let progress_map = self.root_progress.lock().expect("root_progress lock");
                 progress_map.get(&root).cloned().unwrap_or_default()
             };
-            if progress.chunk_count == 1
-                && progress.total_history == 0
-                && progress.total_data == 0
+            if progress.chunk_count == 1 && progress.total_history == 0 && progress.total_data == 0
             {
                 return Err(CasperError::RuntimeError(format!(
                     "LFS forward-horizon: bootstrap signalled empty/missing root {} \
@@ -283,7 +277,10 @@ impl<T: HorizonRequesterOps> HorizonStreamProcessor<T> {
 
             tracing::debug!(
                 "LFS forward-horizon: completed root {} ({} chunks, {} history, {} data)",
-                root, progress.chunk_count, progress.total_history, progress.total_data
+                root,
+                progress.chunk_count,
+                progress.total_history,
+                progress.total_data
             );
 
             // Mark Done and free per-root state.
@@ -852,9 +849,13 @@ mod tests {
 
         // Pre-feed the response.
         let start = vec![(root.clone(), None)];
-        tx.send(make_response(start.clone(), start.clone(), Some(hash_for(8))))
-            .await
-            .unwrap();
+        tx.send(make_response(
+            start.clone(),
+            start.clone(),
+            Some(hash_for(8)),
+        ))
+        .await
+        .unwrap();
         // Drop tx so the receiver eventually sees channel-closed if loop
         // doesn't terminate via is_finished.
         drop(tx);

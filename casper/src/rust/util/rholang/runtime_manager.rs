@@ -31,10 +31,10 @@ use rspace_plus_plus::rspace::merger::merging_logic::{NumberChannelsDiff, Number
 use rspace_plus_plus::rspace::replay_rspace::ReplayRSpace;
 use rspace_plus_plus::rspace::rspace::{RSpace, RSpaceStore};
 use rspace_plus_plus::rspace::shared::key_value_store_manager::KeyValueStoreManager;
-use shared::rust::ByteVector;
 use shared::rust::store::key_value_store::KvStoreError;
 use shared::rust::store::key_value_typed_store::KeyValueTypedStore;
 use shared::rust::store::key_value_typed_store_impl::KeyValueTypedStoreImpl;
+use shared::rust::ByteVector;
 
 use crate::rust::errors::CasperError;
 use crate::rust::merging::block_index::BlockIndex;
@@ -967,8 +967,7 @@ impl RuntimeManager {
         block: &models::rust::casper::protocol::casper_message::BlockMessage,
     ) -> Result<(Vec<u8>, Option<Vec<u8>>), CasperError> {
         let key_bytes = Self::mergeable_key_bytes_for_block(block)?;
-        let value: Option<Vec<DeployMergeableData>> =
-            self.mergeable_store.get_one(&key_bytes)?;
+        let value: Option<Vec<DeployMergeableData>> = self.mergeable_store.get_one(&key_bytes)?;
         let value_bytes = value
             .map(|v| bincode::serialize(&v))
             .transpose()
@@ -989,10 +988,9 @@ impl RuntimeManager {
         if value_bytes.is_empty() {
             return Ok(());
         }
-        let value: Vec<DeployMergeableData> =
-            bincode::deserialize(&value_bytes).map_err(|e| {
-                CasperError::KvStoreError(KvStoreError::SerializationError(e.to_string()))
-            })?;
+        let value: Vec<DeployMergeableData> = bincode::deserialize(&value_bytes).map_err(|e| {
+            CasperError::KvStoreError(KvStoreError::SerializationError(e.to_string()))
+        })?;
         self.mergeable_store
             .put_one(key_bytes, value)
             .map_err(CasperError::KvStoreError)

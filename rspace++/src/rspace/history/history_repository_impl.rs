@@ -69,9 +69,7 @@ where
         })
     }
 
-    fn checkpoint_parallel_actions_threshold() -> usize {
-        CHECKPOINT_PARALLEL_ACTIONS_THRESHOLD
-    }
+    fn checkpoint_parallel_actions_threshold() -> usize { CHECKPOINT_PARALLEL_ACTIONS_THRESHOLD }
 
     fn should_parallelize_checkpoint_actions(actions_len: usize) -> bool {
         actions_len >= Self::checkpoint_parallel_actions_threshold()
@@ -270,39 +268,39 @@ where
         match hot_store_action {
             HotStoreAction::Insert(InsertData(i)) => {
                 let key = hash(&i.channel);
-                HotStoreTrieAction::TrieInsertAction(
-                    TrieInsertAction::TrieInsertProduce(TrieInsertProduce::new(key, i.data)),
-                )
+                HotStoreTrieAction::TrieInsertAction(TrieInsertAction::TrieInsertProduce(
+                    TrieInsertProduce::new(key, i.data),
+                ))
             }
             HotStoreAction::Insert(InsertContinuations(i)) => {
                 let key = hash_from_vec(&i.channels);
-                HotStoreTrieAction::TrieInsertAction(
-                    TrieInsertAction::TrieInsertConsume(TrieInsertConsume::new(key, i.continuations)),
-                )
+                HotStoreTrieAction::TrieInsertAction(TrieInsertAction::TrieInsertConsume(
+                    TrieInsertConsume::new(key, i.continuations),
+                ))
             }
             HotStoreAction::Insert(InsertJoins(i)) => {
                 let key = hash(&i.channel);
-                HotStoreTrieAction::TrieInsertAction(
-                    TrieInsertAction::TrieInsertJoins(TrieInsertJoins::new(key, i.joins)),
-                )
+                HotStoreTrieAction::TrieInsertAction(TrieInsertAction::TrieInsertJoins(
+                    TrieInsertJoins::new(key, i.joins),
+                ))
             }
             HotStoreAction::Delete(DeleteData(d)) => {
                 let key = hash(&d.channel);
-                HotStoreTrieAction::TrieDeleteAction(
-                    TrieDeleteAction::TrieDeleteProduce(TrieDeleteProduce::new(key)),
-                )
+                HotStoreTrieAction::TrieDeleteAction(TrieDeleteAction::TrieDeleteProduce(
+                    TrieDeleteProduce::new(key),
+                ))
             }
             HotStoreAction::Delete(DeleteContinuations(d)) => {
                 let key = hash_from_vec(&d.channels);
-                HotStoreTrieAction::TrieDeleteAction(
-                    TrieDeleteAction::TrieDeleteConsume(TrieDeleteConsume::new(key)),
-                )
+                HotStoreTrieAction::TrieDeleteAction(TrieDeleteAction::TrieDeleteConsume(
+                    TrieDeleteConsume::new(key),
+                ))
             }
             HotStoreAction::Delete(DeleteJoins(d)) => {
                 let key = hash(&d.channel);
-                HotStoreTrieAction::TrieDeleteAction(
-                    TrieDeleteAction::TrieDeleteJoins(TrieDeleteJoins::new(key)),
-                )
+                HotStoreTrieAction::TrieDeleteAction(TrieDeleteAction::TrieDeleteJoins(
+                    TrieDeleteJoins::new(key),
+                ))
             }
         }
     }
