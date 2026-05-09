@@ -240,6 +240,13 @@ impl InitializingSpec {
                 .send(genesis_clone)
                 .await
                 .expect("Failed to enqueue block response");
+            // Brief yield so the LFS stream processes the genesis BlockMessage
+            // (running save_block → mergeable_pending(genesis)) before the
+            // mergeable response below is delivered. Without this, the select
+            // loop may consume the response first and reject it as unsolicited
+            // (was_pending=false), leaving mergeable_d non-empty forever and
+            // the stream blocked waiting for a response that already arrived.
+            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
             // Empty serialized_entry signals "peer has no entry"; this test
             // doesn't exercise actual entry import, just the done-on-response gate.
             mergeable_message_tx

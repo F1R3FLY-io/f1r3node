@@ -550,36 +550,18 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
         // Starting minimum block height. When latest blocks are downloaded new minimum will be calculated.
         let block = &approved_block.candidate.block;
         let start_block_number = proto_util::block_number(block);
-        let min_block_number_for_deploy_lifespan = std::cmp::max(
-            0,
-            start_block_number - self.casper_shard_conf.deploy_lifespan,
-        );
-        // Forward-horizon lower bound: also fetch every block reachable as a
-        // parent of any block within `max_parent_depth + depth_buffer` of LFB.
-        // Without this, lfs_block_requester rejects side-branch blocks below
-        // `deploy_lifespan` (default 50) even though they're still legitimate
-        // parents of upcoming proposals. After Running, gossip blocks
-        // referencing those rejected ancestors trigger
-        // `DAG storage is missing hash` (KvStoreError) and
-        // `validateAndSetCurrentRoot FAILED ... not in roots store`
-        // (RootRepositoryDivergence) on the joiner.
-        let max_parent_depth = self.casper_shard_conf.max_parent_depth as i64;
-        let depth_buffer = self
-            .casper_shard_conf
-            .mergeable_channels_gc_depth_buffer as i64;
-        let min_block_number_for_horizon = if max_parent_depth >= i32::MAX as i64 {
-            // Disabled depth check → no horizon clamping needed. Caller can
-            // opt into full replay (`disable-lfs = true`) for that scenario.
-            min_block_number_for_deploy_lifespan
-        } else {
-            std::cmp::max(0, start_block_number - max_parent_depth - depth_buffer)
-        };
-        // Take the LOWER of the two so LFS covers both the deploy-lifespan
-        // window AND the parent-merge horizon.
-        let min_block_number_for_deploy_lifespan = std::cmp::min(
-            min_block_number_for_deploy_lifespan,
-            min_block_number_for_horizon,
-        );
+        // Compute the LFS lower bound: take the lower (= older floor) of
+        // (a) deploy_lifespan window and (b) forward-horizon parent reach.
+        // See `rspace_history_horizon::lfs_min_block_number` for the rule
+        // and `casper/tests/util/rspace_history_horizon_test.rs` plus the
+        // module's `#[cfg(test)] mod tests` for the spec.
+        let min_block_number_for_deploy_lifespan =
+            crate::rust::util::rspace_history_horizon::lfs_min_block_number(
+                start_block_number,
+                self.casper_shard_conf.deploy_lifespan,
+                self.casper_shard_conf.max_parent_depth,
+                self.casper_shard_conf.mergeable_channels_gc_depth_buffer,
+            );
 
         tracing::info!(
             "request_approved_state: start (block {}, min_height {})",
@@ -744,10 +726,13 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
                     &self.transport_layer,
                     &self.rp_conf_ask,
                 );
+                let rm_for_has_root = self.runtime_manager.clone();
+                let has_root: crate::rust::engine::lfs_horizon_requester::HasRootFn =
+                    Arc::new(move |root| rm_for_has_root.has_root(root));
                 let horizon_stream =
                     crate::rust::engine::lfs_horizon_requester::stream(
                         horizon_roots,
-                        self.runtime_manager.clone(),
+                        has_root,
                         self.rspace_state_manager.importer.clone(),
                         horizon_requester,
                         horizon_rx,

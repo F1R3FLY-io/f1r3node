@@ -239,3 +239,128 @@ async fn ordered_by_descending_height() {
     })
     .await
 }
+
+// ── Pre-state inclusion semantics ─────────────────────────────────────────
+//
+// `compute_forward_horizon_roots` must emit each block's `pre_state_hash`
+// alongside its `post_state_hash`. For single-parent blocks the pre-state
+// equals the parent's post-state and dedupes via the HashSet. For
+// multi-parent blocks the pre-state is the merge intermediate computed by
+// the proposer's `dag_merger::merge` and is distinct from any parent's
+// post-state — those merge intermediates only ever exist as the result of
+// `do_checkpoint`'s `store_root`. Without their inclusion, joiners hit
+// `RootRepositoryDivergence` when validating the multi-parent block.
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn pre_state_included_for_multi_parent_block() {
+    with_storage(|mut block_store, mut block_dag_storage| async move {
+        let v0 = generate_validator(Some("Validator0"));
+        let bonds = vec![Bond {
+            validator: v0.clone(),
+            stake: 10,
+        }];
+
+        // Build two single-parent chain segments off genesis, then a
+        // multi-parent block joining their tips. The multi-parent block's
+        // pre_state_hash is set to a SEED unique to neither parent's post
+        // (mirrors a real merge intermediate computed via dag_merger).
+        let chain =
+            build_chain(&mut block_store, &mut block_dag_storage, 3, bonds.clone(), v0.clone());
+        let genesis = chain[0].clone();
+        let parent_a = chain[2].clone(); // sender v0, post=unique_state_hash(2)
+        let parent_b = create_block(
+            &mut block_store,
+            &mut block_dag_storage,
+            vec![chain[1].block_hash.clone()],
+            &genesis,
+            Some(v0.clone()),
+            Some(bonds.clone()),
+            None,
+            None,
+            Some(unique_state_hash(99)), // distinct post-state
+            None,
+            Some(chain[1].body.state.post_state_hash.clone()),
+            Some(2_i32),
+            None,
+        );
+
+        // Multi-parent block at height 3. Its pre-state is the seeded merge
+        // intermediate (seed=200) — not equal to either parent's post-state.
+        let merge_intermediate = unique_state_hash(200);
+        let merged = create_block(
+            &mut block_store,
+            &mut block_dag_storage,
+            vec![parent_a.block_hash.clone(), parent_b.block_hash.clone()],
+            &genesis,
+            Some(v0.clone()),
+            Some(bonds.clone()),
+            None,
+            None,
+            Some(unique_state_hash(201)),
+            None,
+            Some(merge_intermediate.clone()),
+            Some(3_i32),
+            None,
+        );
+
+        let dag = block_dag_storage.get_representation();
+        let conf = mk_conf(10, 0); // wide horizon — include everything
+
+        let roots = compute_forward_horizon_roots(&dag, &block_store, &merged, &conf).unwrap();
+
+        // The merge intermediate (multi-parent block's pre_state_hash) MUST
+        // be present in the result. Without it, joiners can't reset to the
+        // pre-state during multi-parent block validation.
+        let merge_root = Blake2b256Hash::from_bytes_prost(&merge_intermediate);
+        assert!(
+            roots.contains(&merge_root),
+            "multi-parent block's pre_state_hash (the merge intermediate) must be \
+             collected; without it, joiner validation fires RootRepositoryDivergence"
+        );
+    })
+    .await
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn single_parent_pre_state_dedupes_against_parent_post_state() {
+    with_storage(|mut block_store, mut block_dag_storage| async move {
+        let v0 = generate_validator(Some("Validator0"));
+        let bonds = vec![Bond {
+            validator: v0.clone(),
+            stake: 10,
+        }];
+
+        // Single-parent chain: each non-genesis block's pre-state equals its
+        // parent's post-state. With both in-window, the pre-state must NOT
+        // appear as a separate root entry — it dedupes against the parent's
+        // already-collected post-state. Without the HashSet dedup, the
+        // result would double-count every parent-child boundary.
+        let chain =
+            build_chain(&mut block_store, &mut block_dag_storage, 4, bonds.clone(), v0.clone());
+
+        let dag = block_dag_storage.get_representation();
+        let conf = mk_conf(10, 0); // wide window — all 4 blocks in scope
+
+        let roots = compute_forward_horizon_roots(&dag, &block_store, &chain[3], &conf).unwrap();
+
+        // chain[1].post is referenced both as chain[1]'s own post AND as
+        // chain[2]'s pre-state. It must appear in `roots` exactly once.
+        let chain_1_post =
+            Blake2b256Hash::from_bytes_prost(&chain[1].body.state.post_state_hash);
+        let count = roots.iter().filter(|r| **r == chain_1_post).count();
+        assert_eq!(
+            count, 1,
+            "chain[1].post must appear exactly once — not duplicated by chain[2].pre"
+        );
+
+        // Symmetric check on chain[2].post / chain[3].pre.
+        let chain_2_post =
+            Blake2b256Hash::from_bytes_prost(&chain[2].body.state.post_state_hash);
+        let count = roots.iter().filter(|r| **r == chain_2_post).count();
+        assert_eq!(
+            count, 1,
+            "chain[2].post must appear exactly once — not duplicated by chain[3].pre"
+        );
+    })
+    .await
+}

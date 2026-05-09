@@ -41,7 +41,6 @@ use tokio::sync::mpsc;
 
 use crate::rust::engine::lfs_tuple_space_requester::StatePartPath;
 use crate::rust::errors::CasperError;
-use crate::rust::util::rholang::runtime_manager::RuntimeManager;
 
 /// Per-chunk page size for state-item requests. Matches the value used
 /// by `lfs_tuple_space_requester` for LFB-state subtree pagination.
@@ -164,9 +163,15 @@ struct RootProgress {
     total_data: usize,
 }
 
+/// Closure type for "is this root already in the joiner's roots store?".
+/// Decoupled from `RuntimeManager` so the orchestrator can be unit-tested
+/// against a fake roots store without spinning up the runtime stack.
+pub type HasRootFn =
+    Arc<dyn Fn(&Blake2b256Hash) -> Result<bool, CasperError> + Send + Sync>;
+
 struct HorizonStreamProcessor<T: HorizonRequesterOps> {
     request_ops: T,
-    runtime_manager: Arc<RuntimeManager>,
+    has_root: HasRootFn,
     state_importer: Arc<dyn RSpaceImporter>,
     st: Arc<Mutex<ST<StatePartPath>>>,
     /// Maps each chunk path to the root it's paginating. Initial paths
@@ -267,7 +272,7 @@ impl<T: HorizonRequesterOps> HorizonStreamProcessor<T> {
             // Record the root tag in roots_store and verify the import
             // reconstructed the expected root.
             self.state_importer.set_root(&root);
-            let now_have = self.runtime_manager.has_root(&root)?;
+            let now_have = (self.has_root)(&root)?;
             if !now_have {
                 return Err(CasperError::RuntimeError(format!(
                     "LFS forward-horizon: root {} not in store after import; \
@@ -381,7 +386,7 @@ impl<T: HorizonRequesterOps> HorizonStreamProcessor<T> {
 /// unsynced (incomplete sync = caller must NOT transition to Running).
 pub async fn stream<T: HorizonRequesterOps>(
     horizon_roots: Vec<Blake2b256Hash>,
-    runtime_manager: Arc<RuntimeManager>,
+    has_root: HasRootFn,
     state_importer: Arc<dyn RSpaceImporter>,
     request_ops: T,
     mut store_items_message_receiver: mpsc::Receiver<StoreItemsMessage>,
@@ -394,7 +399,7 @@ pub async fn stream<T: HorizonRequesterOps>(
     let mut filtered: Vec<Blake2b256Hash> = Vec::with_capacity(total_input);
     let mut skipped = 0usize;
     for root in horizon_roots {
-        if runtime_manager.has_root(&root)? {
+        if has_root(&root)? {
             skipped += 1;
         } else {
             filtered.push(root);
@@ -432,7 +437,7 @@ pub async fn stream<T: HorizonRequesterOps>(
 
     let processor = Arc::new(HorizonStreamProcessor {
         request_ops,
-        runtime_manager,
+        has_root,
         state_importer,
         st: st.clone(),
         path_to_root,
@@ -572,11 +577,463 @@ pub async fn stream<T: HorizonRequesterOps>(
 
 #[cfg(test)]
 mod tests {
-    // Integration coverage for sync_forward_horizon lives in B5 isolation runs
-    // (multi-node bonding test on subprocess provider). Unit tests for the
-    // pure reachability calc are in
-    // `casper/tests/util/rspace_history_horizon_test.rs`. The orchestrator
-    // itself coordinates transport + channel + importer interactions that
-    // aren't usefully testable in isolation without rebuilding the entire
-    // mock stack.
+    use super::*;
+
+    // ── ST<Key> state machine ────────────────────────────────────────────
+    //
+    // Mirrors the `Init → Requested → Received → Done` lifecycle that the
+    // streaming orchestrator drives every horizon root through. These tests
+    // pin the algebraic semantics so future changes to the orchestrator or
+    // the `lfs_tuple_space_requester` parallel structure can't silently
+    // diverge from the contract the stream loop assumes.
+
+    #[test]
+    fn st_new_initializes_all_entries_as_init() {
+        let st: ST<i32> = ST::new(vec![1, 2, 3]);
+        assert_eq!(st.len(), 3);
+        assert_eq!(st.done_count(), 0);
+        assert!(!st.is_finished());
+    }
+
+    #[test]
+    fn st_add_inserts_new_keys_as_init_and_leaves_existing() {
+        // Existing key in Requested state must NOT be reset to Init by add().
+        let st: ST<i32> = ST::new(vec![1]);
+        let (st, _) = st.get_next(false); // 1 -> Requested
+        let mut new_keys = HashSet::new();
+        new_keys.insert(2);
+        new_keys.insert(1); // existing
+        let st = st.add(new_keys);
+        // 2 should be Init now; 1 should still be Requested → only 2 picked.
+        let (_, requested) = st.get_next(false);
+        assert_eq!(requested, vec![2]);
+    }
+
+    #[test]
+    fn st_get_next_without_resend_picks_only_init() {
+        let st: ST<i32> = ST::new(vec![1, 2]);
+        let (st, batch) = st.get_next(false);
+        let mut sorted = batch.clone();
+        sorted.sort();
+        assert_eq!(sorted, vec![1, 2]);
+        // Calling again without resend yields nothing: both are Requested.
+        let (_, batch2) = st.get_next(false);
+        assert!(batch2.is_empty());
+    }
+
+    #[test]
+    fn st_get_next_with_resend_picks_init_and_requested() {
+        let st: ST<i32> = ST::new(vec![1]);
+        let (st, _) = st.get_next(false); // 1 -> Requested
+        let (_, batch) = st.get_next(true); // resend: pick Requested again
+        assert_eq!(batch, vec![1]);
+    }
+
+    #[test]
+    fn st_received_valid_only_on_requested_or_init() {
+        let st: ST<i32> = ST::new(vec![1, 2]);
+        // Init: received() accepts (handles fast in-memory test scenarios
+        // where responses arrive before the request loop runs).
+        let (st, valid) = st.received(1);
+        assert!(valid);
+        // Requested: received() accepts.
+        let (st, _) = st.get_next(false); // 2 -> Requested
+        let (st, valid) = st.received(2);
+        assert!(valid);
+        // Already-Received: received() rejects (idempotent).
+        let (_, valid) = st.received(1);
+        assert!(!valid);
+    }
+
+    #[test]
+    fn st_done_only_valid_on_received() {
+        let st: ST<i32> = ST::new(vec![1]);
+        // Init -> done() is a no-op (key NOT advanced).
+        let st = st.done(1);
+        assert!(!st.is_finished());
+        // After received() -> done() advances.
+        let (st, _) = st.received(1);
+        let st = st.done(1);
+        assert!(st.is_finished());
+    }
+
+    #[test]
+    fn st_is_finished_only_when_all_done() {
+        let st: ST<i32> = ST::new(vec![1, 2]);
+        let (st, _) = st.received(1);
+        let st = st.done(1);
+        assert!(!st.is_finished()); // 2 still Init
+        let (st, _) = st.received(2);
+        let st = st.done(2);
+        assert!(st.is_finished());
+    }
+
+    #[test]
+    fn st_done_count_matches_done_entries() {
+        let st: ST<i32> = ST::new(vec![1, 2, 3]);
+        let (st, _) = st.received(1);
+        let st = st.done(1);
+        let (st, _) = st.received(2);
+        let st = st.done(2);
+        assert_eq!(st.done_count(), 2);
+        assert_eq!(st.len() - st.done_count(), 1);
+    }
+
+    // ── stream() behavioral tests with mock HorizonRequesterOps ─────────
+    //
+    // These tests construct the orchestrator with a mock network layer so
+    // we can assert on:
+    //   - skip-already-present pre-filter (mock has_root returns true)
+    //   - terminal cursor handling (single-chunk happy path)
+    //   - byzantine peer detection (terminal+empty on first chunk)
+    //   - pagination (non-terminal cursor enqueues continuation)
+    //   - parallel fan-out (mock counts max simultaneous in-flight requests)
+    //
+    // The mock RSpaceImporter is a no-op since the orchestrator only uses
+    // it as a passive sink for items we feed via canned responses.
+
+    use futures::StreamExt;
+    use rspace_plus_plus::rspace::shared::trie_importer::TrieImporter;
+    use rspace_plus_plus::rspace::state::rspace_importer::RSpaceImporter;
+    use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+    use tokio::sync::mpsc as test_mpsc;
+
+    /// No-op RSpaceImporter — orchestrator just calls set_history_items /
+    /// set_data_items / set_root with the bytes we feed it; tests don't
+    /// inspect what was imported, only what the stream did with the calls.
+    struct NoopImporter;
+
+    impl TrieImporter for NoopImporter {
+        fn set_history_items(&self, _data: Vec<(Blake2b256Hash, Vec<u8>)>) -> () {}
+        fn set_data_items(&self, _data: Vec<(Blake2b256Hash, Vec<u8>)>) -> () {}
+        fn set_root(&self, _key: &Blake2b256Hash) -> () {}
+    }
+
+    impl RSpaceImporter for NoopImporter {
+        fn get_history_item(&self, _hash: Blake2b256Hash) -> Option<Vec<u8>> {
+            None
+        }
+    }
+
+    /// Mock HorizonRequesterOps: records every send and tracks max
+    /// simultaneous in-flight requests. Each send increments the in-flight
+    /// counter and returns immediately; the test loop is responsible for
+    /// feeding canned responses and decrementing. For the parallel-fan-out
+    /// test we observe `max_in_flight` AFTER request_next has dispatched
+    /// the batch but BEFORE responses arrive.
+    struct MockOps {
+        sends: Arc<Mutex<Vec<StatePartPath>>>,
+        in_flight: Arc<AtomicUsize>,
+        max_in_flight: Arc<AtomicUsize>,
+    }
+
+    impl MockOps {
+        fn new() -> Self {
+            Self {
+                sends: Arc::new(Mutex::new(Vec::new())),
+                in_flight: Arc::new(AtomicUsize::new(0)),
+                max_in_flight: Arc::new(AtomicUsize::new(0)),
+            }
+        }
+
+        fn handles(&self) -> (Arc<Mutex<Vec<StatePartPath>>>, Arc<AtomicUsize>) {
+            (self.sends.clone(), self.max_in_flight.clone())
+        }
+    }
+
+    #[async_trait]
+    impl HorizonRequesterOps for MockOps {
+        async fn request_for_horizon_chunk(
+            &self,
+            path: &StatePartPath,
+            _page_size: i32,
+        ) -> Result<(), CasperError> {
+            self.sends.lock().unwrap().push(path.clone());
+            let now = self.in_flight.fetch_add(1, AtomicOrdering::SeqCst) + 1;
+            self.max_in_flight.fetch_max(now, AtomicOrdering::SeqCst);
+            // Simulate the request being "outstanding" — the test loop
+            // decrements via a shared counter when it feeds a response.
+            // We don't decrement here because the response handler
+            // is what unblocks the next request cycle.
+            Ok(())
+        }
+    }
+
+    fn hash_for(seed: u8) -> Blake2b256Hash {
+        let mut bytes = vec![0u8; 32];
+        bytes[0] = seed;
+        Blake2b256Hash::from_bytes(bytes)
+    }
+
+    fn make_response(
+        start_path: StatePartPath,
+        last_path: StatePartPath,
+        history_item: Option<Blake2b256Hash>,
+    ) -> StoreItemsMessage {
+        let history_items = history_item
+            .map(|h| vec![(h, prost::bytes::Bytes::from_static(b"x"))])
+            .unwrap_or_default();
+        StoreItemsMessage {
+            start_path,
+            last_path,
+            history_items,
+            data_items: vec![],
+        }
+    }
+
+    /// Helper to drain an `impl Stream` to its final `ST`.
+    async fn drain<S>(stream: S) -> Option<ST<StatePartPath>>
+    where
+        S: Stream<Item = ST<StatePartPath>>,
+    {
+        let mut stream = Box::pin(stream);
+        let mut last = None;
+        while let Some(st) = stream.next().await {
+            last = Some(st);
+        }
+        last
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn stream_skips_already_present_roots() {
+        // has_root returns true for all roots → filtered set is empty.
+        // Stream yields a finished ST and exits without any request.
+        let r1 = hash_for(1);
+        let r2 = hash_for(2);
+        let has_root: HasRootFn = Arc::new(|_| Ok(true));
+        let importer: Arc<dyn RSpaceImporter> = Arc::new(NoopImporter);
+        let ops = MockOps::new();
+        let (sends, _) = ops.handles();
+        let (_tx, rx) = test_mpsc::channel::<StoreItemsMessage>(2);
+
+        let stream = stream(
+            vec![r1, r2],
+            has_root,
+            importer,
+            ops,
+            rx,
+            Duration::from_secs(5),
+        )
+        .await
+        .unwrap();
+        let final_st = drain(stream).await.expect("stream yields final state");
+        assert!(final_st.is_finished());
+        assert_eq!(final_st.len(), 0);
+        assert!(
+            sends.lock().unwrap().is_empty(),
+            "no requests should have been sent for already-present roots"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn stream_completes_on_terminal_cursor_with_data() {
+        // Single root, single chunk. Response is terminal (last_path ==
+        // start_path) and contains one history item → root marked Done.
+        let root = hash_for(7);
+        let importer: Arc<dyn RSpaceImporter> = Arc::new(NoopImporter);
+        // has_root flips: false on the pre-filter call (so the root gets
+        // added to ST), then true on the post-import verification (so the
+        // import is accepted as having reconstructed the root).
+        let post_import_has_root: HasRootFn = {
+            let r = root.clone();
+            let imported = Arc::new(Mutex::new(false));
+            Arc::new(move |q| {
+                if *q == r && *imported.lock().unwrap() {
+                    Ok(true)
+                } else {
+                    let was = *imported.lock().unwrap();
+                    *imported.lock().unwrap() = true;
+                    Ok(was)
+                }
+            })
+        };
+        let ops = MockOps::new();
+        let (tx, rx) = test_mpsc::channel::<StoreItemsMessage>(4);
+
+        // Pre-feed the response.
+        let start = vec![(root.clone(), None)];
+        tx.send(make_response(start.clone(), start.clone(), Some(hash_for(8))))
+            .await
+            .unwrap();
+        // Drop tx so the receiver eventually sees channel-closed if loop
+        // doesn't terminate via is_finished.
+        drop(tx);
+
+        let stream = stream(
+            vec![root],
+            post_import_has_root,
+            importer,
+            ops,
+            rx,
+            Duration::from_secs(5),
+        )
+        .await
+        .unwrap();
+        let final_st = drain(stream).await.expect("stream yields final state");
+        assert!(
+            final_st.is_finished(),
+            "single-root happy path must mark all paths Done; final state: {:?}",
+            final_st
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn stream_detects_byzantine_peer_terminal_empty_first_chunk() {
+        // Single root. Response is terminal AND empty (no history items,
+        // no data items) on the FIRST chunk. This is the contract for
+        // "peer doesn't have this root" — orchestrator must error out.
+        let root = hash_for(5);
+        let has_root: HasRootFn = Arc::new(|_| Ok(false));
+        let importer: Arc<dyn RSpaceImporter> = Arc::new(NoopImporter);
+        let ops = MockOps::new();
+        let (tx, rx) = test_mpsc::channel::<StoreItemsMessage>(4);
+
+        let start = vec![(root.clone(), None)];
+        tx.send(make_response(start.clone(), start.clone(), None))
+            .await
+            .unwrap();
+        drop(tx);
+
+        let stream = stream(
+            vec![root],
+            has_root,
+            importer,
+            ops,
+            rx,
+            Duration::from_secs(5),
+        )
+        .await
+        .unwrap();
+        let final_st = drain(stream).await.expect("stream yields final state");
+        // Byzantine signal causes the loop to break before marking Done →
+        // final ST is NOT finished. Caller's loud-fail check then triggers.
+        assert!(
+            !final_st.is_finished(),
+            "byzantine peer (terminal+empty) must NOT mark the root Done"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn stream_paginates_non_terminal_responses() {
+        // Single root, two chunks. Response 1 is non-terminal: last_path
+        // points at a continuation. Response 2 is terminal at that
+        // continuation. Orchestrator must enqueue Response 2's start_path
+        // (= Response 1's last_path) as a new Init entry, then fan a
+        // request out for it, then mark Done on terminal arrival.
+        //
+        // Responses are fed by a separate task with a small yield between
+        // sends so the orchestrator's `request_next` cycle can fire for the
+        // continuation path before response 2 lands. Without this, the
+        // biased-response select drains both responses before any request
+        // ever ships and the test would assert against an empty sends log.
+        let root = hash_for(9);
+        let cont_path = vec![(hash_for(10), Some(0u8))];
+        let post_import_has_root: HasRootFn = {
+            let r = root.clone();
+            let imported = Arc::new(Mutex::new(false));
+            Arc::new(move |q| {
+                if *q == r && *imported.lock().unwrap() {
+                    Ok(true)
+                } else {
+                    let was = *imported.lock().unwrap();
+                    *imported.lock().unwrap() = true;
+                    Ok(was)
+                }
+            })
+        };
+        let importer: Arc<dyn RSpaceImporter> = Arc::new(NoopImporter);
+        let ops = MockOps::new();
+        let (sends, _) = ops.handles();
+        let (tx, rx) = test_mpsc::channel::<StoreItemsMessage>(8);
+
+        let start = vec![(root.clone(), None)];
+        let resp1 = make_response(start.clone(), cont_path.clone(), Some(hash_for(11)));
+        let resp2 = make_response(cont_path.clone(), cont_path.clone(), Some(hash_for(12)));
+
+        let feeder_sends = sends.clone();
+        let feeder_start = start.clone();
+        let feeder_cont = cont_path.clone();
+        let feeder = tokio::spawn(async move {
+            // Wait until the initial start_path has actually been requested.
+            loop {
+                if feeder_sends.lock().unwrap().contains(&feeder_start) {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+            tx.send(resp1).await.unwrap();
+            // Wait for the continuation path to be requested (proves the
+            // orchestrator enqueued it after processing response 1).
+            loop {
+                if feeder_sends.lock().unwrap().contains(&feeder_cont) {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+            tx.send(resp2).await.unwrap();
+            drop(tx);
+        });
+
+        let stream = stream(
+            vec![root],
+            post_import_has_root,
+            importer,
+            ops,
+            rx,
+            Duration::from_secs(5),
+        )
+        .await
+        .unwrap();
+        let final_st = drain(stream).await.expect("stream yields final state");
+        feeder.await.unwrap();
+        assert!(
+            final_st.is_finished(),
+            "after 2 chunks (paginated) the root should be Done"
+        );
+        let sent_paths = sends.lock().unwrap().clone();
+        assert!(sent_paths.contains(&start), "initial start_path was sent");
+        assert!(
+            sent_paths.contains(&cont_path),
+            "continuation path (= response 1's last_path) was enqueued and sent"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn stream_fans_out_in_parallel() {
+        // Four roots. Don't feed any responses. Observe `max_in_flight`
+        // after the request loop dispatches the initial batch. With
+        // try_join_all the orchestrator dispatches all 4 requests
+        // simultaneously before any response would be needed.
+        let roots: Vec<Blake2b256Hash> = (1..=4u8).map(hash_for).collect();
+        let has_root: HasRootFn = Arc::new(|_| Ok(false));
+        let importer: Arc<dyn RSpaceImporter> = Arc::new(NoopImporter);
+        let ops = MockOps::new();
+        let (_, max_in_flight) = ops.handles();
+        let (_tx, rx) = test_mpsc::channel::<StoreItemsMessage>(8);
+
+        // Launch the stream and let it pump the initial request cycle.
+        let stream = stream(
+            roots.clone(),
+            has_root,
+            importer,
+            ops,
+            rx,
+            Duration::from_secs(1),
+        )
+        .await
+        .unwrap();
+        // Pull one item (the post-request_next snapshot) which proves the
+        // initial fan-out completed. We don't drain to completion because
+        // there are no responses.
+        let mut stream = Box::pin(stream);
+        let _first = stream.next().await;
+
+        let observed = max_in_flight.load(AtomicOrdering::SeqCst);
+        assert_eq!(
+            observed, 4,
+            "orchestrator must dispatch all 4 root requests in parallel; \
+             max_in_flight={}",
+            observed
+        );
+    }
 }
