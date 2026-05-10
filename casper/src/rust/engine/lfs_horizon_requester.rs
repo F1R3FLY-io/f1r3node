@@ -173,10 +173,13 @@ struct HorizonStreamProcessor<T: HorizonRequesterOps> {
     has_root: HasRootFn,
     state_importer: Arc<dyn RSpaceImporter>,
     st: Arc<Mutex<ST<StatePartPath>>>,
-    /// Maps each chunk path to the root it's paginating. Initial paths
-    /// `[(root, None)]` map to `root`; pagination continuations inherit
-    /// the root of the path they came from.
-    path_to_root: Arc<Mutex<HashMap<StatePartPath, Blake2b256Hash>>>,
+    /// Maps each chunk path to the SET of roots paginating through it.
+    /// Initial paths `[(root, None)]` map to `{root}`. When two roots'
+    /// pagination chains converge on a shared cursor (radix tries derived
+    /// from sibling chain states routinely share suffix paths), the cursor
+    /// maps to BOTH roots; one wire request satisfies both, and the
+    /// terminal completion fires `set_root` for each.
+    path_to_root: Arc<Mutex<HashMap<StatePartPath, HashSet<Blake2b256Hash>>>>,
     /// Per-root chunk-count + byte counters for byzantine-peer detection.
     root_progress: Arc<Mutex<HashMap<Blake2b256Hash, RootProgress>>>,
     request_tx: mpsc::Sender<bool>,
@@ -217,17 +220,22 @@ impl<T: HorizonRequesterOps> HorizonStreamProcessor<T> {
             return Ok(());
         }
 
-        // Find which root this chunk's pagination chain belongs to.
-        let root = {
+        // Find which roots this chunk's pagination chain belongs to.
+        // Multiple roots may share the same cursor — the chunk's content
+        // satisfies all of them in one shot.
+        let roots: Vec<Blake2b256Hash> = {
             let map = self.path_to_root.lock().expect("path_to_root lock");
-            map.get(&start_path).cloned()
+            match map.get(&start_path) {
+                Some(set) => set.iter().cloned().collect(),
+                None => Vec::new(),
+            }
         };
-        let Some(root) = root else {
+        if roots.is_empty() {
             tracing::warn!(
                 "LFS forward-horizon: received chunk for path with no root mapping; ignoring"
             );
             return Ok(());
-        };
+        }
 
         // Apply items to local rspace. Radix nodes are content-addressed so
         // the importer can validate keys against contents internally.
@@ -236,54 +244,70 @@ impl<T: HorizonRequesterOps> HorizonStreamProcessor<T> {
         let _ = self.state_importer.set_history_items(history_items);
         let _ = self.state_importer.set_data_items(data_items);
 
-        // Update per-root progress.
+        // Update per-root progress for every root sharing this chunk.
         {
             let mut progress_map = self.root_progress.lock().expect("root_progress lock");
-            let entry = progress_map.entry(root.clone()).or_default();
-            entry.chunk_count += 1;
-            entry.total_history += history_count;
-            entry.total_data += data_count;
+            for root in &roots {
+                let entry = progress_map.entry(root.clone()).or_default();
+                entry.chunk_count += 1;
+                entry.total_history += history_count;
+                entry.total_data += data_count;
+            }
         }
 
         let is_terminal = last_path == start_path;
 
         if is_terminal {
             // Byzantine signal: terminal cursor on first chunk + no data
-            // means the peer doesn't have this root. Fail loud.
-            let progress = {
-                let progress_map = self.root_progress.lock().expect("root_progress lock");
-                progress_map.get(&root).cloned().unwrap_or_default()
-            };
-            if progress.chunk_count == 1 && progress.total_history == 0 && progress.total_data == 0
+            // means the peer doesn't have this root. Fail loud if ANY root
+            // sharing this terminal saw only an empty first chunk — that's
+            // still an unrecoverable signal even if other roots happened to
+            // have legitimate data on a prior path.
             {
-                return Err(CasperError::RuntimeError(format!(
-                    "LFS forward-horizon: bootstrap signalled empty/missing root {} \
-                     (terminal cursor on first chunk)",
-                    root
-                )));
+                let progress_map = self.root_progress.lock().expect("root_progress lock");
+                for root in &roots {
+                    let progress = progress_map.get(root).cloned().unwrap_or_default();
+                    if progress.chunk_count == 1
+                        && progress.total_history == 0
+                        && progress.total_data == 0
+                    {
+                        return Err(CasperError::RuntimeError(format!(
+                            "LFS forward-horizon: bootstrap signalled empty/missing root {} \
+                             (terminal cursor on first chunk)",
+                            root
+                        )));
+                    }
+                }
             }
 
             // Record the root tag in roots_store and verify the import
-            // reconstructed the expected root.
-            self.state_importer.set_root(&root);
-            let now_have = (self.has_root)(&root)?;
-            if !now_have {
-                return Err(CasperError::RuntimeError(format!(
-                    "LFS forward-horizon: root {} not in store after import; \
-                     peer shipped invalid data",
-                    root
-                )));
+            // reconstructed each expected root.
+            for root in &roots {
+                self.state_importer.set_root(root);
+                let now_have = (self.has_root)(root)?;
+                if !now_have {
+                    return Err(CasperError::RuntimeError(format!(
+                        "LFS forward-horizon: root {} not in store after import; \
+                         peer shipped invalid data",
+                        root
+                    )));
+                }
+                let progress = {
+                    let progress_map = self.root_progress.lock().expect("root_progress lock");
+                    progress_map.get(root).cloned().unwrap_or_default()
+                };
+                tracing::debug!(
+                    "LFS forward-horizon: completed root {} ({} chunks, {} history, {} data)",
+                    root,
+                    progress.chunk_count,
+                    progress.total_history,
+                    progress.total_data
+                );
             }
 
-            tracing::debug!(
-                "LFS forward-horizon: completed root {} ({} chunks, {} history, {} data)",
-                root,
-                progress.chunk_count,
-                progress.total_history,
-                progress.total_data
-            );
-
-            // Mark Done and free per-root state.
+            // Mark the path Done and free its multi-root mapping. ST
+            // tracks paths, not roots, so a single done() retires the
+            // shared chunk for all associated roots.
             {
                 let mut state = self.st.lock().expect("ST lock");
                 let new_state = state.done(start_path.clone());
@@ -298,11 +322,17 @@ impl<T: HorizonRequesterOps> HorizonStreamProcessor<T> {
             // sent now that one has finished.
             let _ = self.request_tx.try_send(false);
         } else {
-            // Non-terminal: enqueue the next chunk for this root. The new
-            // path inherits the same root association.
+            // Non-terminal: continuation cursor inherits the full root set.
+            // If `last_path` is already tracked (another root's chunk
+            // already converged on the same cursor), merge into the
+            // existing set so its terminal completion fires set_root for
+            // every root, not just the first writer.
             {
                 let mut map = self.path_to_root.lock().expect("path_to_root lock");
-                map.insert(last_path.clone(), root.clone());
+                let entry = map.entry(last_path.clone()).or_default();
+                for root in &roots {
+                    entry.insert(root.clone());
+                }
             }
             {
                 let mut state = self.st.lock().expect("ST lock");
@@ -411,11 +441,15 @@ pub async fn stream<T: HorizonRequesterOps>(
     );
 
     // Build initial ST: one path per root, of the form `[(root, None)]`.
+    // Each initial path uniquely identifies its root, so the singleton
+    // sets here will only ever grow when pagination cursors converge.
     let mut initial_paths: Vec<StatePartPath> = Vec::with_capacity(filtered.len());
-    let mut path_to_root_init: HashMap<StatePartPath, Blake2b256Hash> = HashMap::new();
+    let mut path_to_root_init: HashMap<StatePartPath, HashSet<Blake2b256Hash>> = HashMap::new();
     for root in &filtered {
         let path: StatePartPath = vec![(root.clone(), None)];
-        path_to_root_init.insert(path.clone(), root.clone());
+        let mut set = HashSet::new();
+        set.insert(root.clone());
+        path_to_root_init.insert(path.clone(), set);
         initial_paths.push(path);
     }
 
@@ -707,6 +741,39 @@ mod tests {
     }
 
     impl RSpaceImporter for NoopImporter {
+        fn get_history_item(&self, _hash: Blake2b256Hash) -> Option<Vec<u8>> {
+            None
+        }
+    }
+
+    /// Recording RSpaceImporter — captures every root passed to `set_root`.
+    /// Pair with a `has_root` closure that reads from the same set so the
+    /// orchestrator's post-import verification reflects what was recorded.
+    struct RecordingImporter {
+        recorded: Arc<Mutex<HashSet<Blake2b256Hash>>>,
+    }
+
+    impl RecordingImporter {
+        fn new() -> (Self, Arc<Mutex<HashSet<Blake2b256Hash>>>) {
+            let recorded = Arc::new(Mutex::new(HashSet::new()));
+            (
+                Self {
+                    recorded: recorded.clone(),
+                },
+                recorded,
+            )
+        }
+    }
+
+    impl TrieImporter for RecordingImporter {
+        fn set_history_items(&self, _data: Vec<(Blake2b256Hash, Vec<u8>)>) -> () {}
+        fn set_data_items(&self, _data: Vec<(Blake2b256Hash, Vec<u8>)>) -> () {}
+        fn set_root(&self, key: &Blake2b256Hash) -> () {
+            self.recorded.lock().unwrap().insert(key.clone());
+        }
+    }
+
+    impl RSpaceImporter for RecordingImporter {
         fn get_history_item(&self, _hash: Blake2b256Hash) -> Option<Vec<u8>> {
             None
         }
@@ -1035,6 +1102,118 @@ mod tests {
             "orchestrator must dispatch all 4 root requests in parallel; \
              max_in_flight={}",
             observed
+        );
+    }
+
+    /// Regression: two roots whose first chunks return the SAME continuation
+    /// cursor must BOTH receive `set_root` after the shared continuation
+    /// terminates. Without per-path multi-root tracking, the orchestrator's
+    /// HashMap<Path, Hash> mapping silently drops all but the last writer,
+    /// `set_root` fires for only one root, and the other is left with an
+    /// imported trie but no roots-store tag — causing later `reset(root)` to
+    /// fail with `RootRepositoryDivergence`. Radix-trie pagination shares
+    /// suffix cursors across roots derived from sibling chain states, so
+    /// this collision is the common case, not an edge case.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn stream_completes_all_roots_when_first_chunks_share_last_path() {
+        let r1 = hash_for(20);
+        let r2 = hash_for(21);
+        let shared_cont = vec![(hash_for(99), Some(0u8))];
+
+        let (importer_inner, recorded) = RecordingImporter::new();
+        let importer: Arc<dyn RSpaceImporter> = Arc::new(importer_inner);
+
+        // has_root: read from the recorded set so post-import verify sees
+        // what set_root just wrote. Pre-filter sees nothing → both roots
+        // enter the orchestrator.
+        let recorded_for_has_root = recorded.clone();
+        let has_root: HasRootFn =
+            Arc::new(move |q| Ok(recorded_for_has_root.lock().unwrap().contains(q)));
+
+        let ops = MockOps::new();
+        let (sends, _) = ops.handles();
+        let (tx, rx) = test_mpsc::channel::<StoreItemsMessage>(8);
+
+        let start1 = vec![(r1.clone(), None)];
+        let start2 = vec![(r2.clone(), None)];
+
+        // Both first chunks are non-terminal and end at the same cursor.
+        let resp1 = make_response(start1.clone(), shared_cont.clone(), Some(hash_for(101)));
+        let resp2 = make_response(start2.clone(), shared_cont.clone(), Some(hash_for(102)));
+        // The shared continuation terminates with one item (proves it's not
+        // an empty-byzantine signal).
+        let resp3 = make_response(
+            shared_cont.clone(),
+            shared_cont.clone(),
+            Some(hash_for(103)),
+        );
+
+        let feeder_sends = sends.clone();
+        let feeder_start1 = start1.clone();
+        let feeder_start2 = start2.clone();
+        let feeder_cont = shared_cont.clone();
+        let feeder = tokio::spawn(async move {
+            // Wait until both initial start_paths have been requested before
+            // feeding either response, so the orchestrator has both roots in
+            // ST when it processes them.
+            loop {
+                let both_sent = {
+                    let s = feeder_sends.lock().unwrap();
+                    s.contains(&feeder_start1) && s.contains(&feeder_start2)
+                };
+                if both_sent {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+            tx.send(resp1).await.unwrap();
+            tx.send(resp2).await.unwrap();
+            // Wait for the shared continuation to be requested.
+            loop {
+                if feeder_sends.lock().unwrap().contains(&feeder_cont) {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+            tx.send(resp3).await.unwrap();
+            drop(tx);
+        });
+
+        let stream = stream(
+            vec![r1.clone(), r2.clone()],
+            has_root,
+            importer,
+            ops,
+            rx,
+            Duration::from_secs(5),
+        )
+        .await
+        .unwrap();
+        let final_st = drain(stream).await.expect("stream yields final state");
+        feeder.await.unwrap();
+
+        assert!(
+            final_st.is_finished(),
+            "orchestrator should mark all paths Done; final state: {:?}",
+            final_st
+        );
+
+        let recorded = recorded.lock().unwrap();
+        assert!(
+            recorded.contains(&r1),
+            "set_root must fire for r1 (was silently dropped by HashMap collision); recorded = {:?}",
+            recorded
+        );
+        assert!(
+            recorded.contains(&r2),
+            "set_root must fire for r2; recorded = {:?}",
+            recorded
+        );
+        assert_eq!(
+            recorded.len(),
+            2,
+            "exactly 2 roots should have been recorded; recorded = {:?}",
+            recorded
         );
     }
 }
