@@ -131,7 +131,11 @@ impl RuntimeOps {
         (
             StateHash,
             Vec<(ProcessedDeploy, NumberChannelsEndVal, StateChannelsEndVal)>,
-            Vec<(ProcessedSystemDeploy, NumberChannelsEndVal, StateChannelsEndVal)>,
+            Vec<(
+                ProcessedSystemDeploy,
+                NumberChannelsEndVal,
+                StateChannelsEndVal,
+            )>,
         ),
         CasperError,
     > {
@@ -293,7 +297,13 @@ impl RuntimeOps {
         &mut self,
         start_hash: &StateHash,
         terms: Vec<Signed<DeployData>>,
-    ) -> Result<(StateHash, Vec<(ProcessedDeploy, NumberChannelsEndVal, StateChannelsEndVal)>), CasperError> {
+    ) -> Result<
+        (
+            StateHash,
+            Vec<(ProcessedDeploy, NumberChannelsEndVal, StateChannelsEndVal)>,
+        ),
+        CasperError,
+    > {
         let mem_profile_enabled = crate::rust::util::rholang::mem_profiler::mem_profile_enabled();
         let read_vm_rss_kb =
             || -> Option<usize> { crate::rust::util::rholang::mem_profiler::read_vm_rss_kb() };
@@ -363,7 +373,13 @@ impl RuntimeOps {
         &mut self,
         start_hash: &StateHash,
         terms: Vec<Signed<DeployData>>,
-    ) -> Result<(StateHash, Vec<(ProcessedDeploy, NumberChannelsEndVal, StateChannelsEndVal)>), CasperError> {
+    ) -> Result<
+        (
+            StateHash,
+            Vec<(ProcessedDeploy, NumberChannelsEndVal, StateChannelsEndVal)>,
+        ),
+        CasperError,
+    > {
         // Using tracing events for async - Span[F].withMarks("play-deploys") from Scala
         tracing::info!(target: "f1r3fly.casper.play-deploys-genesis", "play-deploys-genesis-started");
         self.runtime
@@ -642,6 +658,10 @@ impl RuntimeOps {
                 "MutexState channels do not flow through the numeric \
                  fold_multi_value path; they use the parallel state-channel pipeline"
             ),
+            MergeType::AdditiveSet => unreachable!(
+                "AdditiveSet channels do not flow through the numeric \
+                 fold_multi_value path; they use the parallel state-channel pipeline"
+            ),
         };
         Some(folded)
     }
@@ -702,15 +722,15 @@ impl RuntimeOps {
     }
 
     /// Extract `StateChannelsEndVal` from the deploy's mergeable channel set.
-    /// Filters for `MutexState`-tagged channels and returns each channel's
-    /// bincode-serialized winner Datum.
+    /// Filters for state-channel merge types (`MutexState`, `AdditiveSet`)
+    /// and returns each channel's bincode-serialized current Datum.
     pub async fn get_state_channels_data(
         &self,
         channels: &std::collections::HashMap<Par, MergeType>,
     ) -> Result<StateChannelsEndVal, CasperError> {
         let mut result = BTreeMap::new();
         for (channel, merge_type) in channels {
-            if !matches!(merge_type, MergeType::MutexState) {
+            if !matches!(merge_type, MergeType::MutexState | MergeType::AdditiveSet) {
                 continue;
             }
             if let Some((hash, bytes)) = self.get_state_channel(channel).await? {
@@ -744,7 +764,11 @@ impl RuntimeOps {
         let chosen_bytes = ch_values
             .iter()
             .map(|d| rspace_serializers::encode_datum(d))
-            .min_by(|a, b| Blake2b256Hash::new(a).bytes().cmp(&Blake2b256Hash::new(b).bytes()))
+            .min_by(|a, b| {
+                Blake2b256Hash::new(a)
+                    .bytes()
+                    .cmp(&Blake2b256Hash::new(b).bytes())
+            })
             .expect("get_state_channel: ch_values non-empty checked above");
 
         if ch_values.len() > 1 {

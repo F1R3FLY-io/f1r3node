@@ -404,7 +404,7 @@ pub fn merge(
         let reader = Arc::clone(&history_reader);
         move |changes, mergeable_chs, state_chs: StateChannelsDiff| {
             // Capture state_chs into the inner closure so dispatch can route
-            // either State (MutexState) or Number (IntegerAdd/BitmaskOr).
+            // either State (MutexState/AdditiveSet) or Number (IntegerAdd/BitmaskOr).
             let state_chs_inner = state_chs.clone();
             state_change_merger::compute_trie_actions(
                 &changes,
@@ -412,8 +412,8 @@ pub fn merge(
                 &mergeable_chs,
                 |hash: &Blake2b256Hash, channel_changes, number_chs: &NumberChannelsDiff| {
                     // State channels take precedence — if a hash is tagged as
-                    // MutexState, it must NOT also be in number_chs (enforced
-                    // upstream by tag-type unique mapping).
+                    // MutexState or AdditiveSet, it must NOT also be in
+                    // number_chs (enforced upstream by tag-type unique mapping).
                     if let Some((diff_bytes, merge_type)) = state_chs_inner.get(hash) {
                         let base_get_data = |h: &Blake2b256Hash| reader.get_data(h);
                         Ok(Some(RholangMergingLogic::calculate_state_channel_merge(

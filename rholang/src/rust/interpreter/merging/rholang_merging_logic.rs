@@ -21,7 +21,7 @@ use rspace_plus_plus::rspace::{
     trace::event::Produce,
 };
 
-use crate::rust::interpreter::rho_type::RhoNumber;
+use crate::rust::interpreter::rho_type::{RhoMap, RhoNumber};
 
 pub struct RholangMergingLogic;
 
@@ -70,11 +70,14 @@ impl RholangMergingLogic {
                     if let Some(prev_val) = state.get(&ch) {
                         let diff = match merge_type {
                             MergeType::IntegerAdd => end_val.wrapping_sub(*prev_val),
-                            MergeType::BitmaskOr => {
-                                ((end_val as u64) & !(*prev_val as u64)) as i64
-                            }
+                            MergeType::BitmaskOr => ((end_val as u64) & !(*prev_val as u64)) as i64,
                             MergeType::MutexState => unreachable!(
                                 "MutexState channels do not flow through the \
+                                 number-channel diff path; they use the parallel \
+                                 state-channel pipeline (StateChannelsDiff)"
+                            ),
+                            MergeType::AdditiveSet => unreachable!(
+                                "AdditiveSet channels do not flow through the \
                                  number-channel diff path; they use the parallel \
                                  state-channel pipeline (StateChannelsDiff)"
                             ),
@@ -118,6 +121,10 @@ impl RholangMergingLogic {
                 "MutexState channels do not flow through calculate_number_channel_merge; \
                  they use calculate_state_channel_merge in the parallel state pipeline"
             ),
+            MergeType::AdditiveSet => unreachable!(
+                "AdditiveSet channels do not flow through calculate_number_channel_merge; \
+                 they use calculate_state_channel_merge in the parallel state pipeline"
+            ),
         };
 
         // Calculate merged random generator (use only unique changes as input)
@@ -158,13 +165,18 @@ impl RholangMergingLogic {
         ))
     }
 
-    /// Merge a state-channel value across multiple parents under the
-    /// `MutexState` strategy. Reads base state, decodes incoming sibling
-    /// Datums, and folds via `combine_mergeable_state` (lowest-hash winner).
-    /// The winner's `random_state` is preserved as-is.
+    /// Merge a state-channel value across multiple parents. Dispatches by
+    /// `MergeType`:
+    ///   - `MutexState`: fold via `combine_mergeable_state` (lowest-bincode
+    ///     -hash winner; the winner's `random_state` is preserved as-is).
+    ///   - `AdditiveSet`: fold via `combine_mergeable_state_additive`
+    ///     (key-wise union of Map-bearing payloads with per-key bincode
+    ///     tiebreak; `random_state` merged across all inputs).
     ///
     /// Symmetric to `calculate_number_channel_merge` but for `Datum<P>`-valued
-    /// channels rather than `i64`-valued ones.
+    /// channels rather than `i64`-valued ones. The reducer is
+    /// associative+commutative+idempotent in both cases, so input order is
+    /// safe.
     pub fn calculate_state_channel_merge(
         channel_hash: &Blake2b256Hash,
         diff_bytes: Vec<u8>,
@@ -173,35 +185,39 @@ impl RholangMergingLogic {
         get_base_data: impl Fn(&Blake2b256Hash) -> Result<Vec<Datum<ListParWithRandom>>, HistoryError>,
     ) -> HotStoreTrieAction<Par, BindPattern, ListParWithRandom, TaggedContinuation> {
         debug_assert!(
-            matches!(merge_type, MergeType::MutexState),
-            "calculate_state_channel_merge only supports MutexState; got {:?}",
+            matches!(merge_type, MergeType::MutexState | MergeType::AdditiveSet),
+            "calculate_state_channel_merge supports MutexState and AdditiveSet; got {:?}",
             merge_type,
         );
 
-        // 1. Decode base state (current Datums on this channel, if any).
         let base = get_base_data(channel_hash).unwrap_or_default();
 
-        // 2. Decode this branch's diff and the sibling-added bytes.
-        let diff_datum: Datum<ListParWithRandom> =
-            serializers::decode_datum(&diff_bytes);
+        let diff_datum: Datum<ListParWithRandom> = serializers::decode_datum(&diff_bytes);
         let added_datums: Vec<Datum<ListParWithRandom>> = changes
             .added
             .iter()
             .map(|b| serializers::decode_datum(&b.to_vec()))
             .collect();
 
-        // 3. Reduce all candidates {base..., diff_datum, added...} via
-        //    combine_mergeable_state (lowest Blake2b256-of-bincode wins).
-        //    The reducer is associative+commutative+idempotent, so order is safe.
         let candidates: Vec<Datum<ListParWithRandom>> = base
             .into_iter()
             .chain(std::iter::once(diff_datum))
             .chain(added_datums)
             .collect();
-        let winner = candidates
-            .into_iter()
-            .reduce(|a, b| combine_mergeable_state(&a, &b, MergeType::MutexState))
-            .expect("calculate_state_channel_merge: at least one candidate must exist");
+        let winner = match merge_type {
+            MergeType::MutexState => candidates
+                .into_iter()
+                .reduce(|a, b| combine_mergeable_state(&a, &b, MergeType::MutexState))
+                .expect("calculate_state_channel_merge: at least one candidate must exist"),
+            MergeType::AdditiveSet => candidates
+                .into_iter()
+                .reduce(|a, b| combine_mergeable_state_additive(&a, &b))
+                .expect("calculate_state_channel_merge: at least one candidate must exist"),
+            other => unreachable!(
+                "calculate_state_channel_merge cannot dispatch on {:?}",
+                other
+            ),
+        };
 
         // 4. Re-encode winner as the single surviving Datum on the channel.
         let winner_bytes = serializers::encode_datum(&winner);
@@ -310,6 +326,99 @@ impl RholangMergingLogic {
             }
         }
     }
+}
+
+/// Combine two `Datum<ListParWithRandom>` whose payloads each encode a
+/// single Rholang `Map[K, V]`, producing one `Datum<ListParWithRandom>`
+/// whose payload is the key-wise union of the two Maps.
+///
+/// Conflict resolution: when both inputs contain the same key with
+/// differing values, the value with the lexicographically lower
+/// bincode encoding wins. This is deterministic across validators and
+/// matches the tiebreak shape used by `combine_mergeable_state` for the
+/// MutexState path.
+///
+/// Persistence: result `persist` is the logical OR of the two inputs.
+/// Source: taken from the lower-hash input Datum (same determinism rule).
+/// `random_state`: merged across both inputs via
+/// `Blake2b512Random::merge` over the deduplicated, byte-sorted RNGs —
+/// same construction as the IntegerAdd / BitmaskOr number-channel merge.
+///
+/// Both inputs must hold a single Par whose only expression is an EMap;
+/// an empty `pars` vec is treated as an empty Map.
+pub fn combine_mergeable_state_additive(
+    a: &Datum<ListParWithRandom>,
+    b: &Datum<ListParWithRandom>,
+) -> Datum<ListParWithRandom> {
+    let map_a = extract_payload_map(&a.a);
+    let map_b = extract_payload_map(&b.a);
+
+    let mut merged: std::collections::HashMap<Par, Par> = map_a;
+    for (k, v_b) in map_b {
+        match merged.get(&k) {
+            None => {
+                merged.insert(k, v_b);
+            }
+            Some(v_a) if *v_a == v_b => {}
+            Some(v_a) => {
+                let bytes_a = bincode::serialize(v_a).unwrap_or_default();
+                let bytes_b = bincode::serialize(&v_b).unwrap_or_default();
+                if bytes_b < bytes_a {
+                    merged.insert(k, v_b);
+                }
+            }
+        }
+    }
+
+    let merged_par = RhoMap::create_par(merged);
+
+    let mut rnd_pairs: Vec<(Blake2b512Random, Vec<u8>)> = [&a.a.random_state, &b.a.random_state]
+        .into_iter()
+        .map(|bytes| {
+            let rnd = Blake2b512Random::from_bytes(bytes);
+            let key = rnd.to_bytes();
+            (rnd, key)
+        })
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    rnd_pairs.sort_by(|x, y| x.1.cmp(&y.1));
+    let sorted_rnds: Vec<Blake2b512Random> = rnd_pairs.into_iter().map(|(rnd, _)| rnd).collect();
+    let merged_rnd = match sorted_rnds.len() {
+        0 => Blake2b512Random::from_bytes(&[]),
+        1 => sorted_rnds.into_iter().next().unwrap(),
+        _ => Blake2b512Random::merge(sorted_rnds),
+    };
+
+    let bytes_a = bincode::serialize(a).unwrap_or_default();
+    let bytes_b = bincode::serialize(b).unwrap_or_default();
+    let source_winner =
+        if Blake2b256Hash::new(&bytes_a).bytes() <= Blake2b256Hash::new(&bytes_b).bytes() {
+            a.source.clone()
+        } else {
+            b.source.clone()
+        };
+
+    Datum {
+        a: ListParWithRandom {
+            pars: vec![merged_par],
+            random_state: merged_rnd.to_bytes(),
+        },
+        persist: a.persist || b.persist,
+        source: source_winner,
+    }
+}
+
+fn extract_payload_map(payload: &ListParWithRandom) -> std::collections::HashMap<Par, Par> {
+    if payload.pars.is_empty() {
+        return std::collections::HashMap::new();
+    }
+    debug_assert_eq!(
+        payload.pars.len(),
+        1,
+        "AdditiveSet payload must hold exactly one Par (the Map)"
+    );
+    RhoMap::unapply(&payload.pars[0]).unwrap_or_default()
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]

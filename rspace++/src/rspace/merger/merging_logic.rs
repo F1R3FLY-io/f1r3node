@@ -29,6 +29,7 @@ pub enum MergeType {
     IntegerAdd,
     BitmaskOr,
     MutexState,
+    AdditiveSet,
 }
 
 // === Number-channel pipeline (existing — i64-valued) =======================
@@ -49,8 +50,12 @@ pub fn combine_mergeable_value(a: i64, b: i64, merge_type: MergeType) -> i64 {
         MergeType::IntegerAdd => a.wrapping_add(b),
         MergeType::BitmaskOr => ((a as u64) | (b as u64)) as i64,
         MergeType::MutexState => unreachable!(
-            "combine_mergeable_value (i64 path) cannot handle MutexState; \
-             route MutexState channels through combine_mergeable_state instead"
+            "combine_mergeable_value (i64 path) cannot handle MutexState; route MutexState \
+             channels through combine_mergeable_state instead"
+        ),
+        MergeType::AdditiveSet => unreachable!(
+            "combine_mergeable_value (i64 path) cannot handle AdditiveSet; route AdditiveSet \
+             channels through combine_mergeable_state_additive instead"
         ),
     }
 }
@@ -106,14 +111,8 @@ pub fn combine_mergeable_state_bytes(a: &[u8], b: &[u8]) -> Vec<u8> {
 ///
 /// `merge_type` is accepted for API symmetry with `combine_mergeable_value`
 /// and asserted internally — only `MergeType::MutexState` is valid here.
-pub fn combine_mergeable_state<P>(
-    a: &Datum<P>,
-    b: &Datum<P>,
-    merge_type: MergeType,
-) -> Datum<P>
-where
-    P: Clone + serde::Serialize,
-{
+pub fn combine_mergeable_state<P>(a: &Datum<P>, b: &Datum<P>, merge_type: MergeType) -> Datum<P>
+where P: Clone + serde::Serialize {
     debug_assert!(
         matches!(merge_type, MergeType::MutexState),
         "combine_mergeable_state only supports MergeType::MutexState, got {:?}",
@@ -1891,12 +1890,9 @@ mod tests {
     fn mutex_state_combine_n_parents_returns_one_winner() {
         let datums: Vec<_> = (0..4u8).map(|i| make_test_datum(i)).collect();
 
-        let result = datums
-            .iter()
-            .skip(1)
-            .fold(datums[0].clone(), |acc, d| {
-                combine_mergeable_state(&acc, d, MergeType::MutexState)
-            });
+        let result = datums.iter().skip(1).fold(datums[0].clone(), |acc, d| {
+            combine_mergeable_state(&acc, d, MergeType::MutexState)
+        });
 
         assert!(datums.contains(&result));
     }

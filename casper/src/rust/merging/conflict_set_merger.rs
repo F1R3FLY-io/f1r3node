@@ -9,9 +9,9 @@ use rspace_plus_plus::rspace::{
     internal::Datum,
     merger::{
         merging_logic::{
-        combine_mergeable_state_bytes, combine_mergeable_value, MergeType, NumberChannelsDiff,
-        StateChannelsDiff,
-    },
+            combine_mergeable_state_bytes, combine_mergeable_value, MergeType, NumberChannelsDiff,
+            StateChannelsDiff,
+        },
         state_change::StateChange,
     },
 };
@@ -609,6 +609,10 @@ fn cal_merged_result<R: Clone + Eq + std::hash::Hash>(
                     }
                     MergeType::MutexState => unreachable!(
                         "MutexState channels do not flow through the i64 conflict-merger \
+                         path; they use the parallel state-channel pipeline"
+                    ),
+                    MergeType::AdditiveSet => unreachable!(
+                        "AdditiveSet channels do not flow through the i64 conflict-merger \
                          path; they use the parallel state-channel pipeline"
                     ),
                 }

@@ -6,7 +6,7 @@
 // merge layer would silently corrupt state.
 
 use models::rhoapi::{
-    g_unforgeable::UnfInstance, expr::ExprInstance, Expr, GPrivate, GUnforgeable,
+    expr::ExprInstance, g_unforgeable::UnfInstance, Expr, GPrivate, GUnforgeable,
     ListParWithRandom, Par,
 };
 use rspace_plus_plus::rspace::{
@@ -279,21 +279,24 @@ fn event_log_index_combine_picks_lowest_hash_winner_for_state_channel() {
     let right_bytes = encode_datum(&datum_right);
 
     // Compute expected winner via the typed function (ground truth).
-    let expected_datum =
-        combine_mergeable_state(&datum_left, &datum_right, MergeType::MutexState);
+    let expected_datum = combine_mergeable_state(&datum_left, &datum_right, MergeType::MutexState);
     let expected_bytes = encode_datum(&expected_datum);
 
     // Construct two EventLogIndexes, each carrying one State Datum on the
     // same channel.
     let mut left = EventLogIndex::empty();
-    left.state_channels_data
-        .insert(channel_hash.clone(), (left_bytes.clone(), MergeType::MutexState));
+    left.state_channels_data.insert(
+        channel_hash.clone(),
+        (left_bytes.clone(), MergeType::MutexState),
+    );
     let mut right = EventLogIndex::empty();
-    right
-        .state_channels_data
-        .insert(channel_hash.clone(), (right_bytes.clone(), MergeType::MutexState));
+    right.state_channels_data.insert(
+        channel_hash.clone(),
+        (right_bytes.clone(), MergeType::MutexState),
+    );
 
-    let combined = EventLogIndex::combine(&left, &right);
+    let combined = EventLogIndex::combine(&left, &right)
+        .expect("EventLogIndex::combine must succeed for matching merge types");
 
     let (combined_bytes, combined_mt) = combined
         .state_channels_data
