@@ -168,9 +168,20 @@ in {
           pickActiveValidators!($$initialBonds$$.toList(), *initialActiveCh) |
           for (@initialActive     <- initialActiveCh;
                @(true, _) <- moveInitialBondCh) {
-            new stateCh, pendingRewardsInitializedCh, rewardsInfo, calTotalActiveBonds, calTotalBonds,
+            new stateCh, bondsCh, pendingRewardsInitializedCh, rewardsInfo, calTotalActiveBonds, calTotalBonds,
                 accumulateSndNum, accumulateFstOfSndArg, accumulateItemInState,
-                mutexTag(`rho:system:mutexStateMergeableTag`) in {
+                mutexTag(`rho:system:mutexStateMergeableTag`),
+                additiveSetTag(`rho:system:additiveSetMergeableTag`) in {
+              // bondsCh holds the canonical bonds map (Map[PublicKey, Int]).
+              // It is tagged with the AdditiveSet merge type so multi-parent
+              // merge takes the key-wise union of concurrent branches' bond
+              // writes instead of dropping all but one branch's contribution
+              // (which is what MutexState's lowest-hash LWW would do).
+              // `getBonds` and active-validator selection read this channel;
+              // `bond` writes to it. The `state.allBonds` field in stateCh
+              // remains as a legacy mirror for the slash/withdraw paths
+              // until those are migrated.
+              @(*additiveSetTag, *bondsCh)!($$initialBonds$$) |
               // Initializes PoS state structure.
               // stateCh is wrapped with the MutexState tag so multi-parent
               // merge over concurrent take-then-put writes collapses to a
@@ -262,10 +273,12 @@ in {
                   }
                 }
               } |
-              // Peeks at bonds map.
+              // Peeks at bonds map. Reads bondsCh (AdditiveSet) — the
+              // canonical bonds source whose multi-parent merge preserves
+              // every branch's contribution.
               contract PoS(@"getBonds", returnCh) = {
-                for (@state <<- @(*mutexTag, *stateCh)) {
-                  returnCh!(state.get("allBonds"))
+                for (@bonds <<- @(*additiveSetTag, *bondsCh)) {
+                  returnCh!(bonds)
                 }
               } |
               // Peeks at active validator list.
@@ -328,7 +341,12 @@ in {
                       for (@depositResult <- depositCh) {
                         match depositResult {
                           // If deposit is successful, the user becomes a bonded validator.
+                          // Dual-write: bondsCh (canonical, AdditiveSet-merged) and
+                          // stateCh.allBonds (legacy mirror for slash/withdraw).
                           (true, _) => {
+                            for (@bonds <- @(*additiveSetTag, *bondsCh)) {
+                              @(*additiveSetTag, *bondsCh)!(bonds.set(userPk, amount))
+                            } |
                             resultCh!(state.set("allBonds", state.get("allBonds").set(userPk, amount)), depositResult)
                           }
                           // If deposit is unsuccessful, the user is not bonded.
@@ -535,8 +553,15 @@ in {
                                         // 5. update `pendingWithdrawers` to empty Map {}.
                                         removeQuarantinedWithdrawers!(blockNumber, newMovedPendingState, *removeQuarantinedCh) |
                                         for (@newRemovedQuantinueState <- removeQuarantinedCh) {
-                                          // 6. Pick new `activeValidators`
-                                          pickActiveValidators!(newMovedPendingState.get("allBonds").toList(), *newValidatorsCh) |
+                                          // 6. Pick new `activeValidators` from the canonical bondsCh
+                                          //    (AdditiveSet-merged) so multi-parent merge of bond
+                                          //    writes is honoured here. Reading the legacy
+                                          //    `state.allBonds` would inherit MutexState's LWW
+                                          //    drop and exclude validators bonded on a sibling
+                                          //    branch.
+                                          for (@bondsForActive <<- @(*additiveSetTag, *bondsCh)) {
+                                            pickActiveValidators!(bondsForActive.toList(), *newValidatorsCh)
+                                          } |
                                           for (@newValidators <- newValidatorsCh) {
                                             stateUpdateCh!(newRemovedQuantinueState.set("activeValidators", newValidators), (true, Nil))
                                           }
