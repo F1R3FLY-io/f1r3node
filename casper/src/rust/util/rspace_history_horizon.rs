@@ -40,12 +40,27 @@
 
 use block_storage::rust::dag::block_dag_key_value_storage::KeyValueDagRepresentation;
 use block_storage::rust::key_value_block_store::KeyValueBlockStore;
+use models::rust::block_hash::BlockHash;
 use models::rust::casper::protocol::casper_message::BlockMessage;
 use rspace_plus_plus::rspace::hashing::blake2b256_hash::Blake2b256Hash;
 use shared::rust::store::key_value_store::KvStoreError;
 use std::collections::HashSet;
 
 use crate::rust::casper::CasperShardConf;
+
+/// Result of walking the forward-horizon DAG window. Carries both the block
+/// hashes (for storage-layers keyed by block — mergeable entries, block
+/// metadata) and the rspace state roots (for the rspace history sync).
+/// Single walk; both projections in one pass.
+pub struct ForwardHorizon {
+    /// Every block hash in the horizon, ordered LFB-side first (highest
+    /// block_number first), deduped.
+    pub block_hashes: Vec<BlockHash>,
+    /// Every rspace state root referenced by horizon blocks (post-state and
+    /// pre-state hashes), ordered LFB-side first, deduped. Within a single
+    /// block the post-state precedes the pre-state — see module-level docs.
+    pub roots: Vec<Blake2b256Hash>,
+}
 
 /// Compute the set of rspace roots a joiner needs in its local roots store
 /// before transitioning to Running. Walks every block in the DAG with
@@ -70,11 +85,32 @@ pub fn compute_forward_horizon_roots(
     lfb: &BlockMessage,
     casper_shard_conf: &CasperShardConf,
 ) -> Result<Vec<Blake2b256Hash>, KvStoreError> {
+    Ok(compute_forward_horizon(dag, block_store, lfb, casper_shard_conf)?.roots)
+}
+
+/// Walk the forward-horizon DAG window and return both the block hashes
+/// (for storage layers keyed by block — mergeable entries, block metadata)
+/// and the rspace state roots (for rspace history sync) in a single pass.
+/// Both projections are deduped and ordered LFB-side first.
+///
+/// Returns an empty `ForwardHorizon` if the LFB is at depth 0 (genesis) or
+/// if the horizon would extend below genesis (clamped to height 0). Also
+/// returns empty when `max_parent_depth == i32::MAX` (depth check disabled
+/// — the unbounded horizon is a deliberate opt-out; operators can use
+/// `disable-lfs = true` for full replay instead).
+pub fn compute_forward_horizon(
+    dag: &KeyValueDagRepresentation,
+    block_store: &KeyValueBlockStore,
+    lfb: &BlockMessage,
+    casper_shard_conf: &CasperShardConf,
+) -> Result<ForwardHorizon, KvStoreError> {
+    let empty = ForwardHorizon {
+        block_hashes: Vec::new(),
+        roots: Vec::new(),
+    };
+
     if casper_shard_conf.max_parent_depth == i32::MAX {
-        // Depth check disabled — joiner can validate against any historical
-        // block. Fall back to no horizon sync; caller can opt into full
-        // replay (`disable-lfs = true`) instead.
-        return Ok(Vec::new());
+        return Ok(empty);
     }
 
     let lfb_height = lfb.body.state.block_number;
@@ -83,7 +119,7 @@ pub fn compute_forward_horizon_roots(
     let min_height = std::cmp::max(0, lfb_height - horizon_depth);
 
     if min_height > lfb_height {
-        return Ok(Vec::new());
+        return Ok(empty);
     }
 
     // topo_sort returns Vec<Vec<BlockHash>> — one inner vec per height,
@@ -91,15 +127,20 @@ pub fn compute_forward_horizon_roots(
     // Ordering: ascending by height. Reverse to get LFB-side first.
     let layers = dag.topo_sort(min_height, Some(lfb_height))?;
 
+    let mut block_hashes: Vec<BlockHash> = Vec::new();
+    let mut block_seen: HashSet<BlockHash> = HashSet::new();
     let mut roots: Vec<Blake2b256Hash> = Vec::new();
-    let mut seen: HashSet<Blake2b256Hash> = HashSet::new();
+    let mut root_seen: HashSet<Blake2b256Hash> = HashSet::new();
     for layer in layers.iter().rev() {
         for block_hash in layer {
+            if !block_seen.insert(block_hash.clone()) {
+                continue;
+            }
             let block = match block_store.get(block_hash)? {
                 Some(b) => b,
                 None => {
                     tracing::warn!(
-                        "compute_forward_horizon_roots: block {} in DAG but missing from block_store",
+                        "compute_forward_horizon: block {} in DAG but missing from block_store",
                         models::rust::casper::pretty_printer::PrettyPrinter::build_string_bytes(
                             block_hash
                         )
@@ -107,17 +148,21 @@ pub fn compute_forward_horizon_roots(
                     continue;
                 }
             };
+            block_hashes.push(block_hash.clone());
             let post = Blake2b256Hash::from_bytes_prost(&block.body.state.post_state_hash);
-            if seen.insert(post.clone()) {
+            if root_seen.insert(post.clone()) {
                 roots.push(post);
             }
             let pre = Blake2b256Hash::from_bytes_prost(&block.body.state.pre_state_hash);
-            if seen.insert(pre.clone()) {
+            if root_seen.insert(pre.clone()) {
                 roots.push(pre);
             }
         }
     }
-    Ok(roots)
+    Ok(ForwardHorizon {
+        block_hashes,
+        roots,
+    })
 }
 
 /// Compute the LFS lower-bound block number for joiner-side block download.
