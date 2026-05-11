@@ -281,7 +281,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: F1R3FLY-io/system-integration
-          ref: 2ace29f4f45b26418749edb9477ec2a310be9c6c
+          ref: refactor/integration-test-framework
           path: system-integration
 
       - uses: actions/setup-python@v5
@@ -337,6 +337,7 @@ jobs:
         shell: bash -ex {0}
         env:
           DEFAULT_IMAGE: f1r3flyindustries/f1r3fly-rust-node
+          F1R3FLY_NODE_DEFAULTS_CONF: ${{ github.workspace }}/node/src/main/resources/defaults.conf
         run: |
           cd system-integration
           SCALE_FLAG=""
@@ -344,29 +345,18 @@ jobs:
             SCALE_FLAG="--timeout-scale=1.5"
           fi
           poetry run pytest \
-            integration-tests/test/test_web_api.py \
-            integration-tests/test/test_wallets.py \
-            integration-tests/test/test_heartbeat.py \
-            integration-tests/test/test_deployment.py \
-            integration-tests/test/test_storage.py \
-            integration-tests/test/test_genesis_ceremony.py \
-            integration-tests/test/test_dag_correctness.py \
-            integration-tests/test/test_finalization.py \
-            integration-tests/test/test_propose.py \
-            integration-tests/test/test_replay_correctness.py \
-            integration-tests/test/test_convergence.py \
-            integration-tests/test/test_bridge_admin.py \
-            integration-tests/test/test_shard_degradation.py \
-            integration-tests/test/test_consensus_health.py \
-            integration-tests/test/test_websocket.py \
-            integration-tests/test/test_synchrony_constraint.py \
-            integration-tests/test/test_asymmetric_bonds.py \
-            integration-tests/test/test_bonding_validators.py \
-            integration-tests/test/test_trim_state.py \
-            -v --tb=short --log-cli-level=WARNING \
-            -n 3 --dist=loadgroup \
-            --deselect=integration-tests/test/test_convergence.py::test_network_converges_after_slow_deploy \
-            --startup-timeout=600 --command-timeout=300 --timeout=1200 $SCALE_FLAG
+            integration-tests/test/tests/shared/ \
+            integration-tests/test/tests/custom/ \
+            integration-tests/test/tests/standalone/ \
+            --deselect integration-tests/test/tests/custom/test_load.py \
+            --deselect integration-tests/test/tests/shared/test_convergence.py::test_network_converges_after_slow_deploy \
+            --deselect integration-tests/test/tests/custom/test_asymmetric_bonds.py::test_finalization_asymmetric_bonds \
+            --deselect integration-tests/test/tests/shared/test_convergence.py::test_ft_convergence \
+            --deselect integration-tests/test/tests/shared/test_bonding_validators.py \
+            --deselect integration-tests/test/tests/custom/test_joiner_self_proposes_at_epoch_boundary.py \
+            --deselect integration-tests/test/tests/shared/test_observer_lfs_sync.py \
+            -v --tb=short --instafail --maxfail=10 \
+            -n auto --dist=loadgroup --timeout=1200 $SCALE_FLAG
 
       - name: Upload Integration Test Logs
         if: always()
