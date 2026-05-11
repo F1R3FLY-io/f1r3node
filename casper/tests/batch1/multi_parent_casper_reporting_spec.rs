@@ -9,7 +9,6 @@ use rholang::rust::interpreter::external_services::ExternalServices;
 use rspace_plus_plus::rspace::hashing::blake2b256_hash::Blake2b256Hash;
 use rspace_plus_plus::rspace::history::history_repository::HistoryRepositoryInstances;
 use rspace_plus_plus::rspace::reporting_rspace::ReportingEvent;
-use rspace_plus_plus::rspace::shared::key_value_store_manager::KeyValueStoreManager;
 use rspace_plus_plus::rspace::state::exporters::rspace_exporter_items::RSpaceExporterItems;
 
 use crate::helper::test_node::TestNode;
