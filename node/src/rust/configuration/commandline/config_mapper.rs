@@ -99,10 +99,9 @@ impl ConfigMapper<Options> for NodeConf {
             );
 
             // API server fields
-            Self::try_override_bool(
-                &mut self.api_server.enable_reporting,
-                run.api_enable_reporting,
-            );
+            if let Some(enable_reporting) = run.api_enable_reporting {
+                self.api_server.enable_reporting = enable_reporting;
+            }
             Self::try_override_value(
                 &mut self.api_server.port_grpc_external,
                 run.api_port_grpc_external,
@@ -614,7 +613,7 @@ mod tests {
                 api_port_http: Some(11111),
                 api_port_admin_http: Some(11111),
                 api_max_blocks_limit: Some(111111),
-                api_enable_reporting: true,
+                api_enable_reporting: Some(true),
                 api_keep_alive_time: Some(Duration::from_secs(111111)),
                 api_keep_alive_timeout: Some(Duration::from_secs(111111)),
                 api_permit_keep_alive_time: Some(Duration::from_secs(111111)),
