@@ -82,6 +82,7 @@ pub struct TestNode {
         Mutex<block_storage::rust::deploy::key_value_rejected_deploy_buffer::KeyValueRejectedDeployBuffer>,
     >,
     pub runtime_manager: RuntimeManager,
+    pub rspace_store: rspace_plus_plus::rspace::rspace::RSpaceStore,
     // Note: no log field, logging will come from log crate
     pub requested_blocks: RequestedBlocks,
     pub connections_cell: ConnectionsCell,
@@ -931,7 +932,7 @@ impl TestNode {
             .unwrap();
         // Use create_with_history to ensure tests can reset to genesis state root hash
         let (runtime_manager, _rho_history_repository) = RuntimeManager::create_with_history(
-            rspace_store,
+            rspace_store.clone(),
             mergeable_store,
             std::sync::Arc::new(Genesis::default_mergeable_tags()),
             rholang::rust::interpreter::external_services::ExternalServices::noop(),
@@ -1111,6 +1112,7 @@ impl TestNode {
             deploy_storage,
             rejected_deploy_buffer,
             runtime_manager,
+            rspace_store,
             requested_blocks,
             connections_cell,
             rp_conf,
