@@ -352,7 +352,6 @@ jobs:
             --deselect integration-tests/test/tests/custom/test_asymmetric_bonds.py::test_finalization_asymmetric_bonds \
             --deselect integration-tests/test/tests/shared/test_convergence.py::test_ft_convergence \
             --deselect integration-tests/test/tests/shared/test_bonding_validators.py \
-            --deselect integration-tests/test/tests/shared/test_contract_lifecycle.py \
             --deselect integration-tests/test/tests/custom/test_joiner_self_proposes_at_epoch_boundary.py \
             --deselect integration-tests/test/tests/shared/test_observer_lfs_sync.py \
             -v --tb=short --instafail --maxfail=10 \
