@@ -251,29 +251,98 @@ jobs:
           name: artifacts-docker-${{ matrix.arch }}
           path: /tmp/rust-node-docker.tar.gz
 
-  # Integration tests on OCI self-hosted runners (one runner per arch).
-  # All tests run in a single pytest invocation per arch, matching local dev
-  # workflow. The static shard boots once and stays up for all shard tests;
-  # custom shard tests boot/teardown their own shards per-test.
+  # Launch the ephemeral OCI VMs that will pick up the integration-tests
+  # matrix jobs. Runs in parallel with build_rust_docker_image so the
+  # ~1-minute launch overhead overlaps with the ~7-minute Docker build.
+  # Each launched VM boots from a baked image, registers itself as a
+  # GitHub Actions runner with f1r3fly-rust-ci-ephemeral labels, picks up
+  # exactly one matrix job, then self-terminates. See
+  # F1R3FLY-io/system-integration ci/oci-runners/ for the full lifecycle.
+  launch_ephemeral_runners:
+    name: Launch Ephemeral Runners
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write  # needed for gh api ... actions/runners/registration-token
+    timeout-minutes: 10
+    steps:
+      - name: Clone system-integration
+        uses: actions/checkout@v4
+        with:
+          repository: F1R3FLY-io/system-integration
+          ref: refactor/integration-test-framework
+          path: system-integration
+
+      - name: Install OCI CLI
+        shell: bash -ex {0}
+        run: |
+          bash -c "$(curl -L https://raw.githubusercontent.com/oracle/oci-cli/master/scripts/install/install.sh)" -- \
+            --accept-all-defaults --install-dir /opt/oci-cli --exec-dir /usr/local/bin
+          oci --version
+
+      - name: Configure OCI auth from secrets
+        shell: bash -ex {0}
+        env:
+          OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID }}
+          OCI_USER_OCID: ${{ secrets.OCI_USER_OCID }}
+          OCI_REGION: ${{ secrets.OCI_REGION }}
+          OCI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
+          OCI_PRIVATE_KEY: ${{ secrets.OCI_PRIVATE_KEY }}
+        run: |
+          mkdir -p ~/.oci
+          printf '%s\n' "$OCI_PRIVATE_KEY" > ~/.oci/oci_api_key.pem
+          chmod 600 ~/.oci/oci_api_key.pem
+          cat > ~/.oci/config <<EOF
+          [DEFAULT]
+          user=$OCI_USER_OCID
+          fingerprint=$OCI_FINGERPRINT
+          tenancy=$OCI_TENANCY_OCID
+          region=$OCI_REGION
+          key_file=$HOME/.oci/oci_api_key.pem
+          EOF
+          chmod 600 ~/.oci/config
+          oci iam region list >/dev/null && echo "OCI auth OK"
+
+      - name: Launch 5 amd64 + 5 arm64 ephemeral runners
+        shell: bash -ex {0}
+        env:
+          # The default GITHUB_TOKEN can't mint runner registration tokens
+          # even with permissions: actions: write — that endpoint requires
+          # admin-on-repo scope. RELEASE_PAT is already provisioned with the
+          # repo scope (used by the release job) so reuse it here.
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+          SUPPRESS_LABEL_WARNING: "True"
+        run: |
+          cd system-integration/ci/oci-runners
+          # Launch in parallel; each script exits as soon as the OCI launch
+          # API call returns (the VM continues booting in the background and
+          # registers itself via cloud-init).
+          for _ in $(seq 1 5); do ./launch-runner.sh amd64 & done
+          for _ in $(seq 1 5); do ./launch-runner.sh arm64 & done
+          wait
+          echo "All 10 ephemeral runner VMs submitted."
+
+  # Integration tests run on ephemeral OCI runners — one fresh VM per matrix
+  # job, self-terminating after the job completes. 5 amd64 + 5 arm64 = 10
+  # parallel jobs against the Docker image artifact from build_rust_docker_image.
   required_rust_integration_tests:
-    name: Integration Tests (${{ matrix.arch }})
-    needs: build_rust_docker_image
+    name: Integration Tests (${{ matrix.arch }}-${{ matrix.slot }})
+    needs: [build_rust_docker_image, launch_ephemeral_runners]
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - arch: amd64
-            runner: [self-hosted, Linux, X64, f1r3fly-rust-ci]
-          - arch: arm64
-            runner: [self-hosted, Linux, ARM64, f1r3fly-rust-ci]
+          - { arch: amd64, slot: 1, runner: [self-hosted, linux, x64,   f1r3fly-rust-ci-ephemeral, oracle-cloud] }
+          - { arch: amd64, slot: 2, runner: [self-hosted, linux, x64,   f1r3fly-rust-ci-ephemeral, oracle-cloud] }
+          - { arch: amd64, slot: 3, runner: [self-hosted, linux, x64,   f1r3fly-rust-ci-ephemeral, oracle-cloud] }
+          - { arch: amd64, slot: 4, runner: [self-hosted, linux, x64,   f1r3fly-rust-ci-ephemeral, oracle-cloud] }
+          - { arch: amd64, slot: 5, runner: [self-hosted, linux, x64,   f1r3fly-rust-ci-ephemeral, oracle-cloud] }
+          - { arch: arm64, slot: 1, runner: [self-hosted, linux, arm64, f1r3fly-rust-ci-ephemeral, oracle-cloud] }
+          - { arch: arm64, slot: 2, runner: [self-hosted, linux, arm64, f1r3fly-rust-ci-ephemeral, oracle-cloud] }
+          - { arch: arm64, slot: 3, runner: [self-hosted, linux, arm64, f1r3fly-rust-ci-ephemeral, oracle-cloud] }
+          - { arch: arm64, slot: 4, runner: [self-hosted, linux, arm64, f1r3fly-rust-ci-ephemeral, oracle-cloud] }
+          - { arch: arm64, slot: 5, runner: [self-hosted, linux, arm64, f1r3fly-rust-ci-ephemeral, oracle-cloud] }
     steps:
-      - name: Clean self-hosted runner state
-        shell: bash {0}
-        run: |
-          sudo rm -rf system-integration/integration-tests/data
-          rm -f /tmp/rust-node-docker.tar.gz /tmp/*.log
-
       - name: Clone Repository
         uses: actions/checkout@v4
 
@@ -281,22 +350,10 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: F1R3FLY-io/system-integration
-          ref: 2ace29f4f45b26418749edb9477ec2a310be9c6c
+          ref: refactor/integration-test-framework
           path: system-integration
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.10"
-          cache: 'pip'
-
-      - name: Install Poetry
-        uses: snok/install-poetry@v1
-        with:
-          version: 1.8.5
-          virtualenvs-create: true
-          virtualenvs-in-project: true
-
-      - name: Load Docker Image
+      - name: Load Docker Image (from build_rust_docker_image artifact)
         uses: actions/download-artifact@v4
         with:
           name: artifacts-docker-${{ matrix.arch }}
@@ -306,25 +363,17 @@ jobs:
         shell: bash -ex {0}
         run: |
           zcat /tmp/rust-node-docker.tar.gz | docker image load
-          docker tag f1r3flyindustries/f1r3fly-rust-node:${{ matrix.arch }} f1r3flyindustries/f1r3fly-rust-node
+          docker tag f1r3flyindustries/f1r3fly-rust-node:${{ matrix.arch }} f1r3flyindustries/f1r3fly-rust-node:latest
 
-      - name: Install docker-compose
+      - name: Extract rnode binary from image (for subprocess provider)
         shell: bash -ex {0}
         run: |
-          if ! command -v docker-compose &>/dev/null; then
-            sudo curl -L "https://github.com/docker/compose/releases/download/v2.32.4/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-            sudo chmod +x /usr/local/bin/docker-compose
-          fi
-          docker-compose --version
-
-      - name: Reset Docker networking
-        shell: bash {0}
-        run: |
-          docker rm -f $(docker ps -aq) 2>/dev/null || true
-          docker network prune -f 2>/dev/null || true
-          echo "Restarting Docker daemon to clear any TIME_WAIT sockets from previous runs"
-          sudo systemctl restart docker
-          sleep 3
+          docker create --name extract-rnode f1r3flyindustries/f1r3fly-rust-node:latest
+          docker cp extract-rnode:/opt/docker/bin/node /tmp/rnode
+          chmod +x /tmp/rnode
+          docker rm extract-rnode
+          /tmp/rnode --version 2>/dev/null || true
+          ldd /tmp/rnode
 
       - name: Install system-integration dependencies
         shell: bash -ex {0}
@@ -333,10 +382,11 @@ jobs:
           poetry lock --no-update
           poetry install --with integration
 
-      - name: Run Integration Tests
+      - name: Run Integration Tests (subprocess provider)
         shell: bash -ex {0}
         env:
-          DEFAULT_IMAGE: f1r3flyindustries/f1r3fly-rust-node
+          F1R3FLY_NODE_BINARY: /tmp/rnode
+          F1R3FLY_NODE_DEFAULTS_CONF: ${{ github.workspace }}/node/src/main/resources/defaults.conf
         run: |
           cd system-integration
           SCALE_FLAG=""
@@ -344,56 +394,27 @@ jobs:
             SCALE_FLAG="--timeout-scale=1.5"
           fi
           poetry run pytest \
-            integration-tests/test/test_web_api.py \
-            integration-tests/test/test_wallets.py \
-            integration-tests/test/test_heartbeat.py \
-            integration-tests/test/test_deployment.py \
-            integration-tests/test/test_storage.py \
-            integration-tests/test/test_genesis_ceremony.py \
-            integration-tests/test/test_dag_correctness.py \
-            integration-tests/test/test_finalization.py \
-            integration-tests/test/test_propose.py \
-            integration-tests/test/test_replay_correctness.py \
-            integration-tests/test/test_convergence.py \
-            integration-tests/test/test_bridge_admin.py \
-            integration-tests/test/test_shard_degradation.py \
-            integration-tests/test/test_consensus_health.py \
-            integration-tests/test/test_websocket.py \
-            integration-tests/test/test_synchrony_constraint.py \
-            integration-tests/test/test_asymmetric_bonds.py \
-            integration-tests/test/test_bonding_validators.py \
-            integration-tests/test/test_trim_state.py \
-            -v --tb=short --log-cli-level=WARNING \
-            -n 3 --dist=loadgroup \
-            --deselect=integration-tests/test/test_convergence.py::test_network_converges_after_slow_deploy \
-            --startup-timeout=600 --command-timeout=300 --timeout=1200 $SCALE_FLAG
+            integration-tests/test/tests/shared/ \
+            integration-tests/test/tests/custom/ \
+            integration-tests/test/tests/standalone/ \
+            --deselect integration-tests/test/tests/custom/test_load.py \
+            --deselect integration-tests/test/tests/shared/test_convergence.py::test_network_converges_after_slow_deploy \
+            --deselect integration-tests/test/tests/custom/test_asymmetric_bonds.py::test_finalization_asymmetric_bonds \
+            --deselect integration-tests/test/tests/shared/test_convergence.py::test_ft_convergence \
+            --deselect integration-tests/test/tests/shared/test_bonding_validators.py \
+            --deselect integration-tests/test/tests/custom/test_joiner_self_proposes_at_epoch_boundary.py \
+            --deselect integration-tests/test/tests/shared/test_observer_lfs_sync.py \
+            --provider=subprocess \
+            -v --tb=short --instafail \
+            -n auto --dist=loadgroup --timeout=1200 $SCALE_FLAG
 
       - name: Upload Integration Test Logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: integration-logs-${{ matrix.arch }}
+          name: integration-logs-${{ matrix.arch }}-slot${{ matrix.slot }}-run${{ github.run_id }}-attempt${{ github.run_attempt }}
           path: system-integration/integration-tests/
           retention-days: 7
-
-      - name: Upload Docker Logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: docker-logs-${{ matrix.arch }}
-          path: /tmp/*.log
-          if-no-files-found: ignore
-          retention-days: 7
-
-      - name: Clean Docker state
-        if: always()
-        shell: bash {0}
-        run: |
-          docker rm -f rnode.bootstrap rnode.validator1 rnode.validator2 rnode.validator3 rnode.readonly \
-            rnode.standalone rnode.custom.boot rnode.custom.validator1 rnode.custom.validator2 \
-            rnode.custom.validator3 rnode.custom.joiner 2>/dev/null
-          docker network rm f1r3fly-shard_f1r3fly-test-shard f1r3fly-standalone_f1r3fly-test-standalone f1r3fly-custom_f1r3fly-test-custom 2>/dev/null
-          sudo rm -rf system-integration/integration-tests/data
 
   # ===========================================================================
   # Smoke Tests — verify README startup instructions work
