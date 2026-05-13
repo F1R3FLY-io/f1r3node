@@ -58,6 +58,11 @@ pub enum InvalidBlock {
     InvalidBondsCache,
     InvalidBlockHash,
     InvalidRejectedDeploy,
+    // Cascading invalidation: this block's parent_hash_list contains one or
+    // more blocks already recorded as invalid. The chain through them is
+    // unviable, so this block is also invalid. NOT slashable — the creator
+    // may not have known the parent was invalid in their view.
+    InvalidParent,
     ContainsExpiredDeploy,
     ContainsTimeExpiredDeploy,
     ContainsFutureDeploy,

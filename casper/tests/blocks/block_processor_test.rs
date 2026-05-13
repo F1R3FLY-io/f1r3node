@@ -3,23 +3,35 @@ use crate::helper::{
     block_dag_storage_fixture::with_storage, block_generator::create_genesis_block,
     block_util::generate_validator,
 };
+use async_trait::async_trait;
 use block_storage::rust::{
     casperbuffer::casper_buffer_key_value_storage::CasperBufferKeyValueStorage,
-    dag::block_dag_key_value_storage::BlockDagKeyValueStorage,
+    dag::block_dag_key_value_storage::{
+        BlockDagKeyValueStorage, DeployId, KeyValueDagRepresentation,
+    },
 };
 use casper::rust::{
-    blocks::block_processor::BlockProcessorDependencies, engine::block_retriever::BlockRetriever,
+    block_status::{BlockError, InvalidBlock, ValidBlock},
+    blocks::block_processor::{BlockProcessor, BlockProcessorDependencies},
+    casper::{test_helpers::TestCasperWithSnapshot, Casper, CasperSnapshot, DeployError},
+    engine::block_retriever::BlockRetriever,
+    errors::CasperError,
 };
 use comm::rust::{
     rp::connect::{Connections, ConnectionsCell},
     test_instances::{create_rp_conf_ask, TransportLayerStub},
 };
+use crypto::rust::signatures::signed::Signed;
 use models::rust::{
     block_hash::BlockHash,
-    casper::protocol::casper_message::{BlockMessage, Bond, Header},
+    casper::protocol::casper_message::{BlockMessage, Bond, DeployData, Header},
 };
-use rspace_plus_plus::rspace::shared::{
-    in_mem_store_manager::InMemoryStoreManager, key_value_store_manager::KeyValueStoreManager,
+use prost::bytes::Bytes;
+use rspace_plus_plus::rspace::{
+    history::Either,
+    shared::{
+        in_mem_store_manager::InMemoryStoreManager, key_value_store_manager::KeyValueStoreManager,
+    },
 };
 use shared::rust::store::key_value_typed_store_impl::KeyValueTypedStoreImpl;
 use std::{
@@ -31,6 +43,10 @@ struct TestFixture {
     dependencies: BlockProcessorDependencies<TransportLayerStub>,
     genesis: BlockMessage,
     test_block: BlockMessage,
+    /// Clone of the same `BlockDagKeyValueStorage` that lives inside
+    /// `dependencies`. Tests that need to pre-populate the dag (e.g. mark a
+    /// parent invalid before exercising the dependency gate) use this handle.
+    block_dag_storage_handle: BlockDagKeyValueStorage,
 }
 
 impl TestFixture {
@@ -113,6 +129,13 @@ impl TestFixture {
             None,
         );
 
+        // Clone the dag-storage handle before moving the original into
+        // BlockProcessorDependencies. Both handles point at the same
+        // underlying KV stores (BlockDagKeyValueStorage is `Clone` because
+        // its inner state is `Arc`/`Mutex`-shared). Tests use the cloned
+        // handle to pre-populate dag state observable by the dependencies.
+        let block_dag_storage_handle = block_dag_storage.clone();
+
         // Create unified dependencies
         let dependencies = BlockProcessorDependencies::new(
             block_store,
@@ -128,6 +151,7 @@ impl TestFixture {
             dependencies,
             genesis,
             test_block,
+            block_dag_storage_handle,
         }
     }
 
@@ -370,4 +394,144 @@ async fn block_processor_components_should_work_together() {
 
     // All operations should complete successfully
     assert!(true, "All components should work together");
+}
+
+// ── Cascading-invalidation gate (parent-child mergeable-entry race) ──
+//
+// A parent recorded as invalid in the local DAG never had its mergeable-
+// channels entry written (save_mergeable_channels runs inside compute_state
+// only on the success path). If a child of such a parent is allowed through
+// the dependency gate, its validation will fail with KvStoreError::KeyNotFound
+// looking up the parent's entry, and the resulting BlockException would be
+// mis-recorded as InvalidTransaction (slashable) — and the cascade would
+// continue down every descendant.
+//
+// `check_dependencies_with_effects` must instead detect the invalid parent
+// at the gate and cascade-invalidate the child as InvalidParent (non-
+// slashable), so validation never runs and the race never fires.
+
+struct CascadeMockCasper {
+    handle_invalid_block_calls: Arc<Mutex<Vec<InvalidBlock>>>,
+}
+
+impl CascadeMockCasper {
+    fn new() -> Self {
+        Self {
+            handle_invalid_block_calls: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+}
+
+#[async_trait]
+impl Casper for CascadeMockCasper {
+    async fn get_snapshot(&self) -> Result<CasperSnapshot, CasperError> {
+        Ok(TestCasperWithSnapshot::create_empty_snapshot())
+    }
+    fn contains(&self, _h: &BlockHash) -> bool {
+        false
+    }
+    fn dag_contains(&self, _h: &BlockHash) -> bool {
+        // Not consulted on the InvalidParent path: get_non_validated_dependencies
+        // identifies invalid parents via the dag-storage invalid_blocks_map
+        // before any dag_contains lookup happens.
+        false
+    }
+    fn buffer_contains(&self, _h: &BlockHash) -> bool {
+        false
+    }
+    fn get_approved_block(&self) -> Result<&BlockMessage, CasperError> {
+        Err(CasperError::RuntimeError("not used in test".into()))
+    }
+    fn deploy(&self, _d: Signed<DeployData>) -> Result<Either<DeployError, DeployId>, CasperError> {
+        unimplemented!("not exercised on the cascade path")
+    }
+    async fn estimator(
+        &self,
+        _: &mut KeyValueDagRepresentation,
+    ) -> Result<Vec<BlockHash>, CasperError> {
+        Ok(Vec::new())
+    }
+    fn get_version(&self) -> i64 {
+        1
+    }
+    async fn validate(
+        &self,
+        _block: &BlockMessage,
+        _snapshot: &mut CasperSnapshot,
+    ) -> Result<Either<BlockError, ValidBlock>, CasperError> {
+        // Validation must NOT be reached when a parent is invalid. If the
+        // gate ever lets the block through, this method's invocation would
+        // be a regression — but the test asserts via the recorded
+        // handle_invalid_block calls, not via panicking here.
+        Ok(Either::Right(ValidBlock::Valid))
+    }
+    async fn validate_self_created(
+        &self,
+        _b: &BlockMessage,
+        _s: &mut CasperSnapshot,
+        _pre: Bytes,
+        _post: Bytes,
+    ) -> Result<Either<BlockError, ValidBlock>, CasperError> {
+        unimplemented!("not exercised on the cascade path")
+    }
+    async fn handle_valid_block(
+        &self,
+        _b: &BlockMessage,
+    ) -> Result<KeyValueDagRepresentation, CasperError> {
+        unimplemented!("not reached on the cascade path")
+    }
+    fn handle_invalid_block(
+        &self,
+        _b: &BlockMessage,
+        status: &InvalidBlock,
+        dag: &KeyValueDagRepresentation,
+    ) -> Result<KeyValueDagRepresentation, CasperError> {
+        self.handle_invalid_block_calls
+            .lock()
+            .unwrap()
+            .push(status.clone());
+        Ok(dag.clone())
+    }
+    fn get_dependency_free_from_buffer(&self) -> Result<Vec<BlockMessage>, CasperError> {
+        Ok(Vec::new())
+    }
+    fn get_all_from_buffer(&self) -> Result<Vec<BlockMessage>, CasperError> {
+        Ok(Vec::new())
+    }
+}
+
+#[tokio::test]
+async fn check_dependencies_must_cascade_invalidate_when_parent_is_invalid() {
+    let fixture = TestFixture::new().await;
+
+    // Pre-populate the dag with `genesis` marked invalid. The dependency gate
+    // reads invalid_blocks_map directly from this storage.
+    fixture
+        .block_dag_storage_handle
+        .insert(&fixture.genesis, true, false)
+        .expect("insert genesis as invalid");
+
+    let casper = Arc::new(CascadeMockCasper::new());
+    let block_processor = BlockProcessor::new(fixture.dependencies);
+
+    // test_block lists genesis as its parent (see TestFixture::new).
+    let ready = block_processor
+        .check_dependencies_with_effects(casper.clone(), &fixture.test_block)
+        .await
+        .expect("dependency check must not error");
+
+    assert!(
+        !ready,
+        "Block with an invalid parent must NOT be reported ready for validation"
+    );
+
+    let calls = casper.handle_invalid_block_calls.lock().unwrap().clone();
+    assert_eq!(
+        calls,
+        vec![InvalidBlock::InvalidParent],
+        "Block must be cascade-invalidated as InvalidParent (non-slashable). \
+         A bug here causes the parent-child mergeable-entry race to fire and \
+         spuriously record blocks as InvalidTransaction (slashable). Calls: {:?}",
+        calls
+    );
 }

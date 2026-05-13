@@ -56,6 +56,30 @@ pub struct BlockProcessor<T: TransportLayer + Send + Sync> {
     dependencies: BlockProcessorDependencies<T>,
 }
 
+/// Outcome of the parent-dependency gate. Determines whether a block can be
+/// validated now, must wait, or has already been disqualified by an invalid
+/// ancestor.
+#[derive(Debug, Clone)]
+pub enum Readiness {
+    /// All parents are present in the DAG and recorded valid. Block may be
+    /// validated immediately.
+    Ready,
+    /// One or more parents are missing locally (need fetch) or in flight (in
+    /// the casper buffer). The block must wait — commit to buffer with the
+    /// dependency set, request missing.
+    Waiting {
+        deps_to_fetch: HashSet<BlockHash>,
+        deps_in_buffer: HashSet<BlockHash>,
+    },
+    /// One or more parents are recorded invalid (in `invalid_blocks_set` or
+    /// the equivocation tracker). The chain through them is unviable, so
+    /// this block is also invalid via cascading invalidation. The block
+    /// MUST NOT enter validation — its parents have no mergeable-channels
+    /// entries written, which is exactly the race that produced the original
+    /// `Missing mergeable entry` cascade. See `check_dependencies_with_effects`.
+    InvalidParents(HashSet<BlockHash>),
+}
+
 const CASPER_BUFFER_PRUNE_INTERVAL_MS: u64 = 5_000;
 const CASPER_BUFFER_STALE_TTL_MS: u64 = 180_000;
 const CASPER_BUFFER_MAX_APPROX_NODES: usize = 16_384;
@@ -64,6 +88,7 @@ const CASPER_BUFFER_STALE_PRUNED_METRIC: &str = "casper.buffer.stale-pruned";
 const CASPER_BUFFER_OVERFLOW_PRUNED_METRIC: &str = "casper.buffer.overflow-pruned";
 const CASPER_BUFFER_APPROX_NODES_METRIC: &str = "casper.buffer.approx-nodes";
 const CASPER_BUFFER_DEPENDENCY_LOOP_PRUNED_METRIC: &str = "casper.buffer.dependency-loop-pruned";
+const BLOCK_CASCADE_INVALIDATED_METRIC: &str = "casper.block-processor.cascade-invalidated";
 const MISSING_DEPENDENCY_ATTEMPTS_MAX: u32 = 32;
 const MISSING_DEPENDENCY_QUARANTINE_MS: u64 = 10_000;
 const MALLOC_TRIM_INTERVAL_BLOCKS: u64 = 8;
@@ -178,54 +203,79 @@ impl<T: TransportLayer + Send + Sync> BlockProcessor<T> {
             return Ok(false);
         }
 
-        let (is_ready, deps_to_fetch, deps_in_buffer) = self
+        let readiness = self
             .dependencies
-            .get_non_validated_dependencies(casper, block)
+            .get_non_validated_dependencies(casper.clone(), block)
             .await?;
 
-        if is_ready {
-            self.dependencies
-                .clear_missing_dependency_attempts(&block.block_hash)?;
-            // store pendant block in buffer, it will be removed once block is validated and added to DAG
-            self.dependencies.commit_to_buffer(block, None).await?;
-        } else {
-            if self
-                .dependencies
-                .register_missing_dependency_attempt(&block.block_hash)?
-            {
-                tracing::warn!(
-                    "Throttling block {} after {} missing-dependency checks (keeping in buffer).",
-                    PrettyPrinter::build_string(CasperMessage::BlockMessage(block.clone()), true),
-                    MISSING_DEPENDENCY_ATTEMPTS_MAX
-                );
-                metrics::counter!(CASPER_BUFFER_DEPENDENCY_LOOP_PRUNED_METRIC, "source" => BLOCK_PROCESSOR_METRICS_SOURCE, "reason" => "attempts")
-                    .increment(1);
+        match readiness {
+            Readiness::Ready => {
                 self.dependencies
                     .clear_missing_dependency_attempts(&block.block_hash)?;
-                self.dependencies
-                    .mark_missing_dependency_quarantine(&block.block_hash)?;
+                // store pendant block in buffer, it will be removed once block is validated and added to DAG
+                self.dependencies.commit_to_buffer(block, None).await?;
+                Ok(true)
             }
+            Readiness::Waiting {
+                deps_to_fetch,
+                deps_in_buffer,
+            } => {
+                if self
+                    .dependencies
+                    .register_missing_dependency_attempt(&block.block_hash)?
+                {
+                    tracing::warn!(
+                        "Throttling block {} after {} missing-dependency checks (keeping in buffer).",
+                        PrettyPrinter::build_string(CasperMessage::BlockMessage(block.clone()), true),
+                        MISSING_DEPENDENCY_ATTEMPTS_MAX
+                    );
+                    metrics::counter!(CASPER_BUFFER_DEPENDENCY_LOOP_PRUNED_METRIC, "source" => BLOCK_PROCESSOR_METRICS_SOURCE, "reason" => "attempts")
+                        .increment(1);
+                    self.dependencies
+                        .clear_missing_dependency_attempts(&block.block_hash)?;
+                    self.dependencies
+                        .mark_missing_dependency_quarantine(&block.block_hash)?;
+                }
 
-            // associate parents with new block in casper buffer
-            let mut all_deps = deps_to_fetch.clone();
-            all_deps.extend(deps_in_buffer.clone());
-            self.dependencies
-                .commit_to_buffer(block, Some(all_deps))
-                .await?;
-            self.dependencies
-                .request_missing_dependencies(&deps_to_fetch)
-                .await?;
-            // Recovery path: if dependency graph is stuck in buffer (no fresh deps to fetch),
-            // force a network re-request for buffered dependencies.
-            if deps_to_fetch.is_empty() && !deps_in_buffer.is_empty() {
+                let mut all_deps = deps_to_fetch.clone();
+                all_deps.extend(deps_in_buffer.clone());
                 self.dependencies
-                    .recover_stale_buffer_dependencies(&deps_in_buffer)
+                    .commit_to_buffer(block, Some(all_deps))
                     .await?;
+                self.dependencies
+                    .request_missing_dependencies(&deps_to_fetch)
+                    .await?;
+                // Recovery path: if dependency graph is stuck in buffer (no fresh deps to fetch),
+                // force a network re-request for buffered dependencies.
+                if deps_to_fetch.is_empty() && !deps_in_buffer.is_empty() {
+                    self.dependencies
+                        .recover_stale_buffer_dependencies(&deps_in_buffer)
+                        .await?;
+                }
+                self.dependencies.ack_processed(block).await?;
+                Ok(false)
             }
-            self.dependencies.ack_processed(block).await?;
+            Readiness::InvalidParents(invalid_parents) => {
+                tracing::warn!(
+                    "Block {} cascading-invalidated: parent(s) {} recorded invalid.",
+                    PrettyPrinter::build_string_bytes(&block.block_hash),
+                    PrettyPrinter::build_string_hashes(
+                        &invalid_parents
+                            .iter()
+                            .map(|h| h.as_ref().to_vec())
+                            .collect::<Vec<_>>()
+                    )
+                );
+                metrics::counter!(BLOCK_CASCADE_INVALIDATED_METRIC, "source" => BLOCK_PROCESSOR_METRICS_SOURCE)
+                    .increment(1);
+                let dag = self.dependencies.block_dag_storage.get_representation();
+                self.dependencies
+                    .effects_for_invalid_block(casper, block, &InvalidBlock::InvalidParent, &dag)
+                    .await?;
+                self.dependencies.ack_processed(block).await?;
+                Ok(false)
+            }
         }
-
-        Ok(is_ready)
     }
 
     /// validate block and invoke all effects required
@@ -281,12 +331,18 @@ impl<T: TransportLayer + Send + Sync> BlockProcessor<T> {
                 match invalid_block {
                     BlockError::Invalid(i) => {
                         self.dependencies
-                            .effects_for_invalid_block(casper, block, i, &snapshot)
+                            .effects_for_invalid_block(casper, block, i, &snapshot.dag)
                             .await
                     }
                     BlockError::BlockException(ref err) => {
-                        tracing::warn!(
-                            "Block {} raised BlockException ({}); recording as InvalidTransaction to prevent dependent-block stall.",
+                        // Post gating-fix this should be unreachable: the dependency
+                        // gate in `check_dependencies_with_effects` rejects children
+                        // of invalid parents before validation runs, so the only
+                        // remaining mergeable-entry write race is structurally
+                        // impossible. Surface loudly if this ever fires — it points
+                        // at a regression in the gate or a new exception path.
+                        tracing::error!(
+                            "UNEXPECTED: Block {} raised BlockException post-gate-fix ({}); falling back to InvalidTransaction recording. Investigate as a regression.",
                             PrettyPrinter::build_string_bytes(&block.block_hash),
                             err
                         );
@@ -295,7 +351,7 @@ impl<T: TransportLayer + Send + Sync> BlockProcessor<T> {
                                 casper,
                                 block,
                                 &InvalidBlock::InvalidTransaction,
-                                &snapshot,
+                                &snapshot.dag,
                             )
                             .await
                     }
@@ -441,19 +497,36 @@ impl<T: TransportLayer + Send + Sync> BlockProcessorDependencies<T> {
     }
 
     /// Equivalent to Scala's: getNonValidatedDependencies = (c: Casper[F], b: BlockMessage) => { ... }
+    /// Classify a block's dependencies into one of three buckets: `Ready`
+    /// (all parents valid-in-DAG, all referenced hashes locally known),
+    /// `Waiting` (some referenced hashes missing or in flight), or
+    /// `InvalidParents` (one or more *parent* hashes recorded invalid).
+    ///
+    /// The InvalidParents bucket is what prevents the parent-child
+    /// mergeable-entry race: an invalid parent has no mergeable-channels
+    /// entry, so the child must not enter validation against it; the caller
+    /// cascade-invalidates instead.
+    ///
+    /// Justifications are *not* state dependencies — they only need to be
+    /// locally known (DAG, eq tracker, or invalid set is fine). So an
+    /// invalid justification does NOT trigger cascade; only invalid parents
+    /// do.
     pub async fn get_non_validated_dependencies(
         &self,
         casper: Arc<dyn Casper + Send + Sync + 'static>,
         block: &BlockMessage,
-    ) -> Result<(bool, HashSet<BlockHash>, HashSet<BlockHash>), CasperError> {
+    ) -> Result<Readiness, CasperError> {
         let all_deps = proto_util::dependencies_hashes_of(block);
+        let parent_hashes: HashSet<BlockHash> =
+            proto_util::parent_hashes(block).into_iter().collect();
 
-        // in addition, equivocation tracker has to be checked, as admissible equivocations are not stored in DAG
+        // Equivocation-tracked hashes (admissible equivocations live here even
+        // when also recorded in invalid_blocks_set; ignorable ones may not be
+        // in the local DAG at all).
         let equivocation_hashes: HashSet<BlockHash> = {
             self.block_dag_storage
                 .access_equivocations_tracker(|tracker| {
                     let equivocation_records = tracker.data()?;
-                    // Use HashSet to ensure uniqueness and O(1) lookup, just like Scala's Set
                     let hashes: HashSet<BlockHash> = equivocation_records
                         .iter()
                         .flat_map(|record| record.equivocation_detected_block_hashes.iter())
@@ -463,8 +536,6 @@ impl<T: TransportLayer + Send + Sync> BlockProcessorDependencies<T> {
                 })
                 .map_err(|e| CasperError::RuntimeError(e.to_string()))?
         };
-        // Invalid blocks are already known/built into Casper state and should not be re-fetched
-        // as unresolved dependencies.
         let invalid_block_hashes: HashSet<BlockHash> = {
             self.block_dag_storage
                 .get_representation()
@@ -474,95 +545,95 @@ impl<T: TransportLayer + Send + Sync> BlockProcessorDependencies<T> {
                 .collect()
         };
 
-        let deps_in_buffer_all: Vec<BlockHash> = {
-            all_deps
-                .iter()
-                .filter_map(|dep| {
-                    let block_hash_serde = BlockHashSerde(dep.clone());
-                    if self.casper_buffer.contains(&block_hash_serde)
-                        || self.casper_buffer.is_pendant(&block_hash_serde)
-                    {
-                        Some(dep.clone())
-                    } else {
-                        None
-                    }
-                })
-                .collect()
-        };
-
-        let deps_in_dag: Vec<BlockHash> = all_deps
+        // Cascade only on invalid PARENTS — not justifications. A parent
+        // contributes its post-state to the merge, so an invalid parent
+        // (no mergeable-channels entry written) makes the child unviable.
+        // A justification just acknowledges a validator's latest message;
+        // an invalid justification is fine and does not need a mergeable entry.
+        let invalid_parents: HashSet<BlockHash> = parent_hashes
             .iter()
-            .filter_map(|dep| {
-                if casper.dag_contains(dep) {
-                    Some(dep.clone())
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        let deps_in_eq_tracker: Vec<BlockHash> = all_deps
-            .iter()
-            .filter(|&dep| equivocation_hashes.contains(dep))
-            .cloned()
-            .collect();
-        let deps_in_invalid_set: Vec<BlockHash> = all_deps
-            .iter()
-            .filter(|&dep| invalid_block_hashes.contains(dep))
+            .filter(|&p| invalid_block_hashes.contains(p) || equivocation_hashes.contains(p))
             .cloned()
             .collect();
 
-        let mut deps_validated: Vec<BlockHash> = deps_in_dag.clone();
-        deps_validated.extend(deps_in_eq_tracker.iter().cloned());
-        deps_validated.extend(deps_in_invalid_set.iter().cloned());
-
-        // If a dependency is already validated, it should not be treated as a blocking
-        // buffer dependency even if stale buffer relations still exist for that hash.
-        let deps_in_buffer: Vec<BlockHash> = deps_in_buffer_all
-            .iter()
-            .filter(|dep| !deps_validated.contains(dep))
-            .cloned()
-            .collect();
-
-        let deps_to_fetch: Vec<BlockHash> = all_deps
-            .iter()
-            .filter(|&dep| !deps_in_buffer.contains(dep))
-            .filter(|&dep| !deps_validated.contains(dep))
-            .cloned()
-            .collect();
-
-        let ready = deps_to_fetch.is_empty() && deps_in_buffer.is_empty();
-
-        if !ready {
+        if !invalid_parents.is_empty() {
             tracing::debug!(
-                "Block {} waiting on missing dependencies. To fetch: {}. In buffer: {}. Validated: {}.",
+                "Block {} has invalid parent(s): {}",
                 PrettyPrinter::build_string(CasperMessage::BlockMessage(block.clone()), true),
                 PrettyPrinter::build_string_hashes(
-                    &deps_to_fetch
-                        .iter()
-                        .map(|h| h.as_ref().to_vec())
-                        .collect::<Vec<_>>()
-                ),
-                PrettyPrinter::build_string_hashes(
-                    &deps_in_buffer
-                        .iter()
-                        .map(|h| h.as_ref().to_vec())
-                        .collect::<Vec<_>>()
-                ),
-                PrettyPrinter::build_string_hashes(
-                    &deps_validated
+                    &invalid_parents
                         .iter()
                         .map(|h| h.as_ref().to_vec())
                         .collect::<Vec<_>>()
                 )
             );
+            return Ok(Readiness::InvalidParents(invalid_parents));
         }
 
-        Ok((
-            ready,
-            deps_to_fetch.into_iter().collect::<HashSet<BlockHash>>(),
-            deps_in_buffer.into_iter().collect::<HashSet<BlockHash>>(),
-        ))
+        // For Ready/Waiting partitioning, "satisfied" means the dep is
+        // locally known: in DAG (valid or invalid), in the eq tracker, or
+        // in invalid_blocks_set. Justifications can be any of these.
+        // Parents at this point are guaranteed valid (cascade returned above
+        // for invalid ones), so an in-DAG parent has its mergeable entry —
+        // closing the parent-child race.
+        let deps_validated: HashSet<BlockHash> = all_deps
+            .iter()
+            .filter(|&dep| {
+                casper.dag_contains(dep)
+                    || invalid_block_hashes.contains(dep)
+                    || equivocation_hashes.contains(dep)
+            })
+            .cloned()
+            .collect();
+
+        let deps_in_buffer: HashSet<BlockHash> = all_deps
+            .iter()
+            .filter(|&dep| !deps_validated.contains(dep))
+            .filter(|dep| {
+                let block_hash_serde = BlockHashSerde((*dep).clone());
+                self.casper_buffer.contains(&block_hash_serde)
+                    || self.casper_buffer.is_pendant(&block_hash_serde)
+            })
+            .cloned()
+            .collect();
+
+        let deps_to_fetch: HashSet<BlockHash> = all_deps
+            .iter()
+            .filter(|dep| !deps_validated.contains(*dep) && !deps_in_buffer.contains(*dep))
+            .cloned()
+            .collect();
+
+        if deps_to_fetch.is_empty() && deps_in_buffer.is_empty() {
+            return Ok(Readiness::Ready);
+        }
+
+        tracing::debug!(
+            "Block {} waiting on missing dependencies. To fetch: {}. In buffer: {}. Validated: {}.",
+            PrettyPrinter::build_string(CasperMessage::BlockMessage(block.clone()), true),
+            PrettyPrinter::build_string_hashes(
+                &deps_to_fetch
+                    .iter()
+                    .map(|h| h.as_ref().to_vec())
+                    .collect::<Vec<_>>()
+            ),
+            PrettyPrinter::build_string_hashes(
+                &deps_in_buffer
+                    .iter()
+                    .map(|h| h.as_ref().to_vec())
+                    .collect::<Vec<_>>()
+            ),
+            PrettyPrinter::build_string_hashes(
+                &deps_validated
+                    .iter()
+                    .map(|h| h.as_ref().to_vec())
+                    .collect::<Vec<_>>()
+            )
+        );
+
+        Ok(Readiness::Waiting {
+            deps_to_fetch,
+            deps_in_buffer,
+        })
     }
 
     /// Equivalent to Scala's: commitToBuffer = (b: BlockMessage, deps: Option[Set[BlockHash]]) => { ... }
@@ -856,9 +927,9 @@ impl<T: TransportLayer + Send + Sync> BlockProcessorDependencies<T> {
         casper: Arc<dyn Casper + Send + Sync + 'static>,
         block: &BlockMessage,
         invalid_block: &InvalidBlock,
-        snapshot: &CasperSnapshot,
+        dag: &KeyValueDagRepresentation,
     ) -> Result<KeyValueDagRepresentation, CasperError> {
-        let dag = casper.handle_invalid_block(block, invalid_block, &snapshot.dag)?;
+        let dag = casper.handle_invalid_block(block, invalid_block, dag)?;
 
         // Equivalent to Scala's: CommUtil[F].sendBlockHash(b.blockHash, b.sender)
         if let Err(err) = self
