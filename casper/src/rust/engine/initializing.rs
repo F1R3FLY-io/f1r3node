@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use dashmap::DashSet;
 use futures::stream::StreamExt;
 use std::{
-    collections::{BTreeMap, HashSet, VecDeque},
+    collections::{BTreeMap, HashMap, HashSet, VecDeque},
     future::Future,
     pin::Pin,
     sync::atomic::{AtomicUsize, Ordering},
@@ -692,15 +692,25 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
         // check in `validate::parents`.
         {
             let dag = self.block_dag_storage.get_representation();
-            let horizon_roots =
-                crate::rust::util::rspace_history_horizon::compute_forward_horizon_roots(
-                    &dag,
-                    &self.block_store,
-                    &approved_block.candidate.block,
-                    &self.casper_shard_conf,
-                )
-                .map_err(|e| CasperError::KvStoreError(e))?;
+            let horizon = crate::rust::util::rspace_history_horizon::compute_forward_horizon(
+                &dag,
+                &self.block_store,
+                &approved_block.candidate.block,
+                &self.casper_shard_conf,
+            )
+            .map_err(|e| CasperError::KvStoreError(e))?;
 
+            // Sync mergeable-channel entries for any horizon block whose
+            // entry is not already in the local mergeable_store. The
+            // per-block sync in `lfs_block_requester` only covers
+            // LFB-ancestor blocks; side-branch blocks within the horizon
+            // need their entries fetched here so subsequent multi-parent
+            // validation can reproduce the merge intermediates without
+            // hitting `RootRepositoryDivergence`.
+            self.sync_horizon_mergeable_entries(&horizon.block_hashes)
+                .await?;
+
+            let horizon_roots = horizon.roots;
             if !horizon_roots.is_empty() {
                 // Phase 1's tuple_space_message_receiver was consumed by
                 // lfs_tuple_space_requester::stream. Install a fresh
@@ -787,6 +797,133 @@ impl<T: TransportLayer + Send + Sync + Clone> Initializing<T> {
             .await?;
         tracing::info!("request_approved_state: transition_to_running completed");
 
+        Ok(())
+    }
+
+    /// Fetch any mergeable-channel entries that are missing locally for the
+    /// given horizon block hashes. Side-branch blocks (those not on the
+    /// LFB-ancestor chain) don't have their entries synced by
+    /// `lfs_block_requester`'s per-block path; without this step,
+    /// multi-parent merge of an upcoming block whose parent is a side-branch
+    /// block hits `RootRepositoryDivergence` because the merge cannot
+    /// reproduce the intermediate root.
+    ///
+    /// Sends one `MergeableEntryRequest` per missing block (broadcast via
+    /// transport_layer), drains responses on a fresh `mergeable_message_rx`,
+    /// imports each via `RuntimeManager::put_mergeable_entry_bytes`, and
+    /// loud-fails if any entry can't be fetched within the timeout.
+    async fn sync_horizon_mergeable_entries(
+        &self,
+        horizon_block_hashes: &[BlockHash],
+    ) -> Result<(), CasperError> {
+        if horizon_block_hashes.is_empty() {
+            return Ok(());
+        }
+
+        let mut needed: Vec<(BlockHash, Vec<u8>)> = Vec::new();
+        for hash in horizon_block_hashes {
+            let block = match self
+                .block_store
+                .get(hash)
+                .map_err(CasperError::KvStoreError)?
+            {
+                Some(b) => b,
+                None => {
+                    tracing::warn!(
+                        "sync_horizon_mergeable_entries: block {} in DAG but missing from block_store",
+                        PrettyPrinter::build_string_bytes(hash),
+                    );
+                    continue;
+                }
+            };
+            let (key_bytes, value) = self.runtime_manager.get_mergeable_entry_bytes(&block)?;
+            if value.is_none() {
+                needed.push((hash.clone(), key_bytes));
+            }
+        }
+
+        if needed.is_empty() {
+            tracing::info!(
+                "LFS forward-horizon mergeable: all {} entries already present",
+                horizon_block_hashes.len(),
+            );
+            return Ok(());
+        }
+
+        let key_for_hash: HashMap<BlockHash, Vec<u8>> = needed.iter().cloned().collect();
+
+        let (mergeable_tx, mut mergeable_rx) = mpsc::channel::<MergeableEntryResponse>(50);
+        {
+            let mut sender_slot = self.mergeable_message_tx.lock().unwrap();
+            *sender_slot = Some(mergeable_tx);
+        }
+
+        for (hash, _) in &needed {
+            let req = MergeableEntryRequest {
+                block_hash: hash.clone(),
+            };
+            self.transport_layer
+                .send_message_to_peers(
+                    &self.connections_cell,
+                    &self.rp_conf_ask,
+                    Arc::new(req.to_proto()),
+                    None,
+                )
+                .await
+                .map_err(|e| CasperError::RuntimeError(e.to_string()))?;
+        }
+
+        tracing::info!(
+            "LFS forward-horizon mergeable: requesting {} missing entries (of {} horizon blocks)",
+            needed.len(),
+            horizon_block_hashes.len(),
+        );
+
+        let request_timeout = Duration::from_secs(30);
+        let deadline = Instant::now() + request_timeout;
+        let mut received: HashSet<BlockHash> = HashSet::new();
+        while received.len() < needed.len() {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                break;
+            }
+            match tokio::time::timeout(remaining, mergeable_rx.recv()).await {
+                Ok(Some(resp)) => {
+                    if received.contains(&resp.block_hash) {
+                        continue;
+                    }
+                    let key_bytes = match key_for_hash.get(&resp.block_hash) {
+                        Some(k) => k.clone(),
+                        None => continue,
+                    };
+                    self.runtime_manager
+                        .put_mergeable_entry_bytes(key_bytes, resp.serialized_entry.to_vec())?;
+                    received.insert(resp.block_hash);
+                }
+                Ok(None) => break,
+                Err(_) => break,
+            }
+        }
+
+        {
+            let mut sender_slot = self.mergeable_message_tx.lock().unwrap();
+            *sender_slot = None;
+        }
+
+        if received.len() < needed.len() {
+            let missing = needed.len() - received.len();
+            return Err(CasperError::RuntimeError(format!(
+                "LFS forward-horizon mergeable: incomplete sync; {} of {} entries unfetched after {:?}",
+                missing,
+                needed.len(),
+                request_timeout,
+            )));
+        }
+
+        tracing::info!(
+            "LFS forward-horizon mergeable: imported {} entries",
+            received.len(),
+        );
         Ok(())
     }
 

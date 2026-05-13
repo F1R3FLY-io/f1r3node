@@ -190,6 +190,7 @@ async fn test_case(
                     rm.get_history_repo(),
                     &pre_state,
                     number_chan_diff,
+                    Default::default(),
                 );
 
                 let sig_bs = make_sig_pb(deploy.sig.as_str());
@@ -317,16 +318,21 @@ async fn test_case(
             }
         };
 
-    let compute_trie_actions = |changes: StateChange, mergeable_chs: NumberChannelsDiff| {
-        state_change_merger::compute_trie_actions(
-            &changes,
-            &base_reader,
-            &mergeable_chs,
-            |_hash, _changes, _number_channels| {
-                override_trie_action(_hash, _changes, _number_channels)
-            },
-        )
-    };
+    let compute_trie_actions =
+        |changes: StateChange,
+         mergeable_chs: NumberChannelsDiff,
+         _state_chs: rspace_plus_plus::rspace::merger::merging_logic::StateChannelsDiff| {
+            // This test only exercises the i64 number-channel path; state channels
+            // are validated separately by state_channel_pipeline_spec.
+            state_change_merger::compute_trie_actions(
+                &changes,
+                &base_reader,
+                &mergeable_chs,
+                |_hash, _changes, _number_channels| {
+                    override_trie_action(_hash, _changes, _number_channels)
+                },
+            )
+        };
 
     let apply_trie_actions = |actions: Vec<
         HotStoreTrieAction<Par, BindPattern, ListParWithRandom, TaggedContinuation>,
@@ -353,6 +359,7 @@ async fn test_case(
         dag_merger::cost_optimal_rejection_alg(),
         |r| Ok(r.state_changes.clone()),
         |r| r.event_log_index.number_channels_data.clone(),
+        |r| r.event_log_index.state_channels_data.clone(),
         compute_trie_actions,
         apply_trie_actions,
         |x| base_reader.get_data(&x),

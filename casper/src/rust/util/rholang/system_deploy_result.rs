@@ -4,7 +4,9 @@ use models::rust::{
     block::state_hash::StateHash,
     casper::protocol::casper_message::{Event, ProcessedSystemDeploy, SystemDeployData},
 };
-use rspace_plus_plus::rspace::merger::merging_logic::NumberChannelsEndVal;
+use rspace_plus_plus::rspace::merger::merging_logic::{
+    NumberChannelsEndVal, StateChannelsEndVal,
+};
 
 use super::system_deploy_user_error::SystemDeployUserError;
 
@@ -13,6 +15,7 @@ pub enum SystemDeployResult<A> {
         state_hash: StateHash,
         processed_system_deploy: ProcessedSystemDeploy,
         mergeable_channels: NumberChannelsEndVal,
+        state_channels: StateChannelsEndVal,
         result: A,
     },
     PlayFailed {
@@ -26,6 +29,7 @@ impl<A> SystemDeployResult<A> {
         log: Vec<Event>,
         system_deploy_data: SystemDeployData,
         mergeable_channels: NumberChannelsEndVal,
+        state_channels: StateChannelsEndVal,
         result: A,
     ) -> Self {
         Self::PlaySucceeded {
@@ -35,6 +39,7 @@ impl<A> SystemDeployResult<A> {
                 system_deploy: system_deploy_data,
             },
             mergeable_channels,
+            state_channels,
             result,
         }
     }

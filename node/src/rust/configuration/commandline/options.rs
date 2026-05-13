@@ -259,9 +259,17 @@ pub struct RunOptions {
     #[arg(long = "api-max-blocks-limit")]
     pub api_max_blocks_limit: Option<u32>,
 
-    /// Use this flag to enable reporting endpoints
-    #[arg(long = "api-enable-reporting", action = ArgAction::SetTrue)]
-    pub api_enable_reporting: bool,
+    /// Override the api-server.enable-reporting config value. Bare
+    /// `--api-enable-reporting` enables reporting (kept for backwards
+    /// compatibility); `--api-enable-reporting=false` explicitly
+    /// disables it. Omit the flag to use the config-file default.
+    #[arg(
+        long = "api-enable-reporting",
+        num_args = 0..=1,
+        default_missing_value = "true",
+        value_parser = clap::value_parser!(bool),
+    )]
+    pub api_enable_reporting: Option<bool>,
 
     /// Sets a custom keepalive time
     #[arg(long = "api-keep-alive-time", value_parser = ValueParser::new(parse_duration))]

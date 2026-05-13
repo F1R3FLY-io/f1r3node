@@ -7,6 +7,7 @@ use shared::rust::hashable_set::HashableSet;
 
 use super::event_log_index::EventLogIndex;
 use crate::rspace::hashing::blake2b256_hash::Blake2b256Hash;
+use crate::rspace::internal::Datum;
 use crate::rspace::trace::event::{Consume, Produce};
 
 /// Merge strategy for a mergeable channel. Mirrors
@@ -27,7 +28,14 @@ use crate::rspace::trace::event::{Consume, Produce};
 pub enum MergeType {
     IntegerAdd,
     BitmaskOr,
+    MutexState,
+    AdditiveSet,
 }
+
+// === Number-channel pipeline (existing — i64-valued) =======================
+//
+// IntegerAdd / BitmaskOr strategies operate on `i64` values. See the parallel
+// state-channel pipeline below for `MutexState` (`Datum<P>`-valued).
 
 pub type NumberChannelsEndVal = BTreeMap<Blake2b256Hash, (i64, MergeType)>;
 
@@ -41,6 +49,83 @@ pub fn combine_mergeable_value(a: i64, b: i64, merge_type: MergeType) -> i64 {
     match merge_type {
         MergeType::IntegerAdd => a.wrapping_add(b),
         MergeType::BitmaskOr => ((a as u64) | (b as u64)) as i64,
+        MergeType::MutexState => unreachable!(
+            "combine_mergeable_value (i64 path) cannot handle MutexState; route MutexState \
+             channels through combine_mergeable_state instead"
+        ),
+        MergeType::AdditiveSet => unreachable!(
+            "combine_mergeable_value (i64 path) cannot handle AdditiveSet; route AdditiveSet \
+             channels through combine_mergeable_state_additive instead"
+        ),
+    }
+}
+
+// === State-channel pipeline (`Datum<P>`-valued) ============================
+//
+// The `MutexState` strategy operates on opaque `Datum<P>` payloads
+// (e.g. PoS `stateCh`). Stored as serialized bytes here to avoid making
+// `EventLogIndex` and downstream consumers generic over the payload
+// type — rspace++ cannot depend on the `models` crate (which provides
+// `ListParWithRandom`) because `models` already depends on rspace++.
+//
+// The typed `combine_mergeable_state` function operates on `Datum<P>` for
+// clean unit testing; the dispatch layer decodes bytes from
+// `StateChannelsDiff` into `Datum<ListParWithRandom>` before invoking it,
+// then re-encodes the winner.
+
+pub type StateChannelsEndVal = BTreeMap<Blake2b256Hash, (Vec<u8>, MergeType)>;
+
+pub type StateChannelsDiff = BTreeMap<Blake2b256Hash, (Vec<u8>, MergeType)>;
+
+/// Byte-level equivalent of `combine_mergeable_state` for the byte-erased
+/// storage layer (e.g. `EventLogIndex.state_channels_data`).
+///
+/// Since storage bytes ARE `bincode::serialize(datum)`, hashing them with
+/// `Blake2b256Hash::new` produces the exact same hash as the typed
+/// `combine_mergeable_state` would compute. This avoids the decode → combine
+/// → re-encode round-trip when we only need to pick the winner's bytes.
+///
+/// Used by `EventLogIndex::combine` and `conflict_set_merger` at the rspace++
+/// layer where the typed `Datum<P>` payload type isn't available.
+pub fn combine_mergeable_state_bytes(a: &[u8], b: &[u8]) -> Vec<u8> {
+    let a_hash = Blake2b256Hash::new(a);
+    let b_hash = Blake2b256Hash::new(b);
+    if a_hash.bytes() <= b_hash.bytes() {
+        a.to_vec()
+    } else {
+        b.to_vec()
+    }
+}
+
+/// Combine two state-channel `Datum`s under the `MutexState` strategy.
+///
+/// Determinism rule: the Datum with the lexicographically lower
+/// `Blake2b256Hash` of its bincode-serialized bytes wins. Hashing the full
+/// Datum (payload + persist + source) — not the payload alone — gives a
+/// total order even when two siblings produce equal payloads, because the
+/// `Produce` source carries lineage that distinguishes them.
+///
+/// This is the LWW-Register CRDT specialization for opaque Rholang state
+/// channels (PoS `stateCh`, etc.). The function is associative, commutative,
+/// and idempotent.
+///
+/// `merge_type` is accepted for API symmetry with `combine_mergeable_value`
+/// and asserted internally — only `MergeType::MutexState` is valid here.
+pub fn combine_mergeable_state<P>(a: &Datum<P>, b: &Datum<P>, merge_type: MergeType) -> Datum<P>
+where P: Clone + serde::Serialize {
+    debug_assert!(
+        matches!(merge_type, MergeType::MutexState),
+        "combine_mergeable_state only supports MergeType::MutexState, got {:?}",
+        merge_type,
+    );
+    let a_bytes = bincode::serialize(a).unwrap_or_default();
+    let b_bytes = bincode::serialize(b).unwrap_or_default();
+    let a_hash = Blake2b256Hash::new(&a_bytes);
+    let b_hash = Blake2b256Hash::new(&b_bytes);
+    if a_hash.bytes() <= b_hash.bytes() {
+        a.clone()
+    } else {
+        b.clone()
     }
 }
 
@@ -1720,5 +1805,95 @@ mod tests {
             let a_bc = combine_mergeable_value(a, bc, MergeType::IntegerAdd);
             proptest::prop_assert_eq!(ab_c, a_bc);
         }
+    }
+
+    use crate::rspace::hashing::blake2b256_hash::Blake2b256Hash;
+    use crate::rspace::internal::Datum;
+    use crate::rspace::trace::event::Produce;
+
+    // Test payload is `i64` to keep the test inside rspace++. The merge
+    // function is generic over A and depends only on the serialized Datum
+    // hash, so i64 is behaviourally equivalent to ListParWithRandom here.
+    fn make_test_datum(payload_marker: u8) -> Datum<i64> {
+        let payload: i64 = payload_marker as i64;
+        let produce = Produce {
+            channel_hash: Blake2b256Hash::new(&[payload_marker]),
+            hash: Blake2b256Hash::new(&[payload_marker; 8]),
+            persistent: false,
+            is_deterministic: true,
+            output_value: vec![],
+            failed: false,
+        };
+        Datum {
+            a: payload,
+            persist: false,
+            source: produce,
+        }
+    }
+
+    #[test]
+    fn mutex_state_combine_picks_lowest_hash_winner() {
+        let datum_a = make_test_datum(0xAA);
+        let datum_b = make_test_datum(0xBB);
+        let datum_c = make_test_datum(0xCC);
+
+        let r1 = combine_mergeable_state(&datum_a, &datum_b, MergeType::MutexState);
+        let r2 = combine_mergeable_state(&r1, &datum_c, MergeType::MutexState);
+
+        let candidates = vec![datum_a.clone(), datum_b.clone(), datum_c.clone()];
+        let expected = candidates
+            .iter()
+            .min_by_key(|d| {
+                let bytes = bincode::serialize(d).unwrap_or_default();
+                Blake2b256Hash::new(&bytes).bytes()
+            })
+            .unwrap();
+        assert_eq!(&r2, expected);
+    }
+
+    #[test]
+    fn mutex_state_combine_is_commutative() {
+        let datum_a = make_test_datum(0x01);
+        let datum_b = make_test_datum(0x02);
+
+        let ab = combine_mergeable_state(&datum_a, &datum_b, MergeType::MutexState);
+        let ba = combine_mergeable_state(&datum_b, &datum_a, MergeType::MutexState);
+
+        assert_eq!(ab, ba);
+    }
+
+    #[test]
+    fn mutex_state_combine_is_associative() {
+        let datum_a = make_test_datum(0xA1);
+        let datum_b = make_test_datum(0xB2);
+        let datum_c = make_test_datum(0xC3);
+
+        let ab = combine_mergeable_state(&datum_a, &datum_b, MergeType::MutexState);
+        let abc_left = combine_mergeable_state(&ab, &datum_c, MergeType::MutexState);
+
+        let bc = combine_mergeable_state(&datum_b, &datum_c, MergeType::MutexState);
+        let abc_right = combine_mergeable_state(&datum_a, &bc, MergeType::MutexState);
+
+        assert_eq!(abc_left, abc_right);
+    }
+
+    #[test]
+    fn mutex_state_combine_is_idempotent() {
+        let datum_a = make_test_datum(0x42);
+
+        let aa = combine_mergeable_state(&datum_a, &datum_a, MergeType::MutexState);
+
+        assert_eq!(aa, datum_a);
+    }
+
+    #[test]
+    fn mutex_state_combine_n_parents_returns_one_winner() {
+        let datums: Vec<_> = (0..4u8).map(|i| make_test_datum(i)).collect();
+
+        let result = datums.iter().skip(1).fold(datums[0].clone(), |acc, d| {
+            combine_mergeable_state(&acc, d, MergeType::MutexState)
+        });
+
+        assert!(datums.contains(&result));
     }
 }

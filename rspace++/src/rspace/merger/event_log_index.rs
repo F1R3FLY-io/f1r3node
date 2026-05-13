@@ -7,7 +7,8 @@ use rayon::prelude::*;
 use shared::rust::hashable_set::HashableSet;
 
 use super::merging_logic::{
-    NumberChannelsDiff, combine_mergeable_value, combine_produces_copied_by_peek,
+    combine_mergeable_state_bytes, combine_mergeable_value, combine_produces_copied_by_peek,
+    NumberChannelsDiff, StateChannelsDiff,
 };
 use crate::rspace::errors::HistoryError;
 use crate::rspace::trace::event::{Consume, Event, IOEvent, Produce};
@@ -26,6 +27,10 @@ pub struct EventLogIndex {
     pub produces_mergeable: HashableSet<Produce>,
     pub consumes_mergeable: HashableSet<Consume>,
     pub number_channels_data: NumberChannelsDiff,
+    /// Parallel State-channel pipeline. Byte-erased storage — bytes are
+    /// bincode-serialized `Datum<ListParWithRandom>`. See
+    /// `merging_logic::combine_mergeable_state_bytes` for the merge rule.
+    pub state_channels_data: StateChannelsDiff,
 }
 
 // Ordering for deterministic processing in merge operations.
@@ -52,6 +57,25 @@ impl Ord for EventLogIndex {
         // Compare entries lexicographically: first by key (Blake2b256Hash), then by
         // value (i64)
         for ((ak, av), (bk, bv)) in a_entries.iter().zip(b_entries.iter()) {
+            let key_cmp = ak.cmp(bk);
+            if key_cmp != std::cmp::Ordering::Equal {
+                return key_cmp;
+            }
+            let val_cmp = av.cmp(bv);
+            if val_cmp != std::cmp::Ordering::Equal {
+                return val_cmp;
+            }
+        }
+
+        // Compare state_channels_data (BTreeMap, key-sorted) entries
+        // lexicographically by (key, byte payload).
+        let a_state: Vec<_> = self.state_channels_data.iter().collect();
+        let b_state: Vec<_> = other.state_channels_data.iter().collect();
+        let state_len_cmp = a_state.len().cmp(&b_state.len());
+        if state_len_cmp != std::cmp::Ordering::Equal {
+            return state_len_cmp;
+        }
+        for ((ak, av), (bk, bv)) in a_state.iter().zip(b_state.iter()) {
             let key_cmp = ak.cmp(bk);
             if key_cmp != std::cmp::Ordering::Equal {
                 return key_cmp;
@@ -90,6 +114,7 @@ impl EventLogIndex {
         produce_exists_in_pre_state: impl Fn(&Produce) -> bool,
         produce_touch_pre_state_join: impl Fn(&Produce) -> bool,
         mergeable_chs: NumberChannelsDiff,
+        state_chs: StateChannelsDiff,
     ) -> Self {
         // Use Arc<Mutex<>> for thread-safe collections that will be updated in parallel
         let produces_linear = Arc::new(Mutex::new(HashSet::new()));
@@ -230,11 +255,16 @@ impl EventLogIndex {
             .cloned()
             .collect();
 
-        // Then filter and clone only once for the final set
+        // Then filter and clone only once for the final set.
+        // A produce/consume is "mergeable" if it touched ANY mergeable channel
+        // (number-tagged OR state-tagged).
         let produces_mergeable = HashableSet(
             all_produces
                 .into_iter()
-                .filter(|p| mergeable_chs.contains_key(&p.channel_hash))
+                .filter(|p| {
+                    mergeable_chs.contains_key(&p.channel_hash)
+                        || state_chs.contains_key(&p.channel_hash)
+                })
                 .collect(),
         );
 
@@ -251,9 +281,9 @@ impl EventLogIndex {
             all_consumes
                 .into_iter()
                 .filter(|c| {
-                    c.channel_hashes
-                        .iter()
-                        .any(|hash| mergeable_chs.contains_key(hash))
+                    c.channel_hashes.iter().any(|hash| {
+                        mergeable_chs.contains_key(hash) || state_chs.contains_key(hash)
+                    })
                 })
                 .collect(),
         );
@@ -271,6 +301,7 @@ impl EventLogIndex {
             produces_mergeable,
             consumes_mergeable,
             number_channels_data: mergeable_chs,
+            state_channels_data: state_chs,
         }
     }
 
@@ -288,6 +319,7 @@ impl EventLogIndex {
             produces_mergeable: HashableSet(HashSet::new()),
             consumes_mergeable: HashableSet(HashSet::new()),
             number_channels_data: NumberChannelsDiff::new(),
+            state_channels_data: StateChannelsDiff::new(),
         }
     }
 
@@ -316,6 +348,29 @@ impl EventLogIndex {
                 }
                 None => {
                     number_channels_data.insert(key.clone(), (incoming_diff, incoming_mt));
+                }
+            }
+        }
+
+        let mut state_channels_data = StateChannelsDiff::new();
+        for (key, value) in x
+            .state_channels_data
+            .iter()
+            .chain(y.state_channels_data.iter())
+        {
+            let (incoming_bytes, incoming_mt) = value;
+            match state_channels_data.get_mut(key) {
+                Some(existing) => {
+                    if existing.1 != *incoming_mt {
+                        return Err(HistoryError::MergeError(format!(
+                            "MergeType mismatch on state channel {:?}: {:?} vs {:?}",
+                            key, existing.1, incoming_mt,
+                        )));
+                    }
+                    existing.0 = combine_mergeable_state_bytes(&existing.0, incoming_bytes);
+                }
+                None => {
+                    state_channels_data.insert(key.clone(), (incoming_bytes.clone(), *incoming_mt));
                 }
             }
         }
@@ -396,6 +451,7 @@ impl EventLogIndex {
                     .collect(),
             ),
             number_channels_data,
+            state_channels_data,
         })
     }
 }

@@ -48,7 +48,7 @@ use rholang::rust::interpreter::{
 use rspace_plus_plus::rspace::{
     hashing::{blake2b256_hash::Blake2b256Hash, stable_hash_provider},
     history::{instances::radix_history::RadixHistory, Either},
-    merger::merging_logic::{MergeType, NumberChannelsEndVal},
+    merger::merging_logic::{MergeType, NumberChannelsEndVal, StateChannelsEndVal},
 };
 
 use crate::rust::{
@@ -130,8 +130,12 @@ impl RuntimeOps {
     ) -> Result<
         (
             StateHash,
-            Vec<(ProcessedDeploy, NumberChannelsEndVal)>,
-            Vec<(ProcessedSystemDeploy, NumberChannelsEndVal)>,
+            Vec<(ProcessedDeploy, NumberChannelsEndVal, StateChannelsEndVal)>,
+            Vec<(
+                ProcessedSystemDeploy,
+                NumberChannelsEndVal,
+                StateChannelsEndVal,
+            )>,
         ),
         CasperError,
     > {
@@ -211,9 +215,14 @@ impl RuntimeOps {
                     state_hash,
                     processed_system_deploy,
                     mergeable_channels,
+                    state_channels,
                     result: _,
                 } => {
-                    processed_system_deploys.push((processed_system_deploy, mergeable_channels));
+                    processed_system_deploys.push((
+                        processed_system_deploy,
+                        mergeable_channels,
+                        state_channels,
+                    ));
                     current_hash = state_hash;
                 }
                 SystemDeployResult::PlayFailed {
@@ -253,7 +262,7 @@ impl RuntimeOps {
         (
             StateHash,
             StateHash,
-            Vec<(ProcessedDeploy, NumberChannelsEndVal)>,
+            Vec<(ProcessedDeploy, NumberChannelsEndVal, StateChannelsEndVal)>,
         ),
         CasperError,
     > {
@@ -288,7 +297,13 @@ impl RuntimeOps {
         &mut self,
         start_hash: &StateHash,
         terms: Vec<Signed<DeployData>>,
-    ) -> Result<(StateHash, Vec<(ProcessedDeploy, NumberChannelsEndVal)>), CasperError> {
+    ) -> Result<
+        (
+            StateHash,
+            Vec<(ProcessedDeploy, NumberChannelsEndVal, StateChannelsEndVal)>,
+        ),
+        CasperError,
+    > {
         let mem_profile_enabled = crate::rust::util::rholang::mem_profiler::mem_profile_enabled();
         let read_vm_rss_kb =
             || -> Option<usize> { crate::rust::util::rholang::mem_profiler::read_vm_rss_kb() };
@@ -358,7 +373,13 @@ impl RuntimeOps {
         &mut self,
         start_hash: &StateHash,
         terms: Vec<Signed<DeployData>>,
-    ) -> Result<(StateHash, Vec<(ProcessedDeploy, NumberChannelsEndVal)>), CasperError> {
+    ) -> Result<
+        (
+            StateHash,
+            Vec<(ProcessedDeploy, NumberChannelsEndVal, StateChannelsEndVal)>,
+        ),
+        CasperError,
+    > {
         // Using tracing events for async - Span[F].withMarks("play-deploys") from Scala
         tracing::info!(target: "f1r3fly.casper.play-deploys-genesis", "play-deploys-genesis-started");
         self.runtime
@@ -380,7 +401,7 @@ impl RuntimeOps {
     pub async fn play_deploy_with_cost_accounting(
         &mut self,
         deploy: Signed<DeployData>,
-    ) -> Result<(ProcessedDeploy, NumberChannelsEndVal), CasperError> {
+    ) -> Result<(ProcessedDeploy, NumberChannelsEndVal, StateChannelsEndVal), CasperError> {
         let mem_profile_enabled = crate::rust::util::rholang::mem_profiler::mem_profile_enabled();
         let read_vm_rss_kb =
             || -> Option<usize> { crate::rust::util::rholang::mem_profiler::read_vm_rss_kb() };
@@ -489,6 +510,9 @@ impl RuntimeOps {
                         let mergeable_channels_data = self
                             .get_number_channels_data(&eval_collector_state.mergeable_channels)
                             .await?;
+                        let state_channels_data = self
+                            .get_state_channels_data(&eval_collector_state.mergeable_channels)
+                            .await?;
 
                         let deploy_log = mem::take(&mut eval_collector_state.event_log);
                         log_mem_step("after_collect_result");
@@ -496,6 +520,7 @@ impl RuntimeOps {
                         Ok((
                             ProcessedDeploy { deploy_log, ..pd },
                             mergeable_channels_data,
+                            state_channels_data,
                         ))
                     }
 
@@ -536,6 +561,9 @@ impl RuntimeOps {
                 let mergeable_channels_data = self
                     .get_number_channels_data(&eval_collector_state.mergeable_channels)
                     .await?;
+                let state_channels_data = self
+                    .get_state_channels_data(&eval_collector_state.mergeable_channels)
+                    .await?;
 
                 let deploy_log = mem::take(&mut eval_collector_state.event_log);
 
@@ -545,6 +573,7 @@ impl RuntimeOps {
                         ..empty_pd
                     },
                     mergeable_channels_data,
+                    state_channels_data,
                 ))
             }
         }
@@ -588,10 +617,11 @@ impl RuntimeOps {
     pub async fn process_deploy_with_mergeable_data(
         &mut self,
         deploy: Signed<DeployData>,
-    ) -> Result<(ProcessedDeploy, NumberChannelsEndVal), CasperError> {
+    ) -> Result<(ProcessedDeploy, NumberChannelsEndVal, StateChannelsEndVal), CasperError> {
         let (pd, merge_chs) = self.process_deploy(deploy).await?;
-        let data = self.get_number_channels_data(&merge_chs).await?;
-        Ok((pd, data))
+        let number_data = self.get_number_channels_data(&merge_chs).await?;
+        let state_data = self.get_state_channels_data(&merge_chs).await?;
+        Ok((pd, number_data, state_data))
     }
 
     pub async fn get_number_channels_data(
@@ -624,6 +654,14 @@ impl RuntimeOps {
             MergeType::BitmaskOr => values
                 .iter()
                 .fold(0i64, |acc, v| ((acc as u64) | (*v as u64)) as i64),
+            MergeType::MutexState => unreachable!(
+                "MutexState channels do not flow through the numeric \
+                 fold_multi_value path; they use the parallel state-channel pipeline"
+            ),
+            MergeType::AdditiveSet => unreachable!(
+                "AdditiveSet channels do not flow through the numeric \
+                 fold_multi_value path; they use the parallel state-channel pipeline"
+            ),
         };
         Some(folded)
     }
@@ -683,6 +721,73 @@ impl RuntimeOps {
         }
     }
 
+    /// Extract `StateChannelsEndVal` from the deploy's mergeable channel set.
+    /// Filters for state-channel merge types (`MutexState`, `AdditiveSet`)
+    /// and returns each channel's bincode-serialized current Datum.
+    pub async fn get_state_channels_data(
+        &self,
+        channels: &std::collections::HashMap<Par, MergeType>,
+    ) -> Result<StateChannelsEndVal, CasperError> {
+        let mut result = BTreeMap::new();
+        for (channel, merge_type) in channels {
+            if !matches!(merge_type, MergeType::MutexState | MergeType::AdditiveSet) {
+                continue;
+            }
+            if let Some((hash, bytes)) = self.get_state_channel(channel).await? {
+                result.insert(hash, (bytes, *merge_type));
+            }
+        }
+        Ok(result)
+    }
+
+    /// Read a single MutexState-tagged channel's current Datum and return
+    /// its bincode-serialized bytes. If the channel currently holds multiple
+    /// Datums (residue from a sibling proposal that hasn't been merged yet),
+    /// pick the lowest-Blake2b256 winner — same determinism rule as
+    /// `combine_mergeable_state`.
+    pub async fn get_state_channel(
+        &self,
+        channel: &Par,
+    ) -> Result<Option<(Blake2b256Hash, Vec<u8>)>, CasperError> {
+        use rspace_plus_plus::rspace::serializers::serializers as rspace_serializers;
+
+        let ch_values = self.runtime.get_data(channel).await;
+        if ch_values.is_empty() {
+            return Ok(None);
+        }
+        let ch_hash = stable_hash_provider::hash(channel);
+
+        // Lowest-hash-of-bincode winner across all Datums currently on the
+        // channel. For a normal "exactly one Datum" channel, this is just
+        // the single Datum's bytes. For multi-Datum residue, it deterministi-
+        // cally collapses to one — same rule as combine_mergeable_state.
+        let chosen_bytes = ch_values
+            .iter()
+            .map(|d| rspace_serializers::encode_datum(d))
+            .min_by(|a, b| {
+                Blake2b256Hash::new(a)
+                    .bytes()
+                    .cmp(&Blake2b256Hash::new(b).bytes())
+            })
+            .expect("get_state_channel: ch_values non-empty checked above");
+
+        if ch_values.len() > 1 {
+            tracing::warn!(
+                target: "f1r3fly.mergeable_channel.sanitize",
+                "StateChannel has {} values; collapsed to deterministic winner for channel {}",
+                ch_values.len(),
+                hex::encode(ch_hash.clone().bytes()),
+            );
+            metrics::counter!(
+                "mergeable_channel_state_sanitized_total",
+                "source" => "casper_runtime"
+            )
+            .increment(1);
+        }
+
+        Ok(Some((ch_hash, chosen_bytes)))
+    }
+
     /* System deploy evaluators */
 
     /**
@@ -708,6 +813,7 @@ impl RuntimeOps {
         match result {
             Either::Right(system_deploy_result) => {
                 let mcl = self.get_number_channels_data(&mergeable_channels).await?;
+                let scl = self.get_state_channels_data(&mergeable_channels).await?;
                 if let Some(SlashDeploy {
                     invalid_block_hash,
                     pk,
@@ -719,6 +825,7 @@ impl RuntimeOps {
                         event_log,
                         SystemDeployData::create_slash(invalid_block_hash.clone(), pk.clone()),
                         mcl,
+                        scl,
                         system_deploy_result,
                     ))
                 } else if let Some(CloseBlockDeploy { .. }) =
@@ -729,6 +836,7 @@ impl RuntimeOps {
                         event_log,
                         SystemDeployData::create_close(),
                         mcl,
+                        scl,
                         system_deploy_result,
                     ))
                 } else {
@@ -737,6 +845,7 @@ impl RuntimeOps {
                         event_log,
                         SystemDeployData::Empty,
                         mcl,
+                        scl,
                         system_deploy_result,
                     ))
                 }

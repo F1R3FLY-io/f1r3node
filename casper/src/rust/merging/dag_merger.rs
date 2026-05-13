@@ -13,7 +13,7 @@ use rholang::rust::interpreter::{
 use rspace_plus_plus::rspace::{
     hashing::blake2b256_hash::Blake2b256Hash,
     merger::{
-        merging_logic::{self, NumberChannelsDiff},
+        merging_logic::{self, NumberChannelsDiff, StateChannelsDiff},
         state_change_merger,
     },
 };
@@ -397,15 +397,33 @@ pub fn merge(
     let mergeable_channels_fn =
         |chain: &DeployChainIndex| chain.event_log_index.number_channels_data.clone();
 
+    let state_channels_fn =
+        |chain: &DeployChainIndex| chain.event_log_index.state_channels_data.clone();
+
     let compute_trie_actions_fn = {
         let reader = Arc::clone(&history_reader);
-        move |changes, mergeable_chs| {
+        move |changes, mergeable_chs, state_chs: StateChannelsDiff| {
+            // Capture state_chs into the inner closure so dispatch can route
+            // either State (MutexState/AdditiveSet) or Number (IntegerAdd/BitmaskOr).
+            let state_chs_inner = state_chs.clone();
             state_change_merger::compute_trie_actions(
                 &changes,
                 &*reader,
                 &mergeable_chs,
                 |hash: &Blake2b256Hash, channel_changes, number_chs: &NumberChannelsDiff| {
-                    if let Some(number_ch_val) = number_chs.get(hash) {
+                    // State channels take precedence — if a hash is tagged as
+                    // MutexState or AdditiveSet, it must NOT also be in
+                    // number_chs (enforced upstream by tag-type unique mapping).
+                    if let Some((diff_bytes, merge_type)) = state_chs_inner.get(hash) {
+                        let base_get_data = |h: &Blake2b256Hash| reader.get_data(h);
+                        Ok(Some(RholangMergingLogic::calculate_state_channel_merge(
+                            hash,
+                            diff_bytes.clone(),
+                            *merge_type,
+                            channel_changes,
+                            base_get_data,
+                        )))
+                    } else if let Some(number_ch_val) = number_chs.get(hash) {
                         let (diff, merge_type) = *number_ch_val;
                         let base_get_data = |h: &Blake2b256Hash| reader.get_data(h);
                         Ok(Some(RholangMergingLogic::calculate_number_channel_merge(
@@ -599,6 +617,7 @@ pub fn merge(
         &resolved,
         &state_changes_fn,
         &mergeable_channels_fn,
+        &state_channels_fn,
         &compute_trie_actions_fn,
         &apply_trie_actions_fn,
     )

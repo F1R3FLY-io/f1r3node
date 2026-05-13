@@ -189,6 +189,7 @@ where
             state_hash: final_play_state_hash,
             processed_system_deploy,
             mergeable_channels: _,
+            state_channels: _,
             result: play_result,
         } => {
             result_assertion(&play_result);
@@ -1780,9 +1781,6 @@ in {{
 /// Deploys bridge.rho on block A (from genesis), creates empty block B (from
 /// genesis, sibling branch), merges [A, B] via compute_parents_post_state,
 /// then queries getNonce from the merged state.
-///
-/// Reproduces: system-integration docs/TODO.md "Contract query deploy returns
-/// empty deployId after finalization (intermittent)"
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn bridge_query_survives_multi_parent_merge() {
     use crate::util::rholang::resources::{
@@ -2357,11 +2355,13 @@ async fn concurrent_registry_inserts_should_not_conflict() {
             history_repo.clone(),
             &genesis_hash_b256,
             std::collections::BTreeMap::new(),
+            std::collections::BTreeMap::new(),
         );
         let eli_b = create_event_log_index(
             &pd_b[0].deploy_log,
             history_repo.clone(),
             &genesis_hash_b256,
+            std::collections::BTreeMap::new(),
             std::collections::BTreeMap::new(),
         );
 

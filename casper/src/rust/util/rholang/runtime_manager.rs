@@ -20,14 +20,16 @@ use models::rust::validator::Validator;
 use rholang::rust::interpreter::external_services::ExternalServices;
 use rholang::rust::interpreter::matcher::r#match::Matcher;
 use rholang::rust::interpreter::merging::rholang_merging_logic::{
-    DeployMergeableData, NumberChannel, RholangMergingLogic,
+    DeployMergeableData, NumberChannel, RholangMergingLogic, StateChannel,
 };
 use rholang::rust::interpreter::rho_runtime::{
     self, RhoHistoryRepository, RhoRuntime, RhoRuntimeImpl,
 };
 use rholang::rust::interpreter::system_processes::BlockData;
 use rspace_plus_plus::rspace::hashing::blake2b256_hash::Blake2b256Hash;
-use rspace_plus_plus::rspace::merger::merging_logic::{NumberChannelsDiff, NumberChannelsEndVal};
+use rspace_plus_plus::rspace::merger::merging_logic::{
+    NumberChannelsDiff, NumberChannelsEndVal, StateChannelsDiff, StateChannelsEndVal,
+};
 use rspace_plus_plus::rspace::replay_rspace::ReplayRSpace;
 use rspace_plus_plus::rspace::rspace::{RSpace, RSpaceStore};
 use rspace_plus_plus::rspace::shared::key_value_store_manager::KeyValueStoreManager;
@@ -329,19 +331,32 @@ impl RuntimeManager {
             )
             .await?;
 
-        let (usr_processed, usr_mergeable): (Vec<ProcessedDeploy>, Vec<NumberChannelsEndVal>) =
-            usr_deploy_res.into_iter().unzip();
-        let (sys_processed, sys_mergeable): (
-            Vec<ProcessedSystemDeploy>,
-            Vec<NumberChannelsEndVal>,
-        ) = sys_deploy_res.into_iter().unzip();
+        let mut usr_processed = Vec::with_capacity(usr_deploy_res.len());
+        let mut usr_mergeable = Vec::with_capacity(usr_deploy_res.len());
+        let mut usr_state = Vec::with_capacity(usr_deploy_res.len());
+        for (pd, m, s) in usr_deploy_res {
+            usr_processed.push(pd);
+            usr_mergeable.push(m);
+            usr_state.push(s);
+        }
+        let mut sys_processed = Vec::with_capacity(sys_deploy_res.len());
+        let mut sys_mergeable = Vec::with_capacity(sys_deploy_res.len());
+        let mut sys_state = Vec::with_capacity(sys_deploy_res.len());
+        for (psd, m, s) in sys_deploy_res {
+            sys_processed.push(psd);
+            sys_mergeable.push(m);
+            sys_state.push(s);
+        }
         let replay_cache_event_log_cap = Self::max_replay_cache_event_log_entries();
 
-        // Concat user and system deploys mergeable channel maps
-        let mergeable_chs = usr_mergeable
+        // Concat user and system deploys mergeable channel maps (per-deploy
+        // alignment preserved). Both pipelines are persisted side-by-side.
+        let mergeable_chs: Vec<NumberChannelsEndVal> = usr_mergeable
             .into_iter()
             .chain(sys_mergeable.into_iter())
             .collect();
+        let state_chs: Vec<StateChannelsEndVal> =
+            usr_state.into_iter().chain(sys_state.into_iter()).collect();
 
         // Convert from final to diff values and persist mergeable (number) channels for post-state hash
         let pre_state_hash = Blake2b256Hash::from_bytes_prost(&start_hash);
@@ -353,6 +368,7 @@ impl RuntimeManager {
             sender.bytes.clone(),
             seq_num,
             mergeable_chs,
+            state_chs,
             &pre_state_hash,
         )?;
 
@@ -460,19 +476,31 @@ impl RuntimeManager {
             .await?;
         log_mem_step("after_compute_state");
 
-        let (usr_processed, usr_mergeable): (Vec<ProcessedDeploy>, Vec<NumberChannelsEndVal>) =
-            usr_deploy_res.into_iter().unzip();
-        let (sys_processed, sys_mergeable): (
-            Vec<ProcessedSystemDeploy>,
-            Vec<NumberChannelsEndVal>,
-        ) = sys_deploy_res.into_iter().unzip();
+        let mut usr_processed = Vec::with_capacity(usr_deploy_res.len());
+        let mut usr_mergeable = Vec::with_capacity(usr_deploy_res.len());
+        let mut usr_state = Vec::with_capacity(usr_deploy_res.len());
+        for (pd, m, s) in usr_deploy_res {
+            usr_processed.push(pd);
+            usr_mergeable.push(m);
+            usr_state.push(s);
+        }
+        let mut sys_processed = Vec::with_capacity(sys_deploy_res.len());
+        let mut sys_mergeable = Vec::with_capacity(sys_deploy_res.len());
+        let mut sys_state = Vec::with_capacity(sys_deploy_res.len());
+        for (psd, m, s) in sys_deploy_res {
+            sys_processed.push(psd);
+            sys_mergeable.push(m);
+            sys_state.push(s);
+        }
         let replay_cache_event_log_cap = Self::max_replay_cache_event_log_entries();
 
         // Concat user and system deploys mergeable channel maps
-        let mergeable_chs = usr_mergeable
+        let mergeable_chs: Vec<NumberChannelsEndVal> = usr_mergeable
             .into_iter()
             .chain(sys_mergeable.into_iter())
             .collect();
+        let state_chs: Vec<StateChannelsEndVal> =
+            usr_state.into_iter().chain(sys_state.into_iter()).collect();
 
         // Convert from final to diff values and persist mergeable (number) channels for post-state hash
         let pre_state_hash = Blake2b256Hash::from_bytes_prost(start_hash);
@@ -484,6 +512,7 @@ impl RuntimeManager {
             sender.bytes.clone(),
             seq_num,
             mergeable_chs,
+            state_chs,
             &pre_state_hash,
         )?;
         log_mem_step("after_save_mergeable_channels");
@@ -544,7 +573,14 @@ impl RuntimeManager {
         let (pre_state, state_hash, processed) = runtime_ops
             .compute_genesis(terms, block_time, block_number)
             .await?;
-        let (processed_deploys, mergeable_chs) = processed.into_iter().unzip();
+        let mut processed_deploys = Vec::with_capacity(processed.len());
+        let mut mergeable_chs = Vec::with_capacity(processed.len());
+        let mut state_chs = Vec::with_capacity(processed.len());
+        for (pd, m, s) in processed {
+            processed_deploys.push(pd);
+            mergeable_chs.push(m);
+            state_chs.push(s);
+        }
 
         // Convert from final to diff values and persist mergeable (number) channels for post-state hash
         let pre_state_hash = Blake2b256Hash::from_bytes_prost(&pre_state);
@@ -556,6 +592,7 @@ impl RuntimeManager {
             prost::bytes::Bytes::new(),
             0,
             mergeable_chs,
+            state_chs,
             &pre_state_hash,
         )?;
 
@@ -623,6 +660,7 @@ impl RuntimeManager {
                             post_state_hash,
                             sender.bytes.clone(),
                             seq_num,
+                            Vec::new(),
                             Vec::new(),
                             &pre_state_hash,
                         )?;
@@ -700,7 +738,7 @@ impl RuntimeManager {
         let runtime_ops = RuntimeOps::new(replay_runtime);
         let mut replay_runtime_ops = ReplayRuntimeOps::new(runtime_ops);
 
-        let (state_hash, mergeable_chs) = replay_runtime_ops
+        let (state_hash, mergeable_chs, state_chs) = replay_runtime_ops
             .replay_compute_state(
                 start_hash,
                 terms,
@@ -720,6 +758,7 @@ impl RuntimeManager {
             sender.bytes,
             seq_num,
             mergeable_chs,
+            state_chs,
             &pre_state_hash,
         )
         .unwrap_or_else(|e| panic!("Failed to save mergeable channels: {:?}", e));
@@ -852,6 +891,7 @@ impl RuntimeManager {
         pre_state_hash: &Blake2b256Hash,
         post_state_hash: &Blake2b256Hash,
         mergeable_chs: &Vec<NumberChannelsDiff>,
+        state_chs: &Vec<StateChannelsDiff>,
     ) -> Result<BlockIndex, CasperError> {
         if let Some(cached) = self.block_index_cache.get(block_hash) {
             Self::touch_cache_key(&self.block_index_cache_order, block_hash);
@@ -870,6 +910,7 @@ impl RuntimeManager {
             post_state_hash,
             &self.history_repo,
             mergeable_chs,
+            state_chs,
         )?;
 
         // Keep index cache bounded for long-running validators.
@@ -926,15 +967,15 @@ impl RuntimeManager {
             .set(self.parents_post_state_cache.len() as f64);
     }
 
-    /**
-     * Load mergeable channels from store
-     */
+    /// Load mergeable channels from store. Returns both the
+    /// `NumberChannelsDiff` vec (IntegerAdd/BitmaskOr) and the
+    /// `StateChannelsDiff` vec (MutexState). Both vecs align by deploy index.
     pub fn load_mergeable_channels(
         &self,
         state_hash_bs: &StateHash,
         creator: prost::bytes::Bytes,
         seq_num: i32,
-    ) -> Result<Vec<NumberChannelsDiff>, CasperError> {
+    ) -> Result<(Vec<NumberChannelsDiff>, Vec<StateChannelsDiff>), CasperError> {
         let state_hash = Blake2b256Hash::from_bytes_prost(state_hash_bs);
         let mergeable_key = MergeableKey {
             state_hash: StateHashSerde(state_hash.to_bytes_prost()),
@@ -949,16 +990,23 @@ impl RuntimeManager {
 
         match res {
             Some(res) => {
-                let res_map = res
-                    .into_iter()
-                    .map(|x| {
+                let mut number_diffs = Vec::with_capacity(res.len());
+                let mut state_diffs = Vec::with_capacity(res.len());
+                for x in res {
+                    number_diffs.push(
                         x.channels
                             .into_iter()
                             .map(|y| (y.hash, (y.diff, y.merge_type)))
-                            .collect::<BTreeMap<_, _>>()
-                    })
-                    .collect::<Vec<_>>();
-                Ok(res_map)
+                            .collect::<BTreeMap<_, _>>(),
+                    );
+                    state_diffs.push(
+                        x.state_channels
+                            .into_iter()
+                            .map(|y| (y.hash, (y.bytes, y.merge_type)))
+                            .collect::<BTreeMap<_, _>>(),
+                    );
+                }
+                Ok((number_diffs, state_diffs))
             }
             None => {
                 let msg = format!(
@@ -1059,16 +1107,28 @@ impl RuntimeManager {
         creator: prost::bytes::Bytes,
         seq_num: i32,
         channels_data: Vec<NumberChannelsEndVal>,
+        state_channels_data: Vec<StateChannelsEndVal>,
         // Used to calculate value difference from final values
         pre_state_hash: &Blake2b256Hash,
     ) -> Result<(), CasperError> {
+        // Per-deploy alignment: number and state vecs must be the same length.
+        debug_assert_eq!(
+            channels_data.len(),
+            state_channels_data.len(),
+            "save_mergeable_channels: number ({}) and state ({}) per-deploy vecs must align",
+            channels_data.len(),
+            state_channels_data.len(),
+        );
+
         // Calculate difference values from final values on number channels
         let diffs = self.convert_number_channels_to_diff(channels_data, pre_state_hash)?;
 
-        // Convert to storage types
+        // Convert to storage types — combine each deploy's number diff with its
+        // state-channel data into a single DeployMergeableData record.
         let deploy_channels = diffs
             .into_iter()
-            .map(|data| {
+            .zip(state_channels_data.into_iter())
+            .map(|(data, state_data)| {
                 let channels: Vec<NumberChannel> = data
                     .into_iter()
                     .map(|(hash, (diff, merge_type))| NumberChannel {
@@ -1078,7 +1138,19 @@ impl RuntimeManager {
                     })
                     .collect::<Vec<_>>();
 
-                DeployMergeableData { channels }
+                let state_channels: Vec<StateChannel> = state_data
+                    .into_iter()
+                    .map(|(hash, (bytes, merge_type))| StateChannel {
+                        hash,
+                        bytes,
+                        merge_type,
+                    })
+                    .collect::<Vec<_>>();
+
+                DeployMergeableData {
+                    channels,
+                    state_channels,
+                }
             })
             .collect();
 
