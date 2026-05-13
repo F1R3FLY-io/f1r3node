@@ -302,7 +302,7 @@ jobs:
           chmod 600 ~/.oci/config
           oci iam region list >/dev/null && echo "OCI auth OK"
 
-      - name: Launch 5 amd64 + 5 arm64 ephemeral runners
+      - name: Launch 10 amd64 + 10 arm64 ephemeral runners
         shell: bash -ex {0}
         env:
           # The default GITHUB_TOKEN can't mint runner registration tokens
@@ -315,33 +315,51 @@ jobs:
           cd system-integration/ci/oci-runners
           # Launch in parallel; each script exits as soon as the OCI launch
           # API call returns (the VM continues booting in the background and
-          # registers itself via cloud-init).
-          for _ in $(seq 1 5); do ./launch-runner.sh amd64 & done
-          for _ in $(seq 1 5); do ./launch-runner.sh arm64 & done
+          # registers itself via cloud-init). 10 amd64 + 10 arm64 feeds the
+          # 20-job dual-provider matrix (docker × {amd64,arm64} × 5 slots +
+          # subprocess × {amd64,arm64} × 5 slots).
+          for _ in $(seq 1 10); do ./launch-runner.sh amd64 & done
+          for _ in $(seq 1 10); do ./launch-runner.sh arm64 & done
           wait
-          echo "All 10 ephemeral runner VMs submitted."
+          echo "All 20 ephemeral runner VMs submitted."
 
   # Integration tests run on ephemeral OCI runners — one fresh VM per matrix
-  # job, self-terminating after the job completes. 5 amd64 + 5 arm64 = 10
-  # parallel jobs against the Docker image artifact from build_rust_docker_image.
+  # job, self-terminating after the job completes. The matrix runs the same
+  # test suite against TWO node-spawn backends (docker provider, subprocess
+  # provider) on each arch — 20 jobs total. Each arch's 10 jobs share its 10
+  # ephemeral runners (provider is a pytest flag, not a runner concern).
   required_rust_integration_tests:
-    name: Integration Tests (${{ matrix.arch }}-${{ matrix.slot }})
+    name: Integration Tests (${{ matrix.arch }}-${{ matrix.provider }}-${{ matrix.slot }})
     needs: [build_rust_docker_image, launch_ephemeral_runners]
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { arch: amd64, slot: 1, runner: [self-hosted, linux, x64,   f1r3fly-rust-ci-ephemeral, oracle-cloud] }
-          - { arch: amd64, slot: 2, runner: [self-hosted, linux, x64,   f1r3fly-rust-ci-ephemeral, oracle-cloud] }
-          - { arch: amd64, slot: 3, runner: [self-hosted, linux, x64,   f1r3fly-rust-ci-ephemeral, oracle-cloud] }
-          - { arch: amd64, slot: 4, runner: [self-hosted, linux, x64,   f1r3fly-rust-ci-ephemeral, oracle-cloud] }
-          - { arch: amd64, slot: 5, runner: [self-hosted, linux, x64,   f1r3fly-rust-ci-ephemeral, oracle-cloud] }
-          - { arch: arm64, slot: 1, runner: [self-hosted, linux, arm64, f1r3fly-rust-ci-ephemeral, oracle-cloud] }
-          - { arch: arm64, slot: 2, runner: [self-hosted, linux, arm64, f1r3fly-rust-ci-ephemeral, oracle-cloud] }
-          - { arch: arm64, slot: 3, runner: [self-hosted, linux, arm64, f1r3fly-rust-ci-ephemeral, oracle-cloud] }
-          - { arch: arm64, slot: 4, runner: [self-hosted, linux, arm64, f1r3fly-rust-ci-ephemeral, oracle-cloud] }
-          - { arch: arm64, slot: 5, runner: [self-hosted, linux, arm64, f1r3fly-rust-ci-ephemeral, oracle-cloud] }
+          # ── amd64 × docker × 5 ───────────────────────────────────────────────
+          - { arch: amd64, provider: docker,     slot: 1, runner: [self-hosted, linux, x64,   f1r3fly-rust-ci-ephemeral, oracle-cloud] }
+          - { arch: amd64, provider: docker,     slot: 2, runner: [self-hosted, linux, x64,   f1r3fly-rust-ci-ephemeral, oracle-cloud] }
+          - { arch: amd64, provider: docker,     slot: 3, runner: [self-hosted, linux, x64,   f1r3fly-rust-ci-ephemeral, oracle-cloud] }
+          - { arch: amd64, provider: docker,     slot: 4, runner: [self-hosted, linux, x64,   f1r3fly-rust-ci-ephemeral, oracle-cloud] }
+          - { arch: amd64, provider: docker,     slot: 5, runner: [self-hosted, linux, x64,   f1r3fly-rust-ci-ephemeral, oracle-cloud] }
+          # ── amd64 × subprocess × 5 ───────────────────────────────────────────
+          - { arch: amd64, provider: subprocess, slot: 1, runner: [self-hosted, linux, x64,   f1r3fly-rust-ci-ephemeral, oracle-cloud] }
+          - { arch: amd64, provider: subprocess, slot: 2, runner: [self-hosted, linux, x64,   f1r3fly-rust-ci-ephemeral, oracle-cloud] }
+          - { arch: amd64, provider: subprocess, slot: 3, runner: [self-hosted, linux, x64,   f1r3fly-rust-ci-ephemeral, oracle-cloud] }
+          - { arch: amd64, provider: subprocess, slot: 4, runner: [self-hosted, linux, x64,   f1r3fly-rust-ci-ephemeral, oracle-cloud] }
+          - { arch: amd64, provider: subprocess, slot: 5, runner: [self-hosted, linux, x64,   f1r3fly-rust-ci-ephemeral, oracle-cloud] }
+          # ── arm64 × docker × 5 ───────────────────────────────────────────────
+          - { arch: arm64, provider: docker,     slot: 1, runner: [self-hosted, linux, arm64, f1r3fly-rust-ci-ephemeral, oracle-cloud] }
+          - { arch: arm64, provider: docker,     slot: 2, runner: [self-hosted, linux, arm64, f1r3fly-rust-ci-ephemeral, oracle-cloud] }
+          - { arch: arm64, provider: docker,     slot: 3, runner: [self-hosted, linux, arm64, f1r3fly-rust-ci-ephemeral, oracle-cloud] }
+          - { arch: arm64, provider: docker,     slot: 4, runner: [self-hosted, linux, arm64, f1r3fly-rust-ci-ephemeral, oracle-cloud] }
+          - { arch: arm64, provider: docker,     slot: 5, runner: [self-hosted, linux, arm64, f1r3fly-rust-ci-ephemeral, oracle-cloud] }
+          # ── arm64 × subprocess × 5 ───────────────────────────────────────────
+          - { arch: arm64, provider: subprocess, slot: 1, runner: [self-hosted, linux, arm64, f1r3fly-rust-ci-ephemeral, oracle-cloud] }
+          - { arch: arm64, provider: subprocess, slot: 2, runner: [self-hosted, linux, arm64, f1r3fly-rust-ci-ephemeral, oracle-cloud] }
+          - { arch: arm64, provider: subprocess, slot: 3, runner: [self-hosted, linux, arm64, f1r3fly-rust-ci-ephemeral, oracle-cloud] }
+          - { arch: arm64, provider: subprocess, slot: 4, runner: [self-hosted, linux, arm64, f1r3fly-rust-ci-ephemeral, oracle-cloud] }
+          - { arch: arm64, provider: subprocess, slot: 5, runner: [self-hosted, linux, arm64, f1r3fly-rust-ci-ephemeral, oracle-cloud] }
     steps:
       - name: Clone Repository
         uses: actions/checkout@v4
@@ -365,7 +383,8 @@ jobs:
           zcat /tmp/rust-node-docker.tar.gz | docker image load
           docker tag f1r3flyindustries/f1r3fly-rust-node:${{ matrix.arch }} f1r3flyindustries/f1r3fly-rust-node:latest
 
-      - name: Extract rnode binary from image (for subprocess provider)
+      - name: Extract rnode binary from image (subprocess provider only)
+        if: matrix.provider == 'subprocess'
         shell: bash -ex {0}
         run: |
           docker create --name extract-rnode f1r3flyindustries/f1r3fly-rust-node:latest
@@ -382,9 +401,12 @@ jobs:
           poetry lock --no-update
           poetry install --with integration
 
-      - name: Run Integration Tests (subprocess provider)
+      - name: Run Integration Tests (${{ matrix.provider }} provider)
         shell: bash -ex {0}
         env:
+          # Both env vars are set unconditionally — the framework's resolver
+          # honors whichever matches `--provider`. Setting the other is harmless.
+          F1R3FLY_NODE_IMAGE: f1r3flyindustries/f1r3fly-rust-node:latest
           F1R3FLY_NODE_BINARY: /tmp/rnode
           F1R3FLY_NODE_DEFAULTS_CONF: ${{ github.workspace }}/node/src/main/resources/defaults.conf
         run: |
@@ -404,7 +426,7 @@ jobs:
             --deselect integration-tests/test/tests/shared/test_bonding_validators.py \
             --deselect integration-tests/test/tests/custom/test_joiner_self_proposes_at_epoch_boundary.py \
             --deselect integration-tests/test/tests/shared/test_observer_lfs_sync.py \
-            --provider=subprocess \
+            --provider=${{ matrix.provider }} \
             -v --tb=short --instafail \
             -n auto --dist=loadgroup --timeout=1200 $SCALE_FLAG
 
@@ -412,7 +434,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: integration-logs-${{ matrix.arch }}-slot${{ matrix.slot }}-run${{ github.run_id }}-attempt${{ github.run_attempt }}
+          name: integration-logs-${{ matrix.arch }}-${{ matrix.provider }}-slot${{ matrix.slot }}-run${{ github.run_id }}-attempt${{ github.run_attempt }}
           path: system-integration/integration-tests/
           retention-days: 7
 
