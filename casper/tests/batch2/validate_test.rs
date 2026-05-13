@@ -1127,7 +1127,7 @@ async fn parent_validation_should_allow_first_block_from_new_validator() {
         let dag = block_dag_storage.get_representation();
         let mut casper_snapshot = mk_casper_snapshot(dag);
 
-        let result = Validate::parents(&b1, &genesis, &mut casper_snapshot, -1, false);
+        let result = Validate::parents(&b1, &genesis, &mut casper_snapshot, -1, i32::MAX, 0, false);
         assert_eq!(result, Either::Right(ValidBlock::Valid));
     })
     .await
@@ -1219,7 +1219,7 @@ async fn parent_validation_should_allow_empty_block_when_new_parents_exist() {
         let dag = block_dag_storage.get_representation();
         let mut casper_snapshot = mk_casper_snapshot(dag);
 
-        let result = Validate::parents(&b3, &genesis, &mut casper_snapshot, -1, false);
+        let result = Validate::parents(&b3, &genesis, &mut casper_snapshot, -1, i32::MAX, 0, false);
         assert_eq!(result, Either::Right(ValidBlock::Valid));
     })
     .await
@@ -1287,7 +1287,7 @@ async fn parent_validation_should_reject_empty_block_when_no_new_parents_exist()
         let dag = block_dag_storage.get_representation();
         let mut casper_snapshot = mk_casper_snapshot(dag);
 
-        let result = Validate::parents(&b2, &genesis, &mut casper_snapshot, -1, false);
+        let result = Validate::parents(&b2, &genesis, &mut casper_snapshot, -1, i32::MAX, 0, false);
         assert_eq!(
             result,
             Either::Left(BlockError::Invalid(InvalidBlock::InvalidParents))
@@ -1361,7 +1361,7 @@ async fn parent_validation_should_allow_block_with_user_deploys_regardless_of_pa
         let dag = block_dag_storage.get_representation();
         let mut casper_snapshot = mk_casper_snapshot(dag);
 
-        let result = Validate::parents(&b2, &genesis, &mut casper_snapshot, -1, false);
+        let result = Validate::parents(&b2, &genesis, &mut casper_snapshot, -1, i32::MAX, 0, false);
         assert_eq!(result, Either::Right(ValidBlock::Valid));
     })
     .await
@@ -1413,7 +1413,7 @@ async fn parent_validation_should_allow_proposal_when_previous_block_is_genesis(
         let dag = block_dag_storage.get_representation();
         let mut casper_snapshot = mk_casper_snapshot(dag);
 
-        let result = Validate::parents(&b1, &genesis, &mut casper_snapshot, -1, false);
+        let result = Validate::parents(&b1, &genesis, &mut casper_snapshot, -1, i32::MAX, 0, false);
         assert_eq!(result, Either::Right(ValidBlock::Valid));
     })
     .await
@@ -1528,7 +1528,7 @@ async fn parent_validation_should_enforce_max_number_of_parents_constraint() {
         let mut casper_snapshot = mk_casper_snapshot(dag);
 
         // maxNumberOfParents = 2, but block has 3 parents
-        let result = Validate::parents(&b4, &genesis, &mut casper_snapshot, 2, false);
+        let result = Validate::parents(&b4, &genesis, &mut casper_snapshot, 2, i32::MAX, 0, false);
         assert_eq!(
             result,
             Either::Left(BlockError::Invalid(InvalidBlock::InvalidParents))
@@ -1582,6 +1582,8 @@ async fn block_summary_validation_should_short_circuit_after_first_invalidity() 
             "root",
             i32::MAX,
             max_number_of_parents,
+            i32::MAX, // max_parent_depth: disable depth check for this test
+            0,        // depth_buffer: irrelevant when depth check disabled
             &mut block_store,
             false,
         )
@@ -2224,6 +2226,396 @@ async fn block_version_validation_should_work() {
 
         let result = Validate::version(&genesis, 1);
         assert_eq!(result, true);
+    })
+    .await
+}
+
+// ── Parent-depth enforcement (symmetric to proposer-side filterDeepParents) ──
+//
+// `validate::parents` rejects blocks whose parents fall outside
+// `max_parent_depth + depth_buffer` from the highest tip. Joiners that LFS-sync
+// to the LFB hold rspace history only for blocks within this horizon; rejecting
+// out-of-horizon blocks here prevents `UnknownRootError` cascades during
+// validation. Symmetric to the proposer-side `Estimator::filterDeepParents`
+// in `multi_parent_casper_impl::create_block`.
+
+fn build_linear_chain(
+    block_store: &mut KeyValueBlockStore,
+    block_dag_storage: &mut IndexedBlockDagStorage,
+    length: usize,
+    bonds: Vec<Bond>,
+    validator: Bytes,
+) -> Vec<BlockMessage> {
+    let genesis = create_genesis_block(
+        block_store,
+        block_dag_storage,
+        None,
+        Some(bonds.clone()),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    );
+    let mut chain = vec![genesis.clone()];
+    for i in 1..length {
+        let parent = chain.last().unwrap().clone();
+        let block = create_block(
+            block_store,
+            block_dag_storage,
+            vec![parent.block_hash.clone()],
+            &genesis,
+            Some(validator.clone()),
+            Some(bonds.clone()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(i as i32),
+            None,
+        );
+        chain.push(block);
+    }
+    chain
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn parent_validation_should_pass_when_parent_within_horizon() {
+    with_storage(|mut block_store, mut block_dag_storage| async move {
+        let v0 = generate_validator(Some("Validator0"));
+        let bonds = vec![Bond {
+            validator: v0.clone(),
+            stake: 10,
+        }];
+
+        // Chain of 5 blocks. Tip at chain[4] (block_number=4).
+        let chain = build_linear_chain(
+            &mut block_store,
+            &mut block_dag_storage,
+            5,
+            bonds.clone(),
+            v0.clone(),
+        );
+        let genesis = chain[0].clone();
+        let tip = chain[4].clone();
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+
+        // Test block parents the tip directly (depth 0). max_parent_depth=2, buffer=0.
+        let test_block = build_block(
+            vec![tip.block_hash.clone()],
+            Some(v0.clone()),
+            now,
+            Some(bonds.clone()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(5),
+        );
+
+        let dag = block_dag_storage.get_representation();
+        let mut casper_snapshot = mk_casper_snapshot(dag);
+
+        let result = Validate::parents(
+            &test_block,
+            &genesis,
+            &mut casper_snapshot,
+            -1,   // max_number_of_parents (unlimited)
+            2,    // max_parent_depth
+            0,    // depth_buffer
+            true, // disable_validator_progress_check (isolate depth check)
+        );
+        assert_eq!(result, Either::Right(ValidBlock::Valid));
+    })
+    .await
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn parent_validation_should_pass_at_horizon_boundary() {
+    with_storage(|mut block_store, mut block_dag_storage| async move {
+        let v0 = generate_validator(Some("Validator0"));
+        let bonds = vec![Bond {
+            validator: v0.clone(),
+            stake: 10,
+        }];
+
+        // Chain of 6 blocks. Max block_number = 5, latest_block_number() returns 6.
+        let chain = build_linear_chain(
+            &mut block_store,
+            &mut block_dag_storage,
+            6,
+            bonds.clone(),
+            v0.clone(),
+        );
+        let genesis = chain[0].clone();
+        let parent_at_depth_4 = chain[2].clone(); // block_number=2, depth=6-2=4
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+
+        let test_block = build_block(
+            vec![parent_at_depth_4.block_hash.clone()],
+            Some(v0.clone()),
+            now,
+            Some(bonds.clone()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(6),
+        );
+
+        let dag = block_dag_storage.get_representation();
+        let mut casper_snapshot = mk_casper_snapshot(dag);
+
+        // depth=4, max_parent_depth=4, buffer=0 → 4 <= 4, passes (boundary)
+        let result = Validate::parents(
+            &test_block,
+            &genesis,
+            &mut casper_snapshot,
+            -1,
+            4,
+            0,
+            true, // disable_validator_progress_check (isolate depth check)
+        );
+        assert_eq!(result, Either::Right(ValidBlock::Valid));
+    })
+    .await
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn parent_validation_should_pass_at_horizon_plus_buffer_boundary() {
+    with_storage(|mut block_store, mut block_dag_storage| async move {
+        let v0 = generate_validator(Some("Validator0"));
+        let bonds = vec![Bond {
+            validator: v0.clone(),
+            stake: 10,
+        }];
+
+        // Chain of 7 blocks. Max block_number = 6, latest_block_number() returns 7.
+        let chain = build_linear_chain(
+            &mut block_store,
+            &mut block_dag_storage,
+            7,
+            bonds.clone(),
+            v0.clone(),
+        );
+        let genesis = chain[0].clone();
+        let parent_at_depth_5 = chain[2].clone(); // block_number=2, depth=7-2=5
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+
+        let test_block = build_block(
+            vec![parent_at_depth_5.block_hash.clone()],
+            Some(v0.clone()),
+            now,
+            Some(bonds.clone()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(7),
+        );
+
+        let dag = block_dag_storage.get_representation();
+        let mut casper_snapshot = mk_casper_snapshot(dag);
+
+        // depth=5, max_parent_depth=4, buffer=1 → 5 <= 4+1, passes (boundary)
+        let result = Validate::parents(
+            &test_block,
+            &genesis,
+            &mut casper_snapshot,
+            -1,
+            4,
+            1,
+            true, // disable_validator_progress_check (isolate depth check)
+        );
+        assert_eq!(result, Either::Right(ValidBlock::Valid));
+    })
+    .await
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn parent_validation_should_reject_when_parent_beyond_horizon() {
+    with_storage(|mut block_store, mut block_dag_storage| async move {
+        let v0 = generate_validator(Some("Validator0"));
+        let bonds = vec![Bond {
+            validator: v0.clone(),
+            stake: 10,
+        }];
+
+        // Chain of 7 blocks. Max block_number = 6, latest_block_number() returns 7.
+        let chain = build_linear_chain(
+            &mut block_store,
+            &mut block_dag_storage,
+            7,
+            bonds.clone(),
+            v0.clone(),
+        );
+        let genesis = chain[0].clone();
+        let parent_at_depth_6 = chain[1].clone(); // block_number=1, depth=7-1=6
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+
+        let test_block = build_block(
+            vec![parent_at_depth_6.block_hash.clone()],
+            Some(v0.clone()),
+            now,
+            Some(bonds.clone()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(7),
+        );
+
+        let dag = block_dag_storage.get_representation();
+        let mut casper_snapshot = mk_casper_snapshot(dag);
+
+        // depth=6, max_parent_depth=4, buffer=0 → 6 > 4, REJECT
+        let result = Validate::parents(
+            &test_block,
+            &genesis,
+            &mut casper_snapshot,
+            -1,
+            4,
+            0,
+            true, // disable_validator_progress_check (isolate depth check)
+        );
+        assert_eq!(
+            result,
+            Either::Left(BlockError::Invalid(InvalidBlock::InvalidParents))
+        );
+    })
+    .await
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn parent_validation_should_exempt_genesis_from_depth_check() {
+    with_storage(|mut block_store, mut block_dag_storage| async move {
+        let v0 = generate_validator(Some("Validator0"));
+        let bonds = vec![Bond {
+            validator: v0.clone(),
+            stake: 10,
+        }];
+
+        // Chain of 12 blocks. Tip at chain[11] (block_number=11). Genesis depth=11.
+        let chain = build_linear_chain(
+            &mut block_store,
+            &mut block_dag_storage,
+            12,
+            bonds.clone(),
+            v0.clone(),
+        );
+        let genesis = chain[0].clone();
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+
+        // Test block parents genesis directly. depth=11, max_parent_depth=4, buffer=0 →
+        // would normally be REJECTED (11 > 4) — but genesis (block_number=0) is exempt.
+        let test_block = build_block(
+            vec![genesis.block_hash.clone()],
+            Some(v0.clone()),
+            now,
+            Some(bonds.clone()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(12),
+        );
+
+        let dag = block_dag_storage.get_representation();
+        let mut casper_snapshot = mk_casper_snapshot(dag);
+
+        let result = Validate::parents(
+            &test_block,
+            &genesis,
+            &mut casper_snapshot,
+            -1,
+            4,
+            0,
+            true, // disable_validator_progress_check (isolate depth check)
+        );
+        assert_eq!(result, Either::Right(ValidBlock::Valid));
+    })
+    .await
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn parent_validation_should_skip_depth_check_when_max_parent_depth_is_unlimited() {
+    with_storage(|mut block_store, mut block_dag_storage| async move {
+        let v0 = generate_validator(Some("Validator0"));
+        let bonds = vec![Bond {
+            validator: v0.clone(),
+            stake: 10,
+        }];
+
+        // Chain of 7 blocks. Max block_number = 6, latest_block_number() returns 7.
+        let chain = build_linear_chain(
+            &mut block_store,
+            &mut block_dag_storage,
+            7,
+            bonds.clone(),
+            v0.clone(),
+        );
+        let genesis = chain[0].clone();
+        let parent_at_depth_6 = chain[1].clone(); // depth=7-1=6
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+
+        let test_block = build_block(
+            vec![parent_at_depth_6.block_hash.clone()],
+            Some(v0.clone()),
+            now,
+            Some(bonds.clone()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(7),
+        );
+
+        let dag = block_dag_storage.get_representation();
+        let mut casper_snapshot = mk_casper_snapshot(dag);
+
+        // depth=5 but max_parent_depth=i32::MAX → check skipped, passes regardless
+        let result = Validate::parents(
+            &test_block,
+            &genesis,
+            &mut casper_snapshot,
+            -1,
+            i32::MAX,
+            0,
+            true, // disable_validator_progress_check (isolate depth check)
+        );
+        assert_eq!(result, Either::Right(ValidBlock::Valid));
     })
     .await
 }

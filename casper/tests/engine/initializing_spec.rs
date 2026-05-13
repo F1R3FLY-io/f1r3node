@@ -212,9 +212,20 @@ impl InitializingSpec {
             .as_ref()
             .unwrap()
             .clone();
+        // Tests must feed a MergeableEntryResponse for every block they enqueue;
+        // otherwise the stream's per-block mergeable_pending state never clears
+        // and is_finished() never returns true.
+        let mergeable_message_tx = initializing_engine
+            .mergeable_message_tx
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .clone();
 
         let store_msgs_clone = store_response_messages.clone();
         let genesis_clone = genesis.clone();
+        let genesis_hash_for_mergeable = genesis.block_hash.clone();
 
         let enqueue_responses = async move {
             // Write directly to tuple space channel (equivalent to stateResponseQueue.enqueue1)
@@ -229,6 +240,24 @@ impl InitializingSpec {
                 .send(genesis_clone)
                 .await
                 .expect("Failed to enqueue block response");
+            // Brief yield so the LFS stream processes the genesis BlockMessage
+            // (running save_block → mergeable_pending(genesis)) before the
+            // mergeable response below is delivered. Without this, the select
+            // loop may consume the response first and reject it as unsolicited
+            // (was_pending=false), leaving mergeable_d non-empty forever and
+            // the stream blocked waiting for a response that already arrived.
+            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+            // Empty serialized_entry signals "peer has no entry"; this test
+            // doesn't exercise actual entry import, just the done-on-response gate.
+            mergeable_message_tx
+                .send(
+                    models::rust::casper::protocol::casper_message::MergeableEntryResponse {
+                        block_hash: genesis_hash_for_mergeable,
+                        serialized_entry: prost::bytes::Bytes::new(),
+                    },
+                )
+                .await
+                .expect("Failed to enqueue mergeable response");
         };
 
         let local_for_expected = fixture.local.clone();
@@ -251,6 +280,15 @@ impl InitializingSpec {
             &local_for_expected,
             &fixture.network_id,
             models::casper::ForkChoiceTipRequestProto::default(),
+        ));
+        // After the genesis BlockMessage lands and is saved, the joiner fires
+        // a MergeableEntryRequest for the same hash.
+        expected_requests.push(packet_with_content(
+            &local_for_expected,
+            &fixture.network_id,
+            models::casper::MergeableEntryRequestProto {
+                block_hash: genesis.block_hash.clone(),
+            },
         ));
 
         let test = async {
@@ -383,6 +421,9 @@ async fn create_initializing_engine(
     // Create engine-specific channels (each Initializing instance needs its own)
     let (block_tx, block_rx) = mpsc::channel::<BlockMessage>(50);
     let (tuple_tx, tuple_rx) = mpsc::channel::<StoreItemsMessage>(50);
+    // Mergeable-channels sync channel.
+    let (mergeable_tx, mergeable_rx) =
+        mpsc::channel::<models::rust::casper::protocol::casper_message::MergeableEntryResponse>(50);
     let (block_processing_queue_tx, _block_processing_queue_rx) = mpsc::channel(1024);
 
     // Use all stores and managers from fixture (matching Scala's Setup pattern)
@@ -406,6 +447,8 @@ async fn create_initializing_engine(
         block_rx,
         tuple_tx,
         tuple_rx,
+        mergeable_tx,
+        mergeable_rx,
         true,
         false,
         fixture.event_publisher.clone(),

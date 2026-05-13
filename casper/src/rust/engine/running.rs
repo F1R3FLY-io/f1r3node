@@ -304,6 +304,17 @@ impl<T: TransportLayer + Send + Sync + 'static> Engine for Running<T> {
                     Ok(())
                 }
             }
+            CasperMessage::MergeableEntryRequest(req) => {
+                if self.disable_state_exporter {
+                    tracing::debug!(
+                        "Received MergeableEntryRequest but state-export is disabled; ignoring (from {}).",
+                        peer
+                    );
+                    return Ok(());
+                }
+                self.handle_mergeable_entry_request(peer, req.block_hash)
+                    .await
+            }
             _ => Ok(()),
         }
     }
@@ -516,6 +527,53 @@ impl<T: TransportLayer + Send + Sync> Running<T> {
             .stream_message_to_peer(&self.conf, &peer, Arc::new(approved_block.to_proto()))
             .await?;
         tracing::info!("ApprovedBlock sent to {}", peer);
+        Ok(())
+    }
+
+    /// Respond to a `MergeableEntryRequest`.
+    ///
+    /// - Block not in our store: silent (no response).
+    /// - Block present, no mergeable entry: respond with empty `serialized_entry`.
+    /// - Block present and entry present: respond with raw bincode bytes from
+    ///   the mergeable_store.
+    async fn handle_mergeable_entry_request(
+        &self,
+        peer: PeerNode,
+        block_hash: BlockHash,
+    ) -> Result<(), CasperError> {
+        let block = match self.casper.block_store().get(&block_hash)? {
+            Some(b) => b,
+            None => {
+                tracing::debug!(
+                    "MergeableEntryRequest for {} from {}: block not in store; silent ignore.",
+                    PrettyPrinter::build_string_bytes(&block_hash),
+                    peer
+                );
+                return Ok(());
+            }
+        };
+
+        let runtime = self.casper.runtime_manager();
+        let (_key_bytes, value_bytes_opt) = runtime.get_mergeable_entry_bytes(&block)?;
+
+        let serialized_entry: prost::bytes::Bytes = value_bytes_opt
+            .map(prost::bytes::Bytes::from)
+            .unwrap_or_default();
+
+        let resp = casper_message::MergeableEntryResponse {
+            block_hash: block_hash.clone(),
+            serialized_entry,
+        };
+
+        self.transport
+            .stream_message_to_peer(&self.conf, &peer, Arc::new(resp.to_proto()))
+            .await?;
+
+        tracing::debug!(
+            "Mergeable entry sent to {} for block {}.",
+            peer,
+            PrettyPrinter::build_string_bytes(&block_hash)
+        );
         Ok(())
     }
 

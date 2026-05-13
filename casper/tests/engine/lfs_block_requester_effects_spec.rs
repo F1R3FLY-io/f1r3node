@@ -291,6 +291,23 @@ impl BlockRequesterOps for MockBlockRequesterOps {
         let state = self.test_state.lock().expect("Lock error");
         !state.invalid.contains(&block.block_hash)
     }
+
+    /// No-op — these tests don't exercise the mergeable-entry path.
+    async fn request_for_mergeable_entry(
+        &self,
+        _block_hash: &BlockHash,
+    ) -> Result<(), CasperError> {
+        Ok(())
+    }
+
+    /// No-op — these tests don't exercise the mergeable-entry path.
+    fn put_mergeable_entry(
+        &self,
+        _block_hash: &BlockHash,
+        _serialized_entry: &[u8],
+    ) -> Result<(), CasperError> {
+        Ok(())
+    }
 }
 
 pub async fn dag_from_block<F, Fut>(
@@ -331,11 +348,14 @@ where
 
         let empty_queue = std::collections::VecDeque::new();
         let response_queue_pending = Arc::new(AtomicUsize::new(0));
+        // Unused receiver to satisfy the stream signature.
+        let (_mergeable_tx, mergeable_rx) = tokio::sync::mpsc::channel(50);
         let lfs_stream = casper::rust::engine::lfs_block_requester::stream(
             &approved_block,
             &empty_queue,
             response_rx,
             response_queue_pending.clone(),
+            mergeable_rx,
             0,
             request_timeout,
             &mut mock_ops,

@@ -6,8 +6,9 @@ use crate::{
     casper::{
         ApprovedBlockProto, ApprovedBlockRequestProto, BlockApprovalProto, BlockHashMessageProto,
         BlockMessageProto, BlockRequestProto, ForkChoiceTipRequestProto, HasBlockProto,
-        HasBlockRequestProto, NoApprovedBlockAvailableProto, StoreItemsMessageProto,
-        StoreItemsMessageRequestProto, UnapprovedBlockProto,
+        HasBlockRequestProto, MergeableEntryRequestProto, MergeableEntryResponseProto,
+        NoApprovedBlockAvailableProto, StoreItemsMessageProto, StoreItemsMessageRequestProto,
+        UnapprovedBlockProto,
     },
     routing::Packet,
 };
@@ -52,3 +53,5 @@ impl_packet!(HasBlockProto, "HasBlock");
 impl_packet!(ForkChoiceTipRequestProto, "ForkChoiceTipRequest");
 impl_packet!(StoreItemsMessageRequestProto, "StoreItemsMessageRequest");
 impl_packet!(StoreItemsMessageProto, "StoreItemsMessage");
+impl_packet!(MergeableEntryRequestProto, "MergeableEntryRequest");
+impl_packet!(MergeableEntryResponseProto, "MergeableEntryResponse");

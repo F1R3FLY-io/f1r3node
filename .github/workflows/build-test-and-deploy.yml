@@ -427,7 +427,7 @@ jobs:
             --deselect integration-tests/test/tests/custom/test_joiner_self_proposes_at_epoch_boundary.py \
             --deselect integration-tests/test/tests/shared/test_observer_lfs_sync.py \
             --provider=${{ matrix.provider }} \
-            -v --tb=short --instafail \
+            -v --tb=short --instafail --maxfail=10 \
             -n auto --dist=loadgroup --timeout=1200 $SCALE_FLAG
 
       - name: Upload Integration Test Logs

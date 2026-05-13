@@ -729,9 +729,9 @@ pub async fn stream<T: TupleSpaceRequesterOps>(
                         final_stats.0, final_stats.1);
 
                     if final_stats.1 {
-                        tracing::info!("✅ LFS Tuple Space Requester completed successfully - all required state downloaded");
+                        tracing::info!("LFS Tuple Space Requester completed successfully - all required state downloaded");
                     } else {
-                        tracing::warn!("⚠️ LFS Tuple Space Requester terminated with incomplete state - some state may be missing");
+                        tracing::warn!("LFS Tuple Space Requester terminated with incomplete state - some state may be missing");
                     }
 
                     Some(state.clone())

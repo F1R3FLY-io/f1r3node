@@ -6,4 +6,5 @@ pub mod genesis_builder;
 pub mod in_memory_key_value_store_spec;
 pub mod proto_util_test;
 pub mod rholang;
+pub mod rspace_history_horizon_test;
 pub mod test_mocks;

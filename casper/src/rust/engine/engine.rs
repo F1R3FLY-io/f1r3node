@@ -13,7 +13,8 @@ use comm::rust::transport::transport_layer::{Blob, TransportLayer};
 use models::rust::block_hash::BlockHash;
 use models::rust::casper::pretty_printer::PrettyPrinter;
 use models::rust::casper::protocol::casper_message::{
-    ApprovedBlock, BlockMessage, CasperMessage, NoApprovedBlockAvailable, StoreItemsMessage,
+    ApprovedBlock, BlockMessage, CasperMessage, MergeableEntryResponse, NoApprovedBlockAvailable,
+    StoreItemsMessage,
 };
 use models::rust::casper::protocol::packet_type_tag::ToPacket;
 use shared::rust::shared::f1r3fly_event::F1r3flyEvent;
@@ -297,9 +298,11 @@ pub async fn transition_to_initializing<U: TransportLayer + Send + Sync + Clone 
     heartbeat_signal_ref: &crate::rust::heartbeat_signal::HeartbeatSignalRef,
 ) -> Result<(), CasperError> {
     // Create bounded channels and return senders so caller can feed LFS responses (Scala: expose queues).
-    // Scala uses size-50 bounded queues in both cases.
+    // Scala uses size-50 bounded queues; we add a third for the
+    // mergeable-channels store sync.
     let (block_tx, block_rx) = mpsc::channel::<BlockMessage>(50);
     let (tuple_tx, tuple_rx) = mpsc::channel::<StoreItemsMessage>(50);
+    let (mergeable_tx, mergeable_rx) = mpsc::channel::<MergeableEntryResponse>(50);
 
     // RuntimeManager is now Arc<Mutex<RuntimeManager>>, so we clone the Arc instead of taking
     let runtime_manager = runtime_manager_arc.clone();
@@ -324,6 +327,8 @@ pub async fn transition_to_initializing<U: TransportLayer + Send + Sync + Clone 
         block_rx,
         tuple_tx.clone(),
         tuple_rx,
+        mergeable_tx.clone(),
+        mergeable_rx,
         trim_state,
         disable_state_exporter,
         event_publisher.clone(),

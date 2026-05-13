@@ -430,6 +430,10 @@ impl RootsStore for InmemRootsStore {
         let _ = roots_lock.insert(key.clone());
         Ok(())
     }
+
+    fn contains_root(&self, key: &Blake2b256Hash) -> Result<bool, RootError> {
+        Ok(self.roots.lock().unwrap().contains(key))
+    }
 }
 
 impl InmemRootsStore {

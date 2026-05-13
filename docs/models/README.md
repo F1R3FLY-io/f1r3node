@@ -57,7 +57,8 @@ pub struct BlockMetadata {
 - `ApprovedBlockCandidate`, `ApprovedBlock`, `BlockApproval`
 - `BlockRequest`, `ForkChoiceTipRequest`
 - `HasBlock`, `HasBlockRequest`
-- `StoreItemsMessageRequest`, `StoreItemsMessage` (state sync)
+- `StoreItemsMessageRequest`, `StoreItemsMessage` (RSpace trie sync)
+- `MergeableEntryRequest`, `MergeableEntryResponse` (mergeable-channels store sync)
 
 **`ToPacket` trait** -- Converts proto messages to routing `Packet`s for network serialization.
 

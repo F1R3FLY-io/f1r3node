@@ -627,9 +627,9 @@ impl RuntimeManager {
                             &pre_state_hash,
                         )?;
                         tracing::warn!(
-                        "[CACHE] StateHashCache hit without mergeable entry for empty block (seq={}); synthesized empty mergeable metadata",
-                        seq_num
-                    );
+                            "[CACHE] StateHashCache hit without mergeable entry for empty block (seq={}); synthesized empty mergeable metadata",
+                            seq_num
+                        );
                         return Ok(cached_post);
                     }
                 }
@@ -804,6 +804,15 @@ impl RuntimeManager {
         self.history_repo.clone()
     }
 
+    /// Check whether a post-state root is recorded in the local rspace
+    /// roots store. Used by joiner-side LFS forward-horizon sync to skip
+    /// roots that have already been imported. Pure lookup — no side effects.
+    pub fn has_root(&self, root: &Blake2b256Hash) -> Result<bool, CasperError> {
+        self.history_repo
+            .contains_root(root)
+            .map_err(|e| CasperError::RuntimeError(format!("has_root lookup failed: {:?}", e)))
+    }
+
     /// Get or compute BlockIndex with caching
     pub fn get_or_compute_block_index(
         &self,
@@ -933,6 +942,58 @@ impl RuntimeManager {
                 Err(CasperError::KvStoreError(KvStoreError::KeyNotFound(msg)))
             }
         }
+    }
+
+    /// Build the mergeable-store key bytes for a block.
+    pub fn mergeable_key_bytes_for_block(
+        block: &models::rust::casper::protocol::casper_message::BlockMessage,
+    ) -> Result<Vec<u8>, CasperError> {
+        let key = MergeableKey {
+            state_hash: StateHashSerde(block.body.state.post_state_hash.clone()),
+            creator: block.sender.clone(),
+            seq_num: block.seq_num,
+        };
+        bincode::serialize(&key)
+            .map_err(|e| CasperError::KvStoreError(KvStoreError::SerializationError(e.to_string())))
+    }
+
+    /// Look up a block's mergeable-channels entry and return its over-the-wire
+    /// byte form. Returns `(key_bytes, Some(value_bytes))` if present,
+    /// `(key_bytes, None)` if absent. Re-serializes via bincode at the typed
+    /// store boundary so the wire format is independent of LMDB's internal
+    /// encoding.
+    pub fn get_mergeable_entry_bytes(
+        &self,
+        block: &models::rust::casper::protocol::casper_message::BlockMessage,
+    ) -> Result<(Vec<u8>, Option<Vec<u8>>), CasperError> {
+        let key_bytes = Self::mergeable_key_bytes_for_block(block)?;
+        let value: Option<Vec<DeployMergeableData>> = self.mergeable_store.get_one(&key_bytes)?;
+        let value_bytes = value
+            .map(|v| bincode::serialize(&v))
+            .transpose()
+            .map_err(|e| {
+                CasperError::KvStoreError(KvStoreError::SerializationError(e.to_string()))
+            })?;
+        Ok((key_bytes, value_bytes))
+    }
+
+    /// Store a mergeable-channels entry received over the wire. Decodes the
+    /// transported bytes and writes via the typed store. Empty `value_bytes`
+    /// signals "peer had no entry" and is a no-op.
+    pub fn put_mergeable_entry_bytes(
+        &self,
+        key_bytes: Vec<u8>,
+        value_bytes: Vec<u8>,
+    ) -> Result<(), CasperError> {
+        if value_bytes.is_empty() {
+            return Ok(());
+        }
+        let value: Vec<DeployMergeableData> = bincode::deserialize(&value_bytes).map_err(|e| {
+            CasperError::KvStoreError(KvStoreError::SerializationError(e.to_string()))
+        })?;
+        self.mergeable_store
+            .put_one(key_bytes, value)
+            .map_err(CasperError::KvStoreError)
     }
 
     /// Delete mergeable channels entry keyed by (post-state-hash, creator, seq-num).
