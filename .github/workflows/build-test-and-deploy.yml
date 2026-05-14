@@ -17,12 +17,12 @@ on:
       - rust/staging
       - "feature/**"
 
-# Prevent interleaving of integration test jobs on single-runner-per-arch
-# self-hosted runners. A second workflow run for the same ref queues until
-# the first completes rather than cancelling it.
+# Queue concurrent workflow runs for the same ref behind the active one
+# rather than cancelling. Each run gets its own pool of ephemeral runners,
+# so the only reason to serialize is to keep CI signal readable.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 env:
   # Enable AES/SSE2 CPU features for gxhash dependency (required by PathMap crate)
