@@ -183,18 +183,22 @@ The merge scope cannot rely on local finalization status because different valid
 
 ### Mergeable Channels
 
-Not every overlapping channel touch is a conflict. Some channels carry data with commutative update semantics — two concurrent writes can be combined rather than one rejected. The merge engine tags such channels with a `MergeType` (defined in `rspace++/src/rspace/merger/merging_logic.rs`), and the rholang interpreter detects them at evaluation time via `is_mergeable_channel` (`rholang/src/rust/interpreter/reduce.rs`):
+A channel whose identity matches an entry in the runtime's `mergeable_tags` registry is bound by a **single-value contract**: at any observation point, the channel holds at most one Datum. This contract is the higher of two layers of mergeability the merger enforces — the lower layer is the CSP multiset semantics encoded in `ChannelChange::combine`. See [STATE_MERGING.md](./STATE_MERGING.md#two-layers-of-mergeability) for the full layering.
 
-| `MergeType` | Channel pattern | Combine rule |
+Identity is detected by the rholang interpreter at evaluation time via `is_mergeable_channel` (`rholang/src/rust/interpreter/reduce.rs`); the two registered tags are:
+
+| `MergeType` | Channel pattern | Commutative merge rule |
 |-------------|-----------------|--------------|
-| `IntegerAdd` | Vault balances, gas accumulators, per-purse counters | Sum the deltas across chains |
+| `IntegerAdd` | Vault balances, gas accumulators, per-purse counters | Sum deltas across branches |
 | `BitmaskOr` | Registry `TreeHashMap` interior-node bitmaps (`@(*bitmaskTag, node, *storeToken)`) | OR-merge the bitmaps |
 
-When the conflict-set merger inspects a shared channel, it looks up the channel's tag against this table. If a `MergeType` is found, the deploys are merged rather than treated as conflicting. If not, ordinary conflict resolution applies (one deploy is kept, the other rejected).
+When a tagged channel's end-of-deploy value is a single `Int`, it enters that deploy's `number_channels_data` and gets the commutative merge above. When the value isn't a single `Int` — empty channel, non-numeric value such as a `TreeHashMap` leaf holding a `Map`, or transient multi-Datum state — the channel still belongs to the contract (identity hasn't changed) but lacks a commutative-merge representation for that deploy. It then appears in `EventLogIndex.identity_tagged_channels` only (a superset of `number_channels_data.keys()`) and is routed through conflict detection rather than the multiset combine path.
 
-`BitmaskOr` was added to handle a class of failure where two registry inserts from sibling blocks both touched the same `TreeHashMap` interior node. Without bitmask merging, one of the inserts would be rejected at multi-parent merge — even though the inserts were at different keys and logically commute. The regression is captured at unit level by `casper/tests/multi_node/bridge_contract_concurrent_merge.rs`.
+`conflicts()` flags such cases with check #4: two branches both leave a pending non-mergeable produce on the same identity-tagged channel ⇒ conflict ⇒ `ConflictSetMerger` picks a cost-optimal winner ⇒ loser's deploys re-enter the `KeyValueRejectedDeployBuffer` for re-inclusion by a later proposer (see [STATE_MERGING.md §What happens after a conflict is detected](./STATE_MERGING.md#what-happens-after-a-conflict-is-detected)).
 
-To diagnose a suspected merge rejection, run with `RUST_LOG=f1r3fly.merge.tag_check=trace` to see which channels match a `MergeType` and which do not.
+The [`MergeableChsForDeploy`](../../rspace++/src/rspace/merger/merging_logic.rs) carrier bundles both halves (`commutative` and `identity_tagged`) and is the per-deploy contract-membership view threaded through `runtime` → `runtime_manager` → `block_index` → `EventLogIndex`.
+
+To diagnose a suspected merge rejection, run with `RUST_LOG=f1r3fly.merge.tag_check=trace` to see which channels match a registered tag and which do not. To diagnose a suspected contract-bound channel falling into the non-numeric path, watch for the `f1r3fly.mergeable_channel.sanitize` WARN — emitted when `get_number_channel` reads a multi-Datum state on a tagged channel.
 
 #### Pitfalls when authoring contracts that use mergeable-tagged channels
 
@@ -236,6 +240,6 @@ All interpreter-level tests use `#[tokio::test(flavor = "multi_thread", worker_t
 to match the production multi-threaded runtime, ensuring parallel `tokio::spawn` evaluation
 of Rholang Par branches is exercised during testing.
 
-**See also:** [casper/ crate README](../../casper/README.md) | [Consensus Protocol](./CONSENSUS_PROTOCOL.md) | [Byzantine Fault Tolerance](./BYZANTINE_FAULT_TOLERANCE.md) | [Synchrony Constraint](./SYNC_CONSTRAINT.md)
+**See also:** [casper/ crate README](../../casper/README.md) | [Consensus Protocol](./CONSENSUS_PROTOCOL.md) | [State Merging](./STATE_MERGING.md) | [Byzantine Fault Tolerance](./BYZANTINE_FAULT_TOLERANCE.md) | [Synchrony Constraint](./SYNC_CONSTRAINT.md)
 
 [← Back to docs index](../README.md)

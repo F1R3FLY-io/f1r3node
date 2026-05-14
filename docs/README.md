@@ -80,6 +80,7 @@ The Cargo workspace contains 11 crates:
 |----------|-------------|
 | [Casper Overview](./casper/) | Block creation, validation, DAG merging, finalization |
 | [Consensus Protocol](./casper/CONSENSUS_PROTOCOL.md) | End-to-end protocol walkthrough, abstraction boundaries for adding new consensus |
+| [State Merging](./casper/STATE_MERGING.md) | Multi-parent merge pipeline, two-layer mergeability model, conflicts() checks, mergeable-channels contract |
 | [Byzantine Fault Tolerance](./casper/BYZANTINE_FAULT_TOLERANCE.md) | BFT architecture, clique oracle, equivocation detection, slashing |
 | [Synchrony Constraint](./casper/SYNC_CONSTRAINT.md) | Synchrony constraint mechanism, configuration, troubleshooting |
 | [Consensus Configuration](https://github.com/F1R3FLY-io/system-integration/blob/main/docs/consensus-configuration.md) | FTT and synchrony threshold semantics, recommended values |

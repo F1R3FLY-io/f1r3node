@@ -267,7 +267,14 @@ In a multi-parent DAG, different validators may have included different deploys 
 
 1. **Identify visible blocks**: All blocks between the LCA and the parents (exclusive of LCA, inclusive of parents)
 2. **Collect deploys**: Extract user deploys from all visible blocks
-3. **Detect conflicts**: Branches conflict if they contain the **same user deploy ID** (not content — just the deploy signature)
+3. **Detect conflicts** via `merging_logic::conflicts()` plus the same-user-deploy-id pass. The structural checks are:
+   - **Races for the same I/O event** — both branches destroyed the same produce or consume by COMM
+   - **Potential cross-branch COMMs** — a produce in one branch matches a consume in the other
+   - **Produce touches base join** — a produce lands on a channel involved in a base-state join
+   - **Identity-tagged non-commutative pending writes** — both branches leave a write on the same channel under the single-value contract (`identity_tagged_channels`) without a commutative-merge representation in `produces_mergeable`
+   - **Same user deploy ID across branches** — two branches contain identical deploy signatures (a same-sig pass run alongside the structural checks)
+
+   See [STATE_MERGING.md](./STATE_MERGING.md#conflicts--the-four-checks) for the predicates in detail.
 4. **Resolve**: `ConflictSetMerger` selects the highest-value subset
    of non-conflicting deploys. Dependents of rejected deploys are
    also rejected. Rejected sigs land in the
@@ -551,6 +558,6 @@ See [F1R3FLY-io/f1r3node issues](https://github.com/F1R3FLY-io/f1r3node/issues) 
 
 ---
 
-**See also:** [Casper Module Overview](./README.md) | [Byzantine Fault Tolerance](./BYZANTINE_FAULT_TOLERANCE.md) | [Synchrony Constraint](./SYNC_CONSTRAINT.md) | [Data Flows](../data-flows/)
+**See also:** [Casper Module Overview](./README.md) | [State Merging](./STATE_MERGING.md) | [Byzantine Fault Tolerance](./BYZANTINE_FAULT_TOLERANCE.md) | [Synchrony Constraint](./SYNC_CONSTRAINT.md) | [Data Flows](../data-flows/)
 
 [← Back to docs index](../README.md)
