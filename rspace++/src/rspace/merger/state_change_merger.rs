@@ -393,4 +393,55 @@ mod tests {
             other => panic!("expected TrieInsertBinaryProduce, got {:?}", other),
         }
     }
+
+    /// A single `ChannelChange` with one add against an empty base state
+    /// yields exactly one trie insert with that one datum. Companion of
+    /// `compute_trie_actions_should_not_duplicate_data_when_merging_identical_sibling_changes`.
+    #[test]
+    fn compute_trie_actions_writes_single_datum_for_single_survivor_after_conflict_resolution() {
+        let datum_x: Vec<u8> = vec![0x11; 32];
+        let channel_hash = Blake2b256Hash::from_bytes(vec![0x01; 32]);
+
+        let base_reader: Box<dyn HistoryReader<Blake2b256Hash, (), (), (), ()>> =
+            Box::new(StubHistoryReaderBinary {
+                data_map: HashMap::new(),
+            });
+
+        let survivor_change = {
+            let dc = DashMap::new();
+            dc.insert(channel_hash.clone(), ChannelChange {
+                added: vec![datum_x.clone()],
+                removed: vec![],
+            });
+            StateChange {
+                datums_changes: dc,
+                cont_changes: DashMap::new(),
+                consume_channels_to_join_serialized_map: DashMap::new(),
+            }
+        };
+
+        let mergeable_chs: NumberChannelsDiff = BTreeMap::new();
+        let no_override =
+            |_: &Blake2b256Hash,
+             _: &ChannelChange<Vec<u8>>,
+             _: &NumberChannelsDiff|
+             -> Result<Option<HotStoreTrieAction<(), (), (), ()>>, HistoryError> {
+                Ok(None)
+            };
+
+        let actions =
+            compute_trie_actions(&survivor_change, &base_reader, &mergeable_chs, no_override)
+                .expect("compute_trie_actions should succeed");
+
+        assert_eq!(actions.len(), 1, "expected exactly one trie action on the channel");
+        match &actions[0] {
+            HotStoreTrieAction::TrieInsertAction(TrieInsertAction::TrieInsertBinaryProduce(
+                insert,
+            )) => {
+                assert_eq!(insert.hash, channel_hash);
+                assert_eq!(insert.data, vec![datum_x]);
+            }
+            other => panic!("expected TrieInsertBinaryProduce, got {:?}", other),
+        }
+    }
 }

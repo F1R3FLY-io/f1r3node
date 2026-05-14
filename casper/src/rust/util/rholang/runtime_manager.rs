@@ -27,7 +27,7 @@ use rholang::rust::interpreter::rho_runtime::{
 };
 use rholang::rust::interpreter::system_processes::BlockData;
 use rspace_plus_plus::rspace::hashing::blake2b256_hash::Blake2b256Hash;
-use rspace_plus_plus::rspace::merger::merging_logic::{NumberChannelsDiff, NumberChannelsEndVal};
+use rspace_plus_plus::rspace::merger::merging_logic::MergeableChsForDeploy;
 use rspace_plus_plus::rspace::replay_rspace::ReplayRSpace;
 use rspace_plus_plus::rspace::rspace::{RSpace, RSpaceStore};
 use rspace_plus_plus::rspace::shared::key_value_store_manager::KeyValueStoreManager;
@@ -329,11 +329,11 @@ impl RuntimeManager {
             )
             .await?;
 
-        let (usr_processed, usr_mergeable): (Vec<ProcessedDeploy>, Vec<NumberChannelsEndVal>) =
+        let (usr_processed, usr_mergeable): (Vec<ProcessedDeploy>, Vec<MergeableChsForDeploy>) =
             usr_deploy_res.into_iter().unzip();
         let (sys_processed, sys_mergeable): (
             Vec<ProcessedSystemDeploy>,
-            Vec<NumberChannelsEndVal>,
+            Vec<MergeableChsForDeploy>,
         ) = sys_deploy_res.into_iter().unzip();
         let replay_cache_event_log_cap = Self::max_replay_cache_event_log_entries();
 
@@ -460,11 +460,11 @@ impl RuntimeManager {
             .await?;
         log_mem_step("after_compute_state");
 
-        let (usr_processed, usr_mergeable): (Vec<ProcessedDeploy>, Vec<NumberChannelsEndVal>) =
+        let (usr_processed, usr_mergeable): (Vec<ProcessedDeploy>, Vec<MergeableChsForDeploy>) =
             usr_deploy_res.into_iter().unzip();
         let (sys_processed, sys_mergeable): (
             Vec<ProcessedSystemDeploy>,
-            Vec<NumberChannelsEndVal>,
+            Vec<MergeableChsForDeploy>,
         ) = sys_deploy_res.into_iter().unzip();
         let replay_cache_event_log_cap = Self::max_replay_cache_event_log_entries();
 
@@ -822,7 +822,7 @@ impl RuntimeManager {
         sys_processed_deploys: &Vec<ProcessedSystemDeploy>,
         pre_state_hash: &Blake2b256Hash,
         post_state_hash: &Blake2b256Hash,
-        mergeable_chs: &Vec<NumberChannelsDiff>,
+        mergeable_chs: &Vec<MergeableChsForDeploy>,
     ) -> Result<BlockIndex, CasperError> {
         if let Some(cached) = self.block_index_cache.get(block_hash) {
             Self::touch_cache_key(&self.block_index_cache_order, block_hash);
@@ -905,7 +905,7 @@ impl RuntimeManager {
         state_hash_bs: &StateHash,
         creator: prost::bytes::Bytes,
         seq_num: i32,
-    ) -> Result<Vec<NumberChannelsDiff>, CasperError> {
+    ) -> Result<Vec<MergeableChsForDeploy>, CasperError> {
         let state_hash = Blake2b256Hash::from_bytes_prost(state_hash_bs);
         let mergeable_key = MergeableKey {
             state_hash: StateHashSerde(state_hash.to_bytes_prost()),
@@ -923,10 +923,18 @@ impl RuntimeManager {
                 let res_map = res
                     .into_iter()
                     .map(|x| {
-                        x.channels
+                        let commutative = x
+                            .channels
                             .into_iter()
                             .map(|y| (y.hash, (y.diff, y.merge_type)))
-                            .collect::<BTreeMap<_, _>>()
+                            .collect::<BTreeMap<_, _>>();
+                        let identity_tagged = shared::rust::hashable_set::HashableSet(
+                            x.identity_tagged_channels.into_iter().collect(),
+                        );
+                        MergeableChsForDeploy {
+                            commutative,
+                            identity_tagged,
+                        }
                     })
                     .collect::<Vec<_>>();
                 Ok(res_map)
@@ -1029,7 +1037,7 @@ impl RuntimeManager {
         post_state_hash: Blake2b256Hash,
         creator: prost::bytes::Bytes,
         seq_num: i32,
-        channels_data: Vec<NumberChannelsEndVal>,
+        channels_data: Vec<MergeableChsForDeploy>,
         // Used to calculate value difference from final values
         pre_state_hash: &Blake2b256Hash,
     ) -> Result<(), CasperError> {
@@ -1041,6 +1049,7 @@ impl RuntimeManager {
             .into_iter()
             .map(|data| {
                 let channels: Vec<NumberChannel> = data
+                    .commutative
                     .into_iter()
                     .map(|(hash, (diff, merge_type))| NumberChannel {
                         hash,
@@ -1048,8 +1057,13 @@ impl RuntimeManager {
                         merge_type,
                     })
                     .collect::<Vec<_>>();
+                let identity_tagged_channels: Vec<Blake2b256Hash> =
+                    data.identity_tagged.0.into_iter().collect();
 
-                DeployMergeableData { channels }
+                DeployMergeableData {
+                    channels,
+                    identity_tagged_channels,
+                }
             })
             .collect();
 
@@ -1079,10 +1093,10 @@ impl RuntimeManager {
      */
     pub fn convert_number_channels_to_diff(
         &self,
-        channels_data: Vec<NumberChannelsEndVal>,
+        channels_data: Vec<MergeableChsForDeploy>,
         // Used to calculate value difference from final values
         pre_state_hash: &Blake2b256Hash,
-    ) -> Result<Vec<NumberChannelsDiff>, CasperError> {
+    ) -> Result<Vec<MergeableChsForDeploy>, CasperError> {
         let history_repo = self.history_repo.clone();
         let reader = history_repo
             .get_history_reader(pre_state_hash)
@@ -1096,7 +1110,7 @@ impl RuntimeManager {
         // Build a one-shot base-value map to avoid repeatedly creating history readers per key.
         let unique_channels = channels_data
             .iter()
-            .flat_map(|m| m.keys().cloned())
+            .flat_map(|m| m.commutative.keys().cloned())
             .collect::<std::collections::BTreeSet<_>>();
         let mut initial_values: BTreeMap<Blake2b256Hash, i64> = BTreeMap::new();
         for ch in unique_channels {
@@ -1133,11 +1147,24 @@ impl RuntimeManager {
             initial_values.insert(ch, value);
         }
 
-        // Calculate difference values from final values on number channels
-        Ok(RholangMergingLogic::calculate_num_channel_diff(
-            channels_data,
-            move |ch| initial_values.get(ch).copied(),
-        ))
+        // Diff conversion operates on the commutative maps only; the
+        // identity_tagged sets are re-paired unchanged after the conversion.
+        let (commutative_end_vals, identity_tagged_per_deploy): (Vec<_>, Vec<_>) = channels_data
+            .into_iter()
+            .map(|d| (d.commutative, d.identity_tagged))
+            .unzip();
+        let commutative_diffs =
+            RholangMergingLogic::calculate_num_channel_diff(commutative_end_vals, move |ch| {
+                initial_values.get(ch).copied()
+            });
+        Ok(commutative_diffs
+            .into_iter()
+            .zip(identity_tagged_per_deploy)
+            .map(|(commutative, identity_tagged)| MergeableChsForDeploy {
+                commutative,
+                identity_tagged,
+            })
+            .collect())
     }
 
     /**

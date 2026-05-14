@@ -10,6 +10,7 @@ use super::merging_logic::{
     NumberChannelsDiff, combine_mergeable_value, combine_produces_copied_by_peek,
 };
 use crate::rspace::errors::HistoryError;
+use crate::rspace::hashing::blake2b256_hash::Blake2b256Hash;
 use crate::rspace::trace::event::{Consume, Event, IOEvent, Produce};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -26,6 +27,11 @@ pub struct EventLogIndex {
     pub produces_mergeable: HashableSet<Produce>,
     pub consumes_mergeable: HashableSet<Consume>,
     pub number_channels_data: NumberChannelsDiff,
+    /// Channel hashes whose identity matches a registered mergeable tag — a
+    /// superset of `number_channels_data.keys()`. Read by `conflicts()` to
+    /// flag two-branch writes on contract-bound channels that lack a
+    /// commutative representation for this branch.
+    pub identity_tagged_channels: HashableSet<Blake2b256Hash>,
 }
 
 // Ordering for deterministic processing in merge operations.
@@ -62,6 +68,17 @@ impl Ord for EventLogIndex {
             }
         }
 
+        // Compare identity_tagged_channels — sorted view for determinism
+        // independent of underlying HashSet iteration order.
+        let a_tagged: std::collections::BTreeSet<&Blake2b256Hash> =
+            self.identity_tagged_channels.0.iter().collect();
+        let b_tagged: std::collections::BTreeSet<&Blake2b256Hash> =
+            other.identity_tagged_channels.0.iter().collect();
+        let tagged_cmp = a_tagged.iter().cmp(b_tagged.iter());
+        if tagged_cmp != std::cmp::Ordering::Equal {
+            return tagged_cmp;
+        }
+
         // If numberChannelsData are identical, distinguish by event counts
         let a_prod = self.produces_linear.0.len() +
             self.produces_persistent.0.len() +
@@ -90,6 +107,7 @@ impl EventLogIndex {
         produce_exists_in_pre_state: impl Fn(&Produce) -> bool,
         produce_touch_pre_state_join: impl Fn(&Produce) -> bool,
         mergeable_chs: NumberChannelsDiff,
+        identity_tagged_channels: HashableSet<Blake2b256Hash>,
     ) -> Self {
         // Use Arc<Mutex<>> for thread-safe collections that will be updated in parallel
         let produces_linear = Arc::new(Mutex::new(HashSet::new()));
@@ -271,6 +289,7 @@ impl EventLogIndex {
             produces_mergeable,
             consumes_mergeable,
             number_channels_data: mergeable_chs,
+            identity_tagged_channels,
         }
     }
 
@@ -288,6 +307,7 @@ impl EventLogIndex {
             produces_mergeable: HashableSet(HashSet::new()),
             consumes_mergeable: HashableSet(HashSet::new()),
             number_channels_data: NumberChannelsDiff::new(),
+            identity_tagged_channels: HashableSet::new(),
         }
     }
 
@@ -396,6 +416,13 @@ impl EventLogIndex {
                     .collect(),
             ),
             number_channels_data,
+            identity_tagged_channels: HashableSet(
+                x.identity_tagged_channels
+                    .0
+                    .union(&y.identity_tagged_channels.0)
+                    .cloned()
+                    .collect(),
+            ),
         })
     }
 }

@@ -21,7 +21,7 @@ use rholang::rust::interpreter::{
 use rspace_plus_plus::rspace::{
     hashing::blake2b256_hash::Blake2b256Hash,
     history::Either,
-    merger::merging_logic::{MergeType, NumberChannelsEndVal},
+    merger::merging_logic::{MergeType, MergeableChsForDeploy},
 };
 
 use crate::rust::{
@@ -99,7 +99,7 @@ impl ReplayRuntimeOps {
         block_data: &BlockData,
         invalid_blocks: Option<HashMap<BlockHash, Validator>>,
         is_genesis: bool, //FIXME have a better way of knowing this. Pass the replayDeploy function maybe? - OLD
-    ) -> Result<(Blake2b256Hash, Vec<NumberChannelsEndVal>), CasperError> {
+    ) -> Result<(Blake2b256Hash, Vec<MergeableChsForDeploy>), CasperError> {
         let invalid_blocks = invalid_blocks.unwrap_or_default();
 
         self.runtime_ops
@@ -127,7 +127,7 @@ impl ReplayRuntimeOps {
         system_deploys: Vec<ProcessedSystemDeploy>,
         with_cost_accounting: bool,
         block_data: &BlockData,
-    ) -> Result<(Blake2b256Hash, Vec<NumberChannelsEndVal>), CasperError> {
+    ) -> Result<(Blake2b256Hash, Vec<MergeableChsForDeploy>), CasperError> {
         // Time reset phase - Span[F].traceI("reset") from Scala
         let reset_start = Instant::now();
         self.runtime_ops
@@ -200,7 +200,7 @@ impl ReplayRuntimeOps {
         &mut self,
         with_cost_accounting: bool,
         processed_deploy: &ProcessedDeploy,
-    ) -> Result<NumberChannelsEndVal, CasperError> {
+    ) -> Result<MergeableChsForDeploy, CasperError> {
         let mut mergeable_channels: HashMap<Par, MergeType> = HashMap::new();
 
         let rig_start = Instant::now();
@@ -402,7 +402,7 @@ impl ReplayRuntimeOps {
         &mut self,
         block_data: &BlockData,
         processed_system_deploy: &ProcessedSystemDeploy,
-    ) -> Result<NumberChannelsEndVal, CasperError> {
+    ) -> Result<MergeableChsForDeploy, CasperError> {
         let system_deploy = match processed_system_deploy {
             ProcessedSystemDeploy::Succeeded {
                 ref system_deploy, ..

@@ -10,7 +10,7 @@ use models::rust::{
 use rholang::rust::interpreter::rho_runtime::RhoHistoryRepository;
 use rspace_plus_plus::rspace::{
     hashing::blake2b256_hash::Blake2b256Hash,
-    merger::{event_log_index::EventLogIndex, merging_logic::NumberChannelsDiff},
+    merger::{event_log_index::EventLogIndex, merging_logic::MergeableChsForDeploy},
     trace::event::Produce,
 };
 
@@ -32,7 +32,7 @@ pub fn create_event_log_index(
     events: &[Event],
     history_repository: RhoHistoryRepository,
     pre_state_hash: &Blake2b256Hash,
-    mergeable_chs: NumberChannelsDiff,
+    mergeable_chs: MergeableChsForDeploy,
 ) -> EventLogIndex {
     let pre_state_reader = history_repository
         .get_history_reader(&pre_state_hash)
@@ -57,7 +57,8 @@ pub fn create_event_log_index(
             .collect(),
         produce_exists_in_pre_state,
         produce_touches_pre_state_join,
-        mergeable_chs,
+        mergeable_chs.commutative,
+        mergeable_chs.identity_tagged,
     )
 }
 
@@ -69,7 +70,7 @@ pub fn new(
     pre_state_hash: &Blake2b256Hash,
     post_state_hash: &Blake2b256Hash,
     history_repository: &RhoHistoryRepository,
-    mergeable_chs: &Vec<NumberChannelsDiff>,
+    mergeable_chs: &Vec<MergeableChsForDeploy>,
 ) -> Result<BlockIndex, CasperError> {
     // Connect mergeable channels data with processed deploys by index
     let usr_count = usr_processed_deploys.len();

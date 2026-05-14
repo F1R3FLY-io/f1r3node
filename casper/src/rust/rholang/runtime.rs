@@ -1,7 +1,7 @@
 // See casper/src/main/scala/coop/rchain/casper/rholang/RuntimeSyntax.scala
 
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, HashSet},
     future::Future,
     mem,
     sync::OnceLock,
@@ -48,7 +48,7 @@ use rholang::rust::interpreter::{
 use rspace_plus_plus::rspace::{
     hashing::{blake2b256_hash::Blake2b256Hash, stable_hash_provider},
     history::{instances::radix_history::RadixHistory, Either},
-    merger::merging_logic::{MergeType, NumberChannelsEndVal},
+    merger::merging_logic::{MergeType, MergeableChsForDeploy},
 };
 
 use crate::rust::{
@@ -130,8 +130,8 @@ impl RuntimeOps {
     ) -> Result<
         (
             StateHash,
-            Vec<(ProcessedDeploy, NumberChannelsEndVal)>,
-            Vec<(ProcessedSystemDeploy, NumberChannelsEndVal)>,
+            Vec<(ProcessedDeploy, MergeableChsForDeploy)>,
+            Vec<(ProcessedSystemDeploy, MergeableChsForDeploy)>,
         ),
         CasperError,
     > {
@@ -253,7 +253,7 @@ impl RuntimeOps {
         (
             StateHash,
             StateHash,
-            Vec<(ProcessedDeploy, NumberChannelsEndVal)>,
+            Vec<(ProcessedDeploy, MergeableChsForDeploy)>,
         ),
         CasperError,
     > {
@@ -288,7 +288,7 @@ impl RuntimeOps {
         &mut self,
         start_hash: &StateHash,
         terms: Vec<Signed<DeployData>>,
-    ) -> Result<(StateHash, Vec<(ProcessedDeploy, NumberChannelsEndVal)>), CasperError> {
+    ) -> Result<(StateHash, Vec<(ProcessedDeploy, MergeableChsForDeploy)>), CasperError> {
         let mem_profile_enabled = crate::rust::util::rholang::mem_profiler::mem_profile_enabled();
         let read_vm_rss_kb =
             || -> Option<usize> { crate::rust::util::rholang::mem_profiler::read_vm_rss_kb() };
@@ -358,7 +358,7 @@ impl RuntimeOps {
         &mut self,
         start_hash: &StateHash,
         terms: Vec<Signed<DeployData>>,
-    ) -> Result<(StateHash, Vec<(ProcessedDeploy, NumberChannelsEndVal)>), CasperError> {
+    ) -> Result<(StateHash, Vec<(ProcessedDeploy, MergeableChsForDeploy)>), CasperError> {
         // Using tracing events for async - Span[F].withMarks("play-deploys") from Scala
         tracing::info!(target: "f1r3fly.casper.play-deploys-genesis", "play-deploys-genesis-started");
         self.runtime
@@ -380,7 +380,7 @@ impl RuntimeOps {
     pub async fn play_deploy_with_cost_accounting(
         &mut self,
         deploy: Signed<DeployData>,
-    ) -> Result<(ProcessedDeploy, NumberChannelsEndVal), CasperError> {
+    ) -> Result<(ProcessedDeploy, MergeableChsForDeploy), CasperError> {
         let mem_profile_enabled = crate::rust::util::rholang::mem_profiler::mem_profile_enabled();
         let read_vm_rss_kb =
             || -> Option<usize> { crate::rust::util::rholang::mem_profiler::read_vm_rss_kb() };
@@ -588,7 +588,7 @@ impl RuntimeOps {
     pub async fn process_deploy_with_mergeable_data(
         &mut self,
         deploy: Signed<DeployData>,
-    ) -> Result<(ProcessedDeploy, NumberChannelsEndVal), CasperError> {
+    ) -> Result<(ProcessedDeploy, MergeableChsForDeploy), CasperError> {
         let (pd, merge_chs) = self.process_deploy(deploy).await?;
         let data = self.get_number_channels_data(&merge_chs).await?;
         Ok((pd, data))
@@ -600,14 +600,27 @@ impl RuntimeOps {
             Par,
             rspace_plus_plus::rspace::merger::merging_logic::MergeType,
         >,
-    ) -> Result<NumberChannelsEndVal, CasperError> {
-        let mut result = BTreeMap::new();
+    ) -> Result<rspace_plus_plus::rspace::merger::merging_logic::MergeableChsForDeploy, CasperError>
+    {
+        let mut commutative = BTreeMap::new();
+        let mut identity_tagged = HashSet::new();
         for (channel, merge_type) in channels {
-            if let Some((hash, value)) = self.get_number_channel(channel, *merge_type).await? {
-                result.insert(hash, (value, *merge_type));
+            // Every entry in `channels` is already identity-tagged
+            // (`is_mergeable_channel` filtered them by tuple-head Par against
+            // the registered `mergeable_tags`); include the hash regardless
+            // of whether the value satisfies the commutative-merge shape.
+            let hash = stable_hash_provider::hash(channel);
+            identity_tagged.insert(hash.clone());
+            if let Some((_, value)) = self.get_number_channel(channel, *merge_type).await? {
+                commutative.insert(hash, (value, *merge_type));
             }
         }
-        Ok(result)
+        Ok(
+            rspace_plus_plus::rspace::merger::merging_logic::MergeableChsForDeploy {
+                commutative,
+                identity_tagged: shared::rust::hashable_set::HashableSet(identity_tagged),
+            },
+        )
     }
 
     /// Deterministic multi-value fold for a mergeable channel that holds more

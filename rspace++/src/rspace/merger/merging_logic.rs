@@ -33,6 +33,41 @@ pub type NumberChannelsEndVal = BTreeMap<Blake2b256Hash, (i64, MergeType)>;
 
 pub type NumberChannelsDiff = BTreeMap<Blake2b256Hash, (i64, MergeType)>;
 
+/// Per-deploy view of channels participating in the Number-channel
+/// single-value contract. A channel is in the contract when its identity
+/// matches an entry in the runtime's `mergeable_tags` registry.
+///
+/// `commutative` holds the subset whose end-of-deploy value is a single
+/// numeric, eligible for commutative merge via the per-channel `MergeType`.
+/// Same underlying shape as `NumberChannelsEndVal` / `NumberChannelsDiff`;
+/// which alias is materialised depends on the lifecycle phase.
+///
+/// `identity_tagged` is the full set of contract-bound channel hashes
+/// touched by the deploy — a superset of `commutative.keys()`. Channels in
+/// `identity_tagged \ commutative.keys()` are contract-bound but lack a
+/// commutative representation this round and must be routed to conflict
+/// resolution rather than the multiset combine path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MergeableChsForDeploy {
+    pub commutative: NumberChannelsEndVal,
+    pub identity_tagged: HashableSet<Blake2b256Hash>,
+}
+
+impl MergeableChsForDeploy {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl Default for MergeableChsForDeploy {
+    fn default() -> Self {
+        Self {
+            commutative: NumberChannelsEndVal::new(),
+            identity_tagged: HashableSet::new(),
+        }
+    }
+}
+
 /// Combine two values according to the strategy. Used by
 /// `EventLogIndex::combine` to aggregate diffs within a chain and by the merge
 /// engine to combine across chains. For `IntegerAdd` semantics, this performs
@@ -309,11 +344,38 @@ pub fn conflicts(a: &EventLogIndex, b: &EventLogIndex) -> HashableSet<Blake2b256
         result
     };
 
+    // Check #4: identity-tagged channels with non-commutative pending writes.
+    // Both branches leave a pending produce on the same single-value-contract
+    // channel that neither side carries in `produces_mergeable`. Without this
+    // check the merger falls through to the multiset combine path and unions
+    // distinct writes on a channel the runtime expects to hold one value.
+    let identity_tagged_non_commutative_writes = {
+        let pending_non_mergeable_channels = |branch: &EventLogIndex| -> HashSet<Blake2b256Hash> {
+            produces_created_and_not_destroyed(branch)
+                .0
+                .iter()
+                .filter(|p| !branch.produces_mergeable.0.contains(*p))
+                .map(|p| p.channel_hash.clone())
+                .collect()
+        };
+        let a_pending = pending_non_mergeable_channels(a);
+        let b_pending = pending_non_mergeable_channels(b);
+        a_pending
+            .intersection(&b_pending)
+            .filter(|h| {
+                a.identity_tagged_channels.0.contains(*h) &&
+                    b.identity_tagged_channels.0.contains(*h)
+            })
+            .cloned()
+            .collect::<HashSet<Blake2b256Hash>>()
+    };
+
     // Combine all conflicts
     let mut all_conflicts = HashSet::new();
     all_conflicts.extend(races_for_same_io_event);
     all_conflicts.extend(potential_comms);
     all_conflicts.extend(produce_touch_base_join);
+    all_conflicts.extend(identity_tagged_non_commutative_writes);
     HashableSet(all_conflicts)
 }
 
@@ -1331,6 +1393,44 @@ mod tests {
         let b3 = EventLogIndex::empty();
         a3.produces_touching_base_joins.0.insert(produce1.clone());
         assert!(are_conflicting(&a3, &b3));
+    }
+
+    /// Two branches each emit a distinct linear produce on the same channel.
+    /// Neither produce is destroyed within its own branch and neither is in
+    /// `produces_mergeable`. Both branches list the channel in
+    /// `identity_tagged_channels`. `conflicts()` must flag the channel —
+    /// without it, the merger combines distinct writes on a channel the
+    /// runtime expects to hold one value.
+    #[test]
+    fn conflicts_flags_distinct_non_mergeable_sibling_produces_on_same_channel() {
+        let channel = Blake2b256Hash::from_bytes(vec![0x42; 32]);
+
+        let mk_produce = |hash_byte: u8| Produce {
+            channel_hash: channel.clone(),
+            persistent: false,
+            hash: Blake2b256Hash::from_bytes(vec![hash_byte; 32]),
+            is_deterministic: true,
+            output_value: vec![],
+            failed: false,
+        };
+
+        let mut a = EventLogIndex::empty();
+        a.produces_linear.0.insert(mk_produce(0xaa));
+        a.identity_tagged_channels.0.insert(channel.clone());
+
+        let mut b = EventLogIndex::empty();
+        b.produces_linear.0.insert(mk_produce(0xbb));
+        b.identity_tagged_channels.0.insert(channel.clone());
+
+        assert_eq!(produces_created_and_not_destroyed(&a).0.len(), 1);
+        assert_eq!(produces_created_and_not_destroyed(&b).0.len(), 1);
+
+        let result = conflicts(&a, &b);
+        assert!(
+            result.0.contains(&channel),
+            "expected channel in conflict set, got {:?}",
+            result.0,
+        );
     }
 
     #[test]
