@@ -349,6 +349,12 @@ pub fn conflicts(a: &EventLogIndex, b: &EventLogIndex) -> HashableSet<Blake2b256
     // channel that neither side carries in `produces_mergeable`. Without this
     // check the merger falls through to the multiset combine path and unions
     // distinct writes on a channel the runtime expects to hold one value.
+    //
+    // Asymmetric case (one branch mergeable, one not) is not flagged here and
+    // is structurally safe: `calculate_number_channel_merge` always emits
+    // exactly one datum from the commutative diff, so the single-value
+    // invariant holds regardless of what the non-mergeable branch added to
+    // `ChannelChange::added`.
     let identity_tagged_non_commutative_writes = {
         let pending_non_mergeable_channels = |branch: &EventLogIndex| -> HashSet<Blake2b256Hash> {
             produces_created_and_not_destroyed(branch)
@@ -1429,6 +1435,47 @@ mod tests {
         assert!(
             result.0.contains(&channel),
             "expected channel in conflict set, got {:?}",
+            result.0,
+        );
+    }
+
+    /// Asymmetric companion to
+    /// `conflicts_flags_distinct_non_mergeable_sibling_produces_on_same_channel`.
+    /// Branch A's produce on the identity-tagged channel is non-mergeable,
+    /// Branch B's produce on the same channel is in `produces_mergeable`.
+    /// Check #4 does not fire — the commutative path in
+    /// `calculate_number_channel_merge` emits exactly one datum from B's
+    /// diff, so the single-value invariant is preserved without rejecting
+    /// either branch.
+    #[test]
+    fn conflicts_does_not_flag_asymmetric_mergeable_vs_non_mergeable_writes() {
+        let channel = Blake2b256Hash::from_bytes(vec![0x42; 32]);
+
+        let mk_produce = |hash_byte: u8| Produce {
+            channel_hash: channel.clone(),
+            persistent: false,
+            hash: Blake2b256Hash::from_bytes(vec![hash_byte; 32]),
+            is_deterministic: true,
+            output_value: vec![],
+            failed: false,
+        };
+
+        let mut a = EventLogIndex::empty();
+        a.produces_linear.0.insert(mk_produce(0xaa));
+        a.identity_tagged_channels.0.insert(channel.clone());
+
+        let mut b = EventLogIndex::empty();
+        let b_produce = mk_produce(0xbb);
+        b.produces_linear.0.insert(b_produce.clone());
+        b.identity_tagged_channels.0.insert(channel.clone());
+        // B's produce IS in produces_mergeable — its end-of-deploy value
+        // satisfied the commutative-merge shape.
+        b.produces_mergeable.0.insert(b_produce);
+
+        let result = conflicts(&a, &b);
+        assert!(
+            !result.0.contains(&channel),
+            "asymmetric mergeable/non-mergeable should not fire check #4; got {:?}",
             result.0,
         );
     }
