@@ -54,9 +54,7 @@ pub struct MergeableChsForDeploy {
 }
 
 impl MergeableChsForDeploy {
-    pub fn new() -> Self {
-        Self::default()
-    }
+    pub fn new() -> Self { Self::default() }
 }
 
 impl Default for MergeableChsForDeploy {
@@ -621,6 +619,13 @@ where
         HashMap::new();
     let mut unconsumed_consumes_by_channel: HashMap<&Blake2b256Hash, HashSet<usize>> =
         HashMap::new();
+    // #4 pending produces on identity-tagged channels that lack a
+    // commutative representation in this branch (not in
+    // `produces_mergeable`), keyed by channel.
+    let mut identity_tagged_non_mergeable_pending_by_channel: HashMap<
+        &Blake2b256Hash,
+        HashSet<usize>,
+    > = HashMap::new();
     let mut global_branches: HashSet<usize> = HashSet::new();
 
     for (idx, e) in event_logs.iter().enumerate() {
@@ -662,6 +667,14 @@ where
                     .entry(&p.channel_hash)
                     .or_default()
                     .insert(idx);
+                if e.identity_tagged_channels.0.contains(&p.channel_hash) &&
+                    !e.produces_mergeable.0.contains(p)
+                {
+                    identity_tagged_non_mergeable_pending_by_channel
+                        .entry(&p.channel_hash)
+                        .or_default()
+                        .insert(idx);
+                }
             }
         }
         for p in &e.produces_persistent.0 {
@@ -670,6 +683,14 @@ where
                     .entry(&p.channel_hash)
                     .or_default()
                     .insert(idx);
+                if e.identity_tagged_channels.0.contains(&p.channel_hash) &&
+                    !e.produces_mergeable.0.contains(p)
+                {
+                    identity_tagged_non_mergeable_pending_by_channel
+                        .entry(&p.channel_hash)
+                        .or_default()
+                        .insert(idx);
+                }
             }
         }
         for c in &e.consumes_linear_and_peeks.0 {
@@ -768,6 +789,23 @@ where
         for o in 0..n {
             if o != g {
                 let (lo, hi) = if g < o { (g, o) } else { (o, g) };
+                pairs.push((lo, hi));
+            }
+        }
+    }
+
+    // #4 identity-tagged channel with non-commutative pending writes from
+    // 2+ branches. See the asymmetric-case note next to check #4 in
+    // `conflicts()` for why the single-branch case is not flagged.
+    for branches_set in identity_tagged_non_mergeable_pending_by_channel.values() {
+        if branches_set.len() < 2 {
+            continue;
+        }
+        let pos: Vec<usize> = branches_set.iter().copied().collect();
+        for i in 0..pos.len() {
+            for j in (i + 1)..pos.len() {
+                let (a, b) = (pos[i], pos[j]);
+                let (lo, hi) = if a < b { (a, b) } else { (b, a) };
                 pairs.push((lo, hi));
             }
         }
@@ -1436,6 +1474,48 @@ mod tests {
             result.0.contains(&channel),
             "expected channel in conflict set, got {:?}",
             result.0,
+        );
+    }
+
+    /// Same setup as
+    /// `conflicts_flags_distinct_non_mergeable_sibling_produces_on_same_channel`,
+    /// routed through `compute_conflict_map_event_indexed` — the function
+    /// the merger actually calls to build the conflict map. The two
+    /// implementations must agree on check #4.
+    #[test]
+    fn compute_conflict_map_event_indexed_flags_identity_tagged_non_commutative_writes() {
+        let channel = Blake2b256Hash::from_bytes(vec![0x42; 32]);
+
+        let mk_produce = |hash_byte: u8| Produce {
+            channel_hash: channel.clone(),
+            persistent: false,
+            hash: Blake2b256Hash::from_bytes(vec![hash_byte; 32]),
+            is_deterministic: true,
+            output_value: vec![],
+            failed: false,
+        };
+
+        let mut a = EventLogIndex::empty();
+        a.produces_linear.0.insert(mk_produce(0xaa));
+        a.identity_tagged_channels.0.insert(channel.clone());
+
+        let mut b = EventLogIndex::empty();
+        b.produces_linear.0.insert(mk_produce(0xbb));
+        b.identity_tagged_channels.0.insert(channel.clone());
+
+        let branches: Vec<i32> = vec![0, 1];
+        let logs: Vec<&EventLogIndex> = vec![&a, &b];
+        let result = compute_conflict_map_event_indexed(&branches, &logs);
+
+        assert!(
+            result.get(&0).map(|s| s.0.contains(&1)).unwrap_or(false),
+            "branch 0 should conflict with branch 1 in the event-indexed map; got {:?}",
+            result,
+        );
+        assert!(
+            result.get(&1).map(|s| s.0.contains(&0)).unwrap_or(false),
+            "branch 1 should conflict with branch 0 in the event-indexed map; got {:?}",
+            result,
         );
     }
 
