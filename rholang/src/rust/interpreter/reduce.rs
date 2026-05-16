@@ -327,6 +327,78 @@ impl DebruijnInterpreter {
             .await?;
         let is_replay = self.space.is_replay().await;
 
+        // [TAGGED-CHANNEL-OP] diagnostic: when this produce targets a
+        // tagged channel, observe the post-state datum count.
+        //   DEBUG  — normal case (count <= 1); high-volume, gated by
+        //            RUST_LOG=f1r3fly.merge=debug.
+        //   WARN   — count > 1 (multi-Datum birth); rare, always emitted
+        //            when the bug class fires. Includes every Datum's
+        //            source.hash prefix so operators can correlate to
+        //            MULTI-DATUM-ORIGIN events at later observation
+        //            points. See docs/observability-conventions.md.
+        //
+        // `produced_hash` identifies THIS specific produce — it's the
+        // source.hash that the new Datum carries. Operators correlate
+        // multi-Datum WARN events' `datum_sources` to earlier produce
+        // events' `produced_hash` to find the originating produce of
+        // the orphan datum.
+        if let Some(merge_type) = self.is_mergeable_channel(&chan) {
+            let post_data = self.space.get_data(&chan).await;
+            let post_count = post_data.len();
+            let path = if is_replay { "replay" } else { "play" };
+            let ch_hash =
+                rspace_plus_plus::rspace::hashing::stable_hash_provider::hash(&chan);
+            let ch_bytes = ch_hash.bytes();
+            let ch_short =
+                hex::encode(&ch_bytes[..std::cmp::min(8, ch_bytes.len())]);
+            let produced_hash =
+                rspace_plus_plus::rspace::hashing::stable_hash_provider::hash_produce(
+                    ch_bytes.clone(),
+                    &data,
+                    persistent,
+                );
+            let produced_hash_bytes = produced_hash.bytes();
+            let produced_hash_short = hex::encode(
+                &produced_hash_bytes[..std::cmp::min(8, produced_hash_bytes.len())],
+            );
+
+            if post_count > 1 {
+                let sources: Vec<String> = post_data
+                    .iter()
+                    .map(|d| {
+                        let sb = d.source.hash.bytes();
+                        hex::encode(&sb[..std::cmp::min(8, sb.len())])
+                    })
+                    .collect();
+                tracing::warn!(
+                    target: "f1r3fly.merge.tagged_op",
+                    op = "produce",
+                    channel_short = %ch_short,
+                    channel_full = %hex::encode(ch_bytes),
+                    merge_type = ?merge_type,
+                    persistent = persistent,
+                    path = %path,
+                    produced_hash = %produced_hash_short,
+                    datum_count = post_count,
+                    datum_sources = ?sources,
+                    "[TAGGED-CHANNEL-MULTI-DATUM] produce left tagged channel with {} datums",
+                    post_count,
+                );
+            } else {
+                tracing::debug!(
+                    target: "f1r3fly.merge.tagged_op",
+                    op = "produce",
+                    channel_short = %ch_short,
+                    merge_type = ?merge_type,
+                    persistent = persistent,
+                    path = %path,
+                    produced_hash = %produced_hash_short,
+                    datum_count = post_count,
+                    "[TAGGED-CHANNEL-OP] produce",
+                );
+            }
+        }
+
         match produce_result {
             Some((c, s, produce_event)) => {
                 let dispatch_type = self
@@ -420,6 +492,59 @@ impl DebruijnInterpreter {
             )
             .await?;
         let is_replay = self.space.is_replay().await;
+
+        // [TAGGED-CHANNEL-OP] diagnostic: for each consume-source detected
+        // as a tagged channel, observe the post-state datum count. Same
+        // level discipline as produce — DEBUG on normal, WARN on
+        // multi-Datum. See docs/observability-conventions.md.
+        for source in &sources {
+            if let Some(merge_type) = self.is_mergeable_channel(source) {
+                let post_data = self.space.get_data(source).await;
+                let post_count = post_data.len();
+                let path = if is_replay { "replay" } else { "play" };
+                let ch_hash =
+                    rspace_plus_plus::rspace::hashing::stable_hash_provider::hash(source);
+                let ch_bytes = ch_hash.bytes();
+                let ch_short =
+                    hex::encode(&ch_bytes[..std::cmp::min(8, ch_bytes.len())]);
+
+                if post_count > 1 {
+                    let sources_hashes: Vec<String> = post_data
+                        .iter()
+                        .map(|d| {
+                            let sb = d.source.hash.bytes();
+                            hex::encode(&sb[..std::cmp::min(8, sb.len())])
+                        })
+                        .collect();
+                    tracing::warn!(
+                        target: "f1r3fly.merge.tagged_op",
+                        op = "consume",
+                        channel_short = %ch_short,
+                        channel_full = %hex::encode(ch_bytes),
+                        merge_type = ?merge_type,
+                        persistent = persistent,
+                        peek = peek,
+                        path = %path,
+                        datum_count = post_count,
+                        datum_sources = ?sources_hashes,
+                        "[TAGGED-CHANNEL-MULTI-DATUM] consume left tagged channel with {} datums",
+                        post_count,
+                    );
+                } else {
+                    tracing::debug!(
+                        target: "f1r3fly.merge.tagged_op",
+                        op = "consume",
+                        channel_short = %ch_short,
+                        merge_type = ?merge_type,
+                        persistent = persistent,
+                        peek = peek,
+                        path = %path,
+                        datum_count = post_count,
+                        "[TAGGED-CHANNEL-OP] consume",
+                    );
+                }
+            }
+        }
 
         self.continue_consume_process(
             unpack_option_with_peek(consume_result),

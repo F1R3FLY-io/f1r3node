@@ -550,6 +550,19 @@ impl RuntimeOps {
         }
     }
 
+    // Span carries `deploy_sig` and `path=play` so every nested event
+    // emitted during user-deploy eval (including the per-tagged-channel
+    // ops in reduce.rs and the existing MULTI-DATUM-ORIGIN events) inherits
+    // deploy context. See docs/observability-conventions.md.
+    #[tracing::instrument(
+        name = "process_deploy",
+        target = "f1r3fly.casper.deploy_eval",
+        skip_all,
+        fields(
+            deploy_sig = %hex::encode(&deploy.sig[..std::cmp::min(8, deploy.sig.len())]),
+            path = "play",
+        ),
+    )]
     pub async fn process_deploy(
         &mut self,
         deploy: Signed<DeployData>,
@@ -842,6 +855,20 @@ impl RuntimeOps {
         }
     }
 
+    // Span carries `path=play` and `kind=system-deploy` plus the system
+    // deploy's Rust type name so child events emitted during PreCharge,
+    // Refund, Slash, or CloseBlock eval are correlatable. See
+    // docs/observability-conventions.md.
+    #[tracing::instrument(
+        name = "play_system_deploy",
+        target = "f1r3fly.casper.deploy_eval",
+        skip_all,
+        fields(
+            path = "play",
+            kind = "system-deploy",
+            system_deploy_type = %std::any::type_name::<S>(),
+        ),
+    )]
     pub async fn play_system_deploy_internal<S: SystemDeployTrait>(
         &mut self,
         system_deploy: &mut S,

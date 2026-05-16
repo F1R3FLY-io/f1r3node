@@ -411,6 +411,18 @@ jobs:
           F1R3FLY_NODE_IMAGE: f1r3flyindustries/f1r3fly-rust-node:latest
           F1R3FLY_NODE_BINARY: /tmp/rnode
           F1R3FLY_NODE_DEFAULTS_CONF: ${{ github.workspace }}/node/src/main/resources/defaults.conf
+          # Scoped DEBUG for the rspace-tagged-channel diagnostic surface
+          # (per docs/observability-conventions.md). Baseline INFO keeps
+          # third-party crate noise (tokio, hyper, h2, etc.) at INFO and
+          # preserves the existing lifecycle-anchor logs. The single
+          # directive `f1r3fly.merge=debug` is a prefix match: it enables
+          # DEBUG (and WARN/ERROR) for every target starting with
+          # `f1r3fly.merge.` — specifically `f1r3fly.merge.tagged_op`
+          # (new produce/consume events) and `f1r3fly.merge.multi_datum_origin`
+          # (existing observation events). TRACE-level events on
+          # `f1r3fly.merge.tag_check` stay filtered out, which is what we
+          # want (TRACE would flood every channel access).
+          RUST_LOG: "info,f1r3fly.merge=debug"
         run: |
           cd system-integration
           SCALE_FLAG=""

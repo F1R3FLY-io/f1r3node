@@ -336,6 +336,20 @@ impl ReplayRuntimeOps {
             .map(|(_, eval_successful)| eval_successful)
     }
 
+    // Span carries `deploy_sig` and `path=replay` so events nested under
+    // the replay-side eval (including reduce.rs tagged-channel ops and
+    // existing MULTI-DATUM-ORIGIN events) inherit deploy context. Mirror
+    // of `process_deploy` on the play side. See
+    // docs/observability-conventions.md.
+    #[tracing::instrument(
+        name = "run_user_deploy",
+        target = "f1r3fly.casper.deploy_eval",
+        skip_all,
+        fields(
+            deploy_sig = %hex::encode(&processed_deploy.deploy.sig[..std::cmp::min(8, processed_deploy.deploy.sig.len())]),
+            path = "replay",
+        ),
+    )]
     pub async fn run_user_deploy(
         &mut self,
         processed_deploy: &ProcessedDeploy,
@@ -532,10 +546,20 @@ impl ReplayRuntimeOps {
         }
     }
 
+    // Span carries `path=replay kind=system-deploy system_deploy_type=...`
+    // so child events emitted during replay-side PreCharge, Refund, Slash,
+    // or CloseBlock eval inherit deploy context — mirroring the play-side
+    // play_system_deploy_internal span. See
+    // docs/observability-conventions.md.
     #[tracing::instrument(
-        name = "replay-system-deploy",
-        target = "f1r3fly.casper.replay-rho-runtime",
-        skip_all
+        name = "replay_system_deploy",
+        target = "f1r3fly.casper.deploy_eval",
+        skip_all,
+        fields(
+            path = "replay",
+            kind = "system-deploy",
+            system_deploy_type = %std::any::type_name::<S>(),
+        ),
     )]
     pub async fn replay_system_deploy_internal<S: SystemDeployTrait>(
         &mut self,
