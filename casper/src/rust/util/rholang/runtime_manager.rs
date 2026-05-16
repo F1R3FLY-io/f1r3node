@@ -922,7 +922,10 @@ impl RuntimeManager {
             Some(res) => {
                 let res_map = res
                     .into_iter()
-                    .map(|x| {
+                    .enumerate()
+                    .map(|(idx, x)| {
+                        let commutative_count_in = x.channels.len();
+                        let identity_tagged_count_in = x.identity_tagged_channels.len();
                         let commutative = x
                             .channels
                             .into_iter()
@@ -930,6 +933,28 @@ impl RuntimeManager {
                             .collect::<BTreeMap<_, _>>();
                         let identity_tagged = shared::rust::hashable_set::HashableSet(
                             x.identity_tagged_channels.into_iter().collect(),
+                        );
+                        // OBSERVABILITY — confirm the round-trip preserved
+                        // both fields. If counts differ between WRITE and
+                        // READ, the persistence layer is dropping data.
+                        let id_tagged_examples: Vec<String> = identity_tagged
+                            .0
+                            .iter()
+                            .take(5)
+                            .map(|h| {
+                                let b = h.bytes();
+                                hex::encode(&b[..std::cmp::min(8, b.len())])
+                            })
+                            .collect();
+                        tracing::debug!(
+                            target: "f1r3fly.merge.store_roundtrip",
+                            deploy_idx = idx,
+                            commutative_count_in = commutative_count_in,
+                            identity_tagged_count_in = identity_tagged_count_in,
+                            commutative_count_out = commutative.len(),
+                            identity_tagged_count_out = identity_tagged.0.len(),
+                            identity_tagged_examples = ?id_tagged_examples,
+                            "[STORE-READ] per-deploy MergeableChsForDeploy",
                         );
                         MergeableChsForDeploy {
                             commutative,
@@ -1045,9 +1070,10 @@ impl RuntimeManager {
         let diffs = self.convert_number_channels_to_diff(channels_data, pre_state_hash)?;
 
         // Convert to storage types
-        let deploy_channels = diffs
+        let deploy_channels: Vec<DeployMergeableData> = diffs
             .into_iter()
-            .map(|data| {
+            .enumerate()
+            .map(|(idx, data)| {
                 let channels: Vec<NumberChannel> = data
                     .commutative
                     .into_iter()
@@ -1059,6 +1085,28 @@ impl RuntimeManager {
                     .collect::<Vec<_>>();
                 let identity_tagged_channels: Vec<Blake2b256Hash> =
                     data.identity_tagged.0.into_iter().collect();
+
+                // OBSERVABILITY — per-deploy entry being WRITTEN to the
+                // mergeable_store. This is the persistence boundary; if a
+                // bincode round-trip drops identity_tagged_channels here
+                // the tagged-conflict detection downstream would fail
+                // silently.
+                let id_tagged_examples: Vec<String> = identity_tagged_channels
+                    .iter()
+                    .take(5)
+                    .map(|h| {
+                        let b = h.bytes();
+                        hex::encode(&b[..std::cmp::min(8, b.len())])
+                    })
+                    .collect();
+                tracing::debug!(
+                    target: "f1r3fly.merge.store_roundtrip",
+                    deploy_idx = idx,
+                    commutative_count = channels.len(),
+                    identity_tagged_count = identity_tagged_channels.len(),
+                    identity_tagged_examples = ?id_tagged_examples,
+                    "[STORE-WRITE] per-deploy MergeableChsForDeploy",
+                );
 
                 DeployMergeableData {
                     channels,

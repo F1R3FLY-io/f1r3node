@@ -664,6 +664,12 @@ impl RuntimeOps {
     {
         let mut commutative = BTreeMap::new();
         let mut identity_tagged = HashSet::new();
+        // OBSERVABILITY — track how many channels qualified for the
+        // commutative path vs only entered the identity_tagged set. The
+        // identity_tagged ∖ commutative subset is what falls through to
+        // multiset_diff at merge time and is the wedge surface for non-
+        // numeric tagged-channel values.
+        let mut channel_diags: Vec<(String, bool, String)> = Vec::new();
         for (channel, merge_type) in channels {
             // Every entry in `channels` is already identity-tagged
             // (`is_mergeable_channel` filtered them by tuple-head Par against
@@ -671,10 +677,28 @@ impl RuntimeOps {
             // of whether the value satisfies the commutative-merge shape.
             let hash = stable_hash_provider::hash(channel);
             identity_tagged.insert(hash.clone());
-            if let Some((_, value)) = self.get_number_channel(channel, *merge_type).await? {
-                commutative.insert(hash, (value, *merge_type));
-            }
+            let in_commutative = if let Some((_, value)) =
+                self.get_number_channel(channel, *merge_type).await?
+            {
+                commutative.insert(hash.clone(), (value, *merge_type));
+                true
+            } else {
+                false
+            };
+            let ch_bytes = hash.bytes();
+            let ch_short =
+                hex::encode(&ch_bytes[..std::cmp::min(8, ch_bytes.len())]);
+            channel_diags.push((ch_short, in_commutative, format!("{:?}", merge_type)));
         }
+        tracing::debug!(
+            target: "f1r3fly.merge.deploy_mergeable",
+            tracked_channels = channels.len(),
+            identity_tagged = identity_tagged.len(),
+            commutative = commutative.len(),
+            fall_through_to_multiset = identity_tagged.len() - commutative.len(),
+            channels = ?channel_diags,
+            "[GET-NUMBER-CHANNELS-DATA] per-deploy mergeable channel summary",
+        );
         Ok(
             rspace_plus_plus::rspace::merger::merging_logic::MergeableChsForDeploy {
                 commutative,

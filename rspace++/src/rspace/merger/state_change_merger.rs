@@ -127,9 +127,41 @@ pub fn compute_trie_actions<C: Clone, P: Clone, A: Clone, K: Clone>(
         .collect();
     datums_changes_sorted.sort_by_key(|(history_pointer, _)| history_pointer.clone());
 
+    // OBSERVABILITY — at entry to the produce-action loop, log the high-level
+    // shape: how many distinct channels have datum diffs, and how many of
+    // those have an entry in `mergeable_chs` (which determines OR-fold vs
+    // multiset-fallthrough dispatch in the closure below).
+    let in_mergeable_count = datums_changes_sorted
+        .iter()
+        .filter(|(h, _)| mergeable_chs.contains_key(h))
+        .count();
+    tracing::debug!(
+        target: "f1r3fly.merge.trie_action",
+        datum_channels = datums_changes_sorted.len(),
+        in_mergeable_chs = in_mergeable_count,
+        fall_through_to_multiset = datums_changes_sorted.len() - in_mergeable_count,
+        "[TRIE-ACTION] compute_trie_actions dispatch summary",
+    );
+
     let produce_trie_actions = datums_changes_sorted
         .iter()
         .map(|(history_pointer, changes)| {
+            // OBSERVABILITY — log per-channel dispatch decision. `in_mergeable`
+            // means handle_channel_change will return Some(action) and run
+            // the OR-fold / IntegerAdd path; otherwise we fall through to
+            // make_trie_action with multiset semantics.
+            let in_mergeable = mergeable_chs.contains_key(history_pointer);
+            let ch_bytes = history_pointer.bytes();
+            let ch_short =
+                hex::encode(&ch_bytes[..std::cmp::min(8, ch_bytes.len())]);
+            tracing::debug!(
+                target: "f1r3fly.merge.trie_action",
+                channel_short = %ch_short,
+                in_mergeable_chs = in_mergeable,
+                added_len = changes.added.len(),
+                removed_len = changes.removed.len(),
+                "[TRIE-ACTION] per-channel dispatch",
+            );
             handle_channel_change(history_pointer, changes, mergeable_chs).and_then(|action| {
                 action.map(Ok).unwrap_or_else(|| {
                     make_trie_action(
@@ -249,6 +281,41 @@ fn make_trie_action<C: Clone, P: Clone, A: Clone, K: Clone>(
         result.extend(changes.added.clone());
         result
     };
+
+    // OBSERVABILITY — log every multiset-fallthrough trie action so we can
+    // trace the orphan's origin. The merger writes here when a channel is
+    // NOT in `number_channels_data` (commutative path). For tagged channels
+    // whose deploy value is non-numeric this is the load-bearing dispatch
+    // for multi-Datum birth: `init - removed + added` can yield >1 element
+    // when (a) init already had a stale datum and changes don't consume
+    // it, or (b) `added` carries multiple values (cross-branch ChannelChange
+    // multiset-union accumulating distinct sibling produces).
+    let ch_bytes = history_pointer.bytes();
+    let ch_short =
+        hex::encode(&ch_bytes[..std::cmp::min(8, ch_bytes.len())]);
+    if new_val.len() > 1 {
+        tracing::warn!(
+            target: "f1r3fly.merge.trie_action",
+            channel_short = %ch_short,
+            channel_full = %hex::encode(&ch_bytes),
+            init_len = init.len(),
+            added_len = changes.added.len(),
+            removed_len = changes.removed.len(),
+            new_val_len = new_val.len(),
+            "[TRIE-ACTION-MULTI-DATUM] make_trie_action will write {} datums (init={} added={} removed={})",
+            new_val.len(), init.len(), changes.added.len(), changes.removed.len()
+        );
+    } else if changes.added.len() + changes.removed.len() > 0 {
+        tracing::debug!(
+            target: "f1r3fly.merge.trie_action",
+            channel_short = %ch_short,
+            init_len = init.len(),
+            added_len = changes.added.len(),
+            removed_len = changes.removed.len(),
+            new_val_len = new_val.len(),
+            "[TRIE-ACTION] make_trie_action multiset path",
+        );
+    }
 
     if new_val.is_empty() && !init.is_empty() {
         // Case 1: All items present in base are removed - remove action

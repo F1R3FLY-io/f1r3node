@@ -6,12 +6,14 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use block_storage::rust::dag::block_dag_key_value_storage::KeyValueDagRepresentation;
+use models::rhoapi::{BindPattern, ListParWithRandom, Par, TaggedContinuation};
 use models::rust::block_hash::BlockHash;
 use rholang::rust::interpreter::{
     merging::rholang_merging_logic::RholangMergingLogic, rho_runtime::RhoHistoryRepository,
 };
 use rspace_plus_plus::rspace::{
     hashing::blake2b256_hash::Blake2b256Hash,
+    hot_store_trie_action::HotStoreTrieAction,
     merger::{
         merging_logic::{self, NumberChannelsDiff},
         state_change_merger,
@@ -407,6 +409,25 @@ pub fn merge(
                 |hash: &Blake2b256Hash, channel_changes, number_chs: &NumberChannelsDiff| {
                     if let Some(number_ch_val) = number_chs.get(hash) {
                         let (diff, merge_type) = *number_ch_val;
+                        // OBSERVABILITY — OR-fold (commutative) dispatch.
+                        // This is the SAFE path for tagged channels with
+                        // numeric values; corresponding multiset path is
+                        // logged at WARN by make_trie_action when it leaves
+                        // >1 datum. Together these two emit sites tell us
+                        // whether a tagged channel actually took the
+                        // designed path.
+                        let b = hash.bytes();
+                        let ch_short =
+                            hex::encode(&b[..std::cmp::min(8, b.len())]);
+                        tracing::debug!(
+                            target: "f1r3fly.merge.trie_action",
+                            channel_short = %ch_short,
+                            merge_type = ?merge_type,
+                            diff = diff,
+                            added_len = channel_changes.added.len(),
+                            removed_len = channel_changes.removed.len(),
+                            "[TRIE-ACTION-COMMUTATIVE] OR-fold / IntegerAdd dispatch",
+                        );
                         let base_get_data = |h: &Blake2b256Hash| reader.get_data(h);
                         Ok(Some(RholangMergingLogic::calculate_number_channel_merge(
                             hash,
@@ -423,7 +444,74 @@ pub fn merge(
         }
     };
 
-    let apply_trie_actions_fn = |actions| {
+    let apply_trie_actions_fn = |actions: Vec<HotStoreTrieAction<Par, BindPattern, ListParWithRandom, TaggedContinuation>>| {
+        // OBSERVABILITY — at the LMDB write boundary, categorize the trie
+        // actions about to be applied. A TrieInsertBinaryProduce that
+        // writes >1 datum on a channel IS the corrupting write at the
+        // storage layer; we already log this at make_trie_action time,
+        // but recording it again here confirms the action reaches LMDB.
+        let mut insert_produce_count = 0usize;
+        let mut insert_consume_count = 0usize;
+        let mut insert_joins_count = 0usize;
+        let mut delete_produce_count = 0usize;
+        let mut delete_consume_count = 0usize;
+        let mut delete_joins_count = 0usize;
+        let mut produce_multi_writes: Vec<(String, usize)> = Vec::new();
+        for action in &actions {
+            match action {
+                HotStoreTrieAction::TrieInsertAction(insert) => match insert {
+                    rspace_plus_plus::rspace::hot_store_trie_action::TrieInsertAction::TrieInsertBinaryProduce(p) => {
+                        insert_produce_count += 1;
+                        if p.data.len() > 1 {
+                            let b = p.hash.bytes();
+                            produce_multi_writes.push((
+                                hex::encode(&b[..std::cmp::min(8, b.len())]),
+                                p.data.len(),
+                            ));
+                        }
+                    }
+                    rspace_plus_plus::rspace::hot_store_trie_action::TrieInsertAction::TrieInsertBinaryConsume(_) => {
+                        insert_consume_count += 1;
+                    }
+                    rspace_plus_plus::rspace::hot_store_trie_action::TrieInsertAction::TrieInsertBinaryJoins(_) => {
+                        insert_joins_count += 1;
+                    }
+                    _ => {}
+                },
+                HotStoreTrieAction::TrieDeleteAction(del) => match del {
+                    rspace_plus_plus::rspace::hot_store_trie_action::TrieDeleteAction::TrieDeleteProduce(_) => {
+                        delete_produce_count += 1;
+                    }
+                    rspace_plus_plus::rspace::hot_store_trie_action::TrieDeleteAction::TrieDeleteConsume(_) => {
+                        delete_consume_count += 1;
+                    }
+                    rspace_plus_plus::rspace::hot_store_trie_action::TrieDeleteAction::TrieDeleteJoins(_) => {
+                        delete_joins_count += 1;
+                    }
+                },
+            }
+        }
+        if !produce_multi_writes.is_empty() {
+            tracing::warn!(
+                target: "f1r3fly.merge.apply",
+                multi_write_count = produce_multi_writes.len(),
+                examples = ?produce_multi_writes.iter().take(10).collect::<Vec<_>>(),
+                "[APPLY-TRIE-ACTIONS-MULTI-WRITE] LMDB write contains TrieInsertBinaryProduce actions that will leave >1 datum on a channel",
+            );
+        }
+        tracing::debug!(
+            target: "f1r3fly.merge.apply",
+            actions_total = actions.len(),
+            insert_produce_count,
+            insert_consume_count,
+            insert_joins_count,
+            delete_produce_count,
+            delete_consume_count,
+            delete_joins_count,
+            multi_produce_writes = produce_multi_writes.len(),
+            "[APPLY-TRIE-ACTIONS] LMDB write breakdown",
+        );
+
         history_repository
             .reset(lfb_post_state)
             .and_then(|reset_repo| Ok(reset_repo.do_checkpoint(actions)))

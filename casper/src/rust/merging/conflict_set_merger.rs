@@ -131,6 +131,18 @@ pub fn resolve_conflicts<R: Clone + Eq + std::hash::Hash + PartialOrd + Ord>(
         (rejected, to_merge)
     };
 
+    // OBSERVABILITY — entry to the branch grouping. After this call,
+    // sibling chains that are independent live in separate branches and
+    // become candidates for conflict-map evaluation.
+    tracing::debug!(
+        target: "f1r3fly.merge.conflicts",
+        actual_set_size = actual_set.len(),
+        late_set_size = late_set.len(),
+        rejected_as_dependents = rejected_as_dependents.0.len(),
+        merge_set_size = merge_set.0.len(),
+        "[RESOLVE-CONFLICTS] entering compute_branches",
+    );
+
     // Group items in merge_set into branches whose elements are mutually
     // dependent.
     let (branches, branches_time) = measure_time(|| compute_branches(&merge_set));
@@ -140,9 +152,35 @@ pub fn resolve_conflicts<R: Clone + Eq + std::hash::Hash + PartialOrd + Ord>(
     )
     .record(branches_time.as_secs_f64());
 
+    // OBSERVABILITY — branch shape post-grouping. branches.len() is the
+    // count of independent branches; their sizes vary depending on inter-
+    // deploy dependency density. Empty merge_set → 0 branches.
+    let branch_sizes: Vec<usize> = branches.0.iter().map(|b| b.0.len()).collect();
+    tracing::debug!(
+        target: "f1r3fly.merge.conflicts",
+        branch_count = branches.0.len(),
+        branch_sizes = ?branch_sizes,
+        "[RESOLVE-CONFLICTS] compute_branches completed",
+    );
+
     let branches_set = HashableSet(branches.0.iter().cloned().collect());
     let (conflict_map, conflicts_map_time) =
         measure_result_time(|| compute_conflict_map(&branches_set))?;
+
+    // OBSERVABILITY — conflict map shape. Total entries with non-empty
+    // conflict sets is the precise count that "ConflictSetMerger rejection
+    // breakdown" reports later as `conflictMap entries with conflicts`.
+    // Should match. If it doesn't, the existing INFO line is stale.
+    let non_empty_entries = conflict_map
+        .iter()
+        .filter(|(_, v)| !v.0.is_empty())
+        .count();
+    tracing::debug!(
+        target: "f1r3fly.merge.conflicts",
+        conflict_map_total_entries = conflict_map.len(),
+        non_empty_entries,
+        "[RESOLVE-CONFLICTS] compute_conflict_map completed",
+    );
     metrics::histogram!(
         crate::rust::metrics_constants::DAG_MERGE_CONFLICTS_MAP_TIME_METRIC,
         "source" => crate::rust::metrics_constants::MERGING_METRICS_SOURCE
@@ -311,12 +349,34 @@ where
         to_merge_items.extend(branch_items);
     }
 
+    // OBSERVABILITY — log the to-merge set composition before we combine
+    // anything. This is the input to the merge-combine pipeline and tells
+    // us exactly which branches survived rejection.
+    tracing::debug!(
+        target: "f1r3fly.merge.combine",
+        to_merge_branches = resolved.to_merge.iter().count(),
+        to_merge_items = to_merge_items.len(),
+        rejected_branches = resolved.rejected.0.len(),
+        "[COMPUTE-MERGED-STATE] entry — branches surviving rejection",
+    );
+
     // Combine state changes from all items to be merged with timing
     let (all_changes, combine_all_changes_time) =
         measure_result_time(|| -> Result<StateChange, HistoryError> {
             let mut combined = StateChange::empty();
-            for item in &to_merge_items {
+            for (idx, item) in to_merge_items.iter().enumerate() {
                 let item_changes = state_changes(item)?;
+                // OBSERVABILITY — per-item state_changes shape entering the
+                // accumulator. Helps reconstruct per-branch diffs that
+                // landed in the combined StateChange.
+                tracing::debug!(
+                    target: "f1r3fly.merge.combine",
+                    item_idx = idx,
+                    datums = item_changes.datums_changes.len(),
+                    conts = item_changes.cont_changes.len(),
+                    joins = item_changes.consume_channels_to_join_serialized_map.len(),
+                    "[COMPUTE-MERGED-STATE] per-item state_changes contributing to merge",
+                );
                 combined = combined.combine(item_changes);
             }
             Ok(combined)
@@ -332,18 +392,45 @@ where
     let combined_conts_count = all_changes.cont_changes.len();
     let combined_joins_count = all_changes.consume_channels_to_join_serialized_map.len();
 
+    // OBSERVABILITY — after combining all items' StateChanges, enumerate
+    // any channel whose ChannelChange.added has >1 element. That's the
+    // multiset-union artifact that drives multi-Datum birth at the trie
+    // action layer. Print up to 10 example channels so logs aren't flooded.
+    let mut multi_added_channels: Vec<(String, usize, usize)> = Vec::new();
+    for entry in all_changes.datums_changes.iter() {
+        if entry.value().added.len() > 1 {
+            let ch_bytes = entry.key().bytes();
+            multi_added_channels.push((
+                hex::encode(&ch_bytes[..std::cmp::min(8, ch_bytes.len())]),
+                entry.value().added.len(),
+                entry.value().removed.len(),
+            ));
+        }
+    }
+    if !multi_added_channels.is_empty() {
+        tracing::warn!(
+            target: "f1r3fly.merge.combine",
+            multi_added_channel_count = multi_added_channels.len(),
+            examples = ?multi_added_channels.iter().take(10).collect::<Vec<_>>(),
+            "[COMPUTE-MERGED-STATE] combined StateChange has channels with multi-element added — these will drive multi-Datum at trie action time unless override (commutative-merge) kicks in",
+        );
+    }
+
     // Combine all mergeable channels (in sorted order). Per-channel `MergeType`
     // determines how diffs combine: integer-add uses wrapping addition; bitmask-OR
     // uses bitwise OR through u64. Branches must agree on merge_type for a given
     // channel; disagreement yields a tagged error so callers reject the merge
     // rather than crashing the validator.
     let mut all_mergeable_channels = NumberChannelsDiff::new();
+    let mut mergeable_first_seen = 0usize;
+    let mut mergeable_merged_in = 0usize;
     for item in &to_merge_items {
         let item_channels = mergeable_channels(item);
         for (key, value) in item_channels.iter() {
             let (incoming_diff, incoming_mt) = *value;
             match all_mergeable_channels.get_mut(key) {
                 Some(existing) => {
+                    mergeable_merged_in += 1;
                     if existing.1 != incoming_mt {
                         return Err(HistoryError::MergeError(format!(
                             "MergeType mismatch on channel {:?}: {:?} vs {:?}",
@@ -353,11 +440,28 @@ where
                     existing.0 = combine_mergeable_value(existing.0, incoming_diff, incoming_mt);
                 }
                 None => {
+                    mergeable_first_seen += 1;
                     all_mergeable_channels.insert(key.clone(), (incoming_diff, incoming_mt));
                 }
             }
         }
     }
+
+    // OBSERVABILITY — final state of `all_mergeable_channels` before
+    // compute_trie_actions. Channels in this set get the OR-fold path;
+    // others fall through to multiset_diff. Any tagged channel where the
+    // deploy's value was non-numeric will be ABSENT from this set despite
+    // being a merge_type-tagged channel, and is therefore unprotected.
+    tracing::debug!(
+        target: "f1r3fly.merge.combine",
+        all_mergeable_channels = all_mergeable_channels.len(),
+        first_seen = mergeable_first_seen,
+        merged_in_via_merge_type = mergeable_merged_in,
+        combined_datums = combined_datums_count,
+        combined_conts = combined_conts_count,
+        combined_joins = combined_joins_count,
+        "[COMPUTE-MERGED-STATE] all_mergeable_channels assembled — these will take OR-fold path; others fall through to multiset",
+    );
 
     // Compute and apply trie actions with timing
     let (trie_actions, compute_actions_time) =

@@ -276,6 +276,43 @@ impl EventLogIndex {
                 .collect(),
         );
 
+        // OBSERVABILITY — full shape of the constructed EventLogIndex.
+        // Critical fields for the multi-Datum diagnosis:
+        //   - identity_tagged_channels: registered tagged channels touched
+        //     by this deploy; check #4 needs this to be populated for a
+        //     channel to even be evaluated for tagged-conflict semantics.
+        //   - produces_mergeable: subset of produces whose channel hash
+        //     appears in `mergeable_chs` (== number_channels_data, the
+        //     commutative path's input). Tagged channels with non-numeric
+        //     end values are absent here on purpose — that's the wedge case.
+        let identity_tagged_examples: Vec<String> = identity_tagged_channels
+            .0
+            .iter()
+            .take(5)
+            .map(|h| {
+                let b = h.bytes();
+                hex::encode(&b[..std::cmp::min(8, b.len())])
+            })
+            .collect();
+        tracing::debug!(
+            target: "f1r3fly.merge.event_log_index",
+            produces_linear = produces_linear.0.len(),
+            produces_persistent = produces_persistent.0.len(),
+            produces_consumed = produces_consumed.0.len(),
+            produces_peeked = produces_peeked.0.len(),
+            produces_copied_by_peek = produces_copied_by_peek.0.len(),
+            produces_touching_base_joins = produces_touching_base_joins.0.len(),
+            consumes_linear_and_peeks = consumes_linear_and_peeks.0.len(),
+            consumes_persistent = consumes_persistent.0.len(),
+            consumes_produced = consumes_produced.0.len(),
+            produces_mergeable = produces_mergeable.0.len(),
+            consumes_mergeable = consumes_mergeable.0.len(),
+            number_channels_data = mergeable_chs.len(),
+            identity_tagged_channels = identity_tagged_channels.0.len(),
+            identity_tagged_examples = ?identity_tagged_examples,
+            "[EVENT-LOG-INDEX-NEW] EventLogIndex constructed",
+        );
+
         EventLogIndex {
             produces_linear,
             produces_persistent,
@@ -312,6 +349,25 @@ impl EventLogIndex {
     }
 
     pub fn combine(x: &Self, y: &Self) -> Result<Self, HistoryError> {
+        // OBSERVABILITY — log the inputs to EventLogIndex::combine. This is
+        // the per-chain combine that produces a combined EventLogIndex for
+        // a branch (sequence of dependent deploys). Any tagged channel
+        // observation collapsing here would affect conflict map computation.
+        tracing::debug!(
+            target: "f1r3fly.merge.event_log_index",
+            x_produces_linear = x.produces_linear.0.len(),
+            x_produces_consumed = x.produces_consumed.0.len(),
+            x_produces_mergeable = x.produces_mergeable.0.len(),
+            x_identity_tagged = x.identity_tagged_channels.0.len(),
+            x_number_channels_data = x.number_channels_data.len(),
+            y_produces_linear = y.produces_linear.0.len(),
+            y_produces_consumed = y.produces_consumed.0.len(),
+            y_produces_mergeable = y.produces_mergeable.0.len(),
+            y_identity_tagged = y.identity_tagged_channels.0.len(),
+            y_number_channels_data = y.number_channels_data.len(),
+            "[EVENT-LOG-INDEX-COMBINE] entry",
+        );
+
         // Merge number channels (combine differences according to per-channel
         // merge strategy: IntegerAdd uses wrapping addition, BitmaskOr uses
         // bitwise OR through u64). Both branches must agree on merge_type for
@@ -327,6 +383,17 @@ impl EventLogIndex {
             match number_channels_data.get_mut(key) {
                 Some(existing) => {
                     if existing.1 != incoming_mt {
+                        let ch_bytes = key.bytes();
+                        let ch_short =
+                            hex::encode(&ch_bytes[..std::cmp::min(8, ch_bytes.len())]);
+                        tracing::error!(
+                            target: "f1r3fly.merge.event_log_index",
+                            channel_short = %ch_short,
+                            channel_full = %hex::encode(&ch_bytes),
+                            existing_merge_type = ?existing.1,
+                            incoming_merge_type = ?incoming_mt,
+                            "[EVENT-LOG-INDEX-COMBINE-ERR] MergeType mismatch",
+                        );
                         return Err(HistoryError::MergeError(format!(
                             "MergeType mismatch on channel {:?}: {:?} vs {:?}",
                             key, existing.1, incoming_mt,

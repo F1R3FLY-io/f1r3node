@@ -719,9 +719,33 @@ where
         }
     }
 
+    // OBSERVABILITY — log the inverted-index assembly summary BEFORE we
+    // emit conflict pairs. This is the raw input to checks #1-#4 and
+    // lets us bisect whether a missing detection is upstream (empty
+    // index for some category) or downstream (index populated but pair
+    // not emitted).
+    tracing::debug!(
+        target: "f1r3fly.merge.conflicts",
+        n_branches = n,
+        produces_consumed_keys = produces_consumed_by_branches.len(),
+        produces_mergeable_keys = produces_mergeable_by_branches.len(),
+        consumes_produced_keys = consumes_produced_by_branches.len(),
+        consumes_mergeable_keys = consumes_mergeable_by_branches.len(),
+        unconsumed_produces_channels = unconsumed_produces_by_channel.len(),
+        unconsumed_consumes_channels = unconsumed_consumes_by_channel.len(),
+        identity_tagged_non_mergeable_pending_channels = identity_tagged_non_mergeable_pending_by_channel.len(),
+        global_branches_count = global_branches.len(),
+        "[CONFLICT-MAP-EVENT-IX] inverted-index assembly summary",
+    );
+
     // Collect conflict pairs (i, j) with i < j; duplicate insertions into
     // the result HashSets are idempotent so we don't dedupe pairs upfront.
     let mut pairs: Vec<(usize, usize)> = Vec::new();
+    let mut check_1_pc_pairs: usize = 0;
+    let mut check_1_cp_pairs: usize = 0;
+    let mut check_2_pairs: usize = 0;
+    let mut check_3_pairs: usize = 0;
+    let mut check_4_pairs: usize = 0;
 
     // #1 race on produces_consumed.
     for (produce, branches_set) in &produces_consumed_by_branches {
@@ -739,6 +763,7 @@ where
                 if !both_mergeable {
                     let (lo, hi) = if a < b { (a, b) } else { (b, a) };
                     pairs.push((lo, hi));
+                    check_1_pc_pairs += 1;
                 }
             }
         }
@@ -760,6 +785,7 @@ where
                 if !both_mergeable {
                     let (lo, hi) = if a < b { (a, b) } else { (b, a) };
                     pairs.push((lo, hi));
+                    check_1_cp_pairs += 1;
                 }
             }
         }
@@ -777,6 +803,7 @@ where
                             (c_idx, p_idx)
                         };
                         pairs.push((lo, hi));
+                        check_2_pairs += 1;
                     }
                 }
             }
@@ -790,6 +817,7 @@ where
             if o != g {
                 let (lo, hi) = if g < o { (g, o) } else { (o, g) };
                 pairs.push((lo, hi));
+                check_3_pairs += 1;
             }
         }
     }
@@ -797,7 +825,24 @@ where
     // #4 identity-tagged channel with non-commutative pending writes from
     // 2+ branches. See the asymmetric-case note next to check #4 in
     // `conflicts()` for why the single-branch case is not flagged.
-    for branches_set in identity_tagged_non_mergeable_pending_by_channel.values() {
+    //
+    // OBSERVABILITY — for EACH identity-tagged channel that appears in the
+    // pending-non-mergeable index, log the channel and the set of branches
+    // that contributed. Helps confirm whether the index entry exists (and
+    // how many branches were collected) for the wedge channel in CI logs.
+    for (channel, branches_set) in &identity_tagged_non_mergeable_pending_by_channel {
+        let ch_bytes = channel.bytes();
+        let ch_short =
+            hex::encode(&ch_bytes[..std::cmp::min(8, ch_bytes.len())]);
+        tracing::debug!(
+            target: "f1r3fly.merge.conflicts",
+            check = 4,
+            channel_short = %ch_short,
+            channel_full = %hex::encode(&ch_bytes),
+            branch_count = branches_set.len(),
+            branches = ?branches_set,
+            "[CHECK-4-CANDIDATE] identity-tagged non-mergeable pending channel",
+        );
         if branches_set.len() < 2 {
             continue;
         }
@@ -807,9 +852,24 @@ where
                 let (a, b) = (pos[i], pos[j]);
                 let (lo, hi) = if a < b { (a, b) } else { (b, a) };
                 pairs.push((lo, hi));
+                check_4_pairs += 1;
             }
         }
     }
+
+    // OBSERVABILITY — final per-check pair counts. Compare against the
+    // `ConflictSetMerger rejection breakdown` INFO line emitted later;
+    // these are the upstream signals that drive the eventual rejection set.
+    tracing::debug!(
+        target: "f1r3fly.merge.conflicts",
+        check_1_produces_consumed_pairs = check_1_pc_pairs,
+        check_1_consumes_produced_pairs = check_1_cp_pairs,
+        check_2_potential_comms_pairs = check_2_pairs,
+        check_3_produce_touch_base_join_pairs = check_3_pairs,
+        check_4_identity_tagged_pairs = check_4_pairs,
+        total_pairs_before_dedup = pairs.len(),
+        "[CONFLICT-MAP-EVENT-IX] per-check pair emissions",
+    );
 
     // Populate result map. HashSet inserts dedupe so duplicate pairs are
     // safe; we don't need to sort or dedupe `pairs` first.

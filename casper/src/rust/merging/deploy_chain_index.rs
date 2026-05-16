@@ -74,6 +74,59 @@ impl DeployChainIndex {
         let state_changes =
             StateChange::new(pre_history_reader, post_history_reader, &event_log_index)?;
 
+        // OBSERVABILITY — final per-chain summary. The state_changes here
+        // are what the cross-branch combine in `compute_merged_state` will
+        // multiset-union. If any channel in datums_changes has > 1 added
+        // datum, this branch alone is bringing a multi-element delta in.
+        let mut chain_multi_added: Vec<(String, usize, usize)> = Vec::new();
+        for entry in state_changes.datums_changes.iter() {
+            if entry.value().added.len() > 1 {
+                let b = entry.key().bytes();
+                chain_multi_added.push((
+                    hex::encode(&b[..std::cmp::min(8, b.len())]),
+                    entry.value().added.len(),
+                    entry.value().removed.len(),
+                ));
+            }
+        }
+        let pre_state_short = {
+            let b = pre_state_hash.bytes();
+            hex::encode(&b[..std::cmp::min(8, b.len())])
+        };
+        let post_state_short = {
+            let b = post_state_hash.bytes();
+            hex::encode(&b[..std::cmp::min(8, b.len())])
+        };
+        let source_block_short = hex::encode(&source_block_hash[..std::cmp::min(8, source_block_hash.len())]);
+        if !chain_multi_added.is_empty() {
+            tracing::warn!(
+                target: "f1r3fly.merge.deploy_chain",
+                source_block_short = %source_block_short,
+                source_block_number,
+                pre_state_short = %pre_state_short,
+                post_state_short = %post_state_short,
+                deploy_count = deploys_with_cost.len(),
+                datums_changes = state_changes.datums_changes.len(),
+                cont_changes = state_changes.cont_changes.len(),
+                multi_added_count = chain_multi_added.len(),
+                examples = ?chain_multi_added.iter().take(10).collect::<Vec<_>>(),
+                "[DEPLOY-CHAIN-INDEX-MULTI-ADDED] chain produced multi-element added on at least one channel",
+            );
+        } else {
+            tracing::debug!(
+                target: "f1r3fly.merge.deploy_chain",
+                source_block_short = %source_block_short,
+                source_block_number,
+                pre_state_short = %pre_state_short,
+                post_state_short = %post_state_short,
+                deploy_count = deploys_with_cost.len(),
+                datums_changes = state_changes.datums_changes.len(),
+                cont_changes = state_changes.cont_changes.len(),
+                event_log_identity_tagged = event_log_index.identity_tagged_channels.0.len(),
+                "[DEPLOY-CHAIN-INDEX] chain constructed",
+            );
+        }
+
         Ok(Self {
             deploys_with_cost: HashableSet(deploys_with_cost),
             post_state_hash: post_state_hash.clone(),

@@ -34,6 +34,24 @@ pub fn create_event_log_index(
     pre_state_hash: &Blake2b256Hash,
     mergeable_chs: MergeableChsForDeploy,
 ) -> EventLogIndex {
+    // OBSERVABILITY — capture inputs to event log construction. The
+    // `mergeable_chs` argument is what flows from the per-deploy
+    // get_number_channels_data → mergeable_store round-trip; both subfields
+    // (commutative + identity_tagged) determine downstream conflict-map
+    // behavior. If `identity_tagged` is empty here for a deploy that
+    // touches a tagged channel, the bug is upstream (see runtime.rs).
+    let pre_state_bytes = pre_state_hash.bytes();
+    let pre_state_short =
+        hex::encode(&pre_state_bytes[..std::cmp::min(8, pre_state_bytes.len())]);
+    tracing::debug!(
+        target: "f1r3fly.merge.block_index",
+        pre_state_short = %pre_state_short,
+        event_count = events.len(),
+        commutative_count = mergeable_chs.commutative.len(),
+        identity_tagged_count = mergeable_chs.identity_tagged.0.len(),
+        "[CREATE-EVENT-LOG-INDEX] entry",
+    );
+
     let pre_state_reader = history_repository
         .get_history_reader(&pre_state_hash)
         .unwrap();
