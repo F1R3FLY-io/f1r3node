@@ -2603,16 +2603,13 @@ async fn concurrent_registry_inserts_should_not_conflict() {
 async fn parallel_tree_hash_map_inserts_should_never_produce_multi_datum_on_tagged_channel() {
     use crate::util::genesis_builder::GenesisBuilder;
     use crate::util::rholang::resources::{
-        block_dag_storage_from_dyn, mergeable_store_from_dyn,
-        mk_test_rnode_store_manager_from_genesis,
+        mergeable_store_from_dyn, mk_test_rnode_store_manager_from_genesis,
     };
-    use block_storage::rust::key_value_block_store::KeyValueBlockStore;
     use casper::rust::genesis::genesis::Genesis;
     use casper::rust::util::rholang::costacc::close_block_deploy::CloseBlockDeploy;
     use casper::rust::util::rholang::system_deploy_enum::SystemDeployEnum;
     use casper::rust::util::rholang::system_deploy_util;
     use rholang::rust::interpreter::external_services::ExternalServices;
-    use rspace_plus_plus::rspace::history::history_reader::HistoryReader;
 
     const N_ITERATIONS: usize = 100;
     const USER_DEPLOYS_PER_BLOCK: usize = 4;
