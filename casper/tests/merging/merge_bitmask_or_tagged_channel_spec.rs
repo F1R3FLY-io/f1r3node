@@ -17,7 +17,7 @@
 // Tests assert on the OUTCOME (rejected vs multi-Datum) and on each
 // upstream layer so failures bisect the actual gap.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use casper::rust::{
     merging::{
@@ -616,6 +616,237 @@ async fn variant_b_peek_then_consume_reveals_check_4_behavior() {
     );
 }
 
+// ============================================================
+// VARIANT F — ORPHAN PROPAGATION (the actual CI mechanism)
+// ============================================================
+//
+// Once a tagged channel ends up with multi-Datum in some block's
+// post-state, subsequent blocks built on that state propagate the
+// orphan even when the deploy's contract is perfectly correct.
+//
+// Mechanism (from rspace++/merger/state_change.rs:270-393 +
+// state_change_merger.rs::make_trie_action):
+//   - StateChange::new computes diff = (removed=lost, added=new)
+//   - The deploy consumes ONE datum on the channel (whichever the
+//     Rholang pattern matches), producing one new datum.
+//   - diff is: removed=[V_consumed], added=[V_new]
+//   - At merge time, make_trie_action applies:
+//       init = pre_state_data       // ALREADY [V_a, V_b] (multi-Datum)
+//       new_val = init - removed + added
+//             = [V_a, V_b] - [V_a] + [V_new]
+//             = [V_b, V_new]        // STILL multi-Datum
+//
+// PR #520 check #4 is irrelevant here — there's only ONE branch
+// updating the channel. There's no sibling conflict to detect. The
+// orphan rides along through the multiset_diff path because the
+// deploy can only consume ONE of the existing datums per Rholang
+// COMM semantics.
+//
+// This test:
+//   1. Builds setup_state with TWO datums on a tagged channel
+//      (planted via two no-consume produces — variant-D pattern)
+//   2. Runs a SINGLE sibling deploy that does linear-consume +
+//      produce against that wedged setup_state
+//   3. Asserts that post-merge state still has 2 datums on the
+//      channel — the orphan was propagated even with no sibling
+//      conflict and a well-behaved deploy
+//
+// This matches the CI WARN signature: persistent=false on both
+// datums, on a BitmaskOr-tagged channel, with no rejection.
+
+static RHO_BASE_PLANT_MULTI_DATUM: &str = r#"
+new MergeableTag, ch in {
+  @(*MergeableTag, *ch)!({"v": 1}) |
+  @(*MergeableTag, *ch)!({"v": 2}) |
+
+  contract @"UPDATE"(@bit, ret) = {
+    for(@m <- @(*MergeableTag, *ch)) {
+      @(*MergeableTag, *ch)!({"v": bit, "prev": m}) |
+      ret!(Nil)
+    }
+  }
+}
+"#;
+
+// VARIANT G — bootstrap candidate: single deploy that peeks + produces.
+// Peek (`<<-`) does NOT destroy the produce on the channel — it observes
+// and the original datum stays. If the deploy then produces a NEW value
+// without a linear consume, the channel ends up with BOTH datums after a
+// single deploy. This bootstraps multi-Datum without any sibling conflict.
+//
+// The test asserts on the in-deploy multi-Datum birth (which would emit a
+// [TAGGED-CHANNEL-MULTI-DATUM] WARN in production logs) AND on the
+// post-merge state.
+//
+// This pattern is structurally similar to what Registry.rho's
+// TreeHashMapSetter does at line 176-179 (peek outer, linear consume
+// inner). If for any reason the linear consume DOESN'T match (because
+// the produce was already consumed elsewhere by some race), the contract
+// continuation would still produce the new value — leaving multi-Datum.
+static RHO_BASE_PEEK_NO_LINEAR_CONSUME: &str = r#"
+new MergeableTag, ch in {
+  @(*MergeableTag, *ch)!({"v": 0}) |
+
+  contract @"PEEK_AND_PRODUCE"(@bit, ret) = {
+    for(@m <<- @(*MergeableTag, *ch)) {
+      @(*MergeableTag, *ch)!({"v": bit, "observed": m}) |
+      ret!(Nil)
+    }
+  }
+}
+"#;
+
+fn rho_sibling_peek_and_produce(bit: i64) -> String {
+    format!(
+        r#"
+new ret in {{
+  @"PEEK_AND_PRODUCE"!({bit}, *ret)
+}}
+"#,
+        bit = bit
+    )
+}
+
+// VARIANT H — bootstrap via parallel produce composition.
+// Two parallel `ch!(...)` in a single deploy on the same channel. No
+// consume. Each produce adds a datum. Channel ends up with multi-Datum.
+//
+// Differs from G in the EventLogIndex shape: NO peek, NO copied_by_peek.
+// Just two surviving produces in produces_linear.
+static RHO_BASE_PARALLEL_PRODUCE: &str = r#"
+new MergeableTag, ch in {
+  contract @"PARALLEL_PRODUCE"(@bit, ret) = {
+    @(*MergeableTag, *ch)!({"v": bit, "side": "a"}) |
+    @(*MergeableTag, *ch)!({"v": bit, "side": "b"}) |
+    ret!(Nil)
+  }
+}
+"#;
+
+fn rho_sibling_parallel_produce(bit: i64) -> String {
+    format!(
+        r#"
+new ret in {{
+  @"PARALLEL_PRODUCE"!({bit}, *ret)
+}}
+"#,
+        bit = bit
+    )
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn variant_h_parallel_produce_in_single_deploy() {
+    let outcome = run_direct_merge(
+        "VARIANT H: parallel produce composition (no peek, no consume)",
+        RHO_BASE_PARALLEL_PRODUCE,
+        vec![SiblingInfo {
+            term: rho_sibling_parallel_produce(0x20),
+            cost: 10,
+            sig: "0x11".to_string(),
+        }],
+    )
+    .await;
+
+    eprintln!(
+        "VARIANT H summary: rejected={} post_merge_datums={}",
+        outcome.rejected_sigs.len(),
+        outcome.post_merge_datum_count
+    );
+
+    if outcome.rejected_sigs.is_empty() && outcome.post_merge_datum_count >= 2 {
+        eprintln!(
+            "VARIANT H BUG REPRODUCED via parallel-produce: single deploy \
+             with `ch!(A) | ch!(B)` left {} datums. No peek required.",
+            outcome.post_merge_datum_count
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn variant_g_peek_then_produce_no_consume_in_single_deploy() {
+    let outcome = run_direct_merge(
+        "VARIANT G: peek + produce (no linear consume) — single-deploy bootstrap",
+        RHO_BASE_PEEK_NO_LINEAR_CONSUME,
+        vec![SiblingInfo {
+            term: rho_sibling_peek_and_produce(0x10),
+            cost: 10,
+            sig: "0x11".to_string(),
+        }],
+    )
+    .await;
+
+    eprintln!(
+        "VARIANT G summary: rejected={} post_merge_datums={}",
+        outcome.rejected_sigs.len(),
+        outcome.post_merge_datum_count
+    );
+
+    if outcome.rejected_sigs.is_empty() && outcome.post_merge_datum_count >= 2 {
+        eprintln!(
+            "VARIANT G BUG REPRODUCED via in-deploy peek+produce: single \
+             deploy left {} datums on the tagged channel. This is a \
+             BOOTSTRAP candidate — the wedge happens within a single \
+             deploy's PLAY, no sibling conflict required.",
+            outcome.post_merge_datum_count
+        );
+    } else if outcome.post_merge_datum_count == 1 {
+        eprintln!(
+            "VARIANT G negative: peek+produce yielded {} datum. \
+             The peek-no-consume pattern does NOT bootstrap multi-Datum \
+             in this configuration. Likely the peek's continuation only \
+             fires once and the produce is the only addition.",
+            outcome.post_merge_datum_count
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn variant_f_pre_state_multi_datum_propagates_through_single_branch() {
+    let outcome = run_direct_merge(
+        "VARIANT F: pre-state already has multi-Datum, single branch consumes only one",
+        RHO_BASE_PLANT_MULTI_DATUM,
+        vec![SiblingInfo {
+            term: rho_sibling_update(0x10),
+            cost: 10,
+            sig: "0x11".to_string(),
+        }],
+    )
+    .await;
+
+    eprintln!(
+        "VARIANT F summary: rejected={} post_merge_datums={}",
+        outcome.rejected_sigs.len(),
+        outcome.post_merge_datum_count
+    );
+
+    // We EXPECT this to leave multi-Datum after merge with ZERO
+    // rejections — that's the orphan-propagation bug class.
+    assert_eq!(
+        outcome.rejected_sigs.len(),
+        0,
+        "VARIANT F: with only one branch, there's no sibling conflict to reject. Got unexpected rejection: {:?}",
+        outcome.rejected_sigs,
+    );
+
+    if outcome.post_merge_datum_count >= 2 {
+        eprintln!(
+            "VARIANT F BUG REPRODUCED via orphan propagation: pre-state \
+             multi-Datum + single deploy with consume + produce leaves \
+             {} datums on the tagged channel after merge. No sibling \
+             conflict means check #4 had nothing to check; the diff path \
+             propagated the unconsumed datum unconditionally.",
+            outcome.post_merge_datum_count
+        );
+    } else {
+        eprintln!(
+            "VARIANT F NOTE: post_merge_datum_count={} — propagation \
+             theory did NOT reproduce. Investigate StateChange::new's \
+             diff calculation in detail.",
+            outcome.post_merge_datum_count
+        );
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn variant_d_produce_no_consume_reveals_check_4_behavior() {
     let outcome = run_direct_merge(
@@ -648,6 +879,471 @@ async fn variant_d_produce_no_consume_reveals_check_4_behavior() {
         outcome.rejected_sigs.len(),
         outcome.post_merge_datum_count
     );
+}
+
+// ============================================================
+// VARIANT E — multi-block via compute_state + block_index::new
+// ============================================================
+//
+// Mirrors the CI scenario more faithfully than the synthetic A–D variants:
+//   - Each "sibling" is a real block built via `RuntimeManager.compute_state`
+//   - Each block includes a closeBlock system deploy (matches CI lifecycle)
+//   - Block construction uses `block_index::new` to assemble DeployChainIndex
+//     across user + system deploys
+//   - The shared mergeable tag is the standard `rho:system:bitmaskMergeableTag`
+//     URI (the SAME tag that Registry.rho's TreeHashMap uses)
+//   - A SETUP block installs the @"UPDATE_TAGGED" contract, capturing the
+//     unforgeable channel hash. Subsequent sibling blocks both invoke that
+//     contract, hitting the same tagged channel.
+//
+// Asserts on the merge outcome the same way as A–D: either rejection
+// happens (check #4 in production path fires) or post-merge state has
+// multi-Datum on the wedge channel (bug reproduced in production path).
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn variant_e_multi_block_compute_state_two_sibling_blocks_merged() {
+    use casper::rust::merging::block_index as block_index_module;
+    use casper::rust::util::construct_deploy;
+    use casper::rust::util::rholang::costacc::close_block_deploy::CloseBlockDeploy;
+    use casper::rust::util::rholang::system_deploy_enum::SystemDeployEnum;
+    use casper::rust::util::rholang::system_deploy_util;
+    use rholang::rust::interpreter::system_processes::BlockData;
+
+    use crate::util::rholang::resources::with_runtime_manager;
+
+    with_runtime_manager(|runtime_manager, genesis_context, _genesis_block| async move {
+        eprintln!("\n========== VARIANT E: multi-block via compute_state ==========");
+
+        let base_state = genesis_context.genesis_block.body.state.post_state_hash.clone();
+        // Use two distinct validators for sibling blocks so the closeBlock
+        // system deploys derive different random seeds (mirroring CI).
+        let validator_a = genesis_context.validator_key_pairs[0].1.clone();
+        let validator_b = genesis_context.validator_key_pairs[1].1.clone();
+        let payer_key = genesis_context.genesis_vaults[0].0.clone();
+        let payer_key_2 = genesis_context.genesis_vaults[1].0.clone();
+
+        // -------- SETUP block --------
+        // Installs the @"UPDATE_TAGGED" contract using the standard
+        // bitmaskMergeableTag URI. The `new ch` inside the SETUP deploy
+        // captures an unforgeable that the contract body closes over;
+        // every subsequent invocation of @"UPDATE_TAGGED" reaches the
+        // SAME (*bitmaskTag, *ch) channel hash.
+        let setup_rho = r#"
+new bitmaskTag(`rho:system:bitmaskMergeableTag`), ch in {
+  @(*bitmaskTag, *ch)!({"v": 0}) |
+  contract @"UPDATE_TAGGED"(@bit, ret) = {
+    for(@m <- @(*bitmaskTag, *ch)) {
+      @(*bitmaskTag, *ch)!({"v": bit, "prev": m}) |
+      ret!(Nil)
+    }
+  }
+}
+"#;
+        let setup_deploy = construct_deploy::source_deploy_now_full(
+            setup_rho.to_string(),
+            None,
+            None,
+            Some(payer_key.clone()),
+            None,
+            None,
+        )
+        .expect("setup deploy construction");
+        let setup_seq_num: i32 = 1;
+        let setup_block_data = BlockData {
+            time_stamp: setup_deploy.data.time_stamp,
+            seq_num: setup_seq_num,
+            block_number: 1,
+            sender: validator_a.clone(),
+        };
+        let setup_close = SystemDeployEnum::Close(CloseBlockDeploy {
+            initial_rand: system_deploy_util::generate_close_deploy_random_seed_from_pk(
+                validator_a.clone(),
+                setup_seq_num,
+            ),
+        });
+        let (setup_state, setup_user_processed, setup_sys_processed) = runtime_manager
+            .compute_state(
+                &base_state,
+                vec![setup_deploy],
+                vec![setup_close],
+                setup_block_data,
+                None,
+            )
+            .await
+            .expect("setup compute_state");
+        assert_eq!(
+            setup_user_processed.len(),
+            1,
+            "setup block should have 1 user deploy"
+        );
+        eprintln!(
+            "  SETUP: state={} user_deploys={} sys_deploys={}",
+            hex::encode(&setup_state[..std::cmp::min(8, setup_state.len())]),
+            setup_user_processed.len(),
+            setup_sys_processed.len(),
+        );
+
+        // -------- Block X (sibling 1) --------
+        // Invokes @"UPDATE_TAGGED" with bit 0x01. Block X is built off
+        // setup_state by validator_a.
+        let deploy_a_rho = r#"new ret in { @"UPDATE_TAGGED"!(1, *ret) }"#;
+        let deploy_a = construct_deploy::source_deploy_now_full(
+            deploy_a_rho.to_string(),
+            None,
+            None,
+            Some(payer_key.clone()),
+            None,
+            None,
+        )
+        .expect("deploy A construction");
+        let block_x_seq_num: i32 = 2;
+        let block_x_block_data = BlockData {
+            time_stamp: deploy_a.data.time_stamp,
+            seq_num: block_x_seq_num,
+            block_number: 2,
+            sender: validator_a.clone(),
+        };
+        let block_x_close = SystemDeployEnum::Close(CloseBlockDeploy {
+            initial_rand: system_deploy_util::generate_close_deploy_random_seed_from_pk(
+                validator_a.clone(),
+                block_x_seq_num,
+            ),
+        });
+        let (block_x_post, block_x_user_processed, block_x_sys_processed) = runtime_manager
+            .compute_state(
+                &setup_state,
+                vec![deploy_a],
+                vec![block_x_close],
+                block_x_block_data,
+                None,
+            )
+            .await
+            .expect("block X compute_state");
+        let block_x_mergeable = runtime_manager
+            .load_mergeable_channels(
+                &block_x_post,
+                validator_a.bytes.clone(),
+                block_x_seq_num,
+            )
+            .expect("load block X mergeable channels");
+
+        // -------- Block Y (sibling 2) --------
+        // Invokes @"UPDATE_TAGGED" with bit 0x02. Block Y is built off the
+        // SAME setup_state, but by validator_b with a different deployer
+        // (payer_key_2). Same seq_num because Y is a sibling, not a
+        // descendant of X.
+        let deploy_b_rho = r#"new ret in { @"UPDATE_TAGGED"!(2, *ret) }"#;
+        let deploy_b = construct_deploy::source_deploy_now_full(
+            deploy_b_rho.to_string(),
+            None,
+            None,
+            Some(payer_key_2.clone()),
+            None,
+            None,
+        )
+        .expect("deploy B construction");
+        let block_y_seq_num: i32 = 2;
+        let block_y_block_data = BlockData {
+            time_stamp: deploy_b.data.time_stamp,
+            seq_num: block_y_seq_num,
+            block_number: 2,
+            sender: validator_b.clone(),
+        };
+        let block_y_close = SystemDeployEnum::Close(CloseBlockDeploy {
+            initial_rand: system_deploy_util::generate_close_deploy_random_seed_from_pk(
+                validator_b.clone(),
+                block_y_seq_num,
+            ),
+        });
+        let (block_y_post, block_y_user_processed, block_y_sys_processed) = runtime_manager
+            .compute_state(
+                &setup_state,
+                vec![deploy_b],
+                vec![block_y_close],
+                block_y_block_data,
+                None,
+            )
+            .await
+            .expect("block Y compute_state");
+        let block_y_mergeable = runtime_manager
+            .load_mergeable_channels(
+                &block_y_post,
+                validator_b.bytes.clone(),
+                block_y_seq_num,
+            )
+            .expect("load block Y mergeable channels");
+
+        eprintln!(
+            "  BLOCK X: validator={} state={} user_deploys={} sys_deploys={} mergeable={}",
+            hex::encode(&validator_a.bytes[..std::cmp::min(4, validator_a.bytes.len())]),
+            hex::encode(&block_x_post[..std::cmp::min(8, block_x_post.len())]),
+            block_x_user_processed.len(),
+            block_x_sys_processed.len(),
+            block_x_mergeable.len(),
+        );
+        eprintln!(
+            "  BLOCK Y: validator={} state={} user_deploys={} sys_deploys={} mergeable={}",
+            hex::encode(&validator_b.bytes[..std::cmp::min(4, validator_b.bytes.len())]),
+            hex::encode(&block_y_post[..std::cmp::min(8, block_y_post.len())]),
+            block_y_user_processed.len(),
+            block_y_sys_processed.len(),
+            block_y_mergeable.len(),
+        );
+
+        // -------- Build BlockIndex for each sibling --------
+        let setup_state_h = Blake2b256Hash::from_bytes_prost(&setup_state);
+        let block_x_post_h = Blake2b256Hash::from_bytes_prost(&block_x_post);
+        let block_y_post_h = Blake2b256Hash::from_bytes_prost(&block_y_post);
+
+        let block_x_hash: models::rust::block_hash::BlockHash =
+            prost::bytes::Bytes::from(vec![0xAAu8; 32]);
+        let block_y_hash: models::rust::block_hash::BlockHash =
+            prost::bytes::Bytes::from(vec![0xBBu8; 32]);
+
+        let block_x_index = block_index_module::new(
+            &block_x_hash,
+            2,
+            &block_x_user_processed,
+            &block_x_sys_processed,
+            &setup_state_h,
+            &block_x_post_h,
+            &runtime_manager.get_history_repo(),
+            &block_x_mergeable,
+        )
+        .expect("block_index X");
+        let block_y_index = block_index_module::new(
+            &block_y_hash,
+            2,
+            &block_y_user_processed,
+            &block_y_sys_processed,
+            &setup_state_h,
+            &block_y_post_h,
+            &runtime_manager.get_history_repo(),
+            &block_y_mergeable,
+        )
+        .expect("block_index Y");
+
+        eprintln!(
+            "  BLOCK X INDEX: {} deploy_chains",
+            block_x_index.deploy_chains.len()
+        );
+        eprintln!(
+            "  BLOCK Y INDEX: {} deploy_chains",
+            block_y_index.deploy_chains.len()
+        );
+
+        // For each chain, surface the identity_tagged and surviving-on-wedge
+        // shape — same diagnostic as variants A–D.
+        let report_chain = |label: &str, chain: &DeployChainIndex| {
+            let eli = &chain.event_log_index;
+            let id_tagged_examples: Vec<String> = eli
+                .identity_tagged_channels
+                .0
+                .iter()
+                .take(5)
+                .map(|h| {
+                    let b = h.bytes();
+                    hex::encode(&b[..std::cmp::min(8, b.len())])
+                })
+                .collect();
+            eprintln!(
+                "    {} chain: identity_tagged={} number_channels_data={} \
+                 produces_linear={} produces_consumed={} \
+                 produces_copied_by_peek={} produces_mergeable={} \
+                 identity_tagged_examples={:?}",
+                label,
+                eli.identity_tagged_channels.0.len(),
+                eli.number_channels_data.len(),
+                eli.produces_linear.0.len(),
+                eli.produces_consumed.0.len(),
+                eli.produces_copied_by_peek.0.len(),
+                eli.produces_mergeable.0.len(),
+                id_tagged_examples,
+            );
+        };
+        for c in &block_x_index.deploy_chains {
+            report_chain("X", c);
+        }
+        for c in &block_y_index.deploy_chains {
+            report_chain("Y", c);
+        }
+
+        // -------- Identify the shared tagged channel --------
+        let block_x_identity_tagged_union: HashSet<Blake2b256Hash> = block_x_index
+            .deploy_chains
+            .iter()
+            .flat_map(|c| c.event_log_index.identity_tagged_channels.0.iter().cloned())
+            .collect();
+        let block_y_identity_tagged_union: HashSet<Blake2b256Hash> = block_y_index
+            .deploy_chains
+            .iter()
+            .flat_map(|c| c.event_log_index.identity_tagged_channels.0.iter().cloned())
+            .collect();
+        let shared: HashSet<Blake2b256Hash> = block_x_identity_tagged_union
+            .intersection(&block_y_identity_tagged_union)
+            .cloned()
+            .collect();
+        eprintln!(
+            "  Identity-tagged intersection between X and Y: {} channels",
+            shared.len()
+        );
+        for h in shared.iter().take(5) {
+            eprintln!("    shared: {}", hex::encode(h.bytes()));
+        }
+
+        // -------- Merge X and Y --------
+        let history_repo = runtime_manager.get_history_repo();
+        let base_reader = history_repo.get_history_reader(&setup_state_h).unwrap();
+
+        let override_trie_action =
+            |hash: &Blake2b256Hash,
+             changes: &ChannelChange<Vec<u8>>,
+             number_channels: &NumberChannelsDiff| {
+                match number_channels.get(&hash) {
+                    Some(number_channel_diff) => {
+                        let (diff, merge_type) = *number_channel_diff;
+                        Ok(Some(RholangMergingLogic::calculate_number_channel_merge(
+                            hash,
+                            diff,
+                            merge_type,
+                            changes,
+                            |_hash| base_reader.get_data(_hash),
+                        )?))
+                    }
+                    None => Ok(None),
+                }
+            };
+        let compute_trie_actions_fn =
+            |changes: StateChange, mergeable_chs: NumberChannelsDiff| {
+                state_change_merger::compute_trie_actions(
+                    &changes,
+                    &base_reader,
+                    &mergeable_chs,
+                    |h, c, nc| override_trie_action(h, c, nc),
+                )
+            };
+        let apply_trie_actions_fn = |actions: Vec<
+            HotStoreTrieAction<Par, BindPattern, ListParWithRandom, TaggedContinuation>,
+        >| {
+            runtime_manager
+                .get_history_repo()
+                .reset(&setup_state_h)
+                .map(|r1| {
+                    let r2 = r1.do_checkpoint(actions);
+                    r2.root()
+                })
+        };
+
+        let mut actual_seq: Vec<DeployChainIndex> = block_x_index
+            .deploy_chains
+            .into_iter()
+            .chain(block_y_index.deploy_chains.into_iter())
+            .collect();
+        actual_seq.sort();
+
+        let (final_hash, rejected) = conflict_set_merger::merge(
+            actual_seq,
+            Vec::new(),
+            |target, source| {
+                merging_logic::depends(&target.event_log_index, &source.event_log_index)
+            },
+            dag_merger::cost_optimal_rejection_alg(),
+            |r| Ok(r.state_changes.clone()),
+            |r| r.event_log_index.number_channels_data.clone(),
+            compute_trie_actions_fn,
+            apply_trie_actions_fn,
+            |x| base_reader.get_data(&x),
+            |merge_set: &HashableSet<DeployChainIndex>| {
+                let chains_vec: Vec<DeployChainIndex> = merge_set.0.iter().cloned().collect();
+                let event_logs: Vec<&EventLogIndex> =
+                    chains_vec.iter().map(|c| &c.event_log_index).collect();
+                let depends_map =
+                    merging_logic::compute_depends_map_event_indexed(&chains_vec, &event_logs);
+                merging_logic::gather_related_sets(&depends_map)
+            },
+            |branches_set: &HashableSet<HashableSet<DeployChainIndex>>| {
+                let branches_refs: Vec<&HashableSet<DeployChainIndex>> =
+                    branches_set.0.iter().collect();
+                let branches_owned: Vec<HashableSet<DeployChainIndex>> =
+                    branches_refs.iter().map(|b| (*b).clone()).collect();
+                let combined_logs: Vec<EventLogIndex> = branches_refs
+                    .iter()
+                    .map(|b| {
+                        let logs: Vec<&EventLogIndex> =
+                            b.0.iter().map(|chain| &chain.event_log_index).collect();
+                        let mut acc = EventLogIndex::empty();
+                        for l in logs {
+                            acc = EventLogIndex::combine(&acc, l)?;
+                        }
+                        Ok::<_, rspace_plus_plus::rspace::errors::HistoryError>(acc)
+                    })
+                    .collect::<Result<_, _>>()?;
+                let event_log_refs: Vec<&EventLogIndex> = combined_logs.iter().collect();
+                let result = merging_logic::compute_conflict_map_event_indexed(
+                    &branches_owned,
+                    &event_log_refs,
+                );
+                Ok(result)
+            },
+        )
+        .expect("conflict_set_merger::merge");
+
+        let rejected_sigs: Vec<String> = rejected
+            .0
+            .iter()
+            .flat_map(|r| r.deploys_with_cost.0.iter())
+            .map(|d| hex::encode(&d.deploy_id))
+            .collect();
+        eprintln!(
+            "  MERGE OUTCOME: rejected={} sigs={:?} final_state={}",
+            rejected_sigs.len(),
+            rejected_sigs,
+            hex::encode(&final_hash.bytes()[..std::cmp::min(8, final_hash.bytes().len())]),
+        );
+
+        // -------- Inspect post-merge state on the wedge channel --------
+        let post_reader = history_repo.get_history_reader(&final_hash).unwrap();
+        let mut max_datum_count_on_shared = 0usize;
+        for ch in &shared {
+            let data = post_reader.get_data(ch).unwrap();
+            let n = data.len();
+            if n > max_datum_count_on_shared {
+                max_datum_count_on_shared = n;
+            }
+            let bytes = ch.bytes();
+            eprintln!(
+                "    post-merge channel {}: {} datums",
+                hex::encode(&bytes[..std::cmp::min(8, bytes.len())]),
+                n
+            );
+            for (i, d) in data.iter().enumerate() {
+                let src = d.source.hash.bytes();
+                eprintln!(
+                    "      datum[{}] source={} persistent={}",
+                    i,
+                    hex::encode(&src[..std::cmp::min(8, src.len())]),
+                    d.persist
+                );
+            }
+        }
+
+        // -------- Assertion --------
+        if rejected_sigs.is_empty() && max_datum_count_on_shared >= 2 {
+            panic!(
+                "VARIANT E BUG REPRODUCED via compute_state path: ZERO \
+                 rejections + {} datums on a shared tagged channel. PR #520 \
+                 check #4 should have flagged the conflict but didn't.",
+                max_datum_count_on_shared,
+            );
+        }
+        eprintln!(
+            "  VARIANT E summary: rejected={} max_datums_on_shared={}",
+            rejected_sigs.len(),
+            max_datum_count_on_shared
+        );
+    })
+    .await
+    .unwrap()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

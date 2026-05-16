@@ -27,6 +27,76 @@ use crate::rust::{
     system_deploy::{is_slash_deploy_id, is_system_deploy_id},
 };
 
+/// Pre-computed data for a single DeployChainIndex, cached by pointer address
+/// to avoid recomputing on every O(D²) depends() call.
+struct ChainDerived {
+    produces_created: HashableSet<rspace_plus_plus::rspace::trace::event::Produce>,
+    consumes_created: HashableSet<rspace_plus_plus::rspace::trace::event::Consume>,
+}
+
+/// Pre-computed data for a branch (HashableSet<DeployChainIndex>), cached by
+/// pointer address to avoid recomputing on every O(B²) conflicts() call.
+///
+/// `user_deploy_ids` powers the same-user-deploy-id dedup pass; system deploy
+/// ids (closeBlock / slash / heartbeat) are intentionally excluded because
+/// every block has them with similar markers — including them would mark
+/// every two blocks as mutual conflicts.
+///
+/// `combined_event_log` powers the event-indexed conflict checks (#1-#4).
+/// Every chain's event log contributes, regardless of whether the chain
+/// contains system deploys. System deploys produce/consume on real channels
+/// (validator vault, gas accumulator, etc.); excluding them blinds the
+/// conflict detection to legitimate cross-branch races on those channels.
+pub struct BranchDerived {
+    pub user_deploy_ids: HashSet<Bytes>,
+    pub combined_event_log: rspace_plus_plus::rspace::merger::event_log_index::EventLogIndex,
+}
+
+/// Build the `BranchDerived` summary for one branch. See `BranchDerived` for
+/// the semantic split between `user_deploy_ids` (filtered) and
+/// `combined_event_log` (unfiltered) — they have different invariants.
+pub fn compute_branch_derived(
+    branch: &HashableSet<DeployChainIndex>,
+) -> Result<BranchDerived, rspace_plus_plus::rspace::errors::HistoryError> {
+    let user_deploy_ids: HashSet<_> = branch
+        .0
+        .iter()
+        .flat_map(|chain| chain.deploys_with_cost.0.iter())
+        .filter(|deploy| !is_system_deploy_id(&deploy.deploy_id))
+        .map(|deploy| deploy.deploy_id.clone())
+        .collect();
+
+    // FIX (CI 25973566430): do NOT filter out chains containing system
+    // deploys here. System deploys (closeBlock, slash, heartbeat) produce
+    // and consume on real tagged channels (validator vault, gas
+    // accumulator, registry interior nodes, etc.). Excluding their event
+    // logs from `combined_event_log` blinds the event-indexed conflict
+    // checks (#1-#4 in compute_conflict_map_event_indexed) — the inverted
+    // indexes see empty event logs, no pair candidates emit, the merger
+    // multiset-combines the chains' state_changes without rejection, and
+    // multi-Datum lands on tagged channels. The system-deploy filter is
+    // ONLY correct for `user_deploy_ids` (above) where it prevents every
+    // two blocks from being marked as mutual conflicts via their shared
+    // closeBlock marker.
+    let combined_event_log = branch
+        .0
+        .iter()
+        .map(|chain| &chain.event_log_index)
+        .try_fold(
+            rspace_plus_plus::rspace::merger::event_log_index::EventLogIndex::empty(),
+            |acc, index| {
+                rspace_plus_plus::rspace::merger::event_log_index::EventLogIndex::combine(
+                    &acc, index,
+                )
+            },
+        )?;
+
+    Ok(BranchDerived {
+        user_deploy_ids,
+        combined_event_log,
+    })
+}
+
 pub fn cost_optimal_rejection_alg() -> impl Fn(&DeployChainIndex) -> u64 {
     |deploy_chain_index: &DeployChainIndex| {
         deploy_chain_index
@@ -268,56 +338,6 @@ pub fn merge(
     // Keep as Vec for deterministic processing (ConflictSetMerger expects sorted Vecs)
     let actual_seq = actual_set_vec;
     let late_seq = late_set_vec;
-
-    // Pre-computed data for a single DeployChainIndex, cached by pointer address
-    // to avoid recomputing on every O(D²) depends() call.
-    struct ChainDerived {
-        produces_created: HashableSet<rspace_plus_plus::rspace::trace::event::Produce>,
-        consumes_created: HashableSet<rspace_plus_plus::rspace::trace::event::Consume>,
-    }
-
-    // Pre-computed data for a branch (HashableSet<DeployChainIndex>), cached by
-    // pointer address to avoid recomputing on every O(B²) conflicts() call.
-    struct BranchDerived {
-        user_deploy_ids: HashSet<Bytes>,
-        combined_event_log: rspace_plus_plus::rspace::merger::event_log_index::EventLogIndex,
-    }
-
-    fn compute_branch_derived(
-        branch: &HashableSet<DeployChainIndex>,
-    ) -> Result<BranchDerived, rspace_plus_plus::rspace::errors::HistoryError> {
-        let user_deploy_ids: HashSet<_> = branch
-            .0
-            .iter()
-            .flat_map(|chain| chain.deploys_with_cost.0.iter())
-            .filter(|deploy| !is_system_deploy_id(&deploy.deploy_id))
-            .map(|deploy| deploy.deploy_id.clone())
-            .collect();
-
-        let combined_event_log = branch
-            .0
-            .iter()
-            .filter(|idx| {
-                idx.deploys_with_cost
-                    .0
-                    .iter()
-                    .all(|d| !is_system_deploy_id(&d.deploy_id))
-            })
-            .map(|chain| &chain.event_log_index)
-            .try_fold(
-                rspace_plus_plus::rspace::merger::event_log_index::EventLogIndex::empty(),
-                |acc, index| {
-                    rspace_plus_plus::rspace::merger::event_log_index::EventLogIndex::combine(
-                        &acc, index,
-                    )
-                },
-            )?;
-
-        Ok(BranchDerived {
-            user_deploy_ids,
-            combined_event_log,
-        })
-    }
 
     // Lazy caches keyed by pointer address. Safe because:
     // - References come from HashSet iteration, addresses stable during iteration
