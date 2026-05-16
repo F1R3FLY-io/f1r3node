@@ -2580,6 +2580,229 @@ async fn concurrent_registry_inserts_should_not_conflict() {
     );
 }
 
+/// Empirical repro for single-deploy async-ISpace multi-Datum hypothesis.
+///
+/// Each iteration deploys a single Rholang contract that does `PARALLEL_SETS`
+/// concurrent `TreeHashMap.set` calls on a freshly-`init`'d map — the same
+/// pattern (peek + consume + produce on interior bitmaps) that
+/// `SystemVault.findOrCreate` exercises in `test_shard_degradation`, but
+/// concentrated into a single deploy so the suspect code path is the only
+/// load-bearing work.
+///
+/// After each iteration we walk every `identity_tagged` channel the deploy
+/// touched and assert `<= 1` Datum on each. Multi-parent merge is never
+/// invoked.
+///
+/// If any iteration hits `data.len() > 1`, the bug is in single-deploy
+/// runtime execution — async-ISpace races the standard library's
+/// consume/produce pairing on tagged channels. If every iteration passes,
+/// the single-deploy origin is empirically falsified and the trigger
+/// requires multi-deploy interaction or replay.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "empirical repro: high iteration count is expensive; run with --ignored"]
+async fn parallel_tree_hash_map_inserts_should_never_produce_multi_datum_on_tagged_channel() {
+    use crate::util::genesis_builder::GenesisBuilder;
+    use crate::util::rholang::resources::{
+        block_dag_storage_from_dyn, mergeable_store_from_dyn,
+        mk_test_rnode_store_manager_from_genesis,
+    };
+    use block_storage::rust::key_value_block_store::KeyValueBlockStore;
+    use casper::rust::genesis::genesis::Genesis;
+    use casper::rust::util::rholang::costacc::close_block_deploy::CloseBlockDeploy;
+    use casper::rust::util::rholang::system_deploy_enum::SystemDeployEnum;
+    use casper::rust::util::rholang::system_deploy_util;
+    use rholang::rust::interpreter::external_services::ExternalServices;
+    use rspace_plus_plus::rspace::history::history_reader::HistoryReader;
+
+    const N_ITERATIONS: usize = 100;
+    const USER_DEPLOYS_PER_BLOCK: usize = 4;
+
+    crate::init_logger();
+
+    // Custom genesis with massively-funded deployer vaults so phlo is not
+    // a bound on the experiment. Bypasses the cached default genesis.
+    let mut params = GenesisBuilder::build_genesis_parameters_with_defaults(None, None);
+    for vault in params.2.vaults.iter_mut() {
+        if vault.initial_balance > 0 {
+            vault.initial_balance = u64::MAX / 4;
+        }
+    }
+    let genesis_context = GenesisBuilder::new()
+        .build_genesis_with_parameters(Some(params))
+        .await
+        .expect("build genesis");
+    let genesis_block = genesis_context.genesis_block.clone();
+    let genesis_state = genesis_block.body.state.post_state_hash.clone();
+    let validator_pk = genesis_context.validator_pks()[0].clone();
+    let validator_bytes: prost::bytes::Bytes = validator_pk.bytes.clone().into();
+
+    let mut kvm = mk_test_rnode_store_manager_from_genesis(&genesis_context);
+    let rspace_store = kvm.r_space_stores().await.expect("rspace stores");
+    let mergeable_store = mergeable_store_from_dyn(&mut *kvm)
+        .await
+        .expect("mergeable store");
+    let (runtime_manager, _) = RuntimeManager::create_with_history(
+        rspace_store,
+        mergeable_store,
+        std::sync::Arc::new(Genesis::default_mergeable_tags()),
+        ExternalServices::noop(),
+    );
+
+    // Use bridge.rho — the same heavy contract test_shard_degradation
+    // deploys in CI. Each bridge deployment writes to genesis-derived
+    // TreeHashMaps (SystemVault.vaultMap, Registry._registryStore), so this
+    // exercises the same channel identities that CI observes wedging on.
+    let parallel_contract = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/resources/bridge.rho"),
+    )
+    .expect("Failed to read bridge.rho");
+
+    let history_repo = runtime_manager.get_history_repo();
+    let mut current_state = genesis_state;
+    let mut multi_datum_hits: Vec<(usize, Vec<(Blake2b256Hash, usize)>)> = Vec::new();
+    let mut successful_iterations = 0usize;
+
+    for iteration in 0..N_ITERATIONS {
+        // Build USER_DEPLOYS_PER_BLOCK user deploys for this block.
+        // Alternate keys so multiple deployers contribute, mirroring CI's
+        // multi-validator deploy distribution.
+        let user_deploys: Vec<_> = (0..USER_DEPLOYS_PER_BLOCK)
+            .map(|d| {
+                let key = if d % 2 == 0 {
+                    construct_deploy::DEFAULT_SEC.clone()
+                } else {
+                    construct_deploy::DEFAULT_SEC2.clone()
+                };
+                // Slight timestamp offset to keep signatures distinct
+                let ts = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_nanos() as i64)
+                    .unwrap_or(0)
+                    + (iteration * 1000 + d) as i64;
+                construct_deploy::source_deploy(
+                    parallel_contract.clone(),
+                    ts,
+                    Some(5_000_000),
+                    None,
+                    Some(key),
+                    None,
+                    None,
+                )
+                .expect("construct deploy")
+            })
+            .collect();
+
+        let seq_num = (iteration + 1) as i32;
+        let block_data = BlockData {
+            time_stamp: user_deploys[0].data.time_stamp,
+            block_number: (iteration + 1) as i64,
+            sender: validator_pk.clone(),
+            seq_num,
+        };
+
+        // Match CI block composition: K user deploys + closeBlock system deploy.
+        let system_deploys = vec![SystemDeployEnum::Close(CloseBlockDeploy {
+            initial_rand: system_deploy_util::generate_close_deploy_random_seed_from_pk(
+                validator_pk.clone(),
+                seq_num,
+            ),
+        })];
+
+        let (new_state, processed_deploys, _sys_processed) = runtime_manager
+            .compute_state(
+                &current_state,
+                user_deploys,
+                system_deploys,
+                block_data,
+                None,
+            )
+            .await
+            .expect("compute_state");
+
+        let mut any_failed = false;
+        for (pd_idx, pd) in processed_deploys.iter().enumerate() {
+            if pd.is_failed {
+                tracing::warn!(
+                    "Iteration {} deploy[{}]: failed: {:?}",
+                    iteration, pd_idx, pd.system_deploy_error
+                );
+                any_failed = true;
+            }
+        }
+        if any_failed {
+            current_state = new_state;
+            continue;
+        }
+        successful_iterations += 1;
+
+        let mergeable_chs = runtime_manager
+            .load_mergeable_channels(&new_state, validator_bytes.clone(), seq_num)
+            .expect("load mergeable channels");
+
+        let new_state_b256 = Blake2b256Hash::from_bytes_prost(&new_state);
+        let reader = history_repo
+            .get_history_reader(&new_state_b256)
+            .expect("get history reader");
+
+        let mut iteration_hits = Vec::new();
+        let mut total_tagged = 0usize;
+        for deploy_mc in &mergeable_chs {
+            for ch_hash in deploy_mc.identity_tagged.0.iter() {
+                total_tagged += 1;
+                let data = reader.get_data(ch_hash).expect("get_data by hash");
+                if data.len() > 1 {
+                    iteration_hits.push((ch_hash.clone(), data.len()));
+                    tracing::error!(
+                        "Iteration {}: MULTI-DATUM on tagged channel {} (n={})",
+                        iteration,
+                        hex::encode(&ch_hash.bytes()[..8]),
+                        data.len(),
+                    );
+                }
+            }
+        }
+
+        tracing::info!(
+            "Iteration {}: user_deploys={}, tagged_channels_checked={}, hits_this_iter={}, cumulative={}",
+            iteration,
+            USER_DEPLOYS_PER_BLOCK,
+            total_tagged,
+            iteration_hits.len(),
+            multi_datum_hits.len(),
+        );
+
+        if !iteration_hits.is_empty() {
+            multi_datum_hits.push((iteration, iteration_hits));
+        }
+
+        current_state = new_state;
+    }
+
+    tracing::info!(
+        "Summary: successful_iterations={}/{}, iterations_with_multi_datum={}",
+        successful_iterations, N_ITERATIONS, multi_datum_hits.len(),
+    );
+
+    if !multi_datum_hits.is_empty() {
+        let summary: Vec<String> = multi_datum_hits
+            .iter()
+            .map(|(i, hits)| {
+                let chans: Vec<String> = hits
+                    .iter()
+                    .map(|(h, n)| format!("{}({})", hex::encode(&h.bytes()[..8]), n))
+                    .collect();
+                format!("iter#{}: {}", i, chans.join(","))
+            })
+            .collect();
+        panic!(
+            "Multi-Datum on tagged channel observed in {}/{} iterations: {}",
+            multi_datum_hits.len(),
+            N_ITERATIONS,
+            summary.join("; "),
+        );
+    }
+}
+
 /// Verifies that exploratory deploy can query user-deployed contracts
 /// through the registry. The `contract` keyword is reserved in Rholang,
 /// so variable names in the query must not use it.

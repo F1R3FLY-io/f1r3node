@@ -366,6 +366,54 @@ impl ReplayRuntimeOps {
                 .revert_to_soft_checkpoint(fallback)
                 .await;
         } else {
+            // [MULTI-DATUM-ORIGIN] Provenance instrumentation: after replay
+            // user-deploy eval, walk every tagged channel the deploy touched
+            // and log ERROR if multi-Datum is left. Mirror of the PLAY-path
+            // check in runtime::process_deploy. Always fires; ERROR-level.
+            // Remove once root cause is identified.
+            let deploy_sig = processed_deploy.deploy.sig.clone();
+            for (channel, merge_type) in &user_eval_result.mergeable {
+                let ch_values = self.runtime_ops.runtime.get_data(channel).await;
+                if ch_values.len() > 1 {
+                    let ch_hash =
+                        rspace_plus_plus::rspace::hashing::stable_hash_provider::hash(
+                            channel,
+                        );
+                    let ch_bytes = ch_hash.bytes();
+                    let ch_short =
+                        hex::encode(&ch_bytes[..std::cmp::min(8, ch_bytes.len())]);
+                    let ch_full = hex::encode(&ch_bytes);
+                    let sig_short =
+                        hex::encode(&deploy_sig[..std::cmp::min(8, deploy_sig.len())]);
+                    tracing::error!(
+                        target: "f1r3fly.merge.multi_datum_origin",
+                        "[MULTI-DATUM-ORIGIN] path=replay kind=user-deploy \
+                         deploy_sig={} channel_short={} channel_full={} \
+                         datum_count={} merge_type={:?}",
+                        sig_short, ch_short, ch_full,
+                        ch_values.len(), merge_type,
+                    );
+                    for (idx, datum) in ch_values.iter().enumerate() {
+                        let src_bytes = datum.source.hash.bytes();
+                        let src_short = hex::encode(
+                            &src_bytes[..std::cmp::min(8, src_bytes.len())],
+                        );
+                        tracing::error!(
+                            target: "f1r3fly.merge.multi_datum_origin",
+                            "[MULTI-DATUM-ORIGIN]   datum[{}] channel_short={} \
+                             produce_hash={} persistent={} par_count={}",
+                            idx, ch_short, src_short,
+                            datum.persist, datum.a.pars.len(),
+                        );
+                    }
+                    metrics::counter!(
+                        "f1r3fly_multi_datum_origin_total",
+                        "path" => "replay",
+                        "kind" => "user-deploy",
+                    )
+                    .increment(1);
+                }
+            }
             mergeable_channels.extend(user_eval_result.mergeable.drain());
         }
 
@@ -499,6 +547,48 @@ impl ReplayRuntimeOps {
         let (result, eval_res) = self.runtime_ops.eval_system_deploy(system_deploy).await?;
         metrics::histogram!(BLOCK_REPLAY_SYSDEPLOY_EVAL_TIME_METRIC, "source" => CASPER_METRICS_SOURCE)
             .record(eval_start.elapsed().as_secs_f64());
+
+        // [MULTI-DATUM-ORIGIN] Provenance instrumentation: after replay
+        // system-deploy eval, walk every tagged channel touched. Mirror of
+        // the PLAY-path check in runtime::play_system_deploy_internal. Covers
+        // replay-side PreCharge, Refund, Slash, CloseBlock. ERROR-level.
+        let system_deploy_type = std::any::type_name::<S>();
+        for (channel, merge_type) in &eval_res.mergeable {
+            let ch_values = self.runtime_ops.runtime.get_data(channel).await;
+            if ch_values.len() > 1 {
+                let ch_hash =
+                    rspace_plus_plus::rspace::hashing::stable_hash_provider::hash(channel);
+                let ch_bytes = ch_hash.bytes();
+                let ch_short = hex::encode(&ch_bytes[..std::cmp::min(8, ch_bytes.len())]);
+                let ch_full = hex::encode(&ch_bytes);
+                tracing::error!(
+                    target: "f1r3fly.merge.multi_datum_origin",
+                    "[MULTI-DATUM-ORIGIN] path=replay kind=system-deploy \
+                     system_deploy_type={} channel_short={} channel_full={} \
+                     datum_count={} merge_type={:?}",
+                    system_deploy_type, ch_short, ch_full,
+                    ch_values.len(), merge_type,
+                );
+                for (idx, datum) in ch_values.iter().enumerate() {
+                    let src_bytes = datum.source.hash.bytes();
+                    let src_short =
+                        hex::encode(&src_bytes[..std::cmp::min(8, src_bytes.len())]);
+                    tracing::error!(
+                        target: "f1r3fly.merge.multi_datum_origin",
+                        "[MULTI-DATUM-ORIGIN]   datum[{}] channel_short={} \
+                         produce_hash={} persistent={} par_count={}",
+                        idx, ch_short, src_short,
+                        datum.persist, datum.a.pars.len(),
+                    );
+                }
+                metrics::counter!(
+                    "f1r3fly_multi_datum_origin_total",
+                    "path" => "replay",
+                    "kind" => "system-deploy",
+                )
+                .increment(1);
+            }
+        }
 
         // Compare evaluation from play and replay, successful or failed
         match (expected_failure_msg, &result) {

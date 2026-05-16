@@ -1121,6 +1121,40 @@ impl RuntimeManager {
                 ))
             })?;
             if data.len() > 1 {
+                // [MULTI-DATUM-ORIGIN] Fatal strict-fail site: pre-state of
+                // the block being built/replayed has multi-Datum on a tagged
+                // channel. By the time this fires, the corruption has been
+                // committed by some prior block. Dump every Datum's source
+                // hash so operators can correlate back to the originating
+                // produce via the deploy event logs.
+                let ch_bytes = ch.bytes();
+                let ch_short =
+                    hex::encode(&ch_bytes[..std::cmp::min(8, ch_bytes.len())]);
+                let ch_full = hex::encode(&ch_bytes);
+                tracing::error!(
+                    target: "f1r3fly.merge.multi_datum_origin",
+                    "[MULTI-DATUM-ORIGIN] observation=pre-state-strict-fail \
+                     channel_short={} channel_full={} datum_count={}",
+                    ch_short, ch_full, data.len(),
+                );
+                for (idx, datum) in data.iter().enumerate() {
+                    let src_bytes = datum.source.hash.bytes();
+                    let src_short =
+                        hex::encode(&src_bytes[..std::cmp::min(8, src_bytes.len())]);
+                    tracing::error!(
+                        target: "f1r3fly.merge.multi_datum_origin",
+                        "[MULTI-DATUM-ORIGIN]   datum[{}] channel_short={} \
+                         produce_hash={} persistent={} par_count={}",
+                        idx, ch_short, src_short,
+                        datum.persist, datum.a.pars.len(),
+                    );
+                }
+                metrics::counter!(
+                    "f1r3fly_multi_datum_origin_total",
+                    "path" => "observation",
+                    "kind" => "convert-number-channels-strict-fail",
+                )
+                .increment(1);
                 return Err(CasperError::RuntimeError(format!(
                     "Expected at most one value for number channel {:?}, found {}",
                     ch,

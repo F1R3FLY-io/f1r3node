@@ -566,6 +566,53 @@ impl RuntimeOps {
         let eval_succeeded = eval_result.errors.is_empty();
         let deploy_sig = deploy.sig.clone();
 
+        // [MULTI-DATUM-ORIGIN] Provenance instrumentation: after user-deploy
+        // eval, walk every tagged channel the deploy touched and log ERROR-
+        // level if it left multi-Datum. Pinpoints the deploy that originated
+        // the state violation surfaced by test_shard_degradation in CI.
+        // Always fires; ERROR level guarantees visibility regardless of
+        // RUST_LOG filter. Remove once root cause is identified.
+        if eval_succeeded {
+            for (channel, merge_type) in &eval_result.mergeable {
+                let ch_values = self.runtime.get_data(channel).await;
+                if ch_values.len() > 1 {
+                    let ch_hash = stable_hash_provider::hash(channel);
+                    let ch_bytes = ch_hash.bytes();
+                    let ch_short =
+                        hex::encode(&ch_bytes[..std::cmp::min(8, ch_bytes.len())]);
+                    let ch_full = hex::encode(&ch_bytes);
+                    let sig_short =
+                        hex::encode(&deploy_sig[..std::cmp::min(8, deploy_sig.len())]);
+                    tracing::error!(
+                        target: "f1r3fly.merge.multi_datum_origin",
+                        "[MULTI-DATUM-ORIGIN] path=play kind=user-deploy \
+                         deploy_sig={} channel_short={} channel_full={} \
+                         datum_count={} merge_type={:?}",
+                        sig_short, ch_short, ch_full,
+                        ch_values.len(), merge_type,
+                    );
+                    for (idx, datum) in ch_values.iter().enumerate() {
+                        let src_bytes = datum.source.hash.bytes();
+                        let src_short =
+                            hex::encode(&src_bytes[..std::cmp::min(8, src_bytes.len())]);
+                        tracing::error!(
+                            target: "f1r3fly.merge.multi_datum_origin",
+                            "[MULTI-DATUM-ORIGIN]   datum[{}] channel_short={} \
+                             produce_hash={} persistent={} par_count={}",
+                            idx, ch_short, src_short,
+                            datum.persist, datum.a.pars.len(),
+                        );
+                    }
+                    metrics::counter!(
+                        "f1r3fly_multi_datum_origin_total",
+                        "path" => "play",
+                        "kind" => "user-deploy",
+                    )
+                    .increment(1);
+                }
+            }
+        }
+
         let deploy_result = ProcessedDeploy {
             deploy,
             cost: Cost::to_proto(eval_result.cost),
@@ -679,6 +726,42 @@ impl RuntimeOps {
                 metrics::counter!(
                     "mergeable_channel_number_sanitized_total",
                     "source" => "casper_runtime"
+                )
+                .increment(1);
+
+                // [MULTI-DATUM-ORIGIN] Observation point: tagged channel
+                // already has multi-Datum BEFORE this read. The corruption
+                // was committed by a prior block; we're now seeing it during
+                // a subsequent deploy's get_number_channels_data sweep. Emit
+                // ERROR with full per-Datum source dump so we can correlate
+                // back to the originating produce by hash.
+                let ch_bytes = ch_hash.bytes();
+                let ch_short =
+                    hex::encode(&ch_bytes[..std::cmp::min(8, ch_bytes.len())]);
+                let ch_full = hex::encode(&ch_bytes);
+                tracing::error!(
+                    target: "f1r3fly.merge.multi_datum_origin",
+                    "[MULTI-DATUM-ORIGIN] observation=sanitize-fallback \
+                     channel_short={} channel_full={} datum_count={} \
+                     merge_type={:?} folded_value={}",
+                    ch_short, ch_full, ch_values.len(), merge_type, num,
+                );
+                for (idx, datum) in ch_values.iter().enumerate() {
+                    let src_bytes = datum.source.hash.bytes();
+                    let src_short =
+                        hex::encode(&src_bytes[..std::cmp::min(8, src_bytes.len())]);
+                    tracing::error!(
+                        target: "f1r3fly.merge.multi_datum_origin",
+                        "[MULTI-DATUM-ORIGIN]   datum[{}] channel_short={} \
+                         produce_hash={} persistent={} par_count={}",
+                        idx, ch_short, src_short,
+                        datum.persist, datum.a.pars.len(),
+                    );
+                }
+                metrics::counter!(
+                    "f1r3fly_multi_datum_origin_total",
+                    "path" => "observation",
+                    "kind" => "sanitize-fallback",
                 )
                 .increment(1);
 
@@ -815,6 +898,48 @@ impl RuntimeOps {
             .map(event_converter::to_casper_event)
             .collect();
         log_mem_step("after_convert_event_log");
+
+        // [MULTI-DATUM-ORIGIN] Provenance instrumentation: after system-deploy
+        // eval, walk every tagged channel the deploy touched and log ERROR if
+        // multi-Datum is left. Covers PreCharge, Refund, Slash, CloseBlock —
+        // any system deploy could be the originator. `deploy_type` carries
+        // the Rust type name (e.g. "casper::...CloseBlockDeploy"). Always
+        // fires; ERROR-level. Remove once root cause is identified.
+        for (channel, merge_type) in &eval_result.mergeable {
+            let ch_values = self.runtime.get_data(channel).await;
+            if ch_values.len() > 1 {
+                let ch_hash = stable_hash_provider::hash(channel);
+                let ch_bytes = ch_hash.bytes();
+                let ch_short = hex::encode(&ch_bytes[..std::cmp::min(8, ch_bytes.len())]);
+                let ch_full = hex::encode(&ch_bytes);
+                tracing::error!(
+                    target: "f1r3fly.merge.multi_datum_origin",
+                    "[MULTI-DATUM-ORIGIN] path=play kind=system-deploy \
+                     system_deploy_type={} channel_short={} channel_full={} \
+                     datum_count={} merge_type={:?}",
+                    deploy_type, ch_short, ch_full,
+                    ch_values.len(), merge_type,
+                );
+                for (idx, datum) in ch_values.iter().enumerate() {
+                    let src_bytes = datum.source.hash.bytes();
+                    let src_short =
+                        hex::encode(&src_bytes[..std::cmp::min(8, src_bytes.len())]);
+                    tracing::error!(
+                        target: "f1r3fly.merge.multi_datum_origin",
+                        "[MULTI-DATUM-ORIGIN]   datum[{}] channel_short={} \
+                         produce_hash={} persistent={} par_count={}",
+                        idx, ch_short, src_short,
+                        datum.persist, datum.a.pars.len(),
+                    );
+                }
+                metrics::counter!(
+                    "f1r3fly_multi_datum_origin_total",
+                    "path" => "play",
+                    "kind" => "system-deploy",
+                )
+                .increment(1);
+            }
+        }
 
         Ok((log, result_or_system_deploy_error, eval_result.mergeable))
     }
