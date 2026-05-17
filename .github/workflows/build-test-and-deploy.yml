@@ -310,6 +310,8 @@ jobs:
           # admin-on-repo scope. RELEASE_PAT is already provisioned with the
           # repo scope (used by the release job) so reuse it here.
           GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+          # Register ephemeral runners on the repo that queued this workflow.
+          GH_REPO: ${{ github.repository }}
           SUPPRESS_LABEL_WARNING: "True"
         run: |
           cd system-integration/ci/oci-runners
