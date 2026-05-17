@@ -102,12 +102,25 @@ impl Ord for EventLogIndex {
 }
 
 impl EventLogIndex {
+    /// `is_commutative_system_deploy`: when true, mark ALL of this deploy's
+    /// produces/consumes as mergeable regardless of channel — the deploy
+    /// is a deterministic system operation whose cross-branch effects are
+    /// commutative under multiset-dedup. Set for closeBlock and heartbeat;
+    /// NOT set for slash (see slash analysis: same-target slashes dedup
+    /// safely but different-target slashes need conflict detection, and
+    /// slash semantics are being reworked separately).
+    ///
+    /// When false (user deploys and slash): use the channel-based filter
+    /// — produce/consume is mergeable iff its channel is in
+    /// `mergeable_chs` (= number_channels_data, the commutative subset
+    /// of identity-tagged channels). This is the original behavior.
     pub fn new(
         event_log: Vec<Event>,
         produce_exists_in_pre_state: impl Fn(&Produce) -> bool,
         produce_touch_pre_state_join: impl Fn(&Produce) -> bool,
         mergeable_chs: NumberChannelsDiff,
         identity_tagged_channels: HashableSet<Blake2b256Hash>,
+        is_commutative_system_deploy: bool,
     ) -> Self {
         // Use Arc<Mutex<>> for thread-safe collections that will be updated in parallel
         let produces_linear = Arc::new(Mutex::new(HashSet::new()));
@@ -248,13 +261,21 @@ impl EventLogIndex {
             .cloned()
             .collect();
 
-        // Then filter and clone only once for the final set
-        let produces_mergeable = HashableSet(
-            all_produces
-                .into_iter()
-                .filter(|p| mergeable_chs.contains_key(&p.channel_hash))
-                .collect(),
-        );
+        // Then filter and clone only once for the final set.
+        // When `is_commutative_system_deploy` is true, ALL produces are
+        // marked mergeable regardless of channel — the deploy is a
+        // deterministic system operation (closeBlock / heartbeat) whose
+        // cross-branch effects are commutative under multiset-dedup.
+        let produces_mergeable = if is_commutative_system_deploy {
+            HashableSet(all_produces.into_iter().collect())
+        } else {
+            HashableSet(
+                all_produces
+                    .into_iter()
+                    .filter(|p| mergeable_chs.contains_key(&p.channel_hash))
+                    .collect(),
+            )
+        };
 
         // Same approach for consumes
         let all_consumes: HashSet<Consume> = consumes_linear_and_peeks
@@ -265,16 +286,20 @@ impl EventLogIndex {
             .cloned()
             .collect();
 
-        let consumes_mergeable = HashableSet(
-            all_consumes
-                .into_iter()
-                .filter(|c| {
-                    c.channel_hashes
-                        .iter()
-                        .any(|hash| mergeable_chs.contains_key(hash))
-                })
-                .collect(),
-        );
+        let consumes_mergeable = if is_commutative_system_deploy {
+            HashableSet(all_consumes.into_iter().collect())
+        } else {
+            HashableSet(
+                all_consumes
+                    .into_iter()
+                    .filter(|c| {
+                        c.channel_hashes
+                            .iter()
+                            .any(|hash| mergeable_chs.contains_key(hash))
+                    })
+                    .collect(),
+            )
+        };
 
         // OBSERVABILITY — full shape of the constructed EventLogIndex.
         // Critical fields for the multi-Datum diagnosis:

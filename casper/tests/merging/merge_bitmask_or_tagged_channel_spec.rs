@@ -178,6 +178,7 @@ async fn run_direct_merge(
             rm.get_history_repo(),
             pre_state,
             num_chan_diff,
+            /* is_commutative_system_deploy */ false,
         );
 
         let deploy_index = DeployIndex {

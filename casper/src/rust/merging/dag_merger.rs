@@ -66,18 +66,40 @@ pub fn compute_branch_derived(
         .map(|deploy| deploy.deploy_id.clone())
         .collect();
 
-    // FIX (CI 25973566430): do NOT filter out chains containing system
-    // deploys here. System deploys (closeBlock, slash, heartbeat) produce
-    // and consume on real tagged channels (validator vault, gas
-    // accumulator, registry interior nodes, etc.). Excluding their event
-    // logs from `combined_event_log` blinds the event-indexed conflict
-    // checks (#1-#4 in compute_conflict_map_event_indexed) — the inverted
-    // indexes see empty event logs, no pair candidates emit, the merger
-    // multiset-combines the chains' state_changes without rejection, and
-    // multi-Datum lands on tagged channels. The system-deploy filter is
-    // ONLY correct for `user_deploy_ids` (above) where it prevents every
-    // two blocks from being marked as mutual conflicts via their shared
-    // closeBlock marker.
+    // The system-deploy filter is structurally load-bearing for consensus
+    // and must remain. A naive fix that drops it (commit bf3d274a, CI run
+    // 25974799710) made closeBlock event logs reach the inverted indexes
+    // of compute_conflict_map_event_indexed. closeBlock touches hundreds
+    // of produces on PoS-managed state (validator vaults, gas accumulator,
+    // etc.). Of those, only a small handful end up in `produces_mergeable`
+    // — the rest race against each sibling block's closeBlock and look
+    // like real conflicts to check #1. The cascade: each merge now emits
+    // many conflict pairs, ConflictSetMerger rejects more branches, and
+    // because different validators see different conflict sets, they
+    // diverge on post-merge state hashes — manifesting as
+    // BondsCacheMismatch / KvStoreError "Missing mergeable entry" /
+    // InvalidTransaction errors and LFB stalls.
+    //
+    // The multi-Datum wedge from CI 25973566430 (test_shard_degradation)
+    // is real but its fix lives elsewhere — likely in how
+    // produces_mergeable is populated for system-deploy effects, or in
+    // how the conflict_map closure distinguishes commutative system-state
+    // races from genuine cross-branch conflicts. Don't touch this filter
+    // without the full pipeline test (compute_branch_derived ->
+    // compute_conflict_map_event_indexed -> rejection selection) covering
+    // realistic closeBlock event logs.
+    // System-deploy event logs contribute to the combined event log.
+    // Their commutative-via-merge_type events are pre-classified in
+    // produces_mergeable / consumes_mergeable at create_event_log_index
+    // time (via `is_commutative_system_deploy` on `EventLogIndex::new`),
+    // so check #1's `both_mergeable` filter correctly skips their cross-
+    // branch races. User-deploy events stay channel-based.
+    //
+    // The prior chain-level filter (was: `all !is_system_deploy_id`) over-
+    // applied: it dropped the entire chain when any system deploy was
+    // present, hiding user-deploy events on tagged non-commutative
+    // channels from check #4 — the wedge surface. Per-event
+    // classification at construction time is the correct granularity.
     let combined_event_log = branch
         .0
         .iter()
@@ -95,6 +117,91 @@ pub fn compute_branch_derived(
         user_deploy_ids,
         combined_event_log,
     })
+}
+
+/// Group chains in `merge_set` into branches whose elements depend on each
+/// other. Builds inverted indexes over each chain's `EventLogIndex` and emits
+/// depends pairs in a single pass, then groups via `gather_related_sets`.
+///
+/// Pure function (no captured state) — call directly from tests. The
+/// production `merge()` uses an equivalent inline closure for symmetry with
+/// `compute_conflict_map`'s cached form.
+pub fn compute_branches(
+    merge_set: &HashableSet<DeployChainIndex>,
+) -> HashableSet<HashableSet<DeployChainIndex>> {
+    let chains_vec: Vec<DeployChainIndex> = merge_set.0.iter().cloned().collect();
+    let event_logs: Vec<&rspace_plus_plus::rspace::merger::event_log_index::EventLogIndex> =
+        chains_vec.iter().map(|c| &c.event_log_index).collect();
+    let depends_map =
+        merging_logic::compute_depends_map_event_indexed(&chains_vec, &event_logs);
+    merging_logic::gather_related_sets(&depends_map)
+}
+
+/// Build the cross-branch conflict map. Combines event-log conflicts (races,
+/// potential COMMs, base-join touches via `compute_conflict_map_event_indexed`)
+/// with the same-user-deploy-id dedup pass: two branches sharing any user
+/// deploy id are marked mutually conflicting regardless of event logs.
+///
+/// `EventLogIndex::combine` (inside `compute_branch_derived`) is fallible —
+/// a MergeType mismatch propagates as a hard error so the merge is rejected
+/// rather than silently absorbing the invariant violation.
+///
+/// Self-contained (rebuilds per-branch derived data each call). The
+/// production `merge()` uses an inline closure that caches `BranchDerived`
+/// by pointer address to avoid recomputation; that's an optimization and
+/// should produce identical results to this function. Tests call this
+/// directly.
+pub fn compute_conflict_map(
+    branches_set: &HashableSet<HashableSet<DeployChainIndex>>,
+) -> Result<
+    HashMap<HashableSet<DeployChainIndex>, HashableSet<HashableSet<DeployChainIndex>>>,
+    rspace_plus_plus::rspace::errors::HistoryError,
+> {
+    // Snapshot branch references in a stable order so the parallel arrays
+    // passed into the indexed conflict map and the deploy-id pass below
+    // line up.
+    let branches_refs: Vec<&HashableSet<DeployChainIndex>> = branches_set.0.iter().collect();
+    let branches_owned: Vec<HashableSet<DeployChainIndex>> =
+        branches_refs.iter().map(|b| (*b).clone()).collect();
+
+    // Pre-compute the derived data per branch.
+    let derived: Vec<BranchDerived> = branches_refs
+        .iter()
+        .map(|b| compute_branch_derived(b))
+        .collect::<Result<Vec<_>, _>>()?;
+    let event_logs: Vec<&rspace_plus_plus::rspace::merger::event_log_index::EventLogIndex> =
+        derived.iter().map(|d| &d.combined_event_log).collect();
+
+    // Event-log conflicts: races, potential COMMs, base-join touches.
+    let mut conflict_map =
+        merging_logic::compute_conflict_map_event_indexed(&branches_owned, &event_logs);
+
+    // Same-user-deploy-id pass.
+    let mut deploy_to_branches: HashMap<prost::bytes::Bytes, Vec<usize>> = HashMap::new();
+    for (idx, d) in derived.iter().enumerate() {
+        for deploy_id in &d.user_deploy_ids {
+            deploy_to_branches.entry(deploy_id.clone()).or_default().push(idx);
+        }
+    }
+    for (_deploy_id, branch_ids) in &deploy_to_branches {
+        if branch_ids.len() < 2 {
+            continue;
+        }
+        for i in 0..branch_ids.len() {
+            for j in (i + 1)..branch_ids.len() {
+                let a = branches_owned[branch_ids[i]].clone();
+                let b = branches_owned[branch_ids[j]].clone();
+                if let Some(set_a) = conflict_map.get_mut(&a) {
+                    set_a.0.insert(b.clone());
+                }
+                if let Some(set_b) = conflict_map.get_mut(&b) {
+                    set_b.0.insert(a.clone());
+                }
+            }
+        }
+    }
+
+    Ok(conflict_map)
 }
 
 pub fn cost_optimal_rejection_alg() -> impl Fn(&DeployChainIndex) -> u64 {

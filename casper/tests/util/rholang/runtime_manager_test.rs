@@ -2357,12 +2357,14 @@ async fn concurrent_registry_inserts_should_not_conflict() {
             history_repo.clone(),
             &genesis_hash_b256,
             rspace_plus_plus::rspace::merger::merging_logic::MergeableChsForDeploy::new(),
+            /* is_commutative_system_deploy */ false,
         );
         let eli_b = create_event_log_index(
             &pd_b[0].deploy_log,
             history_repo.clone(),
             &genesis_hash_b256,
             rspace_plus_plus::rspace::merger::merging_logic::MergeableChsForDeploy::new(),
+            /* is_commutative_system_deploy */ false,
         );
 
         let reason = conflict_reason(&eli_a, &eli_b);
@@ -2795,6 +2797,290 @@ async fn parallel_tree_hash_map_inserts_should_never_produce_multi_datum_on_tagg
             "Multi-Datum on tagged channel observed in {}/{} iterations: {}",
             multi_datum_hits.len(),
             N_ITERATIONS,
+            summary.join("; "),
+        );
+    }
+}
+
+/// Empirical repro of the production wedge surfaced in CI run 25947926570.
+///
+/// CI capture of the wedge timeline on V1 in shard a2e47711/shard7:
+///   00:52:21.946  V1 PLAY starts on bridge deploy #34 in block #43
+///   00:52:22.044  V1 REPLAY starts on gossiped block #43 (b64f10b79a)
+///   00:52:22.113  V1 REPLAY starts on another gossiped block #43 (540290bdf8)
+///   00:52:22.231  REPLAY #1 finishes
+///   00:52:22.268  REPLAY #2 finishes
+///   00:52:22.577  [MULTI-DATUM-ORIGIN] fires inside V1's PLAY post-eval check
+///   00:52:22.773  PLAY finishes
+///
+/// V1's runtime ran three operations in parallel (own PLAY + two gossip
+/// REPLAYs). All three share the same RuntimeManager + KV-backed history
+/// store. The single-runtime, single-validator tests above never reproduce
+/// because they never drive PLAY and REPLAY concurrently.
+///
+/// This test drives that exact concurrency:
+/// Phase 1 — sequentially play POOL_SIZE bridge blocks and save their
+///   replay inputs (mirroring "blocks gossiped from other validators").
+/// Phase 2 — race loop: for each iteration, tokio::join a fresh PLAY of a
+///   new bridge deploy with a REPLAY of a pool block. After both finish,
+///   inspect the PLAY post-state for multi-Datum on any tagged channel.
+///
+/// If any iteration produces multi-Datum, we have proven the bug at code
+/// level. If many iterations pass cleanly, the race needs additional
+/// pressure (more concurrent replays, more iterations, different scheduling).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "empirical repro of PLAY+REPLAY race; expensive; run with --ignored"]
+async fn concurrent_play_replay_should_not_produce_multi_datum_on_tagged_channel() {
+    use crate::util::genesis_builder::GenesisBuilder;
+    use crate::util::rholang::resources::{
+        mergeable_store_from_dyn, mk_test_rnode_store_manager_from_genesis,
+    };
+    use casper::rust::genesis::genesis::Genesis;
+    use casper::rust::util::rholang::costacc::close_block_deploy::CloseBlockDeploy;
+    use casper::rust::util::rholang::system_deploy_enum::SystemDeployEnum;
+    use casper::rust::util::rholang::system_deploy_util;
+    use rholang::rust::interpreter::external_services::ExternalServices;
+
+    const POOL_SIZE: usize = 4;
+    const N_RACE_ITERATIONS: usize = 50;
+
+    crate::init_logger();
+
+    let bridge_rho = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/resources/bridge.rho"),
+    )
+    .expect("Failed to read bridge.rho");
+
+    // Custom high-balance genesis (phlo never a bound).
+    let mut params = GenesisBuilder::build_genesis_parameters_with_defaults(None, None);
+    for vault in params.2.vaults.iter_mut() {
+        if vault.initial_balance > 0 {
+            vault.initial_balance = u64::MAX / 4;
+        }
+    }
+    let genesis_context = GenesisBuilder::new()
+        .build_genesis_with_parameters(Some(params))
+        .await
+        .expect("build genesis");
+    let genesis_block = genesis_context.genesis_block.clone();
+    let genesis_state = genesis_block.body.state.post_state_hash.clone();
+    let validator_pk = genesis_context.validator_pks()[0].clone();
+    let validator_bytes: prost::bytes::Bytes = validator_pk.bytes.clone().into();
+
+    let mut kvm = mk_test_rnode_store_manager_from_genesis(&genesis_context);
+    let rspace_store = kvm.r_space_stores().await.expect("rspace stores");
+    let mergeable_store = mergeable_store_from_dyn(&mut *kvm)
+        .await
+        .expect("mergeable store");
+    let (runtime_manager, _) = RuntimeManager::create_with_history(
+        rspace_store,
+        mergeable_store,
+        std::sync::Arc::new(Genesis::default_mergeable_tags()),
+        ExternalServices::noop(),
+    );
+    let runtime_manager = std::sync::Arc::new(runtime_manager);
+
+    // -------- Phase 1: build a chain of pool blocks to seed diverse state branches --------
+    // We only need each pool block's `start_hash` so concurrent PLAYs in
+    // Phase 2 can spawn off varied parent states. The ProcessedDeploys
+    // would also let us drive REPLAYs, but the replay cache shortcut makes
+    // those no-ops, so we use concurrent PLAYs instead.
+    let mut pool_starts: Vec<StateHash> = Vec::new();
+    let mut current_state = genesis_state.clone();
+    let base_time = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+
+    for i in 0..POOL_SIZE {
+        let key = if i % 2 == 0 {
+            construct_deploy::DEFAULT_SEC.clone()
+        } else {
+            construct_deploy::DEFAULT_SEC2.clone()
+        };
+        let ts = base_time + (i as i64) * 1000;
+        let deploy = construct_deploy::source_deploy(
+            bridge_rho.clone(),
+            ts,
+            Some(5_000_000),
+            None,
+            Some(key),
+            None,
+            None,
+        )
+        .expect("construct pool deploy");
+        let seq_num = (i + 1) as i32;
+        let block_data = BlockData {
+            time_stamp: ts,
+            block_number: (i + 1) as i64,
+            sender: validator_pk.clone(),
+            seq_num,
+        };
+        let sys_deploys = vec![SystemDeployEnum::Close(CloseBlockDeploy {
+            initial_rand: system_deploy_util::generate_close_deploy_random_seed_from_pk(
+                validator_pk.clone(),
+                seq_num,
+            ),
+        })];
+        let saved_start = current_state.clone();
+        let (new_state, _pd, _sys_pd) = runtime_manager
+            .compute_state(&saved_start, vec![deploy], sys_deploys, block_data, None)
+            .await
+            .expect("pool compute_state");
+        pool_starts.push(saved_start);
+        current_state = new_state;
+    }
+    let post_pool_state = current_state;
+    tracing::info!("Pool built: {} blocks", pool_starts.len());
+
+    // -------- Phase 2: race loop --------
+    // True multi-core parallelism via tokio::spawn (each PLAY runs on its
+    // own worker thread, not cooperatively on one task). CI's V1 had 3
+    // operations running concurrently on its runtime; this test drives
+    // CONCURRENT_PLAYS PLAYs per iteration.
+    const CONCURRENT_PLAYS: usize = 4;
+
+    let history_repo = runtime_manager.get_history_repo();
+    let mut multi_datum_hits: Vec<(usize, Vec<(Blake2b256Hash, usize)>)> = Vec::new();
+    let mut successful_races = 0usize;
+
+    for iter in 0..N_RACE_ITERATIONS {
+        let mut handles = Vec::with_capacity(CONCURRENT_PLAYS);
+        for slot in 0..CONCURRENT_PLAYS {
+            let key = if (iter + slot) % 2 == 0 {
+                construct_deploy::DEFAULT_SEC.clone()
+            } else {
+                construct_deploy::DEFAULT_SEC2.clone()
+            };
+            let global_idx = (POOL_SIZE + iter * CONCURRENT_PLAYS + slot) as i64;
+            let ts = base_time + global_idx * 1000;
+            let deploy = construct_deploy::source_deploy(
+                bridge_rho.clone(),
+                ts,
+                Some(5_000_000),
+                None,
+                Some(key),
+                None,
+                None,
+            )
+            .expect("construct deploy");
+            let seq_num = 10_000 + (iter * CONCURRENT_PLAYS + slot) as i32;
+            let block_data = BlockData {
+                time_stamp: ts,
+                block_number: global_idx,
+                sender: validator_pk.clone(),
+                seq_num,
+            };
+            let sys_deploys = vec![SystemDeployEnum::Close(CloseBlockDeploy {
+                initial_rand: system_deploy_util::generate_close_deploy_random_seed_from_pk(
+                    validator_pk.clone(),
+                    seq_num,
+                ),
+            })];
+            // Diverse start states across slots — slot 0 uses post-pool;
+            // slots 1..N use intermediate pool states. Mirrors CI where
+            // gossiped blocks come from various parent sets.
+            let start_state = if slot == 0 {
+                post_pool_state.clone()
+            } else {
+                pool_starts[(iter + slot) % POOL_SIZE].clone()
+            };
+            let rm = std::sync::Arc::clone(&runtime_manager);
+            let handle: tokio::task::JoinHandle<
+                Result<
+                    (StateHash, Vec<ProcessedDeploy>, Vec<ProcessedSystemDeploy>),
+                    casper::rust::errors::CasperError,
+                >,
+            > = tokio::spawn(async move {
+                rm.compute_state(&start_state, vec![deploy], sys_deploys, block_data, None)
+                    .await
+            });
+            handles.push((seq_num, handle));
+        }
+
+        // Await every spawned task and collect post-state results.
+        let mut results: Vec<(i32, StateHash, Vec<ProcessedDeploy>)> =
+            Vec::with_capacity(CONCURRENT_PLAYS);
+        let mut any_play_failed = false;
+        for (seq_num, h) in handles {
+            let r = h.await.expect("task join").expect("compute_state");
+            let (post, pd, _) = r;
+            if pd.iter().any(|p| p.is_failed) {
+                any_play_failed = true;
+            }
+            results.push((seq_num, post, pd));
+        }
+        if any_play_failed {
+            tracing::warn!("Iter {}: at least one concurrent play failed", iter);
+            continue;
+        }
+        successful_races += 1;
+
+        // Inspect every concurrent PLAY's post-state for multi-Datum.
+        let mut iter_hits: Vec<(Blake2b256Hash, usize)> = Vec::new();
+        let mut total_tagged = 0usize;
+        for (seq_num, post_state, _pd) in &results {
+            let mergeable_chs = runtime_manager
+                .load_mergeable_channels(post_state, validator_bytes.clone(), *seq_num)
+                .expect("load mergeable channels");
+            let post_b256 = Blake2b256Hash::from_bytes_prost(post_state);
+            let reader = history_repo
+                .get_history_reader(&post_b256)
+                .expect("get history reader");
+            for dmc in &mergeable_chs {
+                for ch_hash in dmc.identity_tagged.0.iter() {
+                    total_tagged += 1;
+                    let data = reader.get_data(ch_hash).expect("get_data");
+                    if data.len() > 1 {
+                        iter_hits.push((ch_hash.clone(), data.len()));
+                        tracing::error!(
+                            "Iter {} (seq_num {}): MULTI-DATUM on tagged channel {} (n={})",
+                            iter,
+                            seq_num,
+                            hex::encode(&ch_hash.bytes()[..8]),
+                            data.len(),
+                        );
+                    }
+                }
+            }
+        }
+
+        tracing::info!(
+            "Iter {}: concurrent_plays={}, tagged_channels_checked={}, hits_this_iter={}, cumulative={}",
+            iter,
+            CONCURRENT_PLAYS,
+            total_tagged,
+            iter_hits.len(),
+            multi_datum_hits.len(),
+        );
+
+        if !iter_hits.is_empty() {
+            multi_datum_hits.push((iter, iter_hits));
+        }
+    }
+
+    tracing::info!(
+        "Race summary: successful={}/{}, iterations_with_multi_datum={}",
+        successful_races,
+        N_RACE_ITERATIONS,
+        multi_datum_hits.len(),
+    );
+
+    if !multi_datum_hits.is_empty() {
+        let summary: Vec<String> = multi_datum_hits
+            .iter()
+            .map(|(i, hits)| {
+                let chans: Vec<String> = hits
+                    .iter()
+                    .map(|(h, n)| format!("{}({})", hex::encode(&h.bytes()[..8]), n))
+                    .collect();
+                format!("iter#{}: {}", i, chans.join(","))
+            })
+            .collect();
+        panic!(
+            "REPRODUCED: multi-Datum from concurrent PLAY+REPLAY in {}/{} iterations: {}",
+            multi_datum_hits.len(),
+            N_RACE_ITERATIONS,
             summary.join("; "),
         );
     }

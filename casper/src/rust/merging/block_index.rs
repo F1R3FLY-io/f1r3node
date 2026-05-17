@@ -28,11 +28,15 @@ pub struct BlockIndex {
     pub deploy_chains: Vec<DeployChainIndex>,
 }
 
+/// `is_commutative_system_deploy`: forwarded to `EventLogIndex::new`. See
+/// the doc-comment there. Set true for closeBlock and heartbeat system
+/// deploys; false for user deploys and slash.
 pub fn create_event_log_index(
     events: &[Event],
     history_repository: RhoHistoryRepository,
     pre_state_hash: &Blake2b256Hash,
     mergeable_chs: MergeableChsForDeploy,
+    is_commutative_system_deploy: bool,
 ) -> EventLogIndex {
     // OBSERVABILITY — capture inputs to event log construction. The
     // `mergeable_chs` argument is what flows from the per-deploy
@@ -77,6 +81,7 @@ pub fn create_event_log_index(
         produce_touches_pre_state_join,
         mergeable_chs.commutative,
         mergeable_chs.identity_tagged,
+        is_commutative_system_deploy,
     )
 }
 
@@ -122,11 +127,13 @@ pub fn new(
     let mut usr_deploy_indices = Vec::new();
     for (deploy, merge_chs) in usr_deploys_with_mergeable {
         if !deploy.is_failed {
+            // User deploys: standard channel-based mergeable classification.
             let event_log_index = create_event_log_index(
                 &deploy.deploy_log,
                 history_repository.clone(),
                 pre_state_hash,
                 merge_chs.clone(),
+                /* is_commutative_system_deploy */ false,
             );
 
             let deploy_index = DeployIndex {
@@ -147,21 +154,28 @@ pub fn new(
                 system_deploy,
                 event_list,
             } => {
-                let (sig, cost) = match system_deploy {
+                // Per-deploy commutativity classification:
+                //   - closeBlock / heartbeat (Empty marker): deterministic,
+                //     dedup-safe across siblings → all events mergeable.
+                //   - slash: NOT trivially commutative across siblings —
+                //     different-target slashes need real conflict detection.
+                //     Use channel-based filter (same as user deploys).
+                //     Slash semantics are being reworked separately.
+                let (sig, cost, is_commutative_system_deploy) = match system_deploy {
                     SystemDeployData::Slash { .. } => {
                         let mut sig_bytes = block_hash.to_vec();
                         sig_bytes.extend_from_slice(DeployIndex::SYS_SLASH_DEPLOY_ID);
-                        (sig_bytes.into(), DeployIndex::SYS_SLASH_DEPLOY_COST)
+                        (sig_bytes.into(), DeployIndex::SYS_SLASH_DEPLOY_COST, false)
                     }
                     SystemDeployData::CloseBlockSystemDeployData => {
                         let mut sig_bytes = block_hash.to_vec();
                         sig_bytes.extend_from_slice(DeployIndex::SYS_CLOSE_BLOCK_DEPLOY_ID);
-                        (sig_bytes.into(), DeployIndex::SYS_CLOSE_BLOCK_DEPLOY_COST)
+                        (sig_bytes.into(), DeployIndex::SYS_CLOSE_BLOCK_DEPLOY_COST, true)
                     }
                     SystemDeployData::Empty => {
                         let mut sig_bytes = block_hash.to_vec();
                         sig_bytes.extend_from_slice(DeployIndex::SYS_EMPTY_DEPLOY_ID);
-                        (sig_bytes.into(), DeployIndex::SYS_EMPTY_DEPLOY_COST)
+                        (sig_bytes.into(), DeployIndex::SYS_EMPTY_DEPLOY_COST, true)
                     }
                 };
 
@@ -170,6 +184,7 @@ pub fn new(
                     history_repository.clone(),
                     pre_state_hash,
                     merge_chs.clone(),
+                    is_commutative_system_deploy,
                 );
 
                 let deploy_index = DeployIndex {

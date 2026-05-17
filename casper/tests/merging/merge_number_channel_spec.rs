@@ -190,6 +190,7 @@ async fn test_case(
                     rm.get_history_repo(),
                     &pre_state,
                     number_chan_diff,
+                    /* is_commutative_system_deploy */ false,
                 );
 
                 let sig_bs = make_sig_pb(deploy.sig.as_str());
