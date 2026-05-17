@@ -6,12 +6,14 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use block_storage::rust::dag::block_dag_key_value_storage::KeyValueDagRepresentation;
+use models::rhoapi::{BindPattern, ListParWithRandom, Par, TaggedContinuation};
 use models::rust::block_hash::BlockHash;
 use rholang::rust::interpreter::{
     merging::rholang_merging_logic::RholangMergingLogic, rho_runtime::RhoHistoryRepository,
 };
 use rspace_plus_plus::rspace::{
     hashing::blake2b256_hash::Blake2b256Hash,
+    hot_store_trie_action::HotStoreTrieAction,
     merger::{
         merging_logic::{self, NumberChannelsDiff},
         state_change_merger,
@@ -24,6 +26,183 @@ use crate::rust::{
     errors::CasperError,
     system_deploy::{is_slash_deploy_id, is_system_deploy_id},
 };
+
+/// Pre-computed data for a single DeployChainIndex, cached by pointer address
+/// to avoid recomputing on every O(D²) depends() call.
+struct ChainDerived {
+    produces_created: HashableSet<rspace_plus_plus::rspace::trace::event::Produce>,
+    consumes_created: HashableSet<rspace_plus_plus::rspace::trace::event::Consume>,
+}
+
+/// Pre-computed data for a branch (HashableSet<DeployChainIndex>), cached by
+/// pointer address to avoid recomputing on every O(B²) conflicts() call.
+///
+/// `user_deploy_ids` powers the same-user-deploy-id dedup pass; system deploy
+/// ids (closeBlock / slash / heartbeat) are intentionally excluded because
+/// every block has them with similar markers — including them would mark
+/// every two blocks as mutual conflicts.
+///
+/// `combined_event_log` powers the event-indexed conflict checks (#1-#4).
+/// Every chain's event log contributes, regardless of whether the chain
+/// contains system deploys. System deploys produce/consume on real channels
+/// (validator vault, gas accumulator, etc.); excluding them blinds the
+/// conflict detection to legitimate cross-branch races on those channels.
+pub struct BranchDerived {
+    pub user_deploy_ids: HashSet<Bytes>,
+    pub combined_event_log: rspace_plus_plus::rspace::merger::event_log_index::EventLogIndex,
+}
+
+/// Build the `BranchDerived` summary for one branch. See `BranchDerived` for
+/// the semantic split between `user_deploy_ids` (filtered) and
+/// `combined_event_log` (unfiltered) — they have different invariants.
+pub fn compute_branch_derived(
+    branch: &HashableSet<DeployChainIndex>,
+) -> Result<BranchDerived, rspace_plus_plus::rspace::errors::HistoryError> {
+    let user_deploy_ids: HashSet<_> = branch
+        .0
+        .iter()
+        .flat_map(|chain| chain.deploys_with_cost.0.iter())
+        .filter(|deploy| !is_system_deploy_id(&deploy.deploy_id))
+        .map(|deploy| deploy.deploy_id.clone())
+        .collect();
+
+    // The system-deploy filter is structurally load-bearing for consensus
+    // and must remain. A naive fix that drops it (commit bf3d274a, CI run
+    // 25974799710) made closeBlock event logs reach the inverted indexes
+    // of compute_conflict_map_event_indexed. closeBlock touches hundreds
+    // of produces on PoS-managed state (validator vaults, gas accumulator,
+    // etc.). Of those, only a small handful end up in `produces_mergeable`
+    // — the rest race against each sibling block's closeBlock and look
+    // like real conflicts to check #1. The cascade: each merge now emits
+    // many conflict pairs, ConflictSetMerger rejects more branches, and
+    // because different validators see different conflict sets, they
+    // diverge on post-merge state hashes — manifesting as
+    // BondsCacheMismatch / KvStoreError "Missing mergeable entry" /
+    // InvalidTransaction errors and LFB stalls.
+    //
+    // The multi-Datum wedge from CI 25973566430 (test_shard_degradation)
+    // is real but its fix lives elsewhere — likely in how
+    // produces_mergeable is populated for system-deploy effects, or in
+    // how the conflict_map closure distinguishes commutative system-state
+    // races from genuine cross-branch conflicts. Don't touch this filter
+    // without the full pipeline test (compute_branch_derived ->
+    // compute_conflict_map_event_indexed -> rejection selection) covering
+    // realistic closeBlock event logs.
+    // System-deploy event logs contribute to the combined event log.
+    // Their commutative-via-merge_type events are pre-classified in
+    // produces_mergeable / consumes_mergeable at create_event_log_index
+    // time (via `is_commutative_system_deploy` on `EventLogIndex::new`),
+    // so check #1's `both_mergeable` filter correctly skips their cross-
+    // branch races. User-deploy events stay channel-based.
+    //
+    // The prior chain-level filter (was: `all !is_system_deploy_id`) over-
+    // applied: it dropped the entire chain when any system deploy was
+    // present, hiding user-deploy events on tagged non-commutative
+    // channels from check #4 — the wedge surface. Per-event
+    // classification at construction time is the correct granularity.
+    let combined_event_log = branch
+        .0
+        .iter()
+        .map(|chain| &chain.event_log_index)
+        .try_fold(
+            rspace_plus_plus::rspace::merger::event_log_index::EventLogIndex::empty(),
+            |acc, index| {
+                rspace_plus_plus::rspace::merger::event_log_index::EventLogIndex::combine(
+                    &acc, index,
+                )
+            },
+        )?;
+
+    Ok(BranchDerived {
+        user_deploy_ids,
+        combined_event_log,
+    })
+}
+
+/// Group chains in `merge_set` into branches whose elements depend on each
+/// other. Builds inverted indexes over each chain's `EventLogIndex` and emits
+/// depends pairs in a single pass, then groups via `gather_related_sets`.
+///
+/// Pure function (no captured state) — call directly from tests. The
+/// production `merge()` uses an equivalent inline closure for symmetry with
+/// `compute_conflict_map`'s cached form.
+pub fn compute_branches(
+    merge_set: &HashableSet<DeployChainIndex>,
+) -> HashableSet<HashableSet<DeployChainIndex>> {
+    let chains_vec: Vec<DeployChainIndex> = merge_set.0.iter().cloned().collect();
+    let event_logs: Vec<&rspace_plus_plus::rspace::merger::event_log_index::EventLogIndex> =
+        chains_vec.iter().map(|c| &c.event_log_index).collect();
+    let depends_map =
+        merging_logic::compute_depends_map_event_indexed(&chains_vec, &event_logs);
+    merging_logic::gather_related_sets(&depends_map)
+}
+
+/// Build the cross-branch conflict map. Combines event-log conflicts (races,
+/// potential COMMs, base-join touches via `compute_conflict_map_event_indexed`)
+/// with the same-user-deploy-id dedup pass: two branches sharing any user
+/// deploy id are marked mutually conflicting regardless of event logs.
+///
+/// `EventLogIndex::combine` (inside `compute_branch_derived`) is fallible —
+/// a MergeType mismatch propagates as a hard error so the merge is rejected
+/// rather than silently absorbing the invariant violation.
+///
+/// Self-contained (rebuilds per-branch derived data each call). The
+/// production `merge()` uses an inline closure that caches `BranchDerived`
+/// by pointer address to avoid recomputation; that's an optimization and
+/// should produce identical results to this function. Tests call this
+/// directly.
+pub fn compute_conflict_map(
+    branches_set: &HashableSet<HashableSet<DeployChainIndex>>,
+) -> Result<
+    HashMap<HashableSet<DeployChainIndex>, HashableSet<HashableSet<DeployChainIndex>>>,
+    rspace_plus_plus::rspace::errors::HistoryError,
+> {
+    // Snapshot branch references in a stable order so the parallel arrays
+    // passed into the indexed conflict map and the deploy-id pass below
+    // line up.
+    let branches_refs: Vec<&HashableSet<DeployChainIndex>> = branches_set.0.iter().collect();
+    let branches_owned: Vec<HashableSet<DeployChainIndex>> =
+        branches_refs.iter().map(|b| (*b).clone()).collect();
+
+    // Pre-compute the derived data per branch.
+    let derived: Vec<BranchDerived> = branches_refs
+        .iter()
+        .map(|b| compute_branch_derived(b))
+        .collect::<Result<Vec<_>, _>>()?;
+    let event_logs: Vec<&rspace_plus_plus::rspace::merger::event_log_index::EventLogIndex> =
+        derived.iter().map(|d| &d.combined_event_log).collect();
+
+    // Event-log conflicts: races, potential COMMs, base-join touches.
+    let mut conflict_map =
+        merging_logic::compute_conflict_map_event_indexed(&branches_owned, &event_logs);
+
+    // Same-user-deploy-id pass.
+    let mut deploy_to_branches: HashMap<prost::bytes::Bytes, Vec<usize>> = HashMap::new();
+    for (idx, d) in derived.iter().enumerate() {
+        for deploy_id in &d.user_deploy_ids {
+            deploy_to_branches.entry(deploy_id.clone()).or_default().push(idx);
+        }
+    }
+    for (_deploy_id, branch_ids) in &deploy_to_branches {
+        if branch_ids.len() < 2 {
+            continue;
+        }
+        for i in 0..branch_ids.len() {
+            for j in (i + 1)..branch_ids.len() {
+                let a = branches_owned[branch_ids[i]].clone();
+                let b = branches_owned[branch_ids[j]].clone();
+                if let Some(set_a) = conflict_map.get_mut(&a) {
+                    set_a.0.insert(b.clone());
+                }
+                if let Some(set_b) = conflict_map.get_mut(&b) {
+                    set_b.0.insert(a.clone());
+                }
+            }
+        }
+    }
+
+    Ok(conflict_map)
+}
 
 pub fn cost_optimal_rejection_alg() -> impl Fn(&DeployChainIndex) -> u64 {
     |deploy_chain_index: &DeployChainIndex| {
@@ -267,56 +446,6 @@ pub fn merge(
     let actual_seq = actual_set_vec;
     let late_seq = late_set_vec;
 
-    // Pre-computed data for a single DeployChainIndex, cached by pointer address
-    // to avoid recomputing on every O(D²) depends() call.
-    struct ChainDerived {
-        produces_created: HashableSet<rspace_plus_plus::rspace::trace::event::Produce>,
-        consumes_created: HashableSet<rspace_plus_plus::rspace::trace::event::Consume>,
-    }
-
-    // Pre-computed data for a branch (HashableSet<DeployChainIndex>), cached by
-    // pointer address to avoid recomputing on every O(B²) conflicts() call.
-    struct BranchDerived {
-        user_deploy_ids: HashSet<Bytes>,
-        combined_event_log: rspace_plus_plus::rspace::merger::event_log_index::EventLogIndex,
-    }
-
-    fn compute_branch_derived(
-        branch: &HashableSet<DeployChainIndex>,
-    ) -> Result<BranchDerived, rspace_plus_plus::rspace::errors::HistoryError> {
-        let user_deploy_ids: HashSet<_> = branch
-            .0
-            .iter()
-            .flat_map(|chain| chain.deploys_with_cost.0.iter())
-            .filter(|deploy| !is_system_deploy_id(&deploy.deploy_id))
-            .map(|deploy| deploy.deploy_id.clone())
-            .collect();
-
-        let combined_event_log = branch
-            .0
-            .iter()
-            .filter(|idx| {
-                idx.deploys_with_cost
-                    .0
-                    .iter()
-                    .all(|d| !is_system_deploy_id(&d.deploy_id))
-            })
-            .map(|chain| &chain.event_log_index)
-            .try_fold(
-                rspace_plus_plus::rspace::merger::event_log_index::EventLogIndex::empty(),
-                |acc, index| {
-                    rspace_plus_plus::rspace::merger::event_log_index::EventLogIndex::combine(
-                        &acc, index,
-                    )
-                },
-            )?;
-
-        Ok(BranchDerived {
-            user_deploy_ids,
-            combined_event_log,
-        })
-    }
-
     // Lazy caches keyed by pointer address. Safe because:
     // - References come from HashSet iteration, addresses stable during iteration
     // - DerivedSets/BranchDerived are pure functions of the item
@@ -407,6 +536,25 @@ pub fn merge(
                 |hash: &Blake2b256Hash, channel_changes, number_chs: &NumberChannelsDiff| {
                     if let Some(number_ch_val) = number_chs.get(hash) {
                         let (diff, merge_type) = *number_ch_val;
+                        // OBSERVABILITY — OR-fold (commutative) dispatch.
+                        // This is the SAFE path for tagged channels with
+                        // numeric values; corresponding multiset path is
+                        // logged at WARN by make_trie_action when it leaves
+                        // >1 datum. Together these two emit sites tell us
+                        // whether a tagged channel actually took the
+                        // designed path.
+                        let b = hash.bytes();
+                        let ch_short =
+                            hex::encode(&b[..std::cmp::min(8, b.len())]);
+                        tracing::debug!(
+                            target: "f1r3fly.merge.trie_action",
+                            channel_short = %ch_short,
+                            merge_type = ?merge_type,
+                            diff = diff,
+                            added_len = channel_changes.added.len(),
+                            removed_len = channel_changes.removed.len(),
+                            "[TRIE-ACTION-COMMUTATIVE] OR-fold / IntegerAdd dispatch",
+                        );
                         let base_get_data = |h: &Blake2b256Hash| reader.get_data(h);
                         Ok(Some(RholangMergingLogic::calculate_number_channel_merge(
                             hash,
@@ -423,7 +571,74 @@ pub fn merge(
         }
     };
 
-    let apply_trie_actions_fn = |actions| {
+    let apply_trie_actions_fn = |actions: Vec<HotStoreTrieAction<Par, BindPattern, ListParWithRandom, TaggedContinuation>>| {
+        // OBSERVABILITY — at the LMDB write boundary, categorize the trie
+        // actions about to be applied. A TrieInsertBinaryProduce that
+        // writes >1 datum on a channel IS the corrupting write at the
+        // storage layer; we already log this at make_trie_action time,
+        // but recording it again here confirms the action reaches LMDB.
+        let mut insert_produce_count = 0usize;
+        let mut insert_consume_count = 0usize;
+        let mut insert_joins_count = 0usize;
+        let mut delete_produce_count = 0usize;
+        let mut delete_consume_count = 0usize;
+        let mut delete_joins_count = 0usize;
+        let mut produce_multi_writes: Vec<(String, usize)> = Vec::new();
+        for action in &actions {
+            match action {
+                HotStoreTrieAction::TrieInsertAction(insert) => match insert {
+                    rspace_plus_plus::rspace::hot_store_trie_action::TrieInsertAction::TrieInsertBinaryProduce(p) => {
+                        insert_produce_count += 1;
+                        if p.data.len() > 1 {
+                            let b = p.hash.bytes();
+                            produce_multi_writes.push((
+                                hex::encode(&b[..std::cmp::min(8, b.len())]),
+                                p.data.len(),
+                            ));
+                        }
+                    }
+                    rspace_plus_plus::rspace::hot_store_trie_action::TrieInsertAction::TrieInsertBinaryConsume(_) => {
+                        insert_consume_count += 1;
+                    }
+                    rspace_plus_plus::rspace::hot_store_trie_action::TrieInsertAction::TrieInsertBinaryJoins(_) => {
+                        insert_joins_count += 1;
+                    }
+                    _ => {}
+                },
+                HotStoreTrieAction::TrieDeleteAction(del) => match del {
+                    rspace_plus_plus::rspace::hot_store_trie_action::TrieDeleteAction::TrieDeleteProduce(_) => {
+                        delete_produce_count += 1;
+                    }
+                    rspace_plus_plus::rspace::hot_store_trie_action::TrieDeleteAction::TrieDeleteConsume(_) => {
+                        delete_consume_count += 1;
+                    }
+                    rspace_plus_plus::rspace::hot_store_trie_action::TrieDeleteAction::TrieDeleteJoins(_) => {
+                        delete_joins_count += 1;
+                    }
+                },
+            }
+        }
+        if !produce_multi_writes.is_empty() {
+            tracing::warn!(
+                target: "f1r3fly.merge.apply",
+                multi_write_count = produce_multi_writes.len(),
+                examples = ?produce_multi_writes.iter().take(10).collect::<Vec<_>>(),
+                "[APPLY-TRIE-ACTIONS-MULTI-WRITE] LMDB write contains TrieInsertBinaryProduce actions that will leave >1 datum on a channel",
+            );
+        }
+        tracing::debug!(
+            target: "f1r3fly.merge.apply",
+            actions_total = actions.len(),
+            insert_produce_count,
+            insert_consume_count,
+            insert_joins_count,
+            delete_produce_count,
+            delete_consume_count,
+            delete_joins_count,
+            multi_produce_writes = produce_multi_writes.len(),
+            "[APPLY-TRIE-ACTIONS] LMDB write breakdown",
+        );
+
         history_repository
             .reset(lfb_post_state)
             .and_then(|reset_repo| Ok(reset_repo.do_checkpoint(actions)))

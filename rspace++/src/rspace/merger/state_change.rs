@@ -452,16 +452,67 @@ impl StateChange {
     }
 
     pub fn combine(self, other: Self) -> Self {
+        let self_datums_count = self.datums_changes.len();
+        let self_cont_count = self.cont_changes.len();
+        let other_datums_count = other.datums_changes.len();
+        let other_cont_count = other.cont_changes.len();
+
         let datums_changes = self.datums_changes;
         let cont_changes = self.cont_changes;
         let consume_channels_to_join_serialized_map = self.consume_channels_to_join_serialized_map;
 
-        // Combine datum changes via ChannelChange::combine (multiset union)
+        // Combine datum changes via ChannelChange::combine (multiset union).
+        // OBSERVABILITY — log when two branches both produce datum changes
+        // on the SAME channel (an Occupied entry). This is the per-channel
+        // smoking gun: if both sides have non-empty `added`, the result is
+        // multi-element via multiset-union.
+        let mut datum_channel_overlaps: usize = 0;
+        let mut datum_post_combine_multi: Vec<(Blake2b256Hash, usize, usize)> = Vec::new();
         for (key, value) in other.datums_changes {
-            match datums_changes.entry(key) {
+            match datums_changes.entry(key.clone()) {
                 dashmap::mapref::entry::Entry::Occupied(mut entry) => {
+                    datum_channel_overlaps += 1;
+                    let self_added_len = entry.get().added.len();
+                    let self_removed_len = entry.get().removed.len();
+                    let other_added_len = value.added.len();
+                    let other_removed_len = value.removed.len();
                     let current = std::mem::replace(entry.get_mut(), ChannelChange::empty());
-                    *entry.get_mut() = current.combine(value);
+                    let combined = current.combine(value);
+                    let ch_bytes = key.bytes();
+                    let ch_short =
+                        hex::encode(&ch_bytes[..std::cmp::min(8, ch_bytes.len())]);
+                    if combined.added.len() > 1 || combined.removed.len() > 1 {
+                        datum_post_combine_multi.push((
+                            key.clone(),
+                            combined.added.len(),
+                            combined.removed.len(),
+                        ));
+                        tracing::warn!(
+                            target: "f1r3fly.merge.combine",
+                            channel_short = %ch_short,
+                            channel_full = %hex::encode(&ch_bytes),
+                            self_added = self_added_len,
+                            self_removed = self_removed_len,
+                            other_added = other_added_len,
+                            other_removed = other_removed_len,
+                            combined_added = combined.added.len(),
+                            combined_removed = combined.removed.len(),
+                            "[STATE-CHANGE-COMBINE-DATUM-MULTI] StateChange::combine produced multi-element ChannelChange on a channel",
+                        );
+                    } else {
+                        tracing::debug!(
+                            target: "f1r3fly.merge.combine",
+                            channel_short = %ch_short,
+                            self_added = self_added_len,
+                            self_removed = self_removed_len,
+                            other_added = other_added_len,
+                            other_removed = other_removed_len,
+                            combined_added = combined.added.len(),
+                            combined_removed = combined.removed.len(),
+                            "[STATE-CHANGE-COMBINE-DATUM] StateChange::combine datum overlap",
+                        );
+                    }
+                    *entry.get_mut() = combined;
                 }
                 dashmap::mapref::entry::Entry::Vacant(entry) => {
                     entry.insert(value);
@@ -470,9 +521,11 @@ impl StateChange {
         }
 
         // Combine continuation changes via ChannelChange::combine (multiset union)
+        let mut cont_channel_overlaps: usize = 0;
         for (key, value) in other.cont_changes {
             match cont_changes.entry(key) {
                 dashmap::mapref::entry::Entry::Occupied(mut entry) => {
+                    cont_channel_overlaps += 1;
                     let current = std::mem::replace(entry.get_mut(), ChannelChange::empty());
                     *entry.get_mut() = current.combine(value);
                 }
@@ -486,6 +539,22 @@ impl StateChange {
         for (key, value) in other.consume_channels_to_join_serialized_map {
             consume_channels_to_join_serialized_map.insert(key, value);
         }
+
+        // OBSERVABILITY — top-level StateChange::combine summary. The
+        // datum_channel_overlaps count tells us how many channels had
+        // cross-branch contributions; datum_post_combine_multi is the
+        // subset that ended up multi-element after the union.
+        tracing::debug!(
+            target: "f1r3fly.merge.combine",
+            self_datums = self_datums_count,
+            self_conts = self_cont_count,
+            other_datums = other_datums_count,
+            other_conts = other_cont_count,
+            datum_channel_overlaps,
+            cont_channel_overlaps,
+            post_combine_multi_count = datum_post_combine_multi.len(),
+            "[STATE-CHANGE-COMBINE] StateChange::combine summary",
+        );
 
         Self {
             datums_changes,

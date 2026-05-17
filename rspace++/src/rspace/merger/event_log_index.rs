@@ -10,6 +10,7 @@ use super::merging_logic::{
     NumberChannelsDiff, combine_mergeable_value, combine_produces_copied_by_peek,
 };
 use crate::rspace::errors::HistoryError;
+use crate::rspace::hashing::blake2b256_hash::Blake2b256Hash;
 use crate::rspace::trace::event::{Consume, Event, IOEvent, Produce};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -26,6 +27,11 @@ pub struct EventLogIndex {
     pub produces_mergeable: HashableSet<Produce>,
     pub consumes_mergeable: HashableSet<Consume>,
     pub number_channels_data: NumberChannelsDiff,
+    /// Channel hashes whose identity matches a registered mergeable tag — a
+    /// superset of `number_channels_data.keys()`. Read by `conflicts()` to
+    /// flag two-branch writes on contract-bound channels that lack a
+    /// commutative representation for this branch.
+    pub identity_tagged_channels: HashableSet<Blake2b256Hash>,
 }
 
 // Ordering for deterministic processing in merge operations.
@@ -62,6 +68,17 @@ impl Ord for EventLogIndex {
             }
         }
 
+        // Compare identity_tagged_channels — sorted view for determinism
+        // independent of underlying HashSet iteration order.
+        let a_tagged: std::collections::BTreeSet<&Blake2b256Hash> =
+            self.identity_tagged_channels.0.iter().collect();
+        let b_tagged: std::collections::BTreeSet<&Blake2b256Hash> =
+            other.identity_tagged_channels.0.iter().collect();
+        let tagged_cmp = a_tagged.iter().cmp(b_tagged.iter());
+        if tagged_cmp != std::cmp::Ordering::Equal {
+            return tagged_cmp;
+        }
+
         // If numberChannelsData are identical, distinguish by event counts
         let a_prod = self.produces_linear.0.len() +
             self.produces_persistent.0.len() +
@@ -85,11 +102,25 @@ impl Ord for EventLogIndex {
 }
 
 impl EventLogIndex {
+    /// `is_commutative_system_deploy`: when true, mark ALL of this deploy's
+    /// produces/consumes as mergeable regardless of channel — the deploy
+    /// is a deterministic system operation whose cross-branch effects are
+    /// commutative under multiset-dedup. Set for closeBlock and heartbeat;
+    /// NOT set for slash (see slash analysis: same-target slashes dedup
+    /// safely but different-target slashes need conflict detection, and
+    /// slash semantics are being reworked separately).
+    ///
+    /// When false (user deploys and slash): use the channel-based filter
+    /// — produce/consume is mergeable iff its channel is in
+    /// `mergeable_chs` (= number_channels_data, the commutative subset
+    /// of identity-tagged channels). This is the original behavior.
     pub fn new(
         event_log: Vec<Event>,
         produce_exists_in_pre_state: impl Fn(&Produce) -> bool,
         produce_touch_pre_state_join: impl Fn(&Produce) -> bool,
         mergeable_chs: NumberChannelsDiff,
+        identity_tagged_channels: HashableSet<Blake2b256Hash>,
+        is_commutative_system_deploy: bool,
     ) -> Self {
         // Use Arc<Mutex<>> for thread-safe collections that will be updated in parallel
         let produces_linear = Arc::new(Mutex::new(HashSet::new()));
@@ -230,13 +261,21 @@ impl EventLogIndex {
             .cloned()
             .collect();
 
-        // Then filter and clone only once for the final set
-        let produces_mergeable = HashableSet(
-            all_produces
-                .into_iter()
-                .filter(|p| mergeable_chs.contains_key(&p.channel_hash))
-                .collect(),
-        );
+        // Then filter and clone only once for the final set.
+        // When `is_commutative_system_deploy` is true, ALL produces are
+        // marked mergeable regardless of channel — the deploy is a
+        // deterministic system operation (closeBlock / heartbeat) whose
+        // cross-branch effects are commutative under multiset-dedup.
+        let produces_mergeable = if is_commutative_system_deploy {
+            HashableSet(all_produces.into_iter().collect())
+        } else {
+            HashableSet(
+                all_produces
+                    .into_iter()
+                    .filter(|p| mergeable_chs.contains_key(&p.channel_hash))
+                    .collect(),
+            )
+        };
 
         // Same approach for consumes
         let all_consumes: HashSet<Consume> = consumes_linear_and_peeks
@@ -247,15 +286,56 @@ impl EventLogIndex {
             .cloned()
             .collect();
 
-        let consumes_mergeable = HashableSet(
-            all_consumes
-                .into_iter()
-                .filter(|c| {
-                    c.channel_hashes
-                        .iter()
-                        .any(|hash| mergeable_chs.contains_key(hash))
-                })
-                .collect(),
+        let consumes_mergeable = if is_commutative_system_deploy {
+            HashableSet(all_consumes.into_iter().collect())
+        } else {
+            HashableSet(
+                all_consumes
+                    .into_iter()
+                    .filter(|c| {
+                        c.channel_hashes
+                            .iter()
+                            .any(|hash| mergeable_chs.contains_key(hash))
+                    })
+                    .collect(),
+            )
+        };
+
+        // OBSERVABILITY — full shape of the constructed EventLogIndex.
+        // Critical fields for the multi-Datum diagnosis:
+        //   - identity_tagged_channels: registered tagged channels touched
+        //     by this deploy; check #4 needs this to be populated for a
+        //     channel to even be evaluated for tagged-conflict semantics.
+        //   - produces_mergeable: subset of produces whose channel hash
+        //     appears in `mergeable_chs` (== number_channels_data, the
+        //     commutative path's input). Tagged channels with non-numeric
+        //     end values are absent here on purpose — that's the wedge case.
+        let identity_tagged_examples: Vec<String> = identity_tagged_channels
+            .0
+            .iter()
+            .take(5)
+            .map(|h| {
+                let b = h.bytes();
+                hex::encode(&b[..std::cmp::min(8, b.len())])
+            })
+            .collect();
+        tracing::debug!(
+            target: "f1r3fly.merge.event_log_index",
+            produces_linear = produces_linear.0.len(),
+            produces_persistent = produces_persistent.0.len(),
+            produces_consumed = produces_consumed.0.len(),
+            produces_peeked = produces_peeked.0.len(),
+            produces_copied_by_peek = produces_copied_by_peek.0.len(),
+            produces_touching_base_joins = produces_touching_base_joins.0.len(),
+            consumes_linear_and_peeks = consumes_linear_and_peeks.0.len(),
+            consumes_persistent = consumes_persistent.0.len(),
+            consumes_produced = consumes_produced.0.len(),
+            produces_mergeable = produces_mergeable.0.len(),
+            consumes_mergeable = consumes_mergeable.0.len(),
+            number_channels_data = mergeable_chs.len(),
+            identity_tagged_channels = identity_tagged_channels.0.len(),
+            identity_tagged_examples = ?identity_tagged_examples,
+            "[EVENT-LOG-INDEX-NEW] EventLogIndex constructed",
         );
 
         EventLogIndex {
@@ -271,6 +351,7 @@ impl EventLogIndex {
             produces_mergeable,
             consumes_mergeable,
             number_channels_data: mergeable_chs,
+            identity_tagged_channels,
         }
     }
 
@@ -288,10 +369,30 @@ impl EventLogIndex {
             produces_mergeable: HashableSet(HashSet::new()),
             consumes_mergeable: HashableSet(HashSet::new()),
             number_channels_data: NumberChannelsDiff::new(),
+            identity_tagged_channels: HashableSet::new(),
         }
     }
 
     pub fn combine(x: &Self, y: &Self) -> Result<Self, HistoryError> {
+        // OBSERVABILITY — log the inputs to EventLogIndex::combine. This is
+        // the per-chain combine that produces a combined EventLogIndex for
+        // a branch (sequence of dependent deploys). Any tagged channel
+        // observation collapsing here would affect conflict map computation.
+        tracing::debug!(
+            target: "f1r3fly.merge.event_log_index",
+            x_produces_linear = x.produces_linear.0.len(),
+            x_produces_consumed = x.produces_consumed.0.len(),
+            x_produces_mergeable = x.produces_mergeable.0.len(),
+            x_identity_tagged = x.identity_tagged_channels.0.len(),
+            x_number_channels_data = x.number_channels_data.len(),
+            y_produces_linear = y.produces_linear.0.len(),
+            y_produces_consumed = y.produces_consumed.0.len(),
+            y_produces_mergeable = y.produces_mergeable.0.len(),
+            y_identity_tagged = y.identity_tagged_channels.0.len(),
+            y_number_channels_data = y.number_channels_data.len(),
+            "[EVENT-LOG-INDEX-COMBINE] entry",
+        );
+
         // Merge number channels (combine differences according to per-channel
         // merge strategy: IntegerAdd uses wrapping addition, BitmaskOr uses
         // bitwise OR through u64). Both branches must agree on merge_type for
@@ -307,6 +408,17 @@ impl EventLogIndex {
             match number_channels_data.get_mut(key) {
                 Some(existing) => {
                     if existing.1 != incoming_mt {
+                        let ch_bytes = key.bytes();
+                        let ch_short =
+                            hex::encode(&ch_bytes[..std::cmp::min(8, ch_bytes.len())]);
+                        tracing::error!(
+                            target: "f1r3fly.merge.event_log_index",
+                            channel_short = %ch_short,
+                            channel_full = %hex::encode(&ch_bytes),
+                            existing_merge_type = ?existing.1,
+                            incoming_merge_type = ?incoming_mt,
+                            "[EVENT-LOG-INDEX-COMBINE-ERR] MergeType mismatch",
+                        );
                         return Err(HistoryError::MergeError(format!(
                             "MergeType mismatch on channel {:?}: {:?} vs {:?}",
                             key, existing.1, incoming_mt,
@@ -396,6 +508,13 @@ impl EventLogIndex {
                     .collect(),
             ),
             number_channels_data,
+            identity_tagged_channels: HashableSet(
+                x.identity_tagged_channels
+                    .0
+                    .union(&y.identity_tagged_channels.0)
+                    .cloned()
+                    .collect(),
+            ),
         })
     }
 }

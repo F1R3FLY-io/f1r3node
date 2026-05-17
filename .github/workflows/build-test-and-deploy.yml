@@ -17,12 +17,12 @@ on:
       - rust/staging
       - "feature/**"
 
-# Prevent interleaving of integration test jobs on single-runner-per-arch
-# self-hosted runners. A second workflow run for the same ref queues until
-# the first completes rather than cancelling it.
+# Queue concurrent workflow runs for the same ref behind the active one
+# rather than cancelling. Each run gets its own pool of ephemeral runners,
+# so the only reason to serialize is to keep CI signal readable.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 env:
   # Enable AES/SSE2 CPU features for gxhash dependency (required by PathMap crate)
@@ -310,6 +310,8 @@ jobs:
           # admin-on-repo scope. RELEASE_PAT is already provisioned with the
           # repo scope (used by the release job) so reuse it here.
           GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+          # Register ephemeral runners on the repo that queued this workflow.
+          GH_REPO: ${{ github.repository }}
           SUPPRESS_LABEL_WARNING: "True"
         run: |
           cd system-integration/ci/oci-runners
@@ -409,6 +411,18 @@ jobs:
           F1R3FLY_NODE_IMAGE: f1r3flyindustries/f1r3fly-rust-node:latest
           F1R3FLY_NODE_BINARY: /tmp/rnode
           F1R3FLY_NODE_DEFAULTS_CONF: ${{ github.workspace }}/node/src/main/resources/defaults.conf
+          # Scoped DEBUG for the rspace-tagged-channel diagnostic surface
+          # (per docs/observability-conventions.md). Baseline INFO keeps
+          # third-party crate noise (tokio, hyper, h2, etc.) at INFO and
+          # preserves the existing lifecycle-anchor logs. The single
+          # directive `f1r3fly.merge=debug` is a prefix match: it enables
+          # DEBUG (and WARN/ERROR) for every target starting with
+          # `f1r3fly.merge.` — specifically `f1r3fly.merge.tagged_op`
+          # (new produce/consume events) and `f1r3fly.merge.multi_datum_origin`
+          # (existing observation events). TRACE-level events on
+          # `f1r3fly.merge.tag_check` stay filtered out, which is what we
+          # want (TRACE would flood every channel access).
+          RUST_LOG: "info,f1r3fly.merge=debug"
         run: |
           cd system-integration
           SCALE_FLAG=""
@@ -428,7 +442,7 @@ jobs:
             --deselect integration-tests/test/tests/shared/test_observer_lfs_sync.py \
             --provider=${{ matrix.provider }} \
             -v --tb=short --instafail --maxfail=10 \
-            -n auto --dist=loadgroup --timeout=1200 $SCALE_FLAG
+            -n 8 --dist=loadgroup --timeout=1200 $SCALE_FLAG
 
       - name: Upload Integration Test Logs
         if: always()

@@ -191,13 +191,14 @@ trigger the same COMM.
 
 ## Merger (Consensus Support)
 
-`merger/merging_logic.rs` analyzes event logs for conflicts:
+`merger/` provides the analysis primitives the casper crate uses to combine RSpace post-states from sibling blocks. See [casper/STATE_MERGING.md](../casper/STATE_MERGING.md) for the end-to-end pipeline and the two-layer mergeability model.
 
-- `depends(target, source) -> bool` -- Checks if source events are prerequisites for target
-- `are_conflicting(a, b) -> bool` -- Detects races on non-persistent operations
-- `conflict_reason(a, b) -> Option<String>` -- Human-readable conflict explanation
+Key modules:
 
-`ChannelChange<A>` tracks `added` and `removed` items per channel for merge analysis.
+- `merging_logic.rs` -- `conflicts(a, b)` returns the set of channel hashes on which event logs `a` and `b` are non-mergeable (four checks: same-I/O-event races, potential cross-branch COMMs, produce touching base join, identity-tagged non-commutative pending writes). `are_conflicting`, `conflict_reason` are thin wrappers. `MergeType` and `MergeableChsForDeploy` (per-deploy contract-membership carrier) live here.
+- `event_log_index.rs` -- `EventLogIndex` summarises a deploy's event log into produce/consume sets used by `conflicts()`, plus `number_channels_data` (commutative-merge diffs) and `identity_tagged_channels` (single-value-contract membership).
+- `channel_change.rs` -- `ChannelChange<A>` tracks `added`/`removed` per channel; `combine` is multiset union (correct for CSP-level layer-1 mergeability).
+- `state_change_merger.rs` -- `compute_trie_actions` dispatches per channel: commutative-merge path when the channel is in `number_channels_data`, multiset path otherwise.
 
 ## FFI Sub-crate: rspace_rhotypes
 

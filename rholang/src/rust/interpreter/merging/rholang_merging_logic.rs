@@ -246,6 +246,10 @@ impl RholangMergingLogic {
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct DeployMergeableData {
     pub channels: Vec<NumberChannel>,
+    /// Channels whose identity matches a registered mergeable tag — a
+    /// superset of `channels`. Persisted so conflict detection on replay
+    /// sees the same contract membership the play side saw.
+    pub identity_tagged_channels: Vec<Blake2b256Hash>,
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
@@ -334,6 +338,58 @@ mod tests {
 
         // Assert that the results match the expected values
         assert_eq!(result, expected);
+    }
+
+    /// `convert_to_read_number` must reject a multi-datum pre-state with
+    /// `MergeError` rather than returning one of the values arbitrarily.
+    #[test]
+    fn convert_to_read_number_rejects_multi_datum_pre_state() {
+        use models::rhoapi::ListParWithRandom;
+        use rspace_plus_plus::rspace::{internal::Datum, trace::event::Produce};
+
+        let channel_hash = Blake2b256Hash::from_bytes(vec![0xab; 32]);
+
+        let make_datum = |seed: u8| -> Datum<ListParWithRandom> {
+            Datum {
+                a: ListParWithRandom {
+                    pars: vec![Par::default()],
+                    random_state: vec![seed; 32],
+                },
+                persist: false,
+                source: Produce {
+                    channel_hash: channel_hash.clone(),
+                    hash: Blake2b256Hash::from_bytes(vec![seed; 32]),
+                    persistent: false,
+                    is_deterministic: true,
+                    output_value: vec![],
+                    failed: false,
+                },
+            }
+        };
+        let two_datums = vec![make_datum(0x11), make_datum(0x22)];
+
+        let get_data =
+            |_hash: &Blake2b256Hash| -> Result<Vec<Datum<ListParWithRandom>>, HistoryError> {
+                Ok(two_datums.clone())
+            };
+
+        let read = RholangMergingLogic::convert_to_read_number(get_data);
+        let result = read(&channel_hash);
+
+        match result {
+            Err(HistoryError::MergeError(msg)) => {
+                assert!(
+                    msg.contains("has 2 pre-state values")
+                        && msg.contains("single-value invariant violated"),
+                    "expected single-value invariant error, got: {}",
+                    msg,
+                );
+            }
+            other => panic!(
+                "expected MergeError, got {:?}",
+                other.map(|_| "Ok").unwrap_or("non-MergeError"),
+            ),
+        }
     }
 
     #[test]

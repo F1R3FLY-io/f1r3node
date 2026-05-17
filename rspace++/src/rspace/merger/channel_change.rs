@@ -23,16 +23,39 @@ impl<A> ChannelChange<A> {
     /// already present in `self` (accounting for multiplicities).
     pub fn combine(self, other: Self) -> Self
     where A: PartialEq {
+        let self_added_len = self.added.len();
+        let self_removed_len = self.removed.len();
+        let other_added_len = other.added.len();
+        let other_removed_len = other.removed.len();
         let added_only_in_other = Self::vec_diff(other.added, &self.added);
         let removed_only_in_other = Self::vec_diff(other.removed, &self.removed);
-        Self {
+        let result = Self {
             added: self.added.into_iter().chain(added_only_in_other).collect(),
             removed: self
                 .removed
                 .into_iter()
                 .chain(removed_only_in_other)
                 .collect(),
+        };
+        // OBSERVABILITY — record the multiset-union outcome. Caller is
+        // generic (no channel hash visible here), so callers that want to
+        // tag specific channels should log surrounding context with a
+        // matching event-id or channel identifier. This emit fires per
+        // ChannelChange combine and is the lowest-level signal of the
+        // multiset-union behavior responsible for sibling-merge multi-Datum.
+        if result.added.len() > 1 || result.removed.len() > 1 {
+            tracing::debug!(
+                target: "f1r3fly.merge.combine",
+                self_added = self_added_len,
+                self_removed = self_removed_len,
+                other_added = other_added_len,
+                other_removed = other_removed_len,
+                result_added = result.added.len(),
+                result_removed = result.removed.len(),
+                "[CHANNEL-CHANGE-COMBINE-MULTI] ChannelChange::combine yielded multi-element result",
+            );
         }
+        result
     }
 
     /// Multiset difference: for each element in `to_remove`, removes at most

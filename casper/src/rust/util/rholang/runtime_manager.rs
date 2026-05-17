@@ -27,7 +27,7 @@ use rholang::rust::interpreter::rho_runtime::{
 };
 use rholang::rust::interpreter::system_processes::BlockData;
 use rspace_plus_plus::rspace::hashing::blake2b256_hash::Blake2b256Hash;
-use rspace_plus_plus::rspace::merger::merging_logic::{NumberChannelsDiff, NumberChannelsEndVal};
+use rspace_plus_plus::rspace::merger::merging_logic::MergeableChsForDeploy;
 use rspace_plus_plus::rspace::replay_rspace::ReplayRSpace;
 use rspace_plus_plus::rspace::rspace::{RSpace, RSpaceStore};
 use rspace_plus_plus::rspace::shared::key_value_store_manager::KeyValueStoreManager;
@@ -329,11 +329,11 @@ impl RuntimeManager {
             )
             .await?;
 
-        let (usr_processed, usr_mergeable): (Vec<ProcessedDeploy>, Vec<NumberChannelsEndVal>) =
+        let (usr_processed, usr_mergeable): (Vec<ProcessedDeploy>, Vec<MergeableChsForDeploy>) =
             usr_deploy_res.into_iter().unzip();
         let (sys_processed, sys_mergeable): (
             Vec<ProcessedSystemDeploy>,
-            Vec<NumberChannelsEndVal>,
+            Vec<MergeableChsForDeploy>,
         ) = sys_deploy_res.into_iter().unzip();
         let replay_cache_event_log_cap = Self::max_replay_cache_event_log_entries();
 
@@ -460,11 +460,11 @@ impl RuntimeManager {
             .await?;
         log_mem_step("after_compute_state");
 
-        let (usr_processed, usr_mergeable): (Vec<ProcessedDeploy>, Vec<NumberChannelsEndVal>) =
+        let (usr_processed, usr_mergeable): (Vec<ProcessedDeploy>, Vec<MergeableChsForDeploy>) =
             usr_deploy_res.into_iter().unzip();
         let (sys_processed, sys_mergeable): (
             Vec<ProcessedSystemDeploy>,
-            Vec<NumberChannelsEndVal>,
+            Vec<MergeableChsForDeploy>,
         ) = sys_deploy_res.into_iter().unzip();
         let replay_cache_event_log_cap = Self::max_replay_cache_event_log_entries();
 
@@ -822,7 +822,7 @@ impl RuntimeManager {
         sys_processed_deploys: &Vec<ProcessedSystemDeploy>,
         pre_state_hash: &Blake2b256Hash,
         post_state_hash: &Blake2b256Hash,
-        mergeable_chs: &Vec<NumberChannelsDiff>,
+        mergeable_chs: &Vec<MergeableChsForDeploy>,
     ) -> Result<BlockIndex, CasperError> {
         if let Some(cached) = self.block_index_cache.get(block_hash) {
             Self::touch_cache_key(&self.block_index_cache_order, block_hash);
@@ -905,7 +905,7 @@ impl RuntimeManager {
         state_hash_bs: &StateHash,
         creator: prost::bytes::Bytes,
         seq_num: i32,
-    ) -> Result<Vec<NumberChannelsDiff>, CasperError> {
+    ) -> Result<Vec<MergeableChsForDeploy>, CasperError> {
         let state_hash = Blake2b256Hash::from_bytes_prost(state_hash_bs);
         let mergeable_key = MergeableKey {
             state_hash: StateHashSerde(state_hash.to_bytes_prost()),
@@ -922,11 +922,44 @@ impl RuntimeManager {
             Some(res) => {
                 let res_map = res
                     .into_iter()
-                    .map(|x| {
-                        x.channels
+                    .enumerate()
+                    .map(|(idx, x)| {
+                        let commutative_count_in = x.channels.len();
+                        let identity_tagged_count_in = x.identity_tagged_channels.len();
+                        let commutative = x
+                            .channels
                             .into_iter()
                             .map(|y| (y.hash, (y.diff, y.merge_type)))
-                            .collect::<BTreeMap<_, _>>()
+                            .collect::<BTreeMap<_, _>>();
+                        let identity_tagged = shared::rust::hashable_set::HashableSet(
+                            x.identity_tagged_channels.into_iter().collect(),
+                        );
+                        // OBSERVABILITY — confirm the round-trip preserved
+                        // both fields. If counts differ between WRITE and
+                        // READ, the persistence layer is dropping data.
+                        let id_tagged_examples: Vec<String> = identity_tagged
+                            .0
+                            .iter()
+                            .take(5)
+                            .map(|h| {
+                                let b = h.bytes();
+                                hex::encode(&b[..std::cmp::min(8, b.len())])
+                            })
+                            .collect();
+                        tracing::debug!(
+                            target: "f1r3fly.merge.store_roundtrip",
+                            deploy_idx = idx,
+                            commutative_count_in = commutative_count_in,
+                            identity_tagged_count_in = identity_tagged_count_in,
+                            commutative_count_out = commutative.len(),
+                            identity_tagged_count_out = identity_tagged.0.len(),
+                            identity_tagged_examples = ?id_tagged_examples,
+                            "[STORE-READ] per-deploy MergeableChsForDeploy",
+                        );
+                        MergeableChsForDeploy {
+                            commutative,
+                            identity_tagged,
+                        }
                     })
                     .collect::<Vec<_>>();
                 Ok(res_map)
@@ -1029,7 +1062,7 @@ impl RuntimeManager {
         post_state_hash: Blake2b256Hash,
         creator: prost::bytes::Bytes,
         seq_num: i32,
-        channels_data: Vec<NumberChannelsEndVal>,
+        channels_data: Vec<MergeableChsForDeploy>,
         // Used to calculate value difference from final values
         pre_state_hash: &Blake2b256Hash,
     ) -> Result<(), CasperError> {
@@ -1037,10 +1070,12 @@ impl RuntimeManager {
         let diffs = self.convert_number_channels_to_diff(channels_data, pre_state_hash)?;
 
         // Convert to storage types
-        let deploy_channels = diffs
+        let deploy_channels: Vec<DeployMergeableData> = diffs
             .into_iter()
-            .map(|data| {
+            .enumerate()
+            .map(|(idx, data)| {
                 let channels: Vec<NumberChannel> = data
+                    .commutative
                     .into_iter()
                     .map(|(hash, (diff, merge_type))| NumberChannel {
                         hash,
@@ -1048,8 +1083,35 @@ impl RuntimeManager {
                         merge_type,
                     })
                     .collect::<Vec<_>>();
+                let identity_tagged_channels: Vec<Blake2b256Hash> =
+                    data.identity_tagged.0.into_iter().collect();
 
-                DeployMergeableData { channels }
+                // OBSERVABILITY — per-deploy entry being WRITTEN to the
+                // mergeable_store. This is the persistence boundary; if a
+                // bincode round-trip drops identity_tagged_channels here
+                // the tagged-conflict detection downstream would fail
+                // silently.
+                let id_tagged_examples: Vec<String> = identity_tagged_channels
+                    .iter()
+                    .take(5)
+                    .map(|h| {
+                        let b = h.bytes();
+                        hex::encode(&b[..std::cmp::min(8, b.len())])
+                    })
+                    .collect();
+                tracing::debug!(
+                    target: "f1r3fly.merge.store_roundtrip",
+                    deploy_idx = idx,
+                    commutative_count = channels.len(),
+                    identity_tagged_count = identity_tagged_channels.len(),
+                    identity_tagged_examples = ?id_tagged_examples,
+                    "[STORE-WRITE] per-deploy MergeableChsForDeploy",
+                );
+
+                DeployMergeableData {
+                    channels,
+                    identity_tagged_channels,
+                }
             })
             .collect();
 
@@ -1079,10 +1141,10 @@ impl RuntimeManager {
      */
     pub fn convert_number_channels_to_diff(
         &self,
-        channels_data: Vec<NumberChannelsEndVal>,
+        channels_data: Vec<MergeableChsForDeploy>,
         // Used to calculate value difference from final values
         pre_state_hash: &Blake2b256Hash,
-    ) -> Result<Vec<NumberChannelsDiff>, CasperError> {
+    ) -> Result<Vec<MergeableChsForDeploy>, CasperError> {
         let history_repo = self.history_repo.clone();
         let reader = history_repo
             .get_history_reader(pre_state_hash)
@@ -1096,7 +1158,7 @@ impl RuntimeManager {
         // Build a one-shot base-value map to avoid repeatedly creating history readers per key.
         let unique_channels = channels_data
             .iter()
-            .flat_map(|m| m.keys().cloned())
+            .flat_map(|m| m.commutative.keys().cloned())
             .collect::<std::collections::BTreeSet<_>>();
         let mut initial_values: BTreeMap<Blake2b256Hash, i64> = BTreeMap::new();
         for ch in unique_channels {
@@ -1107,6 +1169,40 @@ impl RuntimeManager {
                 ))
             })?;
             if data.len() > 1 {
+                // [MULTI-DATUM-ORIGIN] Fatal strict-fail site: pre-state of
+                // the block being built/replayed has multi-Datum on a tagged
+                // channel. By the time this fires, the corruption has been
+                // committed by some prior block. Dump every Datum's source
+                // hash so operators can correlate back to the originating
+                // produce via the deploy event logs.
+                let ch_bytes = ch.bytes();
+                let ch_short =
+                    hex::encode(&ch_bytes[..std::cmp::min(8, ch_bytes.len())]);
+                let ch_full = hex::encode(&ch_bytes);
+                tracing::error!(
+                    target: "f1r3fly.merge.multi_datum_origin",
+                    "[MULTI-DATUM-ORIGIN] observation=pre-state-strict-fail \
+                     channel_short={} channel_full={} datum_count={}",
+                    ch_short, ch_full, data.len(),
+                );
+                for (idx, datum) in data.iter().enumerate() {
+                    let src_bytes = datum.source.hash.bytes();
+                    let src_short =
+                        hex::encode(&src_bytes[..std::cmp::min(8, src_bytes.len())]);
+                    tracing::error!(
+                        target: "f1r3fly.merge.multi_datum_origin",
+                        "[MULTI-DATUM-ORIGIN]   datum[{}] channel_short={} \
+                         produce_hash={} persistent={} par_count={}",
+                        idx, ch_short, src_short,
+                        datum.persist, datum.a.pars.len(),
+                    );
+                }
+                metrics::counter!(
+                    "f1r3fly_multi_datum_origin_total",
+                    "path" => "observation",
+                    "kind" => "convert-number-channels-strict-fail",
+                )
+                .increment(1);
                 return Err(CasperError::RuntimeError(format!(
                     "Expected at most one value for number channel {:?}, found {}",
                     ch,
@@ -1133,11 +1229,24 @@ impl RuntimeManager {
             initial_values.insert(ch, value);
         }
 
-        // Calculate difference values from final values on number channels
-        Ok(RholangMergingLogic::calculate_num_channel_diff(
-            channels_data,
-            move |ch| initial_values.get(ch).copied(),
-        ))
+        // Diff conversion operates on the commutative maps only; the
+        // identity_tagged sets are re-paired unchanged after the conversion.
+        let (commutative_end_vals, identity_tagged_per_deploy): (Vec<_>, Vec<_>) = channels_data
+            .into_iter()
+            .map(|d| (d.commutative, d.identity_tagged))
+            .unzip();
+        let commutative_diffs =
+            RholangMergingLogic::calculate_num_channel_diff(commutative_end_vals, move |ch| {
+                initial_values.get(ch).copied()
+            });
+        Ok(commutative_diffs
+            .into_iter()
+            .zip(identity_tagged_per_deploy)
+            .map(|(commutative, identity_tagged)| MergeableChsForDeploy {
+                commutative,
+                identity_tagged,
+            })
+            .collect())
     }
 
     /**

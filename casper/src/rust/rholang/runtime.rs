@@ -1,7 +1,7 @@
 // See casper/src/main/scala/coop/rchain/casper/rholang/RuntimeSyntax.scala
 
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, HashSet},
     future::Future,
     mem,
     sync::OnceLock,
@@ -48,7 +48,7 @@ use rholang::rust::interpreter::{
 use rspace_plus_plus::rspace::{
     hashing::{blake2b256_hash::Blake2b256Hash, stable_hash_provider},
     history::{instances::radix_history::RadixHistory, Either},
-    merger::merging_logic::{MergeType, NumberChannelsEndVal},
+    merger::merging_logic::{MergeType, MergeableChsForDeploy},
 };
 
 use crate::rust::{
@@ -130,8 +130,8 @@ impl RuntimeOps {
     ) -> Result<
         (
             StateHash,
-            Vec<(ProcessedDeploy, NumberChannelsEndVal)>,
-            Vec<(ProcessedSystemDeploy, NumberChannelsEndVal)>,
+            Vec<(ProcessedDeploy, MergeableChsForDeploy)>,
+            Vec<(ProcessedSystemDeploy, MergeableChsForDeploy)>,
         ),
         CasperError,
     > {
@@ -253,7 +253,7 @@ impl RuntimeOps {
         (
             StateHash,
             StateHash,
-            Vec<(ProcessedDeploy, NumberChannelsEndVal)>,
+            Vec<(ProcessedDeploy, MergeableChsForDeploy)>,
         ),
         CasperError,
     > {
@@ -288,7 +288,7 @@ impl RuntimeOps {
         &mut self,
         start_hash: &StateHash,
         terms: Vec<Signed<DeployData>>,
-    ) -> Result<(StateHash, Vec<(ProcessedDeploy, NumberChannelsEndVal)>), CasperError> {
+    ) -> Result<(StateHash, Vec<(ProcessedDeploy, MergeableChsForDeploy)>), CasperError> {
         let mem_profile_enabled = crate::rust::util::rholang::mem_profiler::mem_profile_enabled();
         let read_vm_rss_kb =
             || -> Option<usize> { crate::rust::util::rholang::mem_profiler::read_vm_rss_kb() };
@@ -358,7 +358,7 @@ impl RuntimeOps {
         &mut self,
         start_hash: &StateHash,
         terms: Vec<Signed<DeployData>>,
-    ) -> Result<(StateHash, Vec<(ProcessedDeploy, NumberChannelsEndVal)>), CasperError> {
+    ) -> Result<(StateHash, Vec<(ProcessedDeploy, MergeableChsForDeploy)>), CasperError> {
         // Using tracing events for async - Span[F].withMarks("play-deploys") from Scala
         tracing::info!(target: "f1r3fly.casper.play-deploys-genesis", "play-deploys-genesis-started");
         self.runtime
@@ -380,7 +380,7 @@ impl RuntimeOps {
     pub async fn play_deploy_with_cost_accounting(
         &mut self,
         deploy: Signed<DeployData>,
-    ) -> Result<(ProcessedDeploy, NumberChannelsEndVal), CasperError> {
+    ) -> Result<(ProcessedDeploy, MergeableChsForDeploy), CasperError> {
         let mem_profile_enabled = crate::rust::util::rholang::mem_profiler::mem_profile_enabled();
         let read_vm_rss_kb =
             || -> Option<usize> { crate::rust::util::rholang::mem_profiler::read_vm_rss_kb() };
@@ -550,6 +550,19 @@ impl RuntimeOps {
         }
     }
 
+    // Span carries `deploy_sig` and `path=play` so every nested event
+    // emitted during user-deploy eval (including the per-tagged-channel
+    // ops in reduce.rs and the existing MULTI-DATUM-ORIGIN events) inherits
+    // deploy context. See docs/observability-conventions.md.
+    #[tracing::instrument(
+        name = "process_deploy",
+        target = "f1r3fly.casper.deploy_eval",
+        skip_all,
+        fields(
+            deploy_sig = %hex::encode(&deploy.sig[..std::cmp::min(8, deploy.sig.len())]),
+            path = "play",
+        ),
+    )]
     pub async fn process_deploy(
         &mut self,
         deploy: Signed<DeployData>,
@@ -565,6 +578,53 @@ impl RuntimeOps {
 
         let eval_succeeded = eval_result.errors.is_empty();
         let deploy_sig = deploy.sig.clone();
+
+        // [MULTI-DATUM-ORIGIN] Provenance instrumentation: after user-deploy
+        // eval, walk every tagged channel the deploy touched and log ERROR-
+        // level if it left multi-Datum. Pinpoints the deploy that originated
+        // the state violation surfaced by test_shard_degradation in CI.
+        // Always fires; ERROR level guarantees visibility regardless of
+        // RUST_LOG filter. Remove once root cause is identified.
+        if eval_succeeded {
+            for (channel, merge_type) in &eval_result.mergeable {
+                let ch_values = self.runtime.get_data(channel).await;
+                if ch_values.len() > 1 {
+                    let ch_hash = stable_hash_provider::hash(channel);
+                    let ch_bytes = ch_hash.bytes();
+                    let ch_short =
+                        hex::encode(&ch_bytes[..std::cmp::min(8, ch_bytes.len())]);
+                    let ch_full = hex::encode(&ch_bytes);
+                    let sig_short =
+                        hex::encode(&deploy_sig[..std::cmp::min(8, deploy_sig.len())]);
+                    tracing::error!(
+                        target: "f1r3fly.merge.multi_datum_origin",
+                        "[MULTI-DATUM-ORIGIN] path=play kind=user-deploy \
+                         deploy_sig={} channel_short={} channel_full={} \
+                         datum_count={} merge_type={:?}",
+                        sig_short, ch_short, ch_full,
+                        ch_values.len(), merge_type,
+                    );
+                    for (idx, datum) in ch_values.iter().enumerate() {
+                        let src_bytes = datum.source.hash.bytes();
+                        let src_short =
+                            hex::encode(&src_bytes[..std::cmp::min(8, src_bytes.len())]);
+                        tracing::error!(
+                            target: "f1r3fly.merge.multi_datum_origin",
+                            "[MULTI-DATUM-ORIGIN]   datum[{}] channel_short={} \
+                             produce_hash={} persistent={} par_count={}",
+                            idx, ch_short, src_short,
+                            datum.persist, datum.a.pars.len(),
+                        );
+                    }
+                    metrics::counter!(
+                        "f1r3fly_multi_datum_origin_total",
+                        "path" => "play",
+                        "kind" => "user-deploy",
+                    )
+                    .increment(1);
+                }
+            }
+        }
 
         let deploy_result = ProcessedDeploy {
             deploy,
@@ -588,7 +648,7 @@ impl RuntimeOps {
     pub async fn process_deploy_with_mergeable_data(
         &mut self,
         deploy: Signed<DeployData>,
-    ) -> Result<(ProcessedDeploy, NumberChannelsEndVal), CasperError> {
+    ) -> Result<(ProcessedDeploy, MergeableChsForDeploy), CasperError> {
         let (pd, merge_chs) = self.process_deploy(deploy).await?;
         let data = self.get_number_channels_data(&merge_chs).await?;
         Ok((pd, data))
@@ -600,14 +660,51 @@ impl RuntimeOps {
             Par,
             rspace_plus_plus::rspace::merger::merging_logic::MergeType,
         >,
-    ) -> Result<NumberChannelsEndVal, CasperError> {
-        let mut result = BTreeMap::new();
+    ) -> Result<rspace_plus_plus::rspace::merger::merging_logic::MergeableChsForDeploy, CasperError>
+    {
+        let mut commutative = BTreeMap::new();
+        let mut identity_tagged = HashSet::new();
+        // OBSERVABILITY — track how many channels qualified for the
+        // commutative path vs only entered the identity_tagged set. The
+        // identity_tagged ∖ commutative subset is what falls through to
+        // multiset_diff at merge time and is the wedge surface for non-
+        // numeric tagged-channel values.
+        let mut channel_diags: Vec<(String, bool, String)> = Vec::new();
         for (channel, merge_type) in channels {
-            if let Some((hash, value)) = self.get_number_channel(channel, *merge_type).await? {
-                result.insert(hash, (value, *merge_type));
-            }
+            // Every entry in `channels` is already identity-tagged
+            // (`is_mergeable_channel` filtered them by tuple-head Par against
+            // the registered `mergeable_tags`); include the hash regardless
+            // of whether the value satisfies the commutative-merge shape.
+            let hash = stable_hash_provider::hash(channel);
+            identity_tagged.insert(hash.clone());
+            let in_commutative = if let Some((_, value)) =
+                self.get_number_channel(channel, *merge_type).await?
+            {
+                commutative.insert(hash.clone(), (value, *merge_type));
+                true
+            } else {
+                false
+            };
+            let ch_bytes = hash.bytes();
+            let ch_short =
+                hex::encode(&ch_bytes[..std::cmp::min(8, ch_bytes.len())]);
+            channel_diags.push((ch_short, in_commutative, format!("{:?}", merge_type)));
         }
-        Ok(result)
+        tracing::debug!(
+            target: "f1r3fly.merge.deploy_mergeable",
+            tracked_channels = channels.len(),
+            identity_tagged = identity_tagged.len(),
+            commutative = commutative.len(),
+            fall_through_to_multiset = identity_tagged.len() - commutative.len(),
+            channels = ?channel_diags,
+            "[GET-NUMBER-CHANNELS-DATA] per-deploy mergeable channel summary",
+        );
+        Ok(
+            rspace_plus_plus::rspace::merger::merging_logic::MergeableChsForDeploy {
+                commutative,
+                identity_tagged: shared::rust::hashable_set::HashableSet(identity_tagged),
+            },
+        )
     }
 
     /// Deterministic multi-value fold for a mergeable channel that holds more
@@ -666,6 +763,42 @@ impl RuntimeOps {
                 metrics::counter!(
                     "mergeable_channel_number_sanitized_total",
                     "source" => "casper_runtime"
+                )
+                .increment(1);
+
+                // [MULTI-DATUM-ORIGIN] Observation point: tagged channel
+                // already has multi-Datum BEFORE this read. The corruption
+                // was committed by a prior block; we're now seeing it during
+                // a subsequent deploy's get_number_channels_data sweep. Emit
+                // ERROR with full per-Datum source dump so we can correlate
+                // back to the originating produce by hash.
+                let ch_bytes = ch_hash.bytes();
+                let ch_short =
+                    hex::encode(&ch_bytes[..std::cmp::min(8, ch_bytes.len())]);
+                let ch_full = hex::encode(&ch_bytes);
+                tracing::error!(
+                    target: "f1r3fly.merge.multi_datum_origin",
+                    "[MULTI-DATUM-ORIGIN] observation=sanitize-fallback \
+                     channel_short={} channel_full={} datum_count={} \
+                     merge_type={:?} folded_value={}",
+                    ch_short, ch_full, ch_values.len(), merge_type, num,
+                );
+                for (idx, datum) in ch_values.iter().enumerate() {
+                    let src_bytes = datum.source.hash.bytes();
+                    let src_short =
+                        hex::encode(&src_bytes[..std::cmp::min(8, src_bytes.len())]);
+                    tracing::error!(
+                        target: "f1r3fly.merge.multi_datum_origin",
+                        "[MULTI-DATUM-ORIGIN]   datum[{}] channel_short={} \
+                         produce_hash={} persistent={} par_count={}",
+                        idx, ch_short, src_short,
+                        datum.persist, datum.a.pars.len(),
+                    );
+                }
+                metrics::counter!(
+                    "f1r3fly_multi_datum_origin_total",
+                    "path" => "observation",
+                    "kind" => "sanitize-fallback",
                 )
                 .increment(1);
 
@@ -746,6 +879,20 @@ impl RuntimeOps {
         }
     }
 
+    // Span carries `path=play` and `kind=system-deploy` plus the system
+    // deploy's Rust type name so child events emitted during PreCharge,
+    // Refund, Slash, or CloseBlock eval are correlatable. See
+    // docs/observability-conventions.md.
+    #[tracing::instrument(
+        name = "play_system_deploy",
+        target = "f1r3fly.casper.deploy_eval",
+        skip_all,
+        fields(
+            path = "play",
+            kind = "system-deploy",
+            system_deploy_type = %std::any::type_name::<S>(),
+        ),
+    )]
     pub async fn play_system_deploy_internal<S: SystemDeployTrait>(
         &mut self,
         system_deploy: &mut S,
@@ -802,6 +949,48 @@ impl RuntimeOps {
             .map(event_converter::to_casper_event)
             .collect();
         log_mem_step("after_convert_event_log");
+
+        // [MULTI-DATUM-ORIGIN] Provenance instrumentation: after system-deploy
+        // eval, walk every tagged channel the deploy touched and log ERROR if
+        // multi-Datum is left. Covers PreCharge, Refund, Slash, CloseBlock —
+        // any system deploy could be the originator. `deploy_type` carries
+        // the Rust type name (e.g. "casper::...CloseBlockDeploy"). Always
+        // fires; ERROR-level. Remove once root cause is identified.
+        for (channel, merge_type) in &eval_result.mergeable {
+            let ch_values = self.runtime.get_data(channel).await;
+            if ch_values.len() > 1 {
+                let ch_hash = stable_hash_provider::hash(channel);
+                let ch_bytes = ch_hash.bytes();
+                let ch_short = hex::encode(&ch_bytes[..std::cmp::min(8, ch_bytes.len())]);
+                let ch_full = hex::encode(&ch_bytes);
+                tracing::error!(
+                    target: "f1r3fly.merge.multi_datum_origin",
+                    "[MULTI-DATUM-ORIGIN] path=play kind=system-deploy \
+                     system_deploy_type={} channel_short={} channel_full={} \
+                     datum_count={} merge_type={:?}",
+                    deploy_type, ch_short, ch_full,
+                    ch_values.len(), merge_type,
+                );
+                for (idx, datum) in ch_values.iter().enumerate() {
+                    let src_bytes = datum.source.hash.bytes();
+                    let src_short =
+                        hex::encode(&src_bytes[..std::cmp::min(8, src_bytes.len())]);
+                    tracing::error!(
+                        target: "f1r3fly.merge.multi_datum_origin",
+                        "[MULTI-DATUM-ORIGIN]   datum[{}] channel_short={} \
+                         produce_hash={} persistent={} par_count={}",
+                        idx, ch_short, src_short,
+                        datum.persist, datum.a.pars.len(),
+                    );
+                }
+                metrics::counter!(
+                    "f1r3fly_multi_datum_origin_total",
+                    "path" => "play",
+                    "kind" => "system-deploy",
+                )
+                .increment(1);
+            }
+        }
 
         Ok((log, result_or_system_deploy_error, eval_result.mergeable))
     }

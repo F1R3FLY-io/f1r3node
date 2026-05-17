@@ -251,8 +251,13 @@ pub fn init_json_logging() -> eyre::Result<()> {
                 .with_target(true)
                 .with_file(true)
                 .with_line_number(true)
-                .with_current_span(false) // logs only for now
-                .with_span_list(false) // logs only for now
+                // Emit current span's fields on every nested event so
+                // `#[tracing::instrument]` spans (e.g., deploy_sig + path
+                // on process_deploy / run_user_deploy) propagate to the
+                // child events emitted in reduce.rs and elsewhere. See
+                // docs/observability-conventions.md.
+                .with_current_span(true)
+                .with_span_list(false)
                 .flatten_event(true), // put event fields at top level
         )
         .try_init()?;

@@ -105,6 +105,7 @@ async fn two_deploys_executed_inside_single_state_transition_should_be_dependent
                     runtime_manager.get_history_repo(),
                     &Blake2b256Hash::from_bytes_prost(&base_state),
                     merge_chs,
+                    /* is_commutative_system_deploy */ false,
                 )
             })
             .collect::<Vec<_>>();

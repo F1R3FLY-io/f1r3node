@@ -1,3 +1,6 @@
 mod conflict_detection_perf_spec;
+mod dag_merger_branch_derived_spec;
+mod merge_bitmask_or_tagged_channel_spec;
+mod merge_csv_pipeline_spec;
 mod merge_number_channel_spec;
 mod merging_cases;
