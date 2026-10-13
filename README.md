@@ -1,5 +1,8 @@
 # F1r3fly
 
+> [!WARNING]
+> **This repository is deprecated and read-only.** It is no longer developed or supported and is kept for historical reference only. All development, issues, and pull requests have moved to [F1R3FLY-io/f1r3node-rust](https://github.com/F1R3FLY-io/f1r3node-rust).
+
 > A decentralized, economic, censorship-resistant, public compute infrastructure and blockchain that hosts and executes smart contracts with trustworthy, scalable, concurrent proof-of-stake consensus.
 
 ## Table of Contents
@@ -326,6 +329,7 @@ Reference configs:
 - [defaults.conf](node/src/main/resources/defaults.conf) - All available options
 - [docker/conf/standalone-dev.conf](docker/conf/standalone-dev.conf) - Standalone development config
 - [docker/conf/default.conf](docker/conf/default.conf) - Shard config
+- [Consensus Configuration Guide](https://github.com/F1R3FLY-io/system-integration/blob/main/docs/consensus-configuration.md) - FTT, synchrony threshold semantics, finalization formula, recommended values
 
 ## Troubleshooting
 

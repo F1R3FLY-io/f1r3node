@@ -4,6 +4,73 @@ All notable changes to the Scala implementation of F1r3node will be documented i
 This changelog is automatically generated from conventional commits.
 
 
+> **Deprecated:** this repository is no longer maintained and no further releases will be published here. See [f1r3node-rust](https://github.com/F1R3FLY-io/f1r3node-rust) for ongoing development and releases.
+
+## [v0.4.9] - 2026-04-20
+
+### CI
+
+- add cancel-in-progress to concurrency block
+
+
+## [v0.4.8] - 2026-04-02
+
+### CI
+
+- use full SHA for system-integration pin (actions/checkout requires it)
+- pin system-integration to f4c2a00 for Scala test compatibility
+
+
+## [v0.4.7] - 2026-03-31
+
+### Bug Fixes
+
+- PR links in changelog, extract release notes, skip noisy commits
+
+### CI
+
+- explicitly list integration test files instead of running all
+
+
+## [v0.4.6] - 2026-03-31
+
+### Bug Fixes
+
+- update fault-tolerance-threshold defaults and add consensus config guide link
+
+### CI
+
+- skip test_replay_determinism in integration tests
+
+
+## [v0.4.5] - 2026-03-29
+
+### Bug Fixes
+
+- tag release commit not SNAPSHOT, re-enable integration tests
+
+
+## [v0.4.4] - 2026-03-28
+
+### Bug Fixes
+
+- use bodyFile instead of bodyPath for release changelog
+
+
+## [v0.4.3] - 2026-03-27
+
+### Bug Fixes
+
+- split credential push, fix Docker tag logic, add changelog to releases
+
+
+## [v0.4.2] - 2026-03-27
+
+### Bug Fixes
+
+- use PAT checkout for tag triggers, disable integration tests temporarily
+
+
 ## [v0.4.0] - 2026-03-27
 
 ### Bug Fixes
