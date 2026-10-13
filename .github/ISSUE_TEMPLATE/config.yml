@@ -1,5 +1,8 @@
 blank_issues_enabled: false
 contact_links:
+  - name: Open an issue on f1r3node-rust
+    url: https://github.com/F1R3FLY-io/f1r3node-rust/issues
+    about: This repository is deprecated. Please report issues and requests on f1r3node-rust instead.
   - name: Propose F1R3FLY platform improvement (FFLIP)
     url: https://github.com/f1r3fly/fflip/issues
     about: For F1R3FLY platform feature requests, please open an issue on the F1R3FLY Improvement Proposals repository

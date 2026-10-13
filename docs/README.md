@@ -1,5 +1,7 @@
 # F1r3fly Documentation
 
+> **Deprecated:** this repository is no longer maintained. Use [f1r3node-rust](https://github.com/F1R3FLY-io/f1r3node-rust) instead.
+
 ## Workspace Overview
 
 The Cargo workspace contains 11 crates:

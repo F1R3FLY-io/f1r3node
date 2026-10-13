@@ -1,5 +1,7 @@
 # Crypto
 
+> **Deprecated:** this repository is no longer maintained. Use [f1r3node-rust](https://github.com/F1R3FLY-io/f1r3node-rust) instead.
+
 Cryptographic primitives for the F1r3fly node: hashing, signing, key management, and TLS certificates.
 
 ## Features

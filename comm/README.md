@@ -1,5 +1,7 @@
 # F1r3fly Communication Subsystem
 
+> **Deprecated:** this repository is no longer maintained. Use [f1r3node-rust](https://github.com/F1R3FLY-io/f1r3node-rust) instead.
+
 Advanced peer-to-peer communication layer for the F1r3fly blockchain network, featuring secure TLS transport, multi-consumer streaming, and enterprise-grade concurrent messaging capabilities.
 
 ## 🏗️ F1r3fly Communication Architecture

@@ -1,5 +1,7 @@
 # Casper
 
+> **Deprecated:** this repository is no longer maintained. Use [f1r3node-rust](https://github.com/F1R3FLY-io/f1r3node-rust) instead.
+
 CBC Casper consensus engine: block creation, validation, DAG management, safety oracle, and finalization.
 
 ## Building

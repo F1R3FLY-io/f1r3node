@@ -1,5 +1,9 @@
 # RNode - F1R3FLY.io Blockchain Platform
 
+## Deprecation Notice
+- This repository is **deprecated and read-only**. Do not start new feature work, fixes, or refactors here.
+- Direct developers and users to [F1R3FLY-io/f1r3node-rust](https://github.com/F1R3FLY-io/f1r3node-rust) for all development, issues, and pull requests.
+
 ## Project Context
 - RNode is a decentralized blockchain platform developed by F1R3FLY.io that implements four distinct consensus mechanisms using the Rholang programming language
 - This is a **multi-language blockchain project** with Scala for node infrastructure and Rust for performance-critical components

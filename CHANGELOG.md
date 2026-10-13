@@ -3,6 +3,7 @@
 All notable changes to the Rust implementation of F1r3node will be documented in this file.
 This changelog is automatically generated from conventional commits.
 
+> **Deprecated:** this repository is no longer maintained and no further releases will be published here. See [f1r3node-rust](https://github.com/F1R3FLY-io/f1r3node-rust) for ongoing development and releases.
 
 ## [v0.4.15] - 2026-05-08
 

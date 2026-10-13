@@ -1,21 +1,9 @@
 name: Build, Test, and Deploy (Rust)
 
+# Deprecated: automatic push/pull_request triggers removed. This repository is
+# read-only; development continues at https://github.com/F1R3FLY-io/f1r3node-rust
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - staging
-      - trying
-      - rust/dev
-      - rust/main
-      - rust/staging
-    tags: "**"
-  pull_request:
-    branches:
-      - rust/dev
-      - rust/main
-      - rust/staging
-      - "feature/**"
 
 # Prevent interleaving of integration test jobs on single-runner-per-arch
 # self-hosted runners. A second workflow run for the same ref queues until

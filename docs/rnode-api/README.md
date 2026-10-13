@@ -1,4 +1,7 @@
 # RNode API
+
+> **Deprecated:** this repository is no longer maintained. Use [f1r3node-rust](https://github.com/F1R3FLY-io/f1r3node-rust) instead.
+
 [Use it live!](https://developer.rchain.coop/rnode-api)
 
 `rnode` communicates primarily using gRPC but

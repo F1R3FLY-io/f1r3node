@@ -1,5 +1,7 @@
 # rspace++
 
+> **Deprecated:** this repository is no longer maintained. Use [f1r3node-rust](https://github.com/F1R3FLY-io/f1r3node-rust) instead.
+
 Rust implementation of the F1r3fly tuple space engine. Provides produce/consume pattern matching, LMDB-backed trie history, and checkpointing for the Rholang interpreter.
 
 See [rspace/README.md](../rspace/README.md) for the original Scala implementation and conceptual overview.

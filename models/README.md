@@ -1,5 +1,7 @@
 # Models
 
+> **Deprecated:** this repository is no longer maintained. Use [f1r3node-rust](https://github.com/F1R3FLY-io/f1r3node-rust) instead.
+
 Protobuf-generated types, domain structs (blocks, deploys, validators), Rholang AST, and sorted collections for the F1r3fly blockchain.
 
 ## Building

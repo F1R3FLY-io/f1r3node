@@ -1,5 +1,7 @@
 # Node
 
+> **Deprecated:** this repository is no longer maintained. Use [f1r3node-rust](https://github.com/F1R3FLY-io/f1r3node-rust) instead.
+
 Main entry point for the F1r3fly blockchain node. Orchestrates all subsystems: consensus (Casper), networking (comm), contract execution (Rholang/RSpace), storage, gRPC/HTTP APIs, and diagnostics.
 
 ## Building

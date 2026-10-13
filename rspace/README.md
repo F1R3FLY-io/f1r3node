@@ -1,5 +1,7 @@
 # RSpace (Scala)
 
+> **Deprecated:** this repository is no longer maintained. Use [f1r3node-rust](https://github.com/F1R3FLY-io/f1r3node-rust) instead.
+
 This directory contains the original Scala implementation of the RSpace tuple space library. The active Rust implementation is in [`rspace++/`](../rspace++/README.md).
 
 ## Overview
