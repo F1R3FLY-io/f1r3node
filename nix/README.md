@@ -1,5 +1,7 @@
 # RChain project setup/build using *nix*
 
+> **Deprecated:** this repository is no longer maintained. Use [f1r3node-rust](https://github.com/F1R3FLY-io/f1r3node-rust) instead.
+
 This document describes developer setup and build commands for RChain project using _nix-shell_.
 
 **Note:** _default.nix_ file in this directory is not part of this document. Using _shell.nix_

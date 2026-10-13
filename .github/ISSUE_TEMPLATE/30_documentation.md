@@ -7,6 +7,8 @@ assignees: ''
 
 ---
 
+> **This repository is deprecated and no longer accepts issues.** Please open your issue at https://github.com/F1R3FLY-io/f1r3node-rust/issues instead.
+
 <!-- Thank you very much for your feedback. -->
 
 <!-- Please answer these questions before submitting a request. -->

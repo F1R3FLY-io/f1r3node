@@ -1,5 +1,7 @@
 # RChain Node
 
+> **Deprecated:** this repository is no longer maintained. Use [f1r3node-rust](https://github.com/F1R3FLY-io/f1r3node-rust) instead.
+
 ## slowcooker
 
 Set of generative stateful tests that take a long time.

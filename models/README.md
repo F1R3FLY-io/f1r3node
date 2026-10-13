@@ -1,5 +1,7 @@
 # Models
 
+> **Deprecated:** this repository is no longer maintained. Use [f1r3node-rust](https://github.com/F1R3FLY-io/f1r3node-rust) instead.
+
 Common data model types common for the RChain blockchain.
 
 ### Prerequisites

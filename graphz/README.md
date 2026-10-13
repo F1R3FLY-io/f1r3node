@@ -1,5 +1,7 @@
 # Graphz - Rust
 
+> **Deprecated:** this repository is no longer maintained. Use [f1r3node-rust](https://github.com/F1R3FLY-io/f1r3node-rust) instead.
+
 A Rust library for generating Graphviz diagrams, ported from the original Scala implementation.
 
 ## Overview
