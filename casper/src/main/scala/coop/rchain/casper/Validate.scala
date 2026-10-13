@@ -769,4 +769,5 @@ object Validate {
     } else {
       BlockStatus.lowDeployCost.asLeft[ValidBlock].pure
     }
+
 }

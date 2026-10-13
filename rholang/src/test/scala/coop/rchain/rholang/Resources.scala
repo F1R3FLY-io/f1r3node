@@ -84,6 +84,28 @@ object Resources {
         )
       )
 
+  def mkRuntimeWithFileDir[F[_]: Concurrent: Parallel: ContextShift: Metrics: Span: Log](
+      prefix: String,
+      fileReplicationDir: Option[Path]
+  )(implicit scheduler: Scheduler): Resource[F, RhoRuntime[F]] =
+    mkTempDir(prefix)
+      .evalMap(RholangCLI.mkRSpaceStoreManager[F](_))
+      .evalMap(_.rSpaceStores)
+      .evalMap(
+        RhoRuntime.createRuntime(
+          _,
+          Par(),
+          false,
+          RhoRuntime.stdRhoAIProcesses[F] ++ RhoRuntime.stdRhoOllamaProcesses[F],
+          TestExternalServices(
+            OpenAIServiceMock.echoService,
+            GrpcClientService.noOpInstance,
+            OllamaServiceMock.echoService
+          ),
+          fileReplicationDir
+        )
+      )
+
   def mkRuntimes[F[_]: Concurrent: Parallel: ContextShift: Metrics: Span: Log](
       prefix: String,
       initRegistry: Boolean = false

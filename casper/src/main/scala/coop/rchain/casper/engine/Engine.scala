@@ -84,6 +84,9 @@ object Engine {
       _   <- TransportLayer[F].stream(peer, msg)
     } yield ()
 
+  import java.nio.file.{Path, Paths}
+  import scala.concurrent.duration._
+
   // format: off
   def transitionToRunning[F[_]
     /* Execution */   : Concurrent: Time
@@ -98,9 +101,11 @@ object Engine {
       approvedBlock: ApprovedBlock,
       validatorId: Option[ValidatorIdentity],
       init: F[Unit],
-      disableStateExporter: Boolean
+      disableStateExporter: Boolean,
+      fileRequester: FileRequester[F]
   ): F[Unit] = {
     val approvedBlockInfo = PrettyPrinter.buildString(approvedBlock.candidate.block, short = true)
+
     for {
       _ <- Log[F].info(s"Making a transition to Running state. Approved $approvedBlockInfo")
       _ <- EventLog[F].publish(
@@ -115,7 +120,8 @@ object Engine {
         approvedBlock,
         validatorId,
         init,
-        disableStateExporter
+        disableStateExporter,
+        fileRequester
       )
       _ <- EngineCell[F].set(running)
 

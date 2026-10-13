@@ -883,7 +883,8 @@ class ValidateTest
                            rStore,
                            mStore,
                            Genesis.NonNegativeMergeableTagName,
-                           NoOpExternalServices
+                           NoOpExternalServices,
+                           None
                          )
         dag <- blockDagStorage.getRepresentation
         _ <- InterpreterUtil

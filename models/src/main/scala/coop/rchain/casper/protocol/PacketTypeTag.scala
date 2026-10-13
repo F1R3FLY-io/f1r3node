@@ -24,6 +24,10 @@ object PacketTypeTag extends Enum[PacketTypeTag] {
   // Last finalized state messages
   case object StoreItemsMessageRequest extends PacketTypeTag
   case object StoreItemsMessage        extends PacketTypeTag
+  // File Replication
+  case object HasFile     extends PacketTypeTag
+  case object FileRequest extends PacketTypeTag
+  case object FilePacket  extends PacketTypeTag
 
   override val values = findValues
 
@@ -58,6 +62,10 @@ object PacketTypeTag extends Enum[PacketTypeTag] {
       summon(StoreItemsMessageRequest)
     implicit val valueOfStoreItemsMessage: ValueOf[StoreItemsMessage.type] =
       summon(StoreItemsMessage)
+    // File Replication
+    implicit val valueOfHasFile: ValueOf[HasFile.type]         = summon(HasFile)
+    implicit val valueOfFileRequest: ValueOf[FileRequest.type] = summon(FileRequest)
+    implicit val valueOfFilePacket: ValueOf[FilePacket.type]   = summon(FilePacket)
   }
 
 }

@@ -7,10 +7,12 @@ import cats.{Applicative, Foldable}
 import com.google.protobuf.ByteString
 import coop.rchain.blockstorage.BlockStore
 import coop.rchain.casper.api._
-import coop.rchain.casper.engine.EngineCell.EngineCell
+import coop.rchain.casper.engine.EngineCell._
 import coop.rchain.casper.protocol._
+import java.nio.file.Path
 import coop.rchain.casper.protocol.deploy.v1._
 import coop.rchain.casper.{ProposeFunction, SafetyOracle}
+import coop.rchain.node.configuration.FileUploadConf
 import coop.rchain.catscontrib.TaskContrib._
 import coop.rchain.comm.discovery.NodeDiscovery
 import coop.rchain.comm.rp.Connect.{ConnectionsCell, RPConfAsk}
@@ -28,11 +30,15 @@ import coop.rchain.node.web.{
 import coop.rchain.shared.Log
 import coop.rchain.shared.ThrowableOps._
 import coop.rchain.shared.syntax._
+import coop.rchain.shared.FileHashValidation
 import monix.eval.Task
 import monix.execution.Scheduler
 import monix.reactive.Observable
 
 object DeployGrpcServiceV1 {
+
+  /** URI of the FileRegistry contract registered in the rho:registry. */
+  val FILE_REGISTRY_URI = "rho:id:m6rqma7yas7o6ieos45ai4dskmc6zugs9rmsp6i3zan8qe5hsfqsdt"
 
   def apply[F[_]: Monixable: Concurrent: Log: SafetyOracle: BlockStore: Span: EngineCell: RPConfAsk: ConnectionsCell: NodeDiscovery: Metrics](
       apiMaxBlocksLimit: Int,
@@ -44,7 +50,9 @@ object DeployGrpcServiceV1 {
       networkId: String,
       shardId: String,
       minPhloPrice: Long,
-      isNodeReadOnly: Boolean
+      isNodeReadOnly: Boolean,
+      uploadDir: Path,
+      fileUploadConf: FileUploadConf
   )(
       implicit worker: Scheduler
   ): DeployServiceV1GrpcMonix.DeployService =
@@ -398,5 +406,146 @@ object DeployGrpcServiceV1 {
           val response = StatusResponse().withStatus(status)
           response
         }).toTask
+
+      /** Delete the data file and metadata sidecar for a given hash. */
+      private def cleanupUploadedFile(hash: String): Task[Unit] =
+        Task.delay {
+          java.nio.file.Files.deleteIfExists(uploadDir.resolve(hash))
+          java.nio.file.Files.deleteIfExists(uploadDir.resolve(s"$hash.meta.json"))
+        }.void
+
+      def uploadFile(request: Observable[FileUploadChunk]): Task[FileUploadResponse] =
+        FileUploadAPI
+          .processFileUpload(
+            request,
+            shardId,
+            minPhloPrice,
+            isNodeReadOnly,
+            uploadDir,
+            fileUploadConf.phloPerStorageByte,
+            fileUploadConf.baseRegisterPhlo,
+            fileUploadConf.maxFileSize
+          )
+          .flatMap { output =>
+            output.deployProto match {
+              case Some(proto) =>
+                // Validate client signature — same path as doDeploy
+                DeployData.from(proto) match {
+                  case Left(sigErr) =>
+                    // Sig invalid — clean up saved file (only if NOT a dedup)
+                    val hash = output.result.fileHash
+                    // Check if the file existed before this upload (dedup case)
+                    // A dedup upload doesn't write a new file, so we must not delete the existing one.
+                    val isDedupUpload = output.result.storagePhloCost == 0L
+                    val cleanup       = if (!isDedupUpload) cleanupUploadedFile(hash) else Task.unit
+                    cleanup *> Task.now(
+                      FileUploadResponse(
+                        FileUploadResponse.Message.Error(
+                          ServiceError(List(s"Invalid deploy signature: $sigErr"))
+                        )
+                      )
+                    )
+                  case Right(signed) =>
+                    val deployIdHex = coop.rchain.shared.Base16.encode(signed.sig.toByteArray)
+                    BlockAPI
+                      .deploy[F](signed, triggerProposeF, minPhloPrice, isNodeReadOnly, shardId)
+                      .toTask
+                      .flatMap {
+                        case Right(_) =>
+                          val updatedResult = output.result.copy(deployId = deployIdHex)
+                          Task.now(
+                            FileUploadResponse(FileUploadResponse.Message.Result(updatedResult))
+                          )
+                        case Left(deployErr) =>
+                          // Deploy rejected — clean up saved file
+                          val hash = output.result.fileHash
+                          cleanupUploadedFile(hash).map(
+                            _ =>
+                              FileUploadResponse(
+                                FileUploadResponse.Message.Error(
+                                  ServiceError(List(s"Deploy submission failed: $deployErr"))
+                                )
+                              )
+                          )
+                      }
+                }
+
+              case None =>
+                Task.now(
+                  FileUploadResponse(
+                    FileUploadResponse.Message.Error(
+                      ServiceError(List("Deploy proto was not constructed"))
+                    )
+                  )
+                )
+            }
+          }
+          .onErrorHandle { t =>
+            import coop.rchain.shared.ThrowableOps._
+            FileUploadResponse(
+              FileUploadResponse.Message.Error(ServiceError(t.toMessageList()))
+            )
+          }
+
+      // The ScalaPB-generated gRPC Monix trait does not expose request metadata
+      // (no ServerCallHandler or Metadata in the method signature), so we cannot
+      // extract the client IP here. The rate limiter therefore acts as a GLOBAL
+      // concurrent download limit (all clients share the "unknown" key).
+      // To implement true per-IP limiting, add a gRPC ServerInterceptor that
+      // stores the IP in a Context.Key and read it here.
+      def downloadFile(request: FileDownloadRequest): Observable[FileDownloadChunk] =
+        FileDownloadAPI.streamFile(
+          request,
+          isNodeReadOnly,
+          uploadDir,
+          chunkSize = fileUploadConf.chunkSize.toInt,
+          maxConcurrentPerIp = fileUploadConf.maxConcurrentDownloadsPerIp,
+          devMode = devMode,
+          maxCacheEntries = fileUploadConf.maxDownloadCacheEntries,
+          finalizationChecker = checkFileFinalized(devMode)
+        )
+
+      /**
+        * Build a finalization checker that queries
+        * `FileRegistry!("lookup", hash)` on the Last Finalized Block's
+        * post-state via `exploratoryDeploy`.
+        * A non-Nil result means the file is registered in a finalized block.
+        *
+        * Defense-in-depth: the hash is re-validated here even though
+        * `FileDownloadAPI.streamFile` already checks format, to prevent
+        * Rholang code injection if this method is ever called from a
+        * different context.
+        */
+      private def checkFileFinalized(devMode: Boolean): String => Task[Boolean] = {
+        val log = org.slf4j.LoggerFactory.getLogger("FileDownloadAPI")
+        fileHash: String =>
+          require(
+            FileHashValidation.isValidFileHash(fileHash),
+            s"Invalid hash for finalization check: $fileHash"
+          )
+          BlockAPI
+            .exploratoryDeploy[F](
+              s"""new return, rl(`rho:registry:lookup`), fileRegistryCh in {
+                 |  rl!(`${FILE_REGISTRY_URI}`, *fileRegistryCh) |
+                 |  for(@(_, FileRegistry) <- fileRegistryCh) {
+                 |    @FileRegistry!("lookup", "$fileHash", *return)
+                 |  }
+                 |}""".stripMargin,
+              none[String], // Use LFB (no specific block hash)
+              false,        // Use post-state
+              devMode
+            )
+            .toTask
+            .map {
+              case Right((pars, _)) =>
+                // If the result is non-empty and not Nil, the file is registered
+                pars.nonEmpty && pars.exists(p => p != coop.rchain.models.Par())
+              case Left(err) =>
+                log.error(
+                  s"[FileDownloadAPI] Finalization check failed for hash=${fileHash.take(16)}...: $err"
+                )
+                false
+            }
+      }
     }
 }

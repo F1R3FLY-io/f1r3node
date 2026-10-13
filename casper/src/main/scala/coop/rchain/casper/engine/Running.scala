@@ -262,7 +262,8 @@ class Running[F[_]
     approvedBlock: ApprovedBlock,
     validatorId: Option[ValidatorIdentity],
     theInit: F[Unit],
-    disableStateExporter: Boolean
+    disableStateExporter: Boolean,
+    fileRequester: FileRequester[F]
 ) extends Engine[F] {
 
   import Engine._
@@ -345,7 +346,7 @@ class Running[F[_]
 
         _ <- handleApprovedBlockRequest(peer, approvedBlock)
       } yield ()
-    case na: NoApprovedBlockAvailable => logNoApprovedBlockAvailable(na.nodeIdentifer)
+    case na: NoApprovedBlockAvailable => logNoApprovedBlockAvailable[F](na.nodeIdentifer)
 
     // Approved state store records
     case StoreItemsMessageRequest(startPath, skip, take) =>
@@ -360,6 +361,12 @@ class Running[F[_]
           s"Received StoreItemsMessage request but the node is configured to not respond to StoreItemsMessage, from ${peer}."
         )
       }
+
+    // File Replication messages
+    case hf: HasFile     => fileRequester.handleHasFile(peer, hf)
+    case fr: FileRequest => fileRequester.handleFileRequest(peer, fr)
+    case fp: FilePacket  => fileRequester.handleFilePacket(peer, fp)
+
     case _ => noop
   }
 

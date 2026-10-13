@@ -185,6 +185,20 @@ object HashM extends HashMDerivation {
   implicit val ContinuationAtNameResponseV2Hash = gen[v1.ContinuationAtNameResponse]
   implicit val FindDeployResponseV2Hash         = gen[v1.FindDeployResponse]
   implicit val LastFinalizedBlockResponseV2Hash = gen[v1.LastFinalizedBlockResponse]
+
+  // File upload/download — deploy service V1
+  implicit val FileUploadMetadataHash   = gen[v1.FileUploadMetadata]
+  implicit val FileUploadChunkHash      = gen[v1.FileUploadChunk]
+  implicit val FileUploadResultHash     = gen[v1.FileUploadResult]
+  implicit val FileUploadResponseHash   = gen[v1.FileUploadResponse]
+  implicit val FileDownloadRequestHash  = gen[v1.FileDownloadRequest]
+  implicit val FileDownloadMetadataHash = gen[v1.FileDownloadMetadata]
+  implicit val FileDownloadChunkHash    = gen[v1.FileDownloadChunk]
+
+  // File Replication (P2P)
+  implicit val HasFileProtoHash     = gen[HasFileProto]
+  implicit val FileRequestProtoHash = gen[FileRequestProto]
+  implicit val FilePacketProtoHash  = gen[FilePacketProto]
 }
 
 trait HashMDerivation {

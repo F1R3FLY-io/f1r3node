@@ -30,6 +30,6 @@ object Base16 {
     }.toOption
 
   private def bytes2hex(bytes: Array[Byte], sep: Option[String]): String =
-    bytes.map("%02x".format(_)).mkString(sep.getOrElse(""))
+    bytes.map(b => "%02x".format(b & 0xFF)).mkString(sep.getOrElse(""))
 
 }

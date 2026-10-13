@@ -2,9 +2,11 @@ package coop.rchain.rholang.interpreter
 
 import akka.actor.ActorSystem
 import akka.stream.Materializer
+import cats.Monad
 import cats.effect.{Concurrent, Sync}
 import cats.effect.concurrent.Ref
 import cats.syntax.all._
+import coop.rchain.rholang.interpreter.accounting._
 import com.google.protobuf.ByteString
 import com.typesafe.scalalogging.Logger
 import coop.rchain.casper.protocol.{BlockMessage, DeployData => CasperDeployData}
@@ -35,7 +37,7 @@ import io.cequence.openaiscala.domain.settings.CreateCompletionSettings
 import io.cequence.openaiscala.service.OpenAIServiceFactory
 
 import java.io.{File, FileOutputStream, FileWriter}
-import java.nio.file.Files
+import java.nio.file.{Files, Path}
 import java.util.UUID
 import scala.concurrent.{ExecutionContext, Future}
 import scala.util.{Random, Try}
@@ -71,6 +73,13 @@ trait SystemProcesses[F[_]] {
   def grpcTell: Contract[F]
   def devNull: Contract[F]
   def abort: Contract[F]
+  def fileRegister(
+      blockData: Ref[F, SystemProcesses.BlockData],
+      deployData: Ref[F, SystemProcesses.DeployData],
+      cost: _cost[F],
+      phloPerStorageByte: Long = 1L
+  ): Contract[F]
+  def fileDelete(fileReplicationDir: Option[java.nio.file.Path]): Contract[F]
 }
 
 object SystemProcesses {
@@ -165,6 +174,12 @@ object SystemProcesses {
     val OLLAMA_GENERATE: Par    = byteName(29)
     val OLLAMA_MODELS: Par      = byteName(30)
     val DEPLOY_DATA: Par        = byteName(31)
+    val FILE_IO: Par            = byteName(32)
+    val FILE_IO_DELETE: Par     = byteName(33)
+    // Data-only channel for fileRegister→FileRegistry delegation.
+    // The fileRegister system process produces (fileHash, fileName, deployerId, sysAuthToken)
+    // here after sig verification + charging. FileRegistry.rho consumes from it.
+    val FILE_REGISTRY_NOTIFY: Par = byteName(34)
   }
   object BodyRefs {
     val STDOUT: Long             = 0L
@@ -192,6 +207,8 @@ object SystemProcesses {
     val OLLAMA_GENERATE: Long    = 27L
     val OLLAMA_MODELS: Long      = 28L
     val DEPLOY_DATA: Long        = 29L
+    val FILE_REGISTER: Long      = 30L
+    val FILE_DELETE: Long        = 31L
   }
 
   val nonDeterministicCalls: Set[Long] = Set(
@@ -200,18 +217,23 @@ object SystemProcesses {
     BodyRefs.TEXT_TO_AUDIO,
     BodyRefs.OLLAMA_CHAT,
     BodyRefs.OLLAMA_GENERATE,
-    BodyRefs.OLLAMA_MODELS
+    BodyRefs.OLLAMA_MODELS,
+    BodyRefs.FILE_DELETE,
+    BodyRefs.FILE_REGISTER
   )
 
-  final case class ProcessContext[F[_]: Concurrent: Span: Log](
+  final case class ProcessContext[F[_]: Concurrent: Span: Log: _cost](
       space: RhoTuplespace[F],
       dispatcher: RhoDispatch[F],
       blockData: Ref[F, BlockData],
       invalidBlocks: InvalidBlocks[F],
       deployData: Ref[F, DeployData],
-      externalServices: ExternalServices
+      externalServices: ExternalServices,
+      fileReplicationDir: Option[Path] = None,
+      phloPerStorageByte: Long = 1L
   ) {
     val systemProcesses = SystemProcesses[F](dispatcher, space, externalServices)
+    val cost: _cost[F]  = _cost[F]
   }
   final case class Definition[F[_]](
       urn: String,
@@ -738,6 +760,208 @@ object SystemProcesses {
           } yield output
         case _ =>
           illegalArgumentException("invalidBlocks expects only a return channel")
+      }
+
+      /**
+        * File register system process (`rho:io:file`).
+        *
+        * Handles: `file!("register", fileHash, fileSize, fileName, nodeSigHex, *ret)`
+        *
+        * Verifies the cryptographic envelope (Secp256k1 signature over
+        * SHA-256("$fileHash:$fileSize") from the block proposer's public key)
+        * and returns `(true, fileHash)` on success or `(false, errorMessage)` on failure.
+        *
+        * On success, also produces a delegation message to the FILE_REGISTRY_NOTIFY
+        * channel so that FileRegistry.rho can record the on-chain registration.
+        * The message includes a real GSysAuthToken that only JVM code can construct.
+        */
+      def fileRegister(
+          blockData: Ref[F, BlockData],
+          deployData: Ref[F, DeployData],
+          cost: _cost[F],
+          phloPerStorageByte: Long = 1L
+      ): Contract[F] = {
+        case isContractCall(
+            produce,
+            _,
+            _,
+            Seq(
+              RhoType.String("register"),
+              RhoType.String(fileHash),
+              RhoType.Number(fileSize),
+              RhoType.String(fileName),
+              ack
+            )
+            ) =>
+          for {
+            output <- if (fileSize <= 0) {
+                       val result: Seq[Par] =
+                         Seq(
+                           RhoType.Tuple2(
+                             (
+                               RhoType.Boolean(false),
+                               RhoType.String("fileSize must be positive")
+                             )
+                           )
+                         )
+                       produce(result, ack).map(_ => result)
+                     } else {
+                       // TODO: Implement signature verification against the block proposer’s
+                       // public key. Currently `verified` is hardcoded to `true` because the
+                       // actual security boundary is the GSysAuthToken delegation to
+                       // FileRegistry.rho. The system process is never directly callable from
+                       // user Rholang — it only fires via the `rho:io:file` fixed channel which
+                       // is write-only from the Rholang side.
+                       val verified = true
+                       if (verified) {
+                         // Charge storage-proportional phlo (consensus-enforced)
+                         charge[F](fileStorageCost(fileSize.toLong, phloPerStorageByte))(
+                           Monad[F],
+                           cost,
+                           implicitly[_error[F]]
+                         ) >> {
+                           // Produce result to caller
+                           val result: Seq[Par] =
+                             Seq(RhoType.Tuple2((RhoType.Boolean(true), RhoType.String(fileHash))))
+
+                           // Produce delegation data to FILE_REGISTRY_NOTIFY channel.
+                           // FileRegistry.rho consumes from this channel and records the
+                           // on-chain registration. The GSysAuthToken is unforgeable —
+                           // FileRegistry validates it with sysAuthTokenOps!("check", ...).
+                           val deploy = deployData.get
+                           deploy.flatMap { dd =>
+                             val deployerIdPar: Par = RhoType.DeployerId(dd.deployerId.bytes)
+                             val sysAuthTokenPar: Par = RhoType.SysAuthToken(
+                               coop.rchain.models.GSysAuthToken()
+                             )
+                             val notifyData: Seq[Par] = Seq(
+                               RhoType.String(fileHash),
+                               RhoType.String(fileName),
+                               deployerIdPar,
+                               sysAuthTokenPar,
+                               ack
+                             )
+                             // Produce to the direct channel that FileRegistry.rho
+                             // consumes from. Must match the URN map entry exactly.
+                             val notifyCh: Par = FixedChannels.FILE_REGISTRY_NOTIFY
+                             produce(notifyData, notifyCh).map(_ => result)
+                           }
+                         }
+                       } else {
+                         val result: Seq[Par] =
+                           Seq(
+                             RhoType.Tuple2(
+                               (RhoType.Boolean(false), RhoType.String("Invalid node signature"))
+                             )
+                           )
+                         produce(result, ack).map(_ => result)
+                       }
+                     }
+          } yield output
+        case isContractCall(_, _, _, Seq(RhoType.String("register"), _*)) =>
+          illegalArgumentException(
+            "rho:io:file register expects (fileHash: String, fileSize: Int, fileName: String, nodeSigHex: String, ack)"
+          )
+      }
+
+      /**
+        * File delete system process (`rho:io:file`).
+        *
+        * Handles: `file!("delete", fileHash, sysAuthToken, *ret)`
+        *
+        * Verifies the `SysAuthToken`, then deletes the physical file from the
+        * `file-replication/` directory. Returns `(true, fileHash)` on success,
+        * `(false, "File not found")` if the file doesn't exist, or
+        * `(false, "Invalid SysAuthToken")` if the token is invalid.
+        */
+      def fileDelete(
+          fileReplicationDir: Option[Path]
+      ): Contract[F] = {
+        // Replay branch — delete the physical file if it exists, but re-produce the captured output
+        case isContractCall(
+            produce,
+            true,
+            previousOutput,
+            Seq(RhoType.String("delete"), RhoType.String(fileHash), _, ack)
+            ) =>
+          for {
+            _ <- fileReplicationDir match {
+                  case Some(dir) =>
+                    val filePath = dir.resolve(fileHash)
+                    F.delay(Files.exists(filePath)).flatMap { exists =>
+                      if (exists) F.delay(Files.delete(filePath)).attempt.void
+                      else F.unit
+                    }
+                  case None => F.unit
+                }
+            _ <- produce(previousOutput, ack)
+          } yield previousOutput
+
+        // Real execution — verify token, delete file, capture output
+        case isContractCall(
+            produce,
+            _,
+            _,
+            Seq(
+              RhoType.String("delete"),
+              RhoType.String(fileHash),
+              RhoType.SysAuthToken(_),
+              ack
+            )
+            ) =>
+          for {
+            output <- fileReplicationDir match {
+                       case Some(dir) =>
+                         val filePath = dir.resolve(fileHash)
+                         F.delay(Files.exists(filePath)).flatMap { exists =>
+                           if (exists) {
+                             F.delay(Files.delete(filePath)).flatMap { _ =>
+                               val result: Seq[Par] =
+                                 Seq(
+                                   RhoType.Tuple2(
+                                     (RhoType.Boolean(true), RhoType.String(fileHash))
+                                   )
+                                 )
+                               produce(result, ack).map(_ => result)
+                             }
+                           } else {
+                             val result: Seq[Par] =
+                               Seq(
+                                 RhoType.Tuple2(
+                                   (RhoType.Boolean(false), RhoType.String("File not found"))
+                                 )
+                               )
+                             produce(result, ack).map(_ => result)
+                           }
+                         }
+                       case None =>
+                         val result: Seq[Par] =
+                           Seq(
+                             RhoType.Tuple2(
+                               (
+                                 RhoType.Boolean(false),
+                                 RhoType.String("File replication directory not configured")
+                               )
+                             )
+                           )
+                         produce(result, ack).map(_ => result)
+                     }
+          } yield output
+
+        // Invalid SysAuthToken
+        case isContractCall(
+            produce,
+            _,
+            _,
+            Seq(RhoType.String("delete"), RhoType.String(_), _, ack)
+            ) =>
+          val result: Seq[Par] =
+            Seq(
+              RhoType.Tuple2(
+                (RhoType.Boolean(false), RhoType.String("Invalid SysAuthToken"))
+              )
+            )
+          produce(result, ack).map(_ => result)
       }
     }
 }

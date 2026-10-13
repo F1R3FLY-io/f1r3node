@@ -1,0 +1,257 @@
+// FileRegistryTest.rho
+//
+// Rholang unit tests for the FileRegistry contract.
+// Uses RhoSpec framework with sys:test:authToken:make for SysAuthToken
+// and rho:test:deployerId:make for deployer IDs.
+//
+// Pattern follows PoSTest.rho and SystemVaultTest.rho.
+
+new
+  rl(`rho:registry:lookup`),
+  stdlog(`rho:io:stdlog`),
+  makeSysAuthToken(`sys:test:authToken:make`),
+  getDeployerId(`rho:test:deployerId:make`),
+  RhoSpecCh,
+  sysAuthTokenCh,
+  FileRegistryCh,
+  test_register_new_file,
+  test_register_same_file_different_deployer,
+  test_register_same_file_same_deployer,
+  test_ownerAuthKey_valid_owner,
+  test_ownerAuthKey_non_owner,
+  test_delete_with_valid_authkey,
+  test_lookup_non_consuming
+in {
+  rl!(`rho:id:zphjgsfy13h1k85isc8rtwtgt3t9zzt5pjd5ihykfmyapfc4wt3x5h`, *RhoSpecCh) |
+  rl!(`rho:id:m6rqma7yas7o6ieos45ai4dskmc6zugs9rmsp6i3zan8qe5hsfqsdt`, *FileRegistryCh) |
+  makeSysAuthToken!(*sysAuthTokenCh) |
+
+  for (@(_, RhoSpec)       <- RhoSpecCh &
+       @(_, FileRegistry)  <- FileRegistryCh &
+       @sysAuthToken       <- sysAuthTokenCh) {
+
+    stdlog!("info", "FileRegistry and RhoSpec loaded") |
+
+    // FileRegistry is already initialized at genesis by FileRegistryInitDeploy.
+    // The test sysAuthToken is used for register/delete calls (validated per-call).
+
+    @RhoSpec!("testSuite",
+      [
+        ("Register new file returns (true, fileHandle)", *test_register_new_file),
+        ("Register same file with different deployer adds both deployers", *test_register_same_file_different_deployer),
+        ("Register same file with same deployer does not duplicate", *test_register_same_file_same_deployer),
+        ("ownerAuthKey for valid owner returns valid AuthKey", *test_ownerAuthKey_valid_owner),
+        ("ownerAuthKey for non-owner returns Nil", *test_ownerAuthKey_non_owner),
+        ("Delete with valid AuthKey removes deployer from array", *test_delete_with_valid_authkey),
+        ("Lookup is non-consuming (peek)", *test_lookup_non_consuming)
+      ]
+    ) |
+
+        // ── Test: Register new file ────────────────────────────────────────
+        contract test_register_new_file(rhoSpec, _, ackCh) = {
+          new deployerIdCh, regCh in {
+            getDeployerId!("deployerId",
+              "04f700a417754b775d95421973bdbdadb2d23c8a5af46f1829b1431f5c136e549e8a0d61aa0c793f1a614f8e437711c7758473c6ceb0859ac7e9e07911ca66b5c4".hexToBytes(),
+              *deployerIdCh) |
+            for (deployerId <- deployerIdCh) {
+              @FileRegistry!("register", "abc123hash", "test.txt", *deployerId, sysAuthToken, *regCh) |
+              for (@result <- regCh) {
+                match result {
+                  (true, _) => {
+                    rhoSpec!("assert", (true, "==", true), "register returns (true, fileHandle)", *ackCh)
+                  }
+                  _ => {
+                    rhoSpec!("assert", (true, "==", false), "register should have returned (true, fileHandle)", *ackCh)
+                  }
+                }
+              }
+            }
+          }
+        } |
+
+        // ── Test: Register same file, different deployer ───────────────────
+        contract test_register_same_file_different_deployer(rhoSpec, _, ackCh) = {
+          new deployer1Ch, deployer2Ch, reg1Ch, reg2Ch, infoCh in {
+            getDeployerId!("deployerId",
+              "1111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111".hexToBytes(),
+              *deployer1Ch) |
+            getDeployerId!("deployerId",
+              "2222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222".hexToBytes(),
+              *deployer2Ch) |
+            for (deployer1 <- deployer1Ch & deployer2 <- deployer2Ch) {
+              @FileRegistry!("register", "dedup_hash_01", "shared.dat", *deployer1, sysAuthToken, *reg1Ch) |
+              for (@(true, fileHandle1) <- reg1Ch) {
+                @FileRegistry!("register", "dedup_hash_01", "shared.dat", *deployer2, sysAuthToken, *reg2Ch) |
+                for (@(true, _) <- reg2Ch) {
+                  // Verify both deployers are in the state
+                  @fileHandle1!("getInfo", *infoCh) |
+                  for (@state <- infoCh) {
+                    rhoSpec!("assert",
+                      (2, "==", state.get("deployers").size()),
+                      "both deployers should be in the array",
+                      *ackCh)
+                  }
+                }
+              }
+            }
+          }
+        } |
+
+        // ── Test: Register same file, same deployer (no duplicate) ─────────
+        contract test_register_same_file_same_deployer(rhoSpec, _, ackCh) = {
+          new deployerCh, reg1Ch, reg2Ch, infoCh in {
+            getDeployerId!("deployerId",
+              "3333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333".hexToBytes(),
+              *deployerCh) |
+            for (deployer <- deployerCh) {
+              @FileRegistry!("register", "dedup_hash_02", "same.dat", *deployer, sysAuthToken, *reg1Ch) |
+              for (@(true, fileHandle) <- reg1Ch) {
+                // Re-register with the same deployer
+                getDeployerId!("deployerId",
+                  "3333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333".hexToBytes(),
+                  *deployerCh) |
+                for (deployer2 <- deployerCh) {
+                  @FileRegistry!("register", "dedup_hash_02", "same.dat", *deployer2, sysAuthToken, *reg2Ch) |
+                  for (@(true, _) <- reg2Ch) {
+                    @fileHandle!("getInfo", *infoCh) |
+                    for (@state <- infoCh) {
+                      rhoSpec!("assert",
+                        (1, "==", state.get("deployers").size()),
+                        "duplicate deployer should not be added",
+                        *ackCh)
+                    }
+                  }
+                }
+              }
+            }
+          }
+        } |
+
+        // ── Test: ownerAuthKey for valid owner ─────────────────────────────
+        contract test_ownerAuthKey_valid_owner(rhoSpec, _, ackCh) = {
+          new deployerCh, regCh, authKeyCh in {
+            getDeployerId!("deployerId",
+              "4444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444".hexToBytes(),
+              *deployerCh) |
+            for (deployer <- deployerCh) {
+              @FileRegistry!("register", "authkey_hash_01", "authed.txt", *deployer, sysAuthToken, *regCh) |
+              for (@(true, _) <- regCh) {
+                // Get a fresh deployer ID for the same key
+                getDeployerId!("deployerId",
+                  "4444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444".hexToBytes(),
+                  *deployerCh) |
+                for (deployer2 <- deployerCh) {
+                  @FileRegistry!("ownerAuthKey", "authkey_hash_01", *deployer2, *authKeyCh) |
+                  for (@authKey <- authKeyCh) {
+                    rhoSpec!("assert",
+                      (authKey != Nil),
+                      "ownerAuthKey should return a valid AuthKey for owner",
+                      *ackCh)
+                  }
+                }
+              }
+            }
+          }
+        } |
+
+        // ── Test: ownerAuthKey for non-owner ───────────────────────────────
+        contract test_ownerAuthKey_non_owner(rhoSpec, _, ackCh) = {
+          new ownerCh, nonOwnerCh, regCh, authKeyCh in {
+            getDeployerId!("deployerId",
+              "5555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555".hexToBytes(),
+              *ownerCh) |
+            getDeployerId!("deployerId",
+              "6666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666".hexToBytes(),
+              *nonOwnerCh) |
+            for (owner <- ownerCh & nonOwner <- nonOwnerCh) {
+              @FileRegistry!("register", "authkey_hash_02", "secret.txt", *owner, sysAuthToken, *regCh) |
+              for (@(true, _) <- regCh) {
+                @FileRegistry!("ownerAuthKey", "authkey_hash_02", *nonOwner, *authKeyCh) |
+                rhoSpec!("assert", (Nil, "== <-", *authKeyCh),
+                  "ownerAuthKey should return Nil for non-owner", *ackCh)
+              }
+            }
+          }
+        } |
+
+        // ── Test: Delete with valid AuthKey ─────────────────────────────────
+        // Tests that a deployer can be removed from the deployers array.
+        // Uses two deployers so that after deletion, one remains (avoids needing rho:io:file mock).
+        contract test_delete_with_valid_authkey(rhoSpec, _, ackCh) = {
+          new deployer1Ch, deployer2Ch, reg1Ch, reg2Ch, authKeyCh, deleteCh, infoCh,
+              DeployerIdOps(`rho:system:deployerId:ops`), pubKeyCh
+          in {
+            getDeployerId!("deployerId",
+              "7777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777".hexToBytes(),
+              *deployer1Ch) |
+            getDeployerId!("deployerId",
+              "8888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888".hexToBytes(),
+              *deployer2Ch) |
+            for (deployer1 <- deployer1Ch & deployer2 <- deployer2Ch) {
+              @FileRegistry!("register", "delete_hash_01", "deletable.txt", *deployer1, sysAuthToken, *reg1Ch) |
+              for (@(true, fileHandle) <- reg1Ch) {
+                @FileRegistry!("register", "delete_hash_01", "deletable.txt", *deployer2, sysAuthToken, *reg2Ch) |
+                for (@(true, _) <- reg2Ch) {
+                  // Get deployer1's auth key
+                  getDeployerId!("deployerId",
+                    "7777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777".hexToBytes(),
+                    *deployer1Ch) |
+                  for (deployer1b <- deployer1Ch) {
+                    @FileRegistry!("ownerAuthKey", "delete_hash_01", *deployer1b, *authKeyCh) |
+                    for (authKey <- authKeyCh) {
+                      // Get deployer1's pubKey bytes for the delete call
+                      getDeployerId!("deployerId",
+                        "7777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777".hexToBytes(),
+                        *deployer1Ch) |
+                      for (deployer1c <- deployer1Ch) {
+                        DeployerIdOps!("pubKeyBytes", *deployer1c, *pubKeyCh) |
+                        for (@callerPubKey <- pubKeyCh) {
+                          @fileHandle!("delete", callerPubKey, *authKey, *deleteCh) |
+                          for (@deleteResult <- deleteCh) {
+                            // Check remaining deployers
+                            @fileHandle!("getInfo", *infoCh) |
+                            for (@state <- infoCh) {
+                              rhoSpec!("assertMany",
+                                [
+                                  (((true, "delete_hash_01"), "==", deleteResult), "delete should succeed"),
+                                  ((1, "==", state.get("deployers").size()), "one deployer should remain")
+                                ],
+                                *ackCh)
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        } |
+
+        // ── Test: Lookup is non-consuming (peek) ───────────────────────────
+        contract test_lookup_non_consuming(rhoSpec, _, ackCh) = {
+          new deployerCh, regCh, lookup1Ch, lookup2Ch in {
+            getDeployerId!("deployerId",
+              "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".hexToBytes(),
+              *deployerCh) |
+            for (deployer <- deployerCh) {
+              @FileRegistry!("register", "lookup_hash_01", "readable.txt", *deployer, sysAuthToken, *regCh) |
+              for (@(true, _) <- regCh) {
+                // Lookup twice — both should succeed (non-consuming)
+                @FileRegistry!("lookup", "lookup_hash_01", *lookup1Ch) |
+                @FileRegistry!("lookup", "lookup_hash_01", *lookup2Ch) |
+                for (@result1 <- lookup1Ch & @result2 <- lookup2Ch) {
+                  rhoSpec!("assertMany",
+                    [
+                      ((result1 != Nil), "first lookup should find the file"),
+                      ((result2 != Nil), "second lookup should also find the file (non-consuming)")
+                    ],
+                    *ackCh)
+                }
+              }
+            }
+        }
+    }
+  }
+}

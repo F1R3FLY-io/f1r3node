@@ -113,19 +113,22 @@ object Configuration {
         ConfigFactory.empty()
     val kamonConf = kamonDefaultConfig.withFallback(ConfigFactory.load("kamon.conf"))
 
-    val nodeConf_ = checkDevMode(nodeConf)
+    val (nodeConf_, devModeWarning) = checkDevMode(nodeConf)
+    devModeWarning.foreach(msg => Console.err.println(s"[Configuration] $msg"))
 
     (nodeConf_, profile, configFile, kamonConf)
 
   }
 
-  def checkDevMode(nodeConf: NodeConf): NodeConf =
+  def checkDevMode(nodeConf: NodeConf): (NodeConf, Option[String]) =
     if (nodeConf.devMode) {
-      nodeConf
+      (nodeConf, None)
     } else {
-      if (nodeConf.dev.deployerPrivateKey.nonEmpty)
-        System.out.println("Node is not in dev mode, ignoring --deployer-private-key")
-      nodeConf.copy(dev = DevConf(deployerPrivateKey = None))
+      val warning =
+        if (nodeConf.dev.deployerPrivateKey.nonEmpty)
+          Some("Node is not in dev mode, ignoring --deployer-private-key")
+        else None
+      (nodeConf.copy(dev = DevConf(deployerPrivateKey = None)), warning)
     }
 
   final case class Profile(name: String, dataDir: (Path, String))

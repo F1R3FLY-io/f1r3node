@@ -68,7 +68,7 @@ object Resources {
     for {
       rStore         <- kvm.rSpaceStores
       mStore         <- RuntimeManager.mergeableStore(kvm)
-      runtimeManager <- RuntimeManager(rStore, mStore, mergeableTagName, NoOpExternalServices)
+      runtimeManager <- RuntimeManager(rStore, mStore, mergeableTagName, NoOpExternalServices, None)
     } yield runtimeManager
   }
 

@@ -307,7 +307,8 @@ object GenesisTest {
                          rStore,
                          mStore,
                          Genesis.NonNegativeMergeableTagName,
-                         NoOpExternalServices
+                         NoOpExternalServices,
+                         None
                        )
       result <- body(runtimeManager, genesisPath, log, time)
       _      <- Sync[F].delay { storePath.recursivelyDelete() }

@@ -64,6 +64,7 @@ object Genesis {
       StandardDeploys.systemVault(shardId) +:
       StandardDeploys.multiSigSystemVault(shardId) +:
       StandardDeploys.stack(shardId) +:
+      StandardDeploys.fileRegistry(shardId) +:
       vaultDeploys :+
       StandardDeploys.poSGenerator(posParams, shardId)
   }

@@ -18,7 +18,7 @@ abstract class CompiledRholangSource[Env](val code: String, val normalizerEnv: N
 
 object CompiledRholangSource {
   def loadSource(classpath: String) = {
-    val fileContent = Source.fromResource(classpath).mkString
+    val fileContent = Source.fromResource(classpath)(scala.io.Codec.UTF8).mkString
     s"""//Loaded from resource file <<$classpath>>
        #$fileContent
        #""".stripMargin('#')
@@ -54,7 +54,7 @@ abstract class CompiledRholangTemplate[Env](
 
 object CompiledRholangTemplate {
   def loadTemplate(classpath: String, macros: Seq[(String, Any)]) = {
-    val originalContent = Source.fromResource(classpath).mkString
+    val originalContent = Source.fromResource(classpath)(scala.io.Codec.UTF8).mkString
     val finalContent = macros.foldLeft(originalContent) {
       case (content, (name, value)) => content.replace(s"""$$$$$name$$$$""", value.toString)
     }

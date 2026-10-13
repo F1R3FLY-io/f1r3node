@@ -531,18 +531,39 @@ object RhoRuntime {
     )
   )
 
-  def dispatchTableCreator[F[_]: Concurrent: Span: Log](
+  def stdRhoFileProcesses[F[_]]: Seq[Definition[F]] = Seq(
+    Definition[F](
+      "rho:io:file",
+      FixedChannels.FILE_IO,
+      5,
+      BodyRefs.FILE_REGISTER, { ctx =>
+        ctx.systemProcesses
+          .fileRegister(ctx.blockData, ctx.deployData, ctx.cost, ctx.phloPerStorageByte)
+      }
+    ),
+    Definition[F](
+      "rho:io:file:delete",
+      FixedChannels.FILE_IO_DELETE,
+      4,
+      BodyRefs.FILE_DELETE, { ctx =>
+        ctx.systemProcesses.fileDelete(ctx.fileReplicationDir)
+      }
+    )
+  )
+
+  def dispatchTableCreator[F[_]: Concurrent: _cost: Span: Log](
       space: RhoTuplespace[F],
       dispatcher: RhoDispatch[F],
       blockData: Ref[F, BlockData],
       invalidBlocks: InvalidBlocks[F],
       deployData: Ref[F, DeployData],
       extraSystemProcesses: Seq[Definition[F]],
-      externalServices: ExternalServices
+      externalServices: ExternalServices,
+      fileReplicationDir: Option[java.nio.file.Path] = None
   ): RhoDispatchMap[F] =
     (stdSystemProcesses[F] ++ stdRhoCryptoProcesses[F] ++ stdRhoAIProcesses[F] ++ stdRhoOllamaProcesses[
       F
-    ] ++ extraSystemProcesses)
+    ] ++ stdRhoFileProcesses[F] ++ extraSystemProcesses)
       .map(
         _.toDispatchTable(
           ProcessContext(
@@ -551,7 +572,8 @@ object RhoRuntime {
             blockData,
             invalidBlocks,
             deployData,
-            externalServices
+            externalServices,
+            fileReplicationDir
           )
         )
       )
@@ -563,7 +585,11 @@ object RhoRuntime {
     "rho:registry:insertSigned:secp256k1" -> Bundle(
       FixedChannels.REG_INSERT_SIGNED,
       writeFlag = true
-    )
+    ),
+    // Data channel for fileRegister→FileRegistry delegation.
+    // Read-only bundle: FileRegistry.rho consumes (reads), system process produces
+    // to the raw GPrivate channel via produce() which bypasses bundle checks.
+    "rho:io:file:registerNotify:1.0.0" -> FixedChannels.FILE_REGISTRY_NOTIFY
   )
 
   def setupReducer[F[_]: Concurrent: Parallel: _cost: Log: Metrics: Span](
@@ -575,7 +601,8 @@ object RhoRuntime {
       urnMap: Map[String, Par],
       mergeChs: Ref[F, Set[Par]],
       mergeableTagName: Par,
-      externalServices: ExternalServices
+      externalServices: ExternalServices,
+      fileReplicationDir: Option[java.nio.file.Path] = None
   ): Reduce[F] = {
     lazy val replayDispatchTable: RhoDispatchMap[F] =
       dispatchTableCreator(
@@ -585,7 +612,8 @@ object RhoRuntime {
         invalidBlocks,
         deployData,
         extraSystemProcesses,
-        externalServices
+        externalServices,
+        fileReplicationDir
       )
 
     lazy val (replayDispatcher, replayReducer) =
@@ -614,9 +642,9 @@ object RhoRuntime {
       blockDataRef  <- Ref.of(BlockData.empty)
       invalidBlocks = InvalidBlocks.unsafe[F]()
       deployData    <- Ref.of(DeployData.empty)
-      urnMap = basicProcesses ++ (stdSystemProcesses[F] ++ stdRhoCryptoProcesses[F] ++ stdRhoAIProcesses ++ stdRhoOllamaProcesses ++ extraSystemProcesses)
+      urnMap = basicProcesses ++ (stdSystemProcesses[F] ++ stdRhoCryptoProcesses[F] ++ stdRhoAIProcesses ++ stdRhoOllamaProcesses ++ stdRhoFileProcesses ++ extraSystemProcesses)
         .map(_.toUrnMap)
-      procDefs = (stdSystemProcesses[F] ++ stdRhoCryptoProcesses[F] ++ stdRhoAIProcesses ++ stdRhoOllamaProcesses ++ extraSystemProcesses)
+      procDefs = (stdSystemProcesses[F] ++ stdRhoCryptoProcesses[F] ++ stdRhoAIProcesses ++ stdRhoOllamaProcesses ++ stdRhoFileProcesses ++ extraSystemProcesses)
         .map(_.toProcDefs)
     } yield (blockDataRef, invalidBlocks, deployData, urnMap, procDefs)
 
@@ -625,7 +653,8 @@ object RhoRuntime {
       mergeChs: Ref[F, Set[Par]],
       mergeableTagName: Par,
       extraSystemProcesses: Seq[Definition[F]] = Seq.empty,
-      externalServices: ExternalServices
+      externalServices: ExternalServices,
+      fileReplicationDir: Option[java.nio.file.Path] = None
   ): F[(Reduce[F], Ref[F, BlockData], InvalidBlocks[F], Ref[F, DeployData])] =
     for {
       mapsAndRefs                                                    <- setupMapsAndRefs(extraSystemProcesses)
@@ -639,7 +668,8 @@ object RhoRuntime {
         urnMap,
         mergeChs,
         mergeableTagName,
-        externalServices
+        externalServices,
+        fileReplicationDir
       )
       res <- introduceSystemProcesses(rspace :: Nil, procDefs.toList)
       _   = assert(res.forall(_.isEmpty))
@@ -667,7 +697,8 @@ object RhoRuntime {
       extraSystemProcesses: Seq[Definition[F]],
       initRegistry: Boolean,
       mergeableTagName: Par,
-      externalServices: ExternalServices
+      externalServices: ExternalServices,
+      fileReplicationDir: Option[java.nio.file.Path]
   )(implicit costLog: FunctorTell[F, Chain[Cost]]): F[RhoRuntime[F]] =
     Span[F].trace(createPlayRuntime) {
       for {
@@ -680,7 +711,8 @@ object RhoRuntime {
             mergeChs,
             mergeableTagName,
             extraSystemProcesses,
-            externalServices
+            externalServices,
+            fileReplicationDir
           )
         }
         (reducer, blockRef, invalidBlocks, deployDataRef) = rhoEnv
@@ -721,9 +753,17 @@ object RhoRuntime {
       mergeableTagName: Par,
       initRegistry: Boolean = true,
       extraSystemProcesses: Seq[Definition[F]] = Seq.empty,
-      externalServices: ExternalServices
+      externalServices: ExternalServices,
+      fileReplicationDir: Option[java.nio.file.Path] = None
   )(implicit costLog: FunctorTell[F, Chain[Cost]]): F[RhoRuntime[F]] =
-    createRuntime[F](rspace, extraSystemProcesses, initRegistry, mergeableTagName, externalServices)
+    createRuntime[F](
+      rspace,
+      extraSystemProcesses,
+      initRegistry,
+      mergeableTagName,
+      externalServices,
+      fileReplicationDir
+    )
 
   /**
     *
@@ -738,7 +778,8 @@ object RhoRuntime {
       mergeableTagName: Par,
       extraSystemProcesses: Seq[Definition[F]] = Seq.empty,
       initRegistry: Boolean = true,
-      externalServices: ExternalServices
+      externalServices: ExternalServices,
+      fileReplicationDir: Option[java.nio.file.Path] = None
   )(implicit costLog: FunctorTell[F, Chain[Cost]]): F[ReplayRhoRuntime[F]] =
     Span[F].trace(createReplayRuntime) {
       for {
@@ -751,7 +792,8 @@ object RhoRuntime {
             mergeChs,
             mergeableTagName,
             extraSystemProcesses,
-            externalServices
+            externalServices,
+            fileReplicationDir
           )
         }
         (reducer, blockRef, invalidBlocks, deployDataRef) = rhoEnv
@@ -804,7 +846,8 @@ object RhoRuntime {
       mergeableTagName: Par,
       initRegistry: Boolean = false,
       additionalSystemProcesses: Seq[Definition[F]] = Seq.empty,
-      externalServices: ExternalServices
+      externalServices: ExternalServices,
+      fileReplicationDir: Option[java.nio.file.Path] = None
   )(
       implicit scheduler: Scheduler
   ): F[RhoRuntime[F]] = {
@@ -820,7 +863,8 @@ object RhoRuntime {
                   mergeableTagName,
                   initRegistry,
                   additionalSystemProcesses,
-                  externalServices
+                  externalServices,
+                  fileReplicationDir
                 )
     } yield runtime
   }

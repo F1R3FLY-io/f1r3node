@@ -58,4 +58,21 @@ trait CasperMessageProtocol {
     protoSerde[PacketTypeTag.StoreItemsMessageRequest.type, StoreItemsMessageRequestProto]
   implicit final val storeItemsMessageToPacket =
     protoSerde[PacketTypeTag.StoreItemsMessage.type, StoreItemsMessageProto]
+
+  // File Replication
+  implicit final val hasFileFromPacket =
+    protoImpl[PacketTypeTag.HasFile.type, HasFileProto]
+  implicit final val fileRequestFromPacket =
+    protoImpl[PacketTypeTag.FileRequest.type, FileRequestProto]
+  implicit final val filePacketFromPacket =
+    protoImpl[PacketTypeTag.FilePacket.type, FilePacketProto]
+
+  implicit final val hasFileToPacket =
+    protoSerde[PacketTypeTag.HasFile.type, HasFileProto]
+  implicit final val fileRequestToPacket =
+    protoSerde[PacketTypeTag.FileRequest.type, FileRequestProto]
+  implicit final val filePacketToPacket =
+    protoSerde[PacketTypeTag.FilePacket.type, FilePacketProto]
 }
+
+object CasperMessageProtocol extends CasperMessageProtocol

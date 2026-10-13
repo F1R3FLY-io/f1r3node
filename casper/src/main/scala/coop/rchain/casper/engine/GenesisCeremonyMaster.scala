@@ -79,7 +79,9 @@ object GenesisCeremonyMaster {
                case Some(approvedBlock) =>
                  val ab = approvedBlock.candidate.block
                  for {
-                   _ <- insertIntoBlockAndDagStore[F](ab, approvedBlock)
+                   _                           <- insertIntoBlockAndDagStore[F](ab, approvedBlock)
+                   setup                       <- FileReplicationSetup.create[F](casperShardConf)
+                   (fileRequester, daCallback) = setup
                    // Create heartbeat signal ref for triggering fast proposals on deploy submission
                    heartbeatSignalRef <- Ref[F].of(Option.empty[HeartbeatSignal[F]])
                    casper <- MultiParentCasper
@@ -88,7 +90,8 @@ object GenesisCeremonyMaster {
                                 casperShardConf: CasperShardConf,
                                 ab,
                                 heartbeatSignalRef,
-                                onBlockFinalized
+                                onBlockFinalized,
+                                daCallback
                               )
                    _ <- Engine
                          .transitionToRunning[F](
@@ -98,7 +101,8 @@ object GenesisCeremonyMaster {
                            approvedBlock,
                            validatorId,
                            ().pure[F],
-                           disableStateExporter
+                           disableStateExporter,
+                           fileRequester
                          )
                    _ <- CommUtil[F].sendForkChoiceTipRequest
                  } yield ()

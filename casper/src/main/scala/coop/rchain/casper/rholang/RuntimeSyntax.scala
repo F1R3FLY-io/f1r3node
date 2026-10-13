@@ -159,7 +159,7 @@ final class RuntimeOps[F[_]: Sync: Span: Log: Metrics](
     }
 
   /**
-    * Evaluates genesis deploys with checkpoint to get final state hash
+    * Evaluates genesis deploys with checkpoint to get final state hash.
     */
   def computeGenesis(
       terms: Seq[Signed[DeployData]],

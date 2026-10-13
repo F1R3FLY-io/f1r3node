@@ -401,7 +401,7 @@ lazy val node = (project in file("node"))
       val installCmd = Cmd("RUN", """export ARCH=$(uname -m | sed 's/aarch64/arm64/') && \
                                     microdnf update && \
                                     microdnf install jq gzip && \
-                                    curl -LO https://github.com/fullstorydev/grpcurl/releases/download/v1.8.9/grpcurl_1.8.9_linux_$ARCH.tar.gz && \
+                                    curl --ipv4 --retry 5 --retry-delay 5 -LO https://github.com/fullstorydev/grpcurl/releases/download/v1.8.9/grpcurl_1.8.9_linux_$ARCH.tar.gz && \
                                     tar -xzf grpcurl_1.8.9_linux_$ARCH.tar.gz && \
                                     rm -fr LICENSE grpcurl_1.8.9_linux_$ARCH.tar.gz && \
                                     chmod a+x grpcurl && \

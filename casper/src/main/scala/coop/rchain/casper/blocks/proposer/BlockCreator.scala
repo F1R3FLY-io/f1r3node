@@ -8,7 +8,7 @@ import coop.rchain.blockstorage.BlockStore
 import coop.rchain.blockstorage.deploy.DeployStorage
 import coop.rchain.blockstorage.syntax._
 import coop.rchain.casper.protocol.{Header, _}
-import coop.rchain.casper.util.{ConstructDeploy, ProtoUtil}
+import coop.rchain.casper.util.{ConstructDeploy, OrphanFileCleanup, ProtoUtil}
 import coop.rchain.casper.util.rholang.RuntimeManager.StateHash
 import coop.rchain.casper.util.rholang._
 import coop.rchain.casper.util.rholang.costacc.{CloseBlockDeploy, SlashDeploy}
@@ -115,7 +115,16 @@ object BlockCreator {
           // Remove all expired deploys from storage to prevent them from triggering future proposals
           _ <- if (allExpiredDeploys.nonEmpty)
                 Log[F].info(s"Removing ${allExpiredDeploys.size} expired deploy(s) from storage") *>
-                  DeployStorage[F].remove(allExpiredDeploys.toList)
+                  DeployStorage[F].remove(allExpiredDeploys.toList) *>
+                  // Clean up orphaned files for expired file-registration deploys
+                  s.onChainState.shardConf.fileConf.fileReplicationDir.traverse_(
+                    dir =>
+                      OrphanFileCleanup.cleanupOrphanedFiles[F](
+                        allExpiredDeploys,
+                        valid,
+                        dir
+                      )
+                  )
               else ().pure[F]
           _ <- alreadyInScope.toList.traverse_(
                 d =>
@@ -124,7 +133,58 @@ object BlockCreator {
                       s"deploy already exists in DAG within lifespan window"
                   )
               )
-        } yield validUnique
+          // File-deploy backpressure: limit the number/size of file-registration deploys per block
+          maxFileDeploys  = s.onChainState.shardConf.fileConf.maxFileDeploysPerBlock
+          maxFileDataSize = s.onChainState.shardConf.fileConf.maxFileDataSizePerBlock
+          (fileDeploys, nonFileDeploys) = validUnique.partition(
+            d => OrphanFileCleanup.isFileRegistrationDeploy(d.data)
+          )
+
+          missingFileDeploys <- s.onChainState.shardConf.fileConf.fileReplicationDir match {
+                                 case Some(dir) =>
+                                   fileDeploys.toList.filterA { d =>
+                                     Sync[F].delay {
+                                       OrphanFileCleanup.extractFileHash(d.data) match {
+                                         case Some(hash) =>
+                                           !java.nio.file.Files.exists(dir.resolve(hash))
+                                         case None => false
+                                       }
+                                     }
+                                   }
+                                 case None =>
+                                   List.empty[Signed[DeployData]].pure[F]
+                               }
+
+          _ <- missingFileDeploys.traverse_(
+                d =>
+                  Log[F].warn(
+                    s"Deploy ${Base16.encode(d.sig.toByteArray.take(8))}... FILTERED (missing file): " +
+                      s"phantom file registration ignored"
+                  )
+              )
+
+          locallyAvailableFileDeploys = fileDeploys -- missingFileDeploys
+
+          // Apply count limit, then cumulative size limit (FIFO by timestamp)
+          limitedFileDeploys = locallyAvailableFileDeploys.toList
+            .sortBy(_.data.timestamp)
+            .take(maxFileDeploys)
+            .foldLeft((0L, List.empty[Signed[DeployData]])) {
+              case ((usedSize, accepted), d) =>
+                val size = OrphanFileCleanup.extractFileSize(d.data).getOrElse(Long.MaxValue)
+                if (usedSize + size <= maxFileDataSize) (usedSize + size, d :: accepted)
+                else (usedSize, accepted)
+            }
+            ._2
+            .toSet
+          skippedCount = locallyAvailableFileDeploys.size - limitedFileDeploys.size
+          _ <- if (skippedCount > 0)
+                Log[F].info(
+                  s"File-deploy backpressure: $skippedCount file deploy(s) deferred " +
+                    s"(limits: count=$maxFileDeploys, size=${maxFileDataSize / (1024 * 1024)}MB)"
+                )
+              else ().pure[F]
+        } yield nonFileDeploys ++ limitedFileDeploys
 
       def prepareSlashingDeploys(seqNum: Int): F[Seq[SlashDeploy]] =
         for {
@@ -283,7 +343,12 @@ object BlockCreator {
   }
 
   private def notExpiredDeploy(earliestBlockNumber: Long, d: DeployData): Boolean =
-    d.validAfterBlockNumber > earliestBlockNumber
+    // Negative validAfterBlockNumber means "never expires by block count".
+    // This is used by large file-upload deploys (validAfterBlockNumber = -1) to prevent
+    // premature expiration during P2P file transfer.  Without this guard the boundary
+    // condition  -1 > -1 == false  would classify the deploy as expired, triggering
+    // OrphanFileCleanup to delete the data file while peers are still downloading it.
+    d.validAfterBlockNumber < 0 || d.validAfterBlockNumber > earliestBlockNumber
 
   private def notFutureDeploy(currentBlockNumber: Long, d: DeployData): Boolean =
     d.validAfterBlockNumber < currentBlockNumber

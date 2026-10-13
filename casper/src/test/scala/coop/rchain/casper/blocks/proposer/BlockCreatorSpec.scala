@@ -211,4 +211,110 @@ class BlockCreatorSpec extends FlatSpec with Matchers {
 
     test.runSyncUnsafe()
   }
+
+  it should "filter out phantom file registrations while keeping valid file registrations" in {
+    val test = rholang.Resources
+      .mkTempDir[Task]("block-creator-test-")
+      .evalMap(Resources.mkTestRNodeStoreManager[Task])
+      .use { kvm =>
+        for {
+          blockStore            <- KeyValueBlockStore[Task](kvm)
+          _                     <- BlockDagKeyValueStorage.create[Task](kvm)
+          deployStorageInstance <- KeyValueDeployStorage[Task](kvm)
+          runtimeManager        <- Resources.mkRuntimeManagerAt[Task](kvm)
+
+          // Create a temp directory for fileReplicationDir
+          fileReplDir <- Task.delay(java.nio.file.Files.createTempDirectory("file-repl-test"))
+
+          result <- {
+            implicit val ds: DeployStorage[Task]  = deployStorageInstance
+            implicit val bs: BlockStore[Task]     = blockStore
+            implicit val rm: RuntimeManager[Task] = runtimeManager
+
+            val validFileHash   = "a" * 64
+            val phantomFileHash = "b" * 64
+            val validFileDeployTerm =
+              s"""new ret, file(`rho:io:file`) in { file!("register", "$validFileHash", 3, "test.bin", *ret) }"""
+            val phantomFileDeployTerm =
+              s"""new ret, file(`rho:io:file`) in { file!("register", "$phantomFileHash", 3, "test.bin", *ret) }"""
+
+            val validFileDeployData = DeployData(
+              term = validFileDeployTerm,
+              timestamp = System.currentTimeMillis(),
+              phloPrice = 1,
+              phloLimit = 1000,
+              validAfterBlockNumber = 60L,
+              shardId = "test-shard"
+            )
+            val phantomFileDeployData = DeployData(
+              term = phantomFileDeployTerm,
+              timestamp = System.currentTimeMillis(),
+              phloPrice = 1,
+              phloLimit = 1000,
+              validAfterBlockNumber = 60L,
+              shardId = "test-shard"
+            )
+
+            val validFileDeploy   = Signed(validFileDeployData, Secp256k1, validatorSk)
+            val phantomFileDeploy = Signed(phantomFileDeployData, Secp256k1, validatorSk)
+            val normalDeploy      = createDeploy(validAfterBlockNumber = 60L)
+
+            for {
+              // Valid file on disk
+              _ <- Task.delay(
+                    java.nio.file.Files
+                      .write(fileReplDir.resolve(validFileHash), Array[Byte](1, 2, 3))
+                  )
+
+              _ <- ds.add(List(validFileDeploy, phantomFileDeploy, normalDeploy))
+
+              // Verify all 3 are in storage
+              deploysBeforeCreate <- ds.readAll
+              _                   = deploysBeforeCreate.size shouldBe 3
+
+              // Create snapshot with fileReplicationDir configured
+              baseSnapshot = createSnapshot(maxBlockNum = 100L)
+              snapshot = baseSnapshot.copy(
+                onChainState = baseSnapshot.onChainState.copy(
+                  shardConf = baseSnapshot.onChainState.shardConf.copy(
+                    fileConf = coop.rchain.casper.FileConf(fileReplicationDir = Some(fileReplDir))
+                  )
+                )
+              )
+
+              val stub = logStub.asInstanceOf[coop.rchain.p2p.EffectsTestInstances.LogStub[Task]]
+              _        <- Task.delay(stub.reset())
+
+              // The create will fail because there are no parents, but prepareUserDeploys
+              // runs before that and performs the filtering, logging a warning.
+              _ <- BlockCreator.create(snapshot, validatorIdentity).attempt
+
+              _ <- Task.delay {
+                    val phantomSigPrefix =
+                      coop.rchain.shared.Base16.encode(phantomFileDeploy.sig.toByteArray.take(8))
+                    val validSigPrefix =
+                      coop.rchain.shared.Base16.encode(validFileDeploy.sig.toByteArray.take(8))
+
+                    stub.warns.exists(
+                      _.contains(s"Deploy $phantomSigPrefix... FILTERED (missing file)")
+                    ) shouldBe true
+                    stub.warns.exists(
+                      _.contains(s"Deploy $validSigPrefix... FILTERED (missing file)")
+                    ) shouldBe false
+                  }
+
+              // Deploys are still in storage (filtered, not expired)
+              deploysAfterCreate <- ds.readAll
+              _                  = deploysAfterCreate.size shouldBe 3
+            } yield ()
+          }
+          _ <- Task.delay {
+                java.nio.file.Files.deleteIfExists(fileReplDir.resolve("a" * 64))
+                java.nio.file.Files.deleteIfExists(fileReplDir)
+              }
+        } yield result
+      }
+
+    test.runSyncUnsafe()
+  }
 }
