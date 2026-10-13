@@ -1,19 +1,9 @@
 name: Build, Test, and Deploy (required)
 
+# Deprecated: automatic push/pull_request triggers removed. This repository is
+# read-only; development continues at https://github.com/F1R3FLY-io/f1r3node-rust
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
-      - dev
-      - staging
-      - trying
-    tags: "**"
-  pull_request:
-    branches:
-      - dev
-      - main
-      - "feature/**"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

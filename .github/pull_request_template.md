@@ -1,3 +1,5 @@
+> **This repository is deprecated and no longer accepts pull requests.** Please open your pull request at https://github.com/F1R3FLY-io/f1r3node-rust/pulls instead.
+
 ## Overview
 <!-- What this PR does, and why it's needed -->
 

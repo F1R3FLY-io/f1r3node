@@ -1,5 +1,10 @@
 # Contributing to RChain
 
+> [!WARNING]
+> **This repository is deprecated and read-only.** It is no longer developed or supported and is kept for historical reference only. All development, issues, and pull requests have moved to [F1R3FLY-io/f1r3node-rust](https://github.com/F1R3FLY-io/f1r3node-rust).
+>
+> Please do not open pull requests here. Contribute to [f1r3node-rust](https://github.com/F1R3FLY-io/f1r3node-rust) instead.
+
 * [Coding Standards](https://rchain.atlassian.net/wiki/spaces/DOC/pages/28082177/Coding+Standards)
 * [Sign your commits](https://rchain.atlassian.net/wiki/spaces/DOC/pages/498630673/How+to+sign+commits+to+rchain+rchain)
 * [Code Review Process](https://rchain.atlassian.net/wiki/spaces/DOC/pages/44040200/Code+Review+Process)

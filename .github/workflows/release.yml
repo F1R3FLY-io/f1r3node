@@ -13,11 +13,9 @@
 
 name: Release (Scala)
 
+# Deprecated: automatic push trigger removed. This repository is read-only;
+# development continues at https://github.com/F1R3FLY-io/f1r3node-rust
 on:
-  push:
-    branches:
-      - main
-      - dev
   workflow_dispatch:
 
 jobs:
