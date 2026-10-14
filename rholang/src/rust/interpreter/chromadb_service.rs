@@ -242,12 +242,21 @@ pub enum ChromaDBService {
 
 impl ChromaDBService {
     pub fn new_real() -> Self {
+<<<<<<< HEAD
+        if let Ok(client) = ChromaDBClient::new() {
+            Self::Real(client)
+        }
+        else {
+            tracing::info!("ChromaDB service could not be started.");
+            Self::NoOp
+=======
         match ChromaDBClient::new() {
             Ok(client) => Self::Real(client),
             Err(err) => {
                 tracing::info!("ChromaDB service could not be started: {err}");
                 Self::NoOp
             }
+>>>>>>> rust/dev
         }
     }
 
@@ -410,12 +419,20 @@ impl ChromaDBService {
         }
     }
 
+<<<<<<< HEAD
+    /// Upserts the given entries into the identified collection. See [`ChromaCollection::query`]
+    ///
+    /// # Arguments
+    ///
+    /// * `collection_name` - The name of the collection to create
+=======
     /// Queries the identified collection for documents similar to the input texts.
     /// See [`ChromaCollection::query`]
     ///
     /// # Arguments
     ///
     /// * `collection_name` - The name of the collection to query
+>>>>>>> rust/dev
     /// * `doc_texts` - The document texts to get the closest neighbors of.
     ///
     /// The embeddings are auto generated using SBERT.
@@ -443,6 +460,13 @@ impl ChromaDBService {
                         ))
                     })?;
 
+<<<<<<< HEAD
+                // Q (chase): There are a lot of parameters to query with but we
+                // currently do it via document text. Do we need to support any
+                // of the others (e.g N for n nearest neighbours, "where 
+                // document/metadata =", ids etc)?
+=======
+>>>>>>> rust/dev
                 let raw_res = collection
                     .query(
                         embeddings,
@@ -454,7 +478,11 @@ impl ChromaDBService {
                     .await
                     .map_err(|err| {
                         InterpreterError::ChromaDBError(format!(
+<<<<<<< HEAD
+                            "Failed to upsert entries in collection {collection_name}: {}",
+=======
                             "Failed to query entries in collection {collection_name}: {}",
+>>>>>>> rust/dev
                             err
                         ))
                     })?;
@@ -533,6 +561,10 @@ impl ChromaDBService {
     /* TODO (chase): Other potential collection related methods:
        - rename collection (not that necessary?)
        - list collections (bad idea probably)
+<<<<<<< HEAD
+       - delete collection (should blockchain data really be deleted?)
+=======
+>>>>>>> rust/dev
     */
 }
 
@@ -544,7 +576,11 @@ pub fn create_chromadb_service() -> SharedChromaDBService {
     Arc::new(ChromaDBService::new_real())
 }
 
+<<<<<<< HEAD
+/// Create a NoOp OpenAI service
+=======
 /// Create a NoOp ChromaDB service
+>>>>>>> rust/dev
 pub fn create_noop_chromadb_service() -> SharedChromaDBService {
     Arc::new(ChromaDBService::new_noop())
 }

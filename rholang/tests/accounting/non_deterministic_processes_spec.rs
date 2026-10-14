@@ -7,13 +7,13 @@ use rholang::rust::interpreter::rho_runtime::RhoRuntimeImpl;
 use rholang::rust::interpreter::test_utils::resources::create_runtimes_with_services;
 use rholang::rust::interpreter::{
     accounting::costs::Cost,
+    chromadb_service::create_noop_chromadb_service,
     external_services::ExternalServices,
     grpc_client_service::{GrpcClientMockConfig, GrpcClientService},
     interpreter::EvaluateResult,
     openai_service::{create_mock_openai_service, create_noop_openai_service, OpenAIMockConfig},
     rho_runtime::RhoRuntime,
 };
-use rholang::rust::interpreter::chromadb_service::create_noop_chromadb_service;
 use rspace_plus_plus::rspace::history::history_repository::HistoryRepository;
 use rspace_plus_plus::rspace::shared::{
     in_mem_store_manager::InMemoryStoreManager, key_value_store_manager::KeyValueStoreManager,
@@ -34,10 +34,10 @@ fn create_test_external_services(
             Some(config) => GrpcClientService::new_mock(config),
             None => GrpcClientService::new_noop(),
         },
+        chroma: create_noop_chromadb_service(),
         openai_enabled: true,
         ollama_enabled: false,
         is_validator: true,
-        chroma: create_noop_chromadb_service(),
     }
 }
 
@@ -48,10 +48,10 @@ fn create_test_external_services_grpc(grpc_mock: GrpcClientMockConfig) -> Extern
         openai: create_noop_openai_service(),
         ollama: rholang::rust::interpreter::ollama_service::create_disabled_ollama_service(),
         grpc_client: GrpcClientService::new_mock(grpc_mock),
+        chroma: create_noop_chromadb_service(),
         openai_enabled: false,
         ollama_enabled: false,
         is_validator: true,
-        chroma: create_noop_chromadb_service(),
     }
 }
 

@@ -5,8 +5,45 @@ use crate::rust::interpreter::compiler::normalize::VarSort;
 use crate::rust::interpreter::compiler::normalize::VarSort::{NameSort, ProcSort};
 use models::rhoapi::Par;
 use std::collections::HashMap;
+use std::env;
+use std::path::PathBuf;
+use std::process::Command;
 
 use rholang_parser::SourcePos;
+
+// Helper for skipping PeTTa tests if runtime pre-requisites are not met (or
+// panicking if tests are mandatory).
+pub fn should_skip_petta_test() -> bool {
+    let require = env::var_os("REQUIRE_PETTA_TESTS").is_some();
+
+    let petta_path = PathBuf::from(env::var("PETTA_PATH").unwrap_or("./PeTTa".into()));
+    let metta_module_path = petta_path.join("src/metta.pl");
+
+    let petta_missing = !metta_module_path.exists();
+    let swipl_missing = Command::new("swipl")
+        .arg("--version")
+        .output()
+        .map(|output| !output.status.success())
+        .unwrap_or(true);
+
+    let error_message: String;
+    match (petta_missing, swipl_missing) {
+        (false, false) => return false,
+        (true, _) => {
+            error_message = "PeTTa test prerequisite unmet: PeTTa is missing".into();
+        }
+        (_, true) => {
+            error_message = "PeTTa test prerequisite unmet: swipl is missing".into();
+        }
+    }
+
+    if require {
+        panic!("{error_message}");
+    } else {
+        eprintln!("Skipping test: {error_message}");
+        true
+    }
+}
 
 pub fn name_visit_inputs_and_env() -> (NameVisitInputs, HashMap<String, Par>) {
     let input: NameVisitInputs = NameVisitInputs {

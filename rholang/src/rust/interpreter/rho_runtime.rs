@@ -13,9 +13,9 @@ use models::rust::utils::new_freevar_par;
 use models::rust::validator::Validator;
 use rspace_plus_plus::rspace::checkpoint::{Checkpoint, SoftCheckpoint};
 use rspace_plus_plus::rspace::hashing::blake2b256_hash::Blake2b256Hash;
-use rspace_plus_plus::rspace::merger::merging_logic::MergeType;
 use rspace_plus_plus::rspace::history::history_repository::HistoryRepository;
 use rspace_plus_plus::rspace::internal::{Datum, Row, WaitingContinuation};
+use rspace_plus_plus::rspace::merger::merging_logic::MergeType;
 use rspace_plus_plus::rspace::r#match::Match;
 use rspace_plus_plus::rspace::replay_rspace_interface::IReplayRSpace;
 use rspace_plus_plus::rspace::rspace::RSpace;
@@ -326,11 +326,7 @@ impl RhoRuntime for RhoRuntimeImpl {
         &mut self,
     ) -> SoftCheckpoint<Par, BindPattern, ListParWithRandom, TaggedContinuation> {
         let start = Instant::now();
-        let checkpoint = self
-            .reducer
-            .space
-            .create_soft_checkpoint()
-            .await;
+        let checkpoint = self.reducer.space.create_soft_checkpoint().await;
         metrics::histogram!(CREATE_SOFT_CHECKPOINT_TIME_METRIC, "source" => RUNTIME_METRICS_SOURCE)
             .record(start.elapsed().as_secs_f64());
         metrics::counter!(RUNTIME_SOFT_CHECKPOINT_TOTAL_METRIC, "source" => RUNTIME_METRICS_SOURCE)
@@ -378,12 +374,7 @@ impl RhoRuntime for RhoRuntimeImpl {
 
     async fn create_checkpoint(&mut self) -> Checkpoint {
         let start = Instant::now();
-        let checkpoint = self
-            .reducer
-            .space
-            .create_checkpoint()
-            .await
-            .unwrap();
+        let checkpoint = self.reducer.space.create_checkpoint().await.unwrap();
         metrics::histogram!(CREATE_CHECKPOINT_TIME_METRIC, "source" => RUNTIME_METRICS_SOURCE)
             .record(start.elapsed().as_secs_f64());
         metrics::counter!(RUNTIME_CHECKPOINT_TOTAL_METRIC, "source" => RUNTIME_METRICS_SOURCE)
@@ -401,11 +392,7 @@ impl RhoRuntime for RhoRuntimeImpl {
         channel: Vec<Par>,
         pattern: Vec<BindPattern>,
     ) -> Result<Option<(TaggedContinuation, Vec<ListParWithRandom>)>, InterpreterError> {
-        Ok(self
-            .reducer
-            .space
-            .consume_result(channel, pattern)
-            .await?)
+        Ok(self.reducer.space.consume_result(channel, pattern).await?)
     }
 
     async fn get_data(&self, channel: &Par) -> Vec<Datum<ListParWithRandom>> {
@@ -420,10 +407,7 @@ impl RhoRuntime for RhoRuntimeImpl {
         &self,
         channels: Vec<Par>,
     ) -> Vec<WaitingContinuation<BindPattern, TaggedContinuation>> {
-        self.reducer
-            .space
-            .get_waiting_continuations(channels)
-            .await
+        self.reducer.space.get_waiting_continuations(channels).await
     }
 
     async fn set_block_data(&self, block_data: BlockData) -> () {
@@ -483,20 +467,14 @@ impl HasCost for RhoRuntimeImpl {
     }
 }
 
-pub type RhoTuplespace = Arc<
-    Box<dyn Tuplespace<Par, BindPattern, ListParWithRandom, TaggedContinuation> + Send + Sync>,
->;
+pub type RhoTuplespace =
+    Arc<Box<dyn Tuplespace<Par, BindPattern, ListParWithRandom, TaggedContinuation> + Send + Sync>>;
 
-pub type RhoISpace = Arc<
-    Box<dyn ISpace<Par, BindPattern, ListParWithRandom, TaggedContinuation> + Send + Sync>,
->;
+pub type RhoISpace =
+    Arc<Box<dyn ISpace<Par, BindPattern, ListParWithRandom, TaggedContinuation> + Send + Sync>>;
 
 pub type RhoReplayISpace = Arc<
-    Box<
-        dyn IReplayRSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>
-            + Send
-            + Sync,
-    >,
+    Box<dyn IReplayRSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation> + Send + Sync>,
 >;
 
 pub type RhoHistoryRepository = Arc<
@@ -532,7 +510,9 @@ where
         };
 
         for space in &mut spaces {
-            let result = space.install(channels.clone(), patterns.clone(), continuation.clone()).await;
+            let result = space
+                .install(channels.clone(), patterns.clone(), continuation.clone())
+                .await;
             results.push(result.map_err(|err| panic!("{}", err)).unwrap());
         }
     }
@@ -911,6 +891,8 @@ fn std_rho_chroma_processes() -> Vec<Definition> {
         Definition {
             urn: "rho:chroma:collection:new".to_string(),
             fixed_channel: FixedChannels::chroma_create_collection(),
+            // TODO (chase): How to define overloads?
+            // This function can support 4 or 3 arguments (including ack) (second to last one is optional).
             arity: 4,
             body_ref: BodyRefs::CHROMA_CREATE_COLLECTION,
             handler: Box::new(|ctx| {
@@ -996,6 +978,23 @@ fn std_rho_chroma_processes() -> Vec<Definition> {
     ]
 }
 
+fn std_swipl_processes() -> Vec<Definition> {
+    vec![Definition {
+        urn: "rho:petta:execute".to_string(),
+        fixed_channel: FixedChannels::swipl_execute_petta(),
+        arity: 2,
+        body_ref: BodyRefs::SWIPL_EXECUTE_PETTA,
+        handler: Box::new(|ctx| {
+            Box::new(move |args| {
+                let ctx = ctx.clone();
+                Box::pin(
+                    async move { ctx.system_processes.clone().swipl_execute_petta(args).await },
+                )
+            })
+        }),
+        remainder: None,
+    }]
+}
 #[cfg(not(feature = "chromadb"))]
 fn std_rho_chroma_processes() -> Vec<Definition> {
     vec![]
@@ -1022,6 +1021,7 @@ fn dispatch_table_creator(
     all_processes.extend(std_rho_crypto_processes());
     all_processes.extend(std_rho_ai_processes());
     all_processes.extend(std_rho_chroma_processes());
+    all_processes.extend(std_swipl_processes());
 
     all_processes.extend(extra_system_processes.drain(..));
 
@@ -1150,12 +1150,15 @@ fn setup_maps_and_refs(
     // When OpenAI is disabled, the NoOp service handles calls gracefully.
     let rho_ai_binding = std_rho_ai_processes();
     let rho_chroma_binding = std_rho_chroma_processes();
+    let swipl_binding = std_swipl_processes();
 
     let combined_processes = system_binding
         .iter()
         .chain(rho_crypto_binding.iter())
         .chain(rho_ai_binding.iter())
+        .chain(rho_chroma_binding.iter())
         .chain(extra_system_processes.iter())
+        .chain(swipl_binding.iter())
         .chain(rho_chroma_binding.iter())
         .collect::<Vec<&Definition>>();
 
@@ -1228,9 +1231,10 @@ where
     let res = introduce_system_process(vec![&mut rspace], proc_defs).await;
     assert!(res.iter().all(|s| s.is_none()));
 
-    let charging_rspace: RhoISpace = Arc::new(Box::new(
-        ChargingRSpace::charging_rspace(rspace, cost.clone()),
-    ));
+    let charging_rspace: RhoISpace = Arc::new(Box::new(ChargingRSpace::charging_rspace(
+        rspace,
+        cost.clone(),
+    )));
 
     // Use services from ExternalServices
     let openai_service = external_services.openai.clone();

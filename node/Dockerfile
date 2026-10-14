@@ -61,6 +61,9 @@ COPY comm/ ./comm/
 COPY rholang/ ./rholang/
 COPY node/ ./node/
 
+# Copy PeTTa submodule (required for MeTTa contract execution)
+COPY PeTTa/ ./PeTTa/
+
 # Configure pkg-config for cross-compilation to find target OpenSSL libraries
 # xx-apt installs target libs in the xx sysroot, we need to tell pkg-config where they are
 # Enable AES CPU features for gxhash dependency (required by PathMap crate).
@@ -88,12 +91,14 @@ FROM debian:bookworm-slim AS runtime-base
 
 # Install runtime dependencies
 # Note: grpcurl and jq for healthcheck (matching build.sbt healthcheck)
+# Note: swi-prolog is required for PeTTa/MeTTa contract execution
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     libssl3 \
     libc6 \
     libjemalloc2 \
     curl \
+    swi-prolog \
     && rm -rf /var/lib/apt/lists/*
 
 # Install grpcurl and jq for healthcheck (matching build.sbt)
@@ -141,6 +146,9 @@ RUN mkdir -p /opt/docker/bin
 
 COPY --from=builder --chmod=755 /build/node_binary /opt/docker/bin/node
 
+# Copy PeTTa submodule (required for MeTTa contract execution at runtime)
+COPY --from=builder /build/PeTTa ./PeTTa
+
 # Create entrypoint script for Rust (adapted from docker-entrypoint.sh)
 # Copy the Rust-specific entrypoint script from node directory
 # Note: This Dockerfile should be built from workspace root
@@ -167,6 +175,9 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
 # Labels (matching build.sbt)
 LABEL maintainer="F1r3fly.io LCA https://f1r3fly.io/"
 LABEL version="0.4.15"
+
+# Set PETTA_PATH environment variable for MeTTa contract execution
+ENV PETTA_PATH=/opt/docker/PeTTa
 
 # Switch to daemon user (matching build.sbt: daemonUser in Docker := "daemon")
 USER daemon

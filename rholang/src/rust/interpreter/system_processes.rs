@@ -1,8 +1,6 @@
 use crate::rust::interpreter::chromadb_service::SharedChromaDBService;
 #[cfg(feature = "chromadb")]
-use crate::rust::interpreter::chromadb_service::{
-    CollectionEntries, Metadata
-};
+use crate::rust::interpreter::chromadb_service::{CollectionEntries, Metadata};
 #[cfg(feature = "chromadb")]
 use crate::rust::interpreter::rho_type::{Extractor, RhoList, RhoNil};
 
@@ -19,6 +17,7 @@ use super::rho_type::{
     RhoBoolean, RhoByteArray, RhoDeployId, RhoDeployerId, RhoName, RhoNumber, RhoString,
     RhoSysAuthToken, RhoUri,
 };
+use super::swi_prolog_service::petta_execute;
 use super::util::vault_address::VaultAddress;
 use crypto::rust::hash::blake2b256::Blake2b256;
 use crypto::rust::hash::keccak256::Keccak256;
@@ -34,9 +33,9 @@ use models::rhoapi::g_unforgeable::UnfInstance::GPrivateBody;
 use models::rhoapi::{Bundle, Expr, GPrivate, GUnforgeable, ListParWithRandom, Par, Var};
 use models::rust::casper::protocol::casper_message;
 use models::rust::casper::protocol::casper_message::BlockMessage;
-use prost::Message;
 use models::rust::rholang::implicits::single_expr;
 use models::rust::utils::{new_gbool_par, new_gbytearray_par, new_gsys_auth_token_par};
+use prost::Message;
 use shared::rust::BitSet;
 use shared::rust::Byte;
 use std::collections::{HashMap, HashSet};
@@ -219,6 +218,10 @@ impl FixedChannels {
     pub fn chroma_delete_documents() -> Par {
         byte_name(36)
     }
+
+    pub fn swipl_execute_petta() -> Par {
+        byte_name(37)
+    }
 }
 
 pub struct BodyRefs;
@@ -254,6 +257,7 @@ impl BodyRefs {
     pub const CHROMA_UPSERT_ENTRIES: i64 = 34;
     pub const CHROMA_QUERY: i64 = 35;
     pub const CHROMA_DELETE_DOCUMENTS: i64 = 36;
+    pub const SWIPL_EXECUTE_PETTA: i64 = 37;
 }
 
 pub fn non_deterministic_ops() -> HashSet<i64> {
@@ -265,6 +269,7 @@ pub fn non_deterministic_ops() -> HashSet<i64> {
         BodyRefs::OLLAMA_GENERATE,
         BodyRefs::OLLAMA_MODELS,
         BodyRefs::GRPC_TELL,
+        BodyRefs::SWIPL_EXECUTE_PETTA,
         BodyRefs::CHROMA_QUERY,
     ])
 }
@@ -486,7 +491,7 @@ impl SystemProcesses {
             ollama_service,
             grpc_client_service,
             pretty_printer: PrettyPrinter::new(),
-            chromadb_service
+            chromadb_service,
         }
     }
 
@@ -1635,7 +1640,7 @@ impl SystemProcesses {
         &self,
         contract_args: (Vec<ListParWithRandom>, bool, Vec<Par>),
     ) -> Result<Vec<Par>, InterpreterError> {
-        let Some((produce, _, _, args)) =
+        let Some((produce, is_replay, previous_output, args)) =
             self.is_contract_call().unapply(contract_args)
         else {
             return Err(illegal_argument_error("chroma_create_collection"));
@@ -1659,6 +1664,12 @@ impl SystemProcesses {
         ) else {
             return Err(illegal_argument_error("chroma_create_collection"));
         };
+
+        // Common piece of code.
+        if is_replay {
+            produce(&previous_output, ack).await?;
+            return Ok(previous_output);
+        }
 
         self.chromadb_service
             .create_collection(&collection_name, ignore_or_update_if_exists, metadata)
@@ -1693,7 +1704,10 @@ impl SystemProcesses {
             return Ok(previous_output);
         }
 
-        let meta = self.chromadb_service.get_collection_meta(&collection_name).await?;
+        let meta = self
+            .chromadb_service
+            .get_collection_meta(&collection_name)
+            .await?;
         let result_par = match meta {
             None => RhoNil::create_par(),
             Some(inner) => inner.into(),
@@ -1709,7 +1723,7 @@ impl SystemProcesses {
         &self,
         contract_args: (Vec<ListParWithRandom>, bool, Vec<Par>),
     ) -> Result<Vec<Par>, InterpreterError> {
-        let Some((produce, _, _, args)) =
+        let Some((produce, is_replay, previous_output, args)) =
             self.is_contract_call().unapply(contract_args)
         else {
             return Err(illegal_argument_error("chroma_upsert_entries"));
@@ -1724,6 +1738,12 @@ impl SystemProcesses {
         ) else {
             return Err(illegal_argument_error("chroma_upsert_entries"));
         };
+
+        // Common piece of code.
+        if is_replay {
+            produce(&previous_output, ack).await?;
+            return Ok(previous_output);
+        }
 
         self.chromadb_service
             .upsert_entries(&collection_name, entries)
@@ -1762,7 +1782,8 @@ impl SystemProcesses {
             return Ok(previous_output);
         }
 
-        let res = self.chromadb_service
+        let res = self
+            .chromadb_service
             .query(
                 &collection_name,
                 doc_texts.iter().map(|s| s.as_ref()).collect(),
@@ -1782,7 +1803,7 @@ impl SystemProcesses {
         &self,
         contract_args: (Vec<ListParWithRandom>, bool, Vec<Par>),
     ) -> Result<Vec<Par>, InterpreterError> {
-        let Some((produce, _, _, args)) =
+        let Some((produce, is_replay, previous_output, args)) =
             self.is_contract_call().unapply(contract_args)
         else {
             return Err(illegal_argument_error("chroma_delete_documents"));
@@ -1798,17 +1819,90 @@ impl SystemProcesses {
             return Err(illegal_argument_error("chroma_delete_documents"));
         };
 
+        // Common piece of code.
+        if is_replay {
+            produce(&previous_output, ack).await?;
+            return Ok(previous_output);
+        }
+
         self.chromadb_service
             .delete_documents(&collection_name, doc_ids)
             .await?;
 
-        let result_par = RhoString::create_par(collection_name);
-        let output = vec![result_par];
-        produce(&output, ack).await?;
-        Ok(output)
+        let p = RhoString::create_par(collection_name);
+        produce(&[p], ack).await?;
+        Ok(vec![])
     }
 
     // ChromaDB section end
+
+    // SWIPL section begin
+
+    /// System process handler for `rho:petta:execute` URN.
+    ///
+    /// Executes MeTTa code through the PeTTa (SWI-Prolog) interpreter and returns results
+    /// to the calling Rholang contract. This is a non-deterministic operation - results are
+    /// cached during play execution and replayed from cache during replay for consensus safety.
+    ///
+    /// # URN Specification
+    ///
+    /// **URN:** `rho:petta:execute`
+    ///
+    /// **Arity:** 2 arguments
+    ///
+    /// **Arguments:**
+    /// 1. `metta_code: String` - MeTTa code to execute
+    /// 2. `ack: Channel` - Acknowledgment channel to receive result
+    ///
+    /// # Return Shape
+    ///
+    /// Sends a single `Par` on the acknowledgment channel containing the execution result.
+    /// The structure matches PeTTa's JSON output converted to Rholang types.
+    ///
+    /// # Error Conditions
+    ///
+    /// Returns `InterpreterError` for:
+    /// - **Illegal argument error**: Wrong number of arguments or incorrect types
+    /// - **PeTTa not found**: `$PETTA_PATH` points to invalid location
+    /// - **Timeout**: Execution exceeds 10 seconds
+    /// - **MeTTa syntax error**: Invalid MeTTa code
+    /// - **JSON parse error**: PeTTa output is not valid JSON
+    /// - **Number overflow**: JSON number doesn't fit in i64
+    ///
+    /// Errors are propagated to the Rholang contract and captured in the evaluation result's
+    /// error list.
+    pub async fn swipl_execute_petta(
+        &self,
+        contract_args: (Vec<ListParWithRandom>, bool, Vec<Par>),
+    ) -> Result<Vec<Par>, InterpreterError> {
+        let Some((produce, is_replay, previous_output, args)) =
+            self.is_contract_call().unapply(contract_args)
+        else {
+            return Err(illegal_argument_error("swipl_execute_petta"));
+        };
+
+        let [metta_code, ack] = args.as_slice() else {
+            return Err(illegal_argument_error("swipl_execute_petta"));
+        };
+        let Some(metta_code) = RhoString::unapply(metta_code) else {
+            return Err(illegal_argument_error("swipl_execute_petta"));
+        };
+
+        // Common piece of code.
+        if is_replay {
+            produce(&previous_output, ack).await?;
+            return Ok(previous_output);
+        }
+
+        // Perform the execution and wrap in vector
+        let output = petta_execute(&metta_code).await?;
+        let output = vec![output];
+
+        produce(&output, &ack).await?;
+        Ok(output)
+    }
+
+    // SWIPL section end
 }
 
 // See casper/src/test/scala/coop/rchain/casper/helper/RhoSpec.scala

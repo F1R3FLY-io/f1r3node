@@ -1,0 +1,6 @@
+new executePetta(`rho:petta:execute`), stdout(`rho:io:stdout`), retCh in {
+  executePetta!("(= (swap (Pair $x $y)) (Pair $y $x)) !(swap (Pair 1 3)) !(swap (Pair x y))", *retCh) |
+  for(@ok <- retCh) {
+      stdout!(ok)
+  }
+}

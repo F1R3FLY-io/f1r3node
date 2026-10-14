@@ -27,6 +27,7 @@ pub mod rho_runtime;
 pub mod rho_type;
 pub mod storage;
 pub mod substitute;
+pub mod swi_prolog_service;
 pub mod system_processes;
 pub mod test_utils;
 pub mod util;

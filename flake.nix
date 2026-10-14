@@ -149,6 +149,11 @@
               package = just;
               help = "Just command runner for local development tasks";
             }
+            {
+              name = "swipl";
+              package = swi-prolog;
+              help = "SWI-Prolog interpreter (required for PeTTa/MeTTa execution)";
+            }
           ];
           packages = [
             # Required for Python packages with native extensions (grpcio, etc.)
@@ -187,6 +192,10 @@
               {
                 name = "BLOOP_JAVA_OPTS";
                 value = "-Xmx4G -XX:+UseZGC -Xss4m -Xms1g";
+              }
+              {
+                name = "PETTA_PATH";
+                value = "./PeTTa";
               }
             ];
         };
