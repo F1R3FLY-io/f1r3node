@@ -227,3 +227,60 @@ async fn interpreter_should_charge_for_parsing_even_when_not_enough_phlo() {
     })
     .await
 }
+
+#[tokio::test]
+async fn interpreter_should_return_actual_eval_cost_for_interpreter_errors() {
+    use rholang::rust::interpreter::accounting::costs::Cost;
+
+    with_runtime("eval-cost-error-spec-", |mut runtime| async move {
+        // This term will cause an InterpreterError during evaluation
+        // (consuming from stdout which is a system process requires specific patterns)
+        let stdout_consume_term = r#"
+            new stdout(`rho:io:stdout`) in {
+                for(_ <- stdout) {
+                    Nil
+                }
+            }
+        "#;
+
+        let phlo_limit = 100000i64;
+        let initial_phlo = Cost::create(phlo_limit, "test".to_string());
+
+        let result = runtime
+            .evaluate_with_phlo(stdout_consume_term, initial_phlo.clone())
+            .await
+            .unwrap();
+
+        // Verify that an error occurred
+        assert!(
+            !result.errors.is_empty(),
+            "Expected InterpreterError to occur"
+        );
+
+        // Verify that the cost is greater than 0 (some evaluation happened)
+        assert!(
+            result.cost.value > 0,
+            "Expected cost > 0, but got {}",
+            result.cost.value
+        );
+
+        // Verify that the cost is less than the phlo limit (not all phlos consumed)
+        assert!(
+            result.cost.value < phlo_limit,
+            "Expected cost < {}, but got {}",
+            phlo_limit,
+            result.cost.value
+        );
+
+        // Verify that the cost is more than just parsing cost
+        // (it should include evaluation costs)
+        let parsing_cost_value = parsing_cost(stdout_consume_term).value;
+        assert!(
+            result.cost.value > parsing_cost_value,
+            "Expected cost {} > parsing cost {}, indicating evaluation occurred",
+            result.cost.value,
+            parsing_cost_value
+        );
+    })
+    .await
+}
